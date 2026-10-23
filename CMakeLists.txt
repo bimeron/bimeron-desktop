@@ -74,6 +74,11 @@ endif()
 target_compile_definitions(bimeron-desktop PRIVATE
     BIMERON_GUI_VERSION="${PROJECT_VERSION}"
     BIMERON_CORE_UPDATE_PUBLIC_KEY="${BIMERON_CORE_UPDATE_PUBLIC_KEY}")
+option(BIMERON_LOCAL_UPDATE_TESTING "Use an isolated local Core release feed (test builds only)" OFF)
+if(BIMERON_LOCAL_UPDATE_TESTING)
+    target_compile_definitions(bimeron-desktop PRIVATE BIMERON_LOCAL_UPDATE_TESTING)
+    message(WARNING "Local Core update feed enabled; this build is for isolated testing only")
+endif()
 
 include(CTest)
 if(BUILD_TESTING)
@@ -86,6 +91,18 @@ if(BUILD_TESTING)
     endif()
     target_compile_definitions(core-update-test PRIVATE BIMERON_CORE_UPDATE_PUBLIC_KEY="${BIMERON_CORE_UPDATE_PUBLIC_KEY}")
     add_test(NAME core-update-test COMMAND core-update-test)
+    if(BIMERON_LOCAL_UPDATE_TESTING)
+        set(BIMERON_LOCAL_UPDATE_TEST_PUBLIC_KEY "" CACHE STRING "Ephemeral local-feed test public key")
+        if(BIMERON_LOCAL_UPDATE_TEST_PUBLIC_KEY STREQUAL "")
+            message(FATAL_ERROR "Set an ephemeral BIMERON_LOCAL_UPDATE_TEST_PUBLIC_KEY for local-feed fixture tests")
+        endif()
+        add_executable(core-updater-feed-test tests/CoreUpdaterFeedTest.cpp src/CoreUpdater.cpp src/CoreUpdater.h)
+        target_include_directories(core-updater-feed-test PRIVATE src third_party/monocypher)
+        target_link_libraries(core-updater-feed-test PRIVATE core-update)
+        target_compile_definitions(core-updater-feed-test PRIVATE
+            BIMERON_LOCAL_UPDATE_TESTING
+            BIMERON_CORE_UPDATE_PUBLIC_KEY="${BIMERON_LOCAL_UPDATE_TEST_PUBLIC_KEY}")
+    endif()
     add_executable(profile-vless-test tests/ProfileVlessTest.cpp
         src/ProfileStore.cpp src/ProfileStore.h
         src/ProfileEditorDialog.cpp src/ProfileEditorDialog.h)
@@ -226,6 +243,9 @@ set(CPACK_PACKAGE_VERSION "${PROJECT_VERSION}")
 string(TOLOWER "${CMAKE_SYSTEM_NAME}" BIMERON_PACKAGE_PLATFORM)
 set(CPACK_PACKAGE_FILE_NAME
     "bimeron-desktop-${PROJECT_VERSION}-${BIMERON_PACKAGE_PLATFORM}-${BIMERON_PACKAGE_ARCH}")
+if(BIMERON_LOCAL_UPDATE_TESTING)
+    string(APPEND CPACK_PACKAGE_FILE_NAME "-local-update-test")
+endif()
 if(WIN32)
     set(CPACK_PACKAGE_DIRECTORY "${CMAKE_SOURCE_DIR}/dist")
 else()

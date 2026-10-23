@@ -10,6 +10,33 @@ In the `Windows 10 STD` VM, the original running automatic service was Core `0.1
 
 The manifest still has `gui_reviewed: false` and no signature, so GUI release discovery and GUI-managed update/reconnection cannot pass yet. The exact GUI build `0.2.0` has passed local tests and the installed package/helper checks above. The proposed range `[0.2.0, 0.2.1)` is not approved by this direct-helper test alone.
 
+## Isolated local GUI feed, 2026-10-23
+
+The separate MSI `dist/bimeron-desktop-0.2.0-windows-amd64-local-update-test.msi` is 29,044,736 bytes, SHA-256 `8e11b03f5a32e2462b5c4354505eaed76f0917fd0b7e9fd4a6d114d3fe6a6fb8`. Its installed GUI executable has SHA-256 `de8837dd9df7e4f25b2e01530508f8926a021b0326e5821c7fac14c37f423620`. Its bundled Core matches the candidate executable SHA-256 `75e55422ff50ce53d65870f774def68d6d754fa60dee6c77758b3b213b2f7b87`. MSI administrative extraction found no test executables or private key material. The GUI package uses the pinned production Ed25519 public key `bk6SfABmDG88uhUupYT+ia6dtSrpHbnGaBCfYvihJF0=` (key ID `7370a2d8cf890e5e`).
+
+The local-feed option is compiled only into this test build. `BIMERON_TEST_RELEASES_JSON` must name an absolute local GitHub-shaped release-list file. All asset URLs must be local files under that list's directory. The normal build has no local-feed override and continues to fetch HTTPS GitHub Releases. The test build also retains the normal manifest verifier, archive verifier, protected helper, and GUI install/reconnection path.
+
+An isolated `core-updater-feed-test` generated signed fixtures using an ephemeral local test key, public key `GDGP4uDy+RNl3qPim4ZdwSCQzifrr8on4uBnM+hDsVU=` (key ID `6de142a4d6c79fa5`). Its private seed was stored only in ignored local build state and removed from the VM after testing; this key is not in the MSI. In the VM, a validly signed `gui_reviewed: false` fixture failed with `Unreviewed or incomplete update compatibility`; a wrong signature failed with `Update signature verification failed`; and a changed ZIP failed with `Update archive size or hash mismatch`. A correctly signed, reviewed fixture reached the ready/staging state without invoking service installation. The VM service executable remained SHA-256 `75e55422ff50ce53d65870f774def68d6d754fa60dee6c77758b3b213b2f7b87`, and its VPN remained connected.
+
+Windows Installer did not replace the previous GUI executable when installing another `0.2.0` MSI over it. In the VM, the prior local GUI test MSI was removed, then the local-feed MSI was installed. The service executable, command, startup mode, running state, and connected VPN were unchanged. A checkpoint named `Before local GUI update feed test 0.2.0` preserves the prior VM state.
+
+### Repeat with a production-key signed, reviewed manifest
+
+1. Core supplies `update-manifest.json` and `update-manifest.json.sig` signed by the key ID `7370a2d8cf890e5e`, with `gui_reviewed: true`, GUI range `[0.2.0, 0.2.1)`, IPC 1, profile format 1, and unchanged exact sizes and SHA-256 values for the four desktop ZIPs. Do not send or copy the private key. Verify the exact manifest bytes, signature, and all four archive hashes with the GUI verifier before VM installation.
+2. Restore a disposable VM snapshot with an older running Core service and a working test profile. The current VM already runs `0.2.0-beta.1`, so its present state cannot demonstrate discovery of a newer candidate. Copy and install the local-feed MSI in the restored VM; verify its SHA-256 and that the protected bundled Core matches the candidate. Record the original service hash, startup mode, command, IPC version, and active profile ID. Package installation must leave the service and VPN unchanged.
+3. Copy the signed manifest, signature, and unmodified Windows amd64 ZIP into `C:\Users\Public\Documents\Bimeron-VM-Test\feed` in the VM. Keep the existing `releases.json` there; confirm its single release is `v0.2.0-beta.1` and its `file:` asset URLs resolve only inside that directory. Verify the copied files' hashes. First substitute a one-byte-changed ZIP while keeping the valid signed manifest: the GUI must refuse to offer installation and leave the service/profile unchanged. Restore the verified ZIP.
+4. From a PowerShell window in the **interactive VM desktop**, launch the GUI with the local list for that process:
+
+   ```powershell
+   $env:BIMERON_TEST_RELEASES_JSON = 'C:\Users\Public\Documents\Bimeron-VM-Test\feed\releases.json'
+   Start-Process 'C:\Program Files\Bimeron\bimeron-desktop.exe'
+   ```
+
+   Enable beta Core updates, select **Check for core update**, and record that the GUI offers `0.2.0-beta.1` only after signature, compatibility, and ZIP verification. Accept the warning and UAC prompt. Record that the elevated executable is `C:\Program Files\Bimeron\bimeron-core.exe` and its arguments include `service update -source`, `-version 0.2.0-beta.1`, and the extracted executable SHA-256.
+5. Confirm the installed service executable SHA-256 is `75e55422ff50ce53d65870f774def68d6d754fa60dee6c77758b3b213b2f7b87`, startup mode and command are preserved, and IPC `hello` reports `0.2.0-beta.1` at revision `78aca2aa5537f55365c7c7b0452600d69338e49f`. The GUI must reconnect the **same** previously active test profile once. Check a disconnected-service variant separately: it must stay disconnected. Record any failure and rollback without treating a mere version-range match as compatibility evidence.
+
+Do not run these steps on the host. A signed local test manifest with `gui_reviewed: true` is for the isolated VM only until these checks finish; it is not an instruction to publish a release.
+
 ## 1. Verify the guest and inputs
 
 ```powershell

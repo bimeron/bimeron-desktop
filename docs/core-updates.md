@@ -2,6 +2,12 @@
 
 ## Specification
 
+### Isolated local release feed for VM verification
+
+A build configured with `BIMERON_LOCAL_UPDATE_TESTING=ON` may read a local GitHub-shaped release-list JSON from the absolute path in `BIMERON_TEST_RELEASES_JSON`. Asset URLs in that list must be `file:` URLs for regular files under the list file's directory. This test build uses the normal release selection, Ed25519 manifest verification, compatibility gate, archive size and SHA-256 verification, extraction, elevation, IPC check, and reconnection code. Only the source of bytes changes. It must not fetch network URLs and must reject files outside the feed directory, including symbolic-link escapes. A normal build has no local-feed code or environment-variable override and continues to use GitHub Releases and the pinned public key.
+
+Acceptance criteria: a signed unreviewed manifest, a bad signature, and a changed ZIP never become installable; a signed reviewed manifest using the pinned production key can reach the update prompt and the installed VM service only after the same verifier accepts it. A temporary test key may exercise negative cases but must never enter a production package or repository. The current unsigned `gui_reviewed: false` candidate is expected to remain unavailable. Keep the test MSI and its test feed confined to a disposable Windows VM.
+
 Since Bimeron Desktop 0.1.2, the installed Windows or Linux core service can update independently of the desktop package. The package's bundled core remains the bootstrap and recovery copy. The running service's `hello.core.version`, not the bundled file, is the installed version. Desktop, core, IPC, and profile-format versions are independent.
 
 The updater implements IPC protocol `1` and profile format `1`. Published core `v0.1.0-beta.5` has reviewed GUI bounds `gui_min: "0.1.5"` and `gui_max_exclusive: "0.1.6"`, so GUI `0.1.5` can consider it when beta updates are enabled. Older published core `v0.1.0-beta.3` has bounds `[0.1.0, 0.1.2)` and remains ineligible for GUI `0.1.5`.
