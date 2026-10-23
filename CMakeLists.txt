@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(BimeronDesktop VERSION 0.1.5 LANGUAGES C CXX)
+project(BimeronDesktop VERSION 0.2.0 LANGUAGES C CXX)
 
 set(BIMERON_PACKAGE_ARCH "unknown" CACHE STRING "Architecture name used in package files")
 
