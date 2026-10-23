@@ -60,6 +60,7 @@ private:
     void finishServiceCommand(int exitCode, const QString &details = {});
     void refreshServiceStatus();
     void refreshCoreAfterUpdate();
+    void reportCoreUpdateResult(const QString &message);
     void recoverNetwork();
     void applyStartupSetting(bool enabled);
     void editProfile(int row);
@@ -103,6 +104,7 @@ private:
     QString state_ = "unknown";
     QString activeProfileId_;
     QString reconnectProfileAfterUpdate_;
+    QString reconnectResultProfileId_;
     QString expectedCoreVersionAfterUpdate_;
     QString lastCoreError_;
     QString runningCoreVersion_;
@@ -123,6 +125,7 @@ private:
     bool startServiceAfterInstall_ = false;
     bool coreUpdateCheckStarted_ = false;
     bool coreUpdateCommand_ = false;
+    bool coreUpdateAwaitingResult_ = false;
     quintptr serviceCommandProcess_ = 0;
     QProcess *linuxServiceProcess_ = nullptr;
     QString serviceCommandDescription_;

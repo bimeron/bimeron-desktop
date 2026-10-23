@@ -26,6 +26,8 @@ At confirmation, remember the currently connected profile. Warn that updating in
 
 Acceptance criteria: a successful update with an active profile reconnects that profile once after new-service verification; a disconnected update stays disconnected; failed, canceled, or mismatched updates do not reconnect. The GUI reports a failed reconnect through its normal connection status and log.
 
+The Settings result distinguishes helper completion from verified success. After the helper exits successfully, show that Core and VPN state are being checked. Report the installed version only after IPC `hello` matches the requested version. If a profile was active, report success after that same profile reaches `connected`, or report a separate reconnection failure. A mismatched version or failed IPC check must not be presented as a successful update. Keep the final result visible in Settings and record it in the log.
+
 ## Acceptance criteria
 
 - Tests with a test key verify exact-byte signatures and reject tampering, unknown keys, invalid compatibility, duplicate targets, unsafe names, and wrong archive length/hash. The test key is never embedded in the production application.

@@ -740,6 +740,7 @@ QWidget *MainWindow::settingsPage() {
     service->addLayout(serviceButtons);
     coreUpdateLabel_ = new QLabel(updater_.available() ? tr("Core updates have not been checked") : tr("Signed updates are not available yet"));
     coreUpdateLabel_->setObjectName("sectionHint");
+    coreUpdateLabel_->setWordWrap(true);
     service->addWidget(coreUpdateLabel_);
     connect(&updater_, &CoreUpdater::statusChanged, coreUpdateLabel_, &QLabel::setText);
     connect(&updater_, &CoreUpdater::ready, this, [this](const QString &version, const QString &path, const QString &digest) {
@@ -1192,6 +1193,16 @@ void MainWindow::handleReply(const QString &command, const QJsonObject &response
     if (command == "stop")
         stopRequested_ = false;
     if (response.contains("error")) {
+        if (command == "hello" && coreUpdateAwaitingResult_) {
+            coreUpdateAwaitingResult_ = false;
+            reconnectProfileAfterUpdate_.clear();
+            expectedCoreVersionAfterUpdate_.clear();
+            reportCoreUpdateResult(tr("Core update could not be verified; VPN was not reconnected"));
+        }
+        if (command == "start" && !reconnectResultProfileId_.isEmpty()) {
+            reconnectResultProfileId_.clear();
+            reportCoreUpdateResult(tr("Core %1 installed, but VPN reconnection failed").arg(runningCoreVersion_));
+        }
         if (command == "stop")
             pendingStartPath_.clear();
         if (command == "events" && response.value("error").toString() == "invalid_cursor") {
@@ -1231,19 +1242,30 @@ void MainWindow::handleReply(const QString &command, const QJsonObject &response
             updateTimer->start();
         }
         handleStatus(response.value("status").toObject());
-        if (!coreUpdateCommand_ && !expectedCoreVersionAfterUpdate_.isEmpty()) {
+        if (coreUpdateAwaitingResult_ && !coreUpdateCommand_ && !expectedCoreVersionAfterUpdate_.isEmpty()) {
             const QString profileId = reconnectProfileAfterUpdate_;
-            const bool reconnect = version == expectedCoreVersionAfterUpdate_ && state_ == "disconnected";
+            const bool verified = version == expectedCoreVersionAfterUpdate_ && state_ == "disconnected";
+            coreUpdateAwaitingResult_ = false;
             expectedCoreVersionAfterUpdate_.clear();
             reconnectProfileAfterUpdate_.clear();
-            if (reconnect && !profileId.isEmpty()) {
+            if (!verified) {
+                reportCoreUpdateResult(tr("Core update could not be verified; VPN was not reconnected"));
+            } else if (profileId.isEmpty()) {
+                reportCoreUpdateResult(tr("Core %1 installed and verified; VPN remains disconnected").arg(version));
+            } else {
+                bool found = false;
                 for (int row = 0; row < profiles_.size(); ++row) {
                     if (profiles_[row].id == profileId) {
+                        found = true;
+                        reconnectResultProfileId_ = profileId;
+                        coreUpdateLabel_->setText(tr("Core %1 installed and verified; reconnecting VPN…").arg(version));
                         profileList_->setCurrentRow(row);
                         startProfile(row);
                         break;
                     }
                 }
+                if (!found)
+                    reportCoreUpdateResult(tr("Core %1 installed, but the previous VPN profile is unavailable").arg(version));
             }
         }
         if (!autoConnectAttempted_ && state_ == "disconnected" && QSettings().value("app/autoConnect", false).toBool()) {
@@ -1320,6 +1342,15 @@ void MainWindow::handleStatus(const QJsonObject &status) {
         connectionAttempted_ = false;
     const auto session = status.value("Session").toObject();
     activeProfileId_ = session.value("profile_id").toString();
+    if (!reconnectResultProfileId_.isEmpty()) {
+        if (state_ == "connected" && activeProfileId_ == reconnectResultProfileId_) {
+            reconnectResultProfileId_.clear();
+            reportCoreUpdateResult(tr("Core %1 installed and verified; VPN reconnected").arg(runningCoreVersion_));
+        } else if (state_ == "failed" || (state_ == "connected" && activeProfileId_ != reconnectResultProfileId_)) {
+            reconnectResultProfileId_.clear();
+            reportCoreUpdateResult(tr("Core %1 installed, but VPN reconnection failed").arg(runningCoreVersion_));
+        }
+    }
     if (trayMenu_ && (state_ != previousState || activeProfileId_ != previousProfileId))
         rebuildTrayMenu();
     const QString newSession = session.value("id").toString();
@@ -1815,7 +1846,10 @@ void MainWindow::finishServiceCommand(int exitCode, const QString &details) {
             return;
         }
         refreshServiceStatus();
-        if (finishedCoreUpdate) coreUpdateLabel_->setText(tr("Core service update completed"));
+        if (finishedCoreUpdate) {
+            coreUpdateAwaitingResult_ = true;
+            coreUpdateLabel_->setText(tr("Core service updated; verifying version and VPN state…"));
+        }
     }
     if (finishedCoreUpdate)
         QTimer::singleShot(500, this, &MainWindow::refreshCoreAfterUpdate);
@@ -1824,6 +1858,11 @@ void MainWindow::finishServiceCommand(int exitCode, const QString &details) {
 void MainWindow::refreshCoreAfterUpdate() {
     if (core_.busy()) QTimer::singleShot(250, this, &MainWindow::refreshCoreAfterUpdate);
     else core_.request("hello");
+}
+
+void MainWindow::reportCoreUpdateResult(const QString &message) {
+    coreUpdateLabel_->setText(message);
+    appendLog(message);
 }
 
 void MainWindow::refreshServiceStatus() {
