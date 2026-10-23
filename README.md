@@ -99,3 +99,5 @@ The application connects to the `BimeronCore` service via a Windows named pipe o
 `/run/bimeron/control.sock` on Linux. Profiles are located in the data directory
 applications and receive only the rights of the owner. Closing the window does not stop the VPN,
 unless the user has explicitly enabled the appropriate setting.
+
+The profile dialog accepts `ss://`, `ssconf://`, `socks5://`, and `vless://` links. VLESS links and explicit transport settings follow [the VLESS profile contract](docs/vless-profiles.md). A VLESS-capable core CLI and installed service are required to use those profiles; the currently bundled `v0.1.0-beta.5` core predates VLESS.

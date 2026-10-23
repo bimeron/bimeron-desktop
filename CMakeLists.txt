@@ -86,6 +86,15 @@ if(BUILD_TESTING)
     endif()
     target_compile_definitions(core-update-test PRIVATE BIMERON_CORE_UPDATE_PUBLIC_KEY="${BIMERON_CORE_UPDATE_PUBLIC_KEY}")
     add_test(NAME core-update-test COMMAND core-update-test)
+    add_executable(profile-vless-test tests/ProfileVlessTest.cpp
+        src/ProfileStore.cpp src/ProfileStore.h
+        src/ProfileEditorDialog.cpp src/ProfileEditorDialog.h)
+    target_include_directories(profile-vless-test PRIVATE src)
+    target_link_libraries(profile-vless-test PRIVATE Qt6::Widgets Qt6::Network)
+    add_test(NAME profile-vless-test COMMAND profile-vless-test)
+    if(NOT WIN32)
+        set_tests_properties(profile-vless-test PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+    endif()
 endif()
 
 include(cmake/core-release.cmake)
@@ -164,7 +173,8 @@ if(WIN32)
     install(DIRECTORY "$<TARGET_FILE_DIR:bimeron-desktop>/"
         DESTINATION .
         USE_SOURCE_PERMISSIONS
-        PATTERN "core-update*" EXCLUDE)
+        PATTERN "core-update*" EXCLUDE
+        PATTERN "profile-vless-test*" EXCLUDE)
     set(CMAKE_INSTALL_SYSTEM_RUNTIME_DESTINATION ".")
     include(InstallRequiredSystemLibraries)
     if(NOT CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS MATCHES "vcruntime140_1\\.dll")

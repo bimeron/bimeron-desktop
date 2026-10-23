@@ -71,9 +71,9 @@ QString ProfileStore::importConfig(const QString &source, QString *error) const 
 
 QString ProfileStore::createConfig(const QString &name, const QString &key, QString *error) const {
     const QString trimmed = key.trimmed();
-    const QString field = trimmed.startsWith("ssconf://") ? "SSConf" : trimmed.startsWith("ss://") ? "SS" : trimmed.startsWith("socks5://") ? "SOCKS5" : QString();
+    const QString field = trimmed.startsWith("ssconf://") ? "SSConf" : trimmed.startsWith("ss://") ? "SS" : trimmed.startsWith("socks5://") ? "SOCKS5" : trimmed.startsWith("vless://") ? "VLESS" : QString();
     if (field.isEmpty()) {
-        if (error) *error = QObject::tr("The key must begin with ss://, ssconf://, or socks5://");
+        if (error) *error = QObject::tr("The key must begin with ss://, ssconf://, socks5://, or vless://");
         return {};
     }
     QString safeName = name.trimmed().left(128);

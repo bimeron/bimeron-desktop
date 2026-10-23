@@ -253,8 +253,8 @@ QIcon statusDot(const QColor &color) {
 
 QString safeCoreDiagnostic(QByteArray output) {
     QString text = QString::fromUtf8(output).trimmed();
-    text.replace(QRegularExpression(R"((ss(?:conf)?://)[^\s\"']+)"), QStringLiteral("\\1") + QObject::tr("[hidden]"));
-    text.replace(QRegularExpression(R"((?im)^\s*(Password|Key|SS|SSConf)\s*=.*$)"), QStringLiteral("\\1 = ") + QObject::tr("[hidden]"));
+    text.replace(QRegularExpression(R"(((?:ss(?:conf)?|socks5|vless)://)[^\s\"']+)"), QStringLiteral("\\1") + QObject::tr("[hidden]"));
+    text.replace(QRegularExpression(R"((?im)^\s*(Password|Key|SS|SSConf|SOCKS5|VLESS|ID|PublicKey|ShortID)\s*=.*$)"), QStringLiteral("\\1 = ") + QObject::tr("[hidden]"));
     text.replace("error: [Interface] IPv6 = disable requires Mode = vpn",
                  QObject::tr("IPv6 can only be disabled in system VPN mode."));
     text.replace("error: KillSwitch requires Mode = vpn",
@@ -972,9 +972,9 @@ void MainWindow::addProfile() {
     dialog.setWindowTitle(tr("Add profile"));
     dialog.setMinimumWidth(440);
     auto *layout = new QVBoxLayout(&dialog);
-    auto *hint = new QLabel(tr("Paste a key beginning with ss://, ssconf://, or socks5://"));
+    auto *hint = new QLabel(tr("Paste a key beginning with ss://, ssconf://, socks5://, or vless://"));
     auto *key = new QLineEdit;
-    key->setPlaceholderText(tr("ss://, ssconf://, or socks5://"));
+    key->setPlaceholderText(tr("ss://, ssconf://, socks5://, or vless://"));
     key->setMinimumHeight(30);
     auto *paste = new QPushButton;
     auto *nameLabel = new QLabel(tr("Profile name"));
@@ -1010,6 +1010,10 @@ void MainWindow::addProfile() {
             const bool hasUser = !url.userName().isEmpty();
             return hasUser == !url.password().isEmpty();
         }
+        if (url.scheme() == "vless")
+            return url.isValid() && !url.host().isEmpty() && url.port() > 0 && url.port() <= 65535
+                && url.password().isEmpty() && url.path().isEmpty()
+                && QRegularExpression("^[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}$").match(url.userName()).hasMatch();
         if (url.scheme() != "ss") return false;
 
         QString body = trimmed.mid(5);

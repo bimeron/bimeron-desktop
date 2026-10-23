@@ -156,10 +156,14 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
     keySource_->addItem(tr("ss:// key"), "SS");
     keySource_->addItem(tr("Dynamic ssconf://"), "SSConf");
     keySource_->addItem(tr("Remote socks5://"), "SOCKS5");
+    keySource_->addItem(tr("vless:// key"), "VLESS");
+    if (!valueFor(text, "AccessKey", "Key").isEmpty())
+        keySource_->addItem(tr("Legacy key"), "Key");
     if (!valueFor(text, "AccessKey", "File").isEmpty())
         keySource_->addItem(tr("Key file"), "File");
     keySource_->addItem(tr("Explicit Shadowsocks settings"), "Explicit");
     keySource_->addItem(tr("Explicit SOCKS5 settings"), "ExplicitSOCKS5");
+    keySource_->addItem(tr("Explicit VLESS settings"), "ExplicitVLESS");
     key_ = new QLineEdit;
     auto *keyRow = new QWidget;
     auto *keyLayout = new QHBoxLayout(keyRow);
@@ -200,6 +204,46 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
     generalForm->addRow(tr("SOCKS5 address"), listen_);
     auto *keyLabel = qobject_cast<QLabel *>(generalForm->labelForField(keyRow));
     tabs_->addTab(general, tr("General"));
+
+    auto *vlessPage = new QWidget;
+    auto *vlessForm = new QFormLayout(vlessPage);
+    vlessId_ = new QLineEdit;
+    vlessNetwork_ = new HiDpiComboBox;
+    for (const char *network : {"tcp", "ws", "grpc", "xhttp"}) vlessNetwork_->addItem(network);
+    vlessSecurity_ = new HiDpiComboBox;
+    vlessSecurity_->addItems({"tls", "reality"});
+    vlessFlow_ = new HiDpiComboBox;
+    vlessFlow_->addItems({"", "xtls-rprx-vision", "xtls-rprx-vision-udp443"});
+    vlessServerName_ = new QLineEdit;
+    vlessFingerprint_ = new HiDpiComboBox;
+    vlessFingerprint_->addItems({"", "chrome", "firefox", "safari", "ios", "android", "edge"});
+    vlessPublicKey_ = new QLineEdit;
+    vlessShortId_ = new QLineEdit;
+    vlessSpiderX_ = new QLineEdit;
+    vlessAlpn_ = new QLineEdit;
+    vlessPath_ = new QLineEdit;
+    vlessHost_ = new QLineEdit;
+    vlessEarlyData_ = new QSpinBox;
+    vlessEarlyData_->setRange(0, 8192);
+    vlessServiceName_ = new QLineEdit;
+    vlessXhttpMode_ = new HiDpiComboBox;
+    vlessXhttpMode_->addItems({"packet-up", "stream-one"});
+    vlessForm->addRow(tr("User ID"), vlessId_);
+    vlessForm->addRow(tr("Transport"), vlessNetwork_);
+    vlessForm->addRow(tr("Security"), vlessSecurity_);
+    vlessForm->addRow(tr("Flow"), vlessFlow_);
+    vlessForm->addRow(tr("Server name (SNI)"), vlessServerName_);
+    vlessForm->addRow(tr("Fingerprint"), vlessFingerprint_);
+    vlessForm->addRow(tr("REALITY public key"), vlessPublicKey_);
+    vlessForm->addRow(tr("REALITY short ID"), vlessShortId_);
+    vlessForm->addRow(tr("REALITY SpiderX"), vlessSpiderX_);
+    vlessForm->addRow(tr("ALPN"), vlessAlpn_);
+    vlessForm->addRow(tr("Path"), vlessPath_);
+    vlessForm->addRow(tr("Host"), vlessHost_);
+    vlessForm->addRow(tr("WebSocket early data"), vlessEarlyData_);
+    vlessForm->addRow(tr("gRPC service name"), vlessServiceName_);
+    vlessForm->addRow(tr("XHTTP mode"), vlessXhttpMode_);
+    tabs_->addTab(vlessPage, tr("VLESS"));
 
     auto *network = new QWidget;
     auto *networkForm = new QFormLayout(network);
@@ -313,7 +357,26 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
         }
         return parsed.valid;
     };
-    const auto updateKeyControls = [this, generalForm, keyRow, keyLabel, browse, reveal, applySs] {
+    const auto updateVlessControls = [this, vlessForm] {
+        const bool explicitVless = keySource_->currentData().toString() == "ExplicitVLESS";
+        tabs_->setTabVisible(1, explicitVless);
+        if (!explicitVless) return;
+        const QString network = vlessNetwork_->currentText();
+        const bool reality = vlessSecurity_->currentText() == "reality";
+        vlessForm->setRowVisible(vlessFlow_, network == "tcp" && reality);
+        vlessForm->setRowVisible(vlessPublicKey_, reality);
+        vlessForm->setRowVisible(vlessShortId_, reality);
+        vlessForm->setRowVisible(vlessSpiderX_, reality);
+        vlessForm->setRowVisible(vlessAlpn_, !(network == "tcp" && reality));
+        vlessForm->setRowVisible(vlessPath_, network == "ws" || network == "xhttp");
+        vlessForm->setRowVisible(vlessHost_, network == "ws" || network == "xhttp");
+        vlessForm->setRowVisible(vlessEarlyData_, network == "ws");
+        vlessForm->setRowVisible(vlessServiceName_, network == "grpc");
+        vlessForm->setRowVisible(vlessXhttpMode_, network == "xhttp");
+    };
+    connect(vlessNetwork_, &QComboBox::currentIndexChanged, this, updateVlessControls);
+    connect(vlessSecurity_, &QComboBox::currentIndexChanged, this, updateVlessControls);
+    const auto updateKeyControls = [this, generalForm, keyRow, keyLabel, browse, reveal, applySs, updateVlessControls] {
         const QString source = keySource_->currentData().toString();
         const bool ss = source == "SS";
         const bool ssconf = source == "SSConf";
@@ -321,27 +384,30 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
         const bool file = source == "File";
         const bool explicitKey = source == "Explicit";
         const bool explicitSocks5 = source == "ExplicitSOCKS5";
-        const bool showParameters = ss || explicitKey || explicitSocks5;
+        const bool explicitVless = source == "ExplicitVLESS";
+        const bool showParameters = ss || explicitKey || explicitSocks5 || explicitVless;
 
         keyLabel->setText(file ? tr("File path") : tr("URL"));
         key_->setEnabled(true);
-        generalForm->setRowVisible(keyRow, !explicitKey && !explicitSocks5);
+        generalForm->setRowVisible(keyRow, !explicitKey && !explicitSocks5 && !explicitVless);
         key_->setVisible(file || keyRevealed_);
         browse->setVisible(file);
-        reveal->setVisible(ss || ssconf || socks5);
+        reveal->setVisible(ss || ssconf || socks5 || source == "VLESS" || source == "Key");
         reveal->setText(keyRevealed_ ? tr("Hide") : tr("Show"));
 
         generalForm->setRowVisible(server_, showParameters);
         generalForm->setRowVisible(port_, showParameters);
         generalForm->setRowVisible(method_, ss || explicitKey);
         generalForm->setRowVisible(username_, explicitSocks5);
-        generalForm->setRowVisible(password_, showParameters);
+        generalForm->setRowVisible(password_, showParameters && !explicitVless);
         generalForm->setRowVisible(prefix_, ss || explicitKey);
         for (auto *widget : {static_cast<QWidget *>(server_), static_cast<QWidget *>(port_), static_cast<QWidget *>(method_), static_cast<QWidget *>(username_), static_cast<QWidget *>(password_), static_cast<QWidget *>(prefix_)})
-            widget->setEnabled(explicitKey || explicitSocks5);
+            widget->setEnabled(explicitKey || explicitSocks5 || explicitVless);
         if (ss) applySs(key_->text());
         if (explicitKey && port_->value() == 0) port_->setValue(8388);
         if (explicitSocks5 && port_->value() == 0) port_->setValue(1080);
+        if (explicitVless && port_->value() == 0) port_->setValue(443);
+        updateVlessControls();
     };
     connect(keySource_, &QComboBox::currentIndexChanged, this, [this, updateKeyControls] {
         keyRevealed_ = false;
@@ -387,9 +453,13 @@ void ProfileEditorDialog::loadText(const QString &text) {
     QString source = "SS", value = valueFor(text, "AccessKey", "SS");
     if (value.isEmpty()) { source = "SSConf"; value = valueFor(text, "AccessKey", "SSConf"); }
     if (value.isEmpty()) { source = "SOCKS5"; value = valueFor(text, "AccessKey", "SOCKS5"); }
+    if (value.isEmpty()) { source = "VLESS"; value = valueFor(text, "AccessKey", "VLESS"); }
+    if (value.isEmpty()) { source = "Key"; value = valueFor(text, "AccessKey", "Key"); }
     if (value.isEmpty()) { source = "File"; value = valueFor(text, "AccessKey", "File"); }
-    if (value.isEmpty() && !valueFor(text, "AccessKey", "Server").isEmpty())
-        source = valueFor(text, "AccessKey", "Type") == "socks5" ? "ExplicitSOCKS5" : "Explicit";
+    if (value.isEmpty() && !valueFor(text, "AccessKey", "Server").isEmpty()) {
+        const QString type = valueFor(text, "AccessKey", "Type");
+        source = type == "socks5" ? "ExplicitSOCKS5" : type == "vless" ? "ExplicitVLESS" : "Explicit";
+    }
     keySource_->setCurrentIndex(keySource_->findData(source)); key_->setText(value);
     server_->setText(valueFor(text, "AccessKey", "Server"));
     port_->setValue(valueFor(text, "AccessKey", "Port").toInt());
@@ -397,6 +467,29 @@ void ProfileEditorDialog::loadText(const QString &text) {
     password_->setText(valueFor(text, "AccessKey", "Password"));
     username_->setText(valueFor(text, "AccessKey", "Username"));
     prefix_->setText(valueFor(text, "AccessKey", "Prefix"));
+    vlessId_->setText(valueFor(text, "AccessKey", "ID"));
+    const auto setChoice = [this, &text](QComboBox *combo, const QString &field) {
+        const QString value = valueFor(text, "AccessKey", field);
+        if (value.isEmpty()) return;
+        const int index = combo->findText(value);
+        if (index < 0) { hasUnknownSettings_ = true; return; }
+        combo->setCurrentIndex(index);
+    };
+    setChoice(vlessNetwork_, "Network");
+    setChoice(vlessSecurity_, "Security");
+    setChoice(vlessFlow_, "Flow");
+    setChoice(vlessFingerprint_, "Fingerprint");
+    setChoice(vlessXhttpMode_, "XHTTPMode");
+    vlessServerName_->setText(valueFor(text, "AccessKey", "ServerName"));
+    vlessPublicKey_->setText(valueFor(text, "AccessKey", "PublicKey"));
+    vlessShortId_->setText(valueFor(text, "AccessKey", "ShortID"));
+    vlessSpiderX_->setText(valueFor(text, "AccessKey", "SpiderX"));
+    vlessAlpn_->setText(valueFor(text, "AccessKey", "ALPN"));
+    const QString network = vlessNetwork_->currentText();
+    vlessPath_->setText(valueFor(text, "AccessKey", network == "xhttp" ? "XHTTPPath" : "WSPath"));
+    vlessHost_->setText(valueFor(text, "AccessKey", network == "xhttp" ? "XHTTPHost" : "WSHost"));
+    vlessEarlyData_->setValue(valueFor(text, "AccessKey", "WSEarlyData").toInt());
+    vlessServiceName_->setText(valueFor(text, "AccessKey", "GRPCServiceName"));
     const QString configuredMode = valueFor(text, "Interface", "Mode");
     const int modeIndex = mode_->findData(configuredMode);
     if (!configuredMode.isEmpty() && modeIndex < 0) hasUnknownSettings_ = true;
@@ -432,7 +525,7 @@ void ProfileEditorDialog::loadText(const QString &text) {
     finishRule(rule);
     const QHash<QString, QSet<QString>> known{
         {"Profile", {"Version", "Name"}},
-        {"AccessKey", {"SS", "SSConf", "SOCKS5", "File", "Type", "Server", "Port", "Method", "Username", "Password", "Prefix"}},
+        {"AccessKey", {"SS", "SSConf", "SOCKS5", "VLESS", "Key", "File", "Type", "Server", "Port", "Method", "Username", "Password", "Prefix", "ID", "Encryption", "Flow", "Network", "Security", "ServerName", "PublicKey", "ShortID", "Fingerprint", "SpiderX", "ALPN", "WSPath", "WSHost", "WSEarlyData", "GRPCServiceName", "XHTTPPath", "XHTTPHost", "XHTTPMode"}},
         {"Interface", {"Mode", "Name", "MTU", "DNS", "IPv6", "KillSwitch", "Listen"}},
         {"Routing", {"Default"}}, {"Rule", {"CIDR", "Domain", "Action"}}};
     QString currentSection;
@@ -509,6 +602,34 @@ QString ProfileEditorDialog::buildText() const {
             + "\nMethod = " + method_->currentText()
             + "\nPassword = " + password_->text()
             + "\nPrefix = " + prefix_->text();
+    else if (keySource_->currentData().toString() == "ExplicitVLESS") {
+        const QString network = vlessNetwork_->currentText();
+        const bool reality = vlessSecurity_->currentText() == "reality";
+        accessKey = "Type = vless\nServer = " + server_->text()
+            + "\nPort = " + QString::number(port_->value())
+            + "\nID = " + vlessId_->text()
+            + "\nEncryption = none\nNetwork = " + network
+            + "\nSecurity = " + vlessSecurity_->currentText();
+        const auto append = [&accessKey](const QString &field, const QString &value) {
+            if (!value.isEmpty()) accessKey += "\n" + field + " = " + value;
+        };
+        if (network == "tcp" && reality) append("Flow", vlessFlow_->currentText());
+        append("ServerName", vlessServerName_->text());
+        append("Fingerprint", vlessFingerprint_->currentText());
+        if (reality) {
+            append("PublicKey", vlessPublicKey_->text());
+            append("ShortID", vlessShortId_->text());
+            append("SpiderX", vlessSpiderX_->text());
+        }
+        if (!(network == "tcp" && reality)) append("ALPN", vlessAlpn_->text());
+        if (network == "ws" || network == "xhttp") {
+            append(network == "ws" ? "WSPath" : "XHTTPPath", vlessPath_->text());
+            append(network == "ws" ? "WSHost" : "XHTTPHost", vlessHost_->text());
+        }
+        if (network == "ws" && vlessEarlyData_->value()) append("WSEarlyData", QString::number(vlessEarlyData_->value()));
+        if (network == "grpc") append("GRPCServiceName", vlessServiceName_->text());
+        if (network == "xhttp") append("XHTTPMode", vlessXhttpMode_->currentText());
+    }
     else
         accessKey = keySource_->currentData().toString() + " = " + key_->text();
     QString text = "[Profile]\nVersion = 1\nName = " + name_->text()
