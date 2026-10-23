@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Bimeron
+Comment=Bimeron VPN client
+Exec=bimeron-desktop
+Icon=bimeron
+Categories=Network;Security;
+Terminal=false

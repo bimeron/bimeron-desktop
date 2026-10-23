@@ -1,0 +1,92 @@
+name: Desktop CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux:
+    name: Linux ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            arch: amd64
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Install Qt and build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build g++ qt6-base-dev qt6-base-dev-tools
+      - name: Configure
+        run: cmake -S . -B build/ci -G Ninja -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build/ci --parallel 2
+
+  windows:
+    name: Windows ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: windows-2022
+            qt_host: windows
+            qt_arch: win64_msvc2022_64
+            qt_dir: msvc2022_64
+          - arch: ARM64
+            runner: windows-2022
+            qt_host: windows_arm64
+            qt_arch: win64_msvc2022_arm64
+            qt_dir: msvc2022_arm64
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Install Qt host tools
+        if: matrix.arch == 'ARM64'
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.8.3'
+          host: windows
+          arch: win64_msvc2022_64
+          dir: ${{ runner.temp }}/qt-host
+          cache: true
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.8.3'
+          host: ${{ matrix.qt_host }}
+          arch: ${{ matrix.qt_arch }}
+          dir: ${{ runner.temp }}/qt-target
+          cache: true
+      - name: Configure
+        shell: pwsh
+        run: |
+          $qtTarget = '${{ runner.temp }}/qt-target/Qt/6.8.3/${{ matrix.qt_dir }}'
+          $args = @('-S', '.', '-B', 'build/ci', '-G', 'Visual Studio 17 2022', '-A', '${{ matrix.arch }}', "-DCMAKE_PREFIX_PATH=$qtTarget")
+          if ('${{ matrix.arch }}' -eq 'ARM64') {
+            $args += '-DQT_HOST_PATH=${{ runner.temp }}/qt-host/Qt/6.8.3/msvc2022_64'
+            $args += '-DBIMERON_DEPLOY_QT=OFF'
+          }
+          cmake @args
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Build
+        run: cmake --build build/ci --config Release --parallel 2

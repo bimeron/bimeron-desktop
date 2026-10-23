@@ -1,0 +1,106 @@
+{
+  "version": 6,
+  "configurePresets": [
+    {
+      "name": "windows-base",
+      "hidden": true,
+      "generator": "Visual Studio 18 2026",
+      "cacheVariables": {
+        "CMAKE_GENERATOR_INSTANCE": "C:/Program Files (x86)/Microsoft Visual Studio/18/BuildTools"
+      }
+    },
+    {
+      "name": "windows-amd64-release",
+      "displayName": "Windows amd64 Release",
+      "inherits": "windows-base",
+      "architecture": "x64",
+      "binaryDir": "${sourceDir}/build/windows-amd64",
+      "cacheVariables": {
+        "CMAKE_PREFIX_PATH": "C:/Qt/6.8.3/msvc2022_64",
+        "CMAKE_INSTALL_PREFIX": "${sourceDir}/stage/windows-amd64",
+        "BIMERON_PACKAGE_ARCH": "amd64"
+      }
+    },
+    {
+      "name": "windows-arm64-release",
+      "displayName": "Windows ARM64 Release",
+      "inherits": "windows-base",
+      "architecture": "ARM64",
+      "binaryDir": "${sourceDir}/build/windows-arm64",
+      "cacheVariables": {
+        "CMAKE_PREFIX_PATH": "C:/Qt/6.8.3/msvc2022_arm64",
+        "CMAKE_INSTALL_PREFIX": "${sourceDir}/stage/windows-arm64",
+        "BIMERON_PACKAGE_ARCH": "arm64",
+        "QT_HOST_PATH": "C:/Qt/6.8.3/msvc2022_64"
+      }
+    },
+    {
+      "name": "linux-base",
+      "hidden": true,
+      "generator": "Ninja",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    },
+    {
+      "name": "linux-amd64-release",
+      "displayName": "Linux amd64 Release",
+      "inherits": "linux-base",
+      "binaryDir": "${sourceDir}/build/linux-amd64",
+      "cacheVariables": {
+        "CMAKE_INSTALL_PREFIX": "${sourceDir}/stage/linux-amd64",
+        "BIMERON_PACKAGE_ARCH": "amd64"
+      }
+    },
+    {
+      "name": "linux-arm64-release",
+      "displayName": "Linux ARM64 Release",
+      "inherits": "linux-base",
+      "binaryDir": "${sourceDir}/build/linux-arm64",
+      "toolchainFile": "${sourceDir}/cmake/linux-arm64-toolchain.cmake",
+      "cacheVariables": {
+        "CMAKE_PREFIX_PATH": "/usr/lib/aarch64-linux-gnu/cmake",
+        "CMAKE_INSTALL_PREFIX": "${sourceDir}/stage/linux-arm64",
+        "BIMERON_PACKAGE_ARCH": "arm64"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "windows-amd64-release",
+      "configurePreset": "windows-amd64-release",
+      "configuration": "Release"
+    },
+    {
+      "name": "windows-arm64-release",
+      "configurePreset": "windows-arm64-release",
+      "configuration": "Release"
+    },
+    {
+      "name": "linux-amd64-release",
+      "configurePreset": "linux-amd64-release"
+    },
+    {
+      "name": "linux-arm64-release",
+      "configurePreset": "linux-arm64-release"
+    }
+  ],
+  "packagePresets": [
+    {
+      "name": "windows-amd64-release",
+      "configurePreset": "windows-amd64-release"
+    },
+    {
+      "name": "windows-arm64-release",
+      "configurePreset": "windows-arm64-release"
+    },
+    {
+      "name": "linux-amd64-release",
+      "configurePreset": "linux-amd64-release"
+    },
+    {
+      "name": "linux-arm64-release",
+      "configurePreset": "linux-arm64-release"
+    }
+  ]
+}

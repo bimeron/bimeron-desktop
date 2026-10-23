@@ -1,0 +1,47 @@
+# Build output
+/build*/
+/stage/
+/dist/
+/.tools/
+/CMakeFiles/
+/CMakeCache.txt
+/DartConfiguration.tcl
+/Testing/
+/.rcc/
+/cmake_install.cmake
+/compile_commands.json
+/Makefile
+/.qt/
+
+# IDE settings
+/.vs/
+/.vscode/
+/.idea/
+*.user
+*.user.*
+*.suo
+*.autosave
+
+# Compiler output
+*.obj
+*.o
+*.pch
+*.pdb
+*.ilk
+
+# Local data and credentials
+/profiles/
+.env
+.env.*
+*.key
+
+# Logs and temporary files
+*.log
+*.tmp
+*.swp
+*~
+
+# Operating system files
+.DS_Store
+Thumbs.db
+Desktop.ini
