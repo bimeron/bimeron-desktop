@@ -2,6 +2,14 @@
 
 Run these commands **inside the disposable Windows 10 amd64 VM**, in an elevated PowerShell window. Never run the service commands on the host. The host has copied the MSI, Core ZIP, manifest, SHA256SUMS, and a reference Core executable to `C:\Users\Public\Documents\Bimeron-VM-Test`. Record results before changing the guest service. The MSI is a local test artifact, not a release.
 
+## Recorded local VM result, 2026-10-23
+
+The Windows amd64 test MSI is `dist/bimeron-desktop-0.2.0-windows-amd64.msi`, 29,044,736 bytes, SHA-256 `c68cd76971f41cdfce39442ed7240213ae6db210107c17d57f9cf49128fd900e`. MSI metadata reports ProductVersion `0.2.0` and the established UpgradeCode. Administrative MSI extraction yielded a bundled `bimeron-core.exe` with SHA-256 `75e55422ff50ce53d65870f774def68d6d754fa60dee6c77758b3b213b2f7b87`, identical to the verified Core candidate executable. The bundled helper recognizes `service update -source`.
+
+In the `Windows 10 STD` VM, the original running automatic service was Core `0.1.0-beta.4`, executable SHA-256 `b162c2ce459dcdf3a238a23e9638b647981cc2bf73413853ca71d74db0dbacbc`. A working VM VPN profile was connected. The MSI installed without changing the service executable. A wrong executable SHA-256 was rejected before replacement. A correct source with an intentionally wrong expected version caused IPC health-check failure and restored the original executable, running state, and old IPC version. A subsequent update with the correct version succeeded: the service remained running and automatic, its command path stayed the same, its executable hash became `75e55422ff50ce53d65870f774def68d6d754fa60dee6c77758b3b213b2f7b87`, and IPC `hello` reported `0.2.0-beta.1` at revision `78aca2aa5537f55365c7c7b0452600d69338e49f`. The existing VM profile passed `validate` and reconnected through an explicit Core CLI `start` after the direct helper update. This was **not** GUI-managed reconnection.
+
+The manifest still has `gui_reviewed: false` and no signature, so GUI release discovery and GUI-managed update/reconnection cannot pass yet. The exact GUI build `0.2.0` has passed local tests and the installed package/helper checks above. The proposed range `[0.2.0, 0.2.1)` is not approved by this direct-helper test alone.
+
 ## 1. Verify the guest and inputs
 
 ```powershell
