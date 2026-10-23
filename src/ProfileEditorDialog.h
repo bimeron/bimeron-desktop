@@ -50,6 +50,8 @@ private:
     QLineEdit *vlessHost_ = nullptr;
     QSpinBox *vlessEarlyData_ = nullptr;
     QLineEdit *vlessServiceName_ = nullptr;
+    QLineEdit *vlessAuthority_ = nullptr;
+    QCheckBox *vlessMultiMode_ = nullptr;
     QComboBox *vlessXhttpMode_ = nullptr;
     QComboBox *mode_ = nullptr;
     QLineEdit *listen_ = nullptr;
@@ -64,5 +66,7 @@ private:
     QPlainTextEdit *raw_ = nullptr;
     bool rawDirty_ = false;
     bool hasUnknownSettings_ = false;
+    bool rawOnlyVless_ = false;
+    bool vlessMultiModeConfigured_ = false;
     bool keyRevealed_ = false;
 };

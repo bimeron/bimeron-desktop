@@ -2,9 +2,15 @@
 #include "ProfileStore.h"
 
 #include <QApplication>
+#include <QDialogButtonBox>
 #include <QFile>
+#include <QMessageBox>
+#include <QPlainTextEdit>
 #include <QProcess>
+#include <QPushButton>
+#include <QTabWidget>
 #include <QTemporaryDir>
+#include <QTimer>
 
 #include <cstdlib>
 
@@ -46,6 +52,10 @@ int main(int argc, char **argv) {
     check(uriProfile, {"VLESS = " + link}, core, temporary.filePath("uri.conf"));
     check("[Profile]\nVersion = 1\n[AccessKey]\nKey = " + link + "\n",
         {"Key = " + link}, core, temporary.filePath("legacy.conf"));
+    const QString extendedLink = "vless://" + uuid + "@server.example:443?encryption=none&type=xhttp&security=tls"
+        "&mode=stream-up&alpn=h3&extra=%7B%22headers%22%3A%7B%22User-Agent%22%3A%22Example%22%7D%7D";
+    check("[Profile]\nVersion = 1\n[AccessKey]\nVLESS = " + extendedLink + "\n",
+        {"VLESS = " + extendedLink}, core, temporary.filePath("extended-link.conf"));
     for (const auto &scheme : {"ss://", "ssconf://", "socks5://"}) {
         const QString path = store.createConfig("Existing", QString::fromLatin1(scheme) + "example", &error);
         require(!path.isEmpty());
@@ -57,12 +67,40 @@ int main(int argc, char **argv) {
     const struct { const char *settings; const char *field; } cases[] = {
         {"Network = tcp\nSecurity = tls\nServerName = server.example\n", "Network = tcp"},
         {"Network = tcp\nSecurity = reality\nFlow = xtls-rprx-vision\nServerName = server.example\nFingerprint = firefox\nPublicKey = AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\nShortID = abcd\n", "Flow = xtls-rprx-vision"},
+        {"Network = tcp\nSecurity = reality\nServerName = server.example\nFingerprint = firefox\nPublicKey = AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\n", "Security = reality"},
         {"Network = ws\nSecurity = tls\nWSPath = /chat\nWSHost = front.example\nWSEarlyData = 2048\nALPN = http/1.1\n", "WSEarlyData = 2048"},
         {"Network = grpc\nSecurity = tls\nGRPCServiceName = proxy\nALPN = h2\n", "GRPCServiceName = proxy"},
+        {"Network = grpc\nSecurity = tls\nGRPCServiceName = proxy\nGRPCMultiMode = false\n", "GRPCMultiMode = false"},
+        {"Network = grpc\nSecurity = reality\nGRPCServiceName = /proxy/Custom\nGRPCAuthority = front.example\nGRPCMultiMode = true\nServerName = server.example\nFingerprint = firefox\nPublicKey = AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\nALPN = h2\n", "GRPCMultiMode = true"},
         {"Network = xhttp\nSecurity = tls\nXHTTPMode = packet-up\nXHTTPPath = /stream\nALPN = h2\n", "XHTTPMode = packet-up"},
+        {"Network = xhttp\nSecurity = tls\nXHTTPMode = stream-up\nALPN = h3\n", "XHTTPMode = stream-up"},
+        {"Network = xhttp\nSecurity = tls\nXHTTPMode = auto\n", "XHTTPMode = auto"},
         {"Network = xhttp\nSecurity = reality\nXHTTPMode = stream-one\nServerName = server.example\nFingerprint = firefox\nPublicKey = AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\n", "XHTTPMode = stream-one"},
+        {"Network = xhttp\nSecurity = reality\nXHTTPMode = stream-up\nServerName = server.example\nFingerprint = firefox\nPublicKey = AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\n", "XHTTPMode = stream-up"},
+        {"Network = xhttp\nSecurity = reality\nXHTTPMode = auto\nServerName = server.example\nFingerprint = firefox\nPublicKey = AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\n", "XHTTPMode = auto"},
     };
-    for (int i = 0; i < 6; ++i)
-        check(base + cases[i].settings + tail, {"Type = vless", cases[i].field, "ID = " + uuid}, core, temporary.filePath(QString::number(i) + ".conf"));
+    int index = 0;
+    for (const auto &item : cases)
+        check(base + item.settings + tail, {"Type = vless", item.field, "ID = " + uuid}, core, temporary.filePath(QString::number(index++) + ".conf"));
+
+    const QString extended = base + "Network = xhttp\nSecurity = tls\nXHTTPMode = packet-up\n"
+        "XHTTPExtra = {\"headers\":{\"User-Agent\":\"Example\"}}\n" + tail;
+    ProfileEditorDialog editor(extended, QJsonObject{{"vpn", true}, {"proxy", true}, {"ip_split", true}, {"domain_split", true}});
+    QTabWidget *tabs = editor.findChild<QTabWidget *>();
+    QPlainTextEdit *raw = editor.findChild<QPlainTextEdit *>();
+    require(tabs && raw);
+    tabs->setCurrentIndex(tabs->count() - 1);
+    require(raw->toPlainText() == extended && editor.configText() == extended);
+    QTimer::singleShot(0, [] {
+        if (auto *box = qobject_cast<QMessageBox *>(QApplication::activeModalWidget())) box->accept();
+    });
+    editor.findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Save)->click();
+    require(editor.result() != QDialog::Accepted && editor.configText() == extended);
+    raw->appendPlainText("# retained");
+    require(editor.configText().contains("XHTTPExtra =") && editor.configText().contains("# retained"));
+    check(extended, {"XHTTPExtra ="}, core, temporary.filePath("extended.conf"));
+    const QString separate = base + "Network = xhttp\nSecurity = tls\nXHTTPMode = packet-up\n"
+        "XHTTPHeaders = {\"User-Agent\":\"Example\"}\n" + tail;
+    check(separate, {"XHTTPHeaders ="}, core, temporary.filePath("separate.conf"));
     return 0;
 }

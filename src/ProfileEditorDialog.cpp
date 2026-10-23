@@ -226,8 +226,11 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
     vlessEarlyData_ = new QSpinBox;
     vlessEarlyData_->setRange(0, 8192);
     vlessServiceName_ = new QLineEdit;
+    vlessServiceName_->setPlaceholderText("proxy or /proxy/Custom");
+    vlessAuthority_ = new QLineEdit;
+    vlessMultiMode_ = new HiDpiCheckBox;
     vlessXhttpMode_ = new HiDpiComboBox;
-    vlessXhttpMode_->addItems({"packet-up", "stream-one"});
+    vlessXhttpMode_->addItems({"packet-up", "stream-up", "auto", "stream-one"});
     vlessForm->addRow(tr("User ID"), vlessId_);
     vlessForm->addRow(tr("Transport"), vlessNetwork_);
     vlessForm->addRow(tr("Security"), vlessSecurity_);
@@ -242,6 +245,8 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
     vlessForm->addRow(tr("Host"), vlessHost_);
     vlessForm->addRow(tr("WebSocket early data"), vlessEarlyData_);
     vlessForm->addRow(tr("gRPC service name"), vlessServiceName_);
+    vlessForm->addRow(tr("gRPC authority"), vlessAuthority_);
+    vlessForm->addRow(tr("gRPC TunMulti"), vlessMultiMode_);
     vlessForm->addRow(tr("XHTTP mode"), vlessXhttpMode_);
     tabs_->addTab(vlessPage, tr("VLESS"));
 
@@ -336,6 +341,12 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
     buttons->button(QDialogButtonBox::Save)->setText(tr("Save"));
     buttons->button(QDialogButtonBox::Cancel)->setText(tr("Cancel"));
     connect(buttons, &QDialogButtonBox::accepted, this, [this] {
+        if (rawOnlyVless_ && !rawDirty_) {
+            QMessageBox::information(this, tr("Advanced settings"),
+                tr("This VLESS profile has settings unavailable in the visual editor. Edit Raw config to save it without losing them."));
+            tabs_->setCurrentIndex(tabs_->count() - 1);
+            return;
+        }
         if (hasUnknownSettings_ && !rawDirty_ && QMessageBox::warning(this, tr("Advanced settings"),
             tr("The profile contains settings unavailable in the visual editor. Saving the visual form will remove them. Continue?"),
             QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes) return;
@@ -362,7 +373,20 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
         tabs_->setTabVisible(1, explicitVless);
         if (!explicitVless) return;
         const QString network = vlessNetwork_->currentText();
+        if (network == "ws" && vlessSecurity_->currentText() == "reality") {
+            const QSignalBlocker blocker(vlessSecurity_);
+            vlessSecurity_->setCurrentText("tls");
+        }
         const bool reality = vlessSecurity_->currentText() == "reality";
+        if (network == "xhttp") {
+            const QString current = vlessXhttpMode_->currentText();
+            const QSignalBlocker blocker(vlessXhttpMode_);
+            vlessXhttpMode_->clear();
+            vlessXhttpMode_->addItems(reality ? QStringList{"stream-one", "stream-up", "auto"}
+                                               : QStringList{"packet-up", "stream-up", "auto"});
+            const int index = vlessXhttpMode_->findText(current);
+            vlessXhttpMode_->setCurrentIndex(index < 0 ? 0 : index);
+        }
         vlessForm->setRowVisible(vlessFlow_, network == "tcp" && reality);
         vlessForm->setRowVisible(vlessPublicKey_, reality);
         vlessForm->setRowVisible(vlessShortId_, reality);
@@ -372,6 +396,8 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
         vlessForm->setRowVisible(vlessHost_, network == "ws" || network == "xhttp");
         vlessForm->setRowVisible(vlessEarlyData_, network == "ws");
         vlessForm->setRowVisible(vlessServiceName_, network == "grpc");
+        vlessForm->setRowVisible(vlessAuthority_, network == "grpc");
+        vlessForm->setRowVisible(vlessMultiMode_, network == "grpc");
         vlessForm->setRowVisible(vlessXhttpMode_, network == "xhttp");
     };
     connect(vlessNetwork_, &QComboBox::currentIndexChanged, this, updateVlessControls);
@@ -468,11 +494,15 @@ void ProfileEditorDialog::loadText(const QString &text) {
     username_->setText(valueFor(text, "AccessKey", "Username"));
     prefix_->setText(valueFor(text, "AccessKey", "Prefix"));
     vlessId_->setText(valueFor(text, "AccessKey", "ID"));
-    const auto setChoice = [this, &text](QComboBox *combo, const QString &field) {
+    const auto setChoice = [this, &text, &source](QComboBox *combo, const QString &field) {
         const QString value = valueFor(text, "AccessKey", field);
         if (value.isEmpty()) return;
         const int index = combo->findText(value);
-        if (index < 0) { hasUnknownSettings_ = true; return; }
+        if (index < 0) {
+            hasUnknownSettings_ = true;
+            if (source == "ExplicitVLESS") rawOnlyVless_ = true;
+            return;
+        }
         combo->setCurrentIndex(index);
     };
     setChoice(vlessNetwork_, "Network");
@@ -490,6 +520,12 @@ void ProfileEditorDialog::loadText(const QString &text) {
     vlessHost_->setText(valueFor(text, "AccessKey", network == "xhttp" ? "XHTTPHost" : "WSHost"));
     vlessEarlyData_->setValue(valueFor(text, "AccessKey", "WSEarlyData").toInt());
     vlessServiceName_->setText(valueFor(text, "AccessKey", "GRPCServiceName"));
+    vlessAuthority_->setText(valueFor(text, "AccessKey", "GRPCAuthority"));
+    const QString multiMode = valueFor(text, "AccessKey", "GRPCMultiMode");
+    vlessMultiModeConfigured_ = !multiMode.isEmpty();
+    vlessMultiMode_->setChecked(multiMode == "true");
+    if (source == "ExplicitVLESS" && valueFor(text, "AccessKey", "Encryption") != "none")
+        rawOnlyVless_ = true;
     const QString configuredMode = valueFor(text, "Interface", "Mode");
     const int modeIndex = mode_->findData(configuredMode);
     if (!configuredMode.isEmpty() && modeIndex < 0) hasUnknownSettings_ = true;
@@ -525,7 +561,7 @@ void ProfileEditorDialog::loadText(const QString &text) {
     finishRule(rule);
     const QHash<QString, QSet<QString>> known{
         {"Profile", {"Version", "Name"}},
-        {"AccessKey", {"SS", "SSConf", "SOCKS5", "VLESS", "Key", "File", "Type", "Server", "Port", "Method", "Username", "Password", "Prefix", "ID", "Encryption", "Flow", "Network", "Security", "ServerName", "PublicKey", "ShortID", "Fingerprint", "SpiderX", "ALPN", "WSPath", "WSHost", "WSEarlyData", "GRPCServiceName", "XHTTPPath", "XHTTPHost", "XHTTPMode"}},
+        {"AccessKey", {"SS", "SSConf", "SOCKS5", "VLESS", "Key", "File", "Type", "Server", "Port", "Method", "Username", "Password", "Prefix", "ID", "Encryption", "Flow", "Network", "Security", "ServerName", "PublicKey", "ShortID", "Fingerprint", "SpiderX", "ALPN", "WSPath", "WSHost", "WSEarlyData", "GRPCServiceName", "GRPCAuthority", "GRPCMultiMode", "XHTTPPath", "XHTTPHost", "XHTTPMode"}},
         {"Interface", {"Mode", "Name", "MTU", "DNS", "IPv6", "KillSwitch", "Listen"}},
         {"Routing", {"Default"}}, {"Rule", {"CIDR", "Domain", "Action"}}};
     QString currentSection;
@@ -537,7 +573,10 @@ void ProfileEditorDialog::loadText(const QString &text) {
             if (!known.contains(currentSection)) hasUnknownSettings_ = true;
         } else if (line.contains('=')) {
             const QString key = line.left(line.indexOf('=')).trimmed();
-            if (!known.value(currentSection).contains(key)) hasUnknownSettings_ = true;
+            if (!known.value(currentSection).contains(key)) {
+                hasUnknownSettings_ = true;
+                if (source == "ExplicitVLESS" && currentSection == "AccessKey") rawOnlyVless_ = true;
+            }
         }
     }
     raw_->setPlainText(text);
@@ -627,7 +666,12 @@ QString ProfileEditorDialog::buildText() const {
             append(network == "ws" ? "WSHost" : "XHTTPHost", vlessHost_->text());
         }
         if (network == "ws" && vlessEarlyData_->value()) append("WSEarlyData", QString::number(vlessEarlyData_->value()));
-        if (network == "grpc") append("GRPCServiceName", vlessServiceName_->text());
+        if (network == "grpc") {
+            append("GRPCServiceName", vlessServiceName_->text());
+            append("GRPCAuthority", vlessAuthority_->text());
+            if (vlessMultiMode_->isChecked() || vlessMultiModeConfigured_)
+                append("GRPCMultiMode", vlessMultiMode_->isChecked() ? "true" : "false");
+        }
         if (network == "xhttp") append("XHTTPMode", vlessXhttpMode_->currentText());
     }
     else
@@ -655,7 +699,8 @@ QString ProfileEditorDialog::buildText() const {
 }
 
 void ProfileEditorDialog::syncRaw() {
+    if (rawOnlyVless_) return;
     raw_->blockSignals(true); raw_->setPlainText(buildText()); raw_->blockSignals(false);
 }
 
-QString ProfileEditorDialog::configText() const { return rawDirty_ ? raw_->toPlainText() : buildText(); }
+QString ProfileEditorDialog::configText() const { return rawDirty_ || rawOnlyVless_ ? raw_->toPlainText() : buildText(); }
