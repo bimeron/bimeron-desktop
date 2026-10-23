@@ -1,5 +1,11 @@
 # Windows VM check for Desktop 0.2.0 and Core v0.2.0-beta.1
 
+## Published GitHub release through normal Desktop package, 2026-10-23
+
+In `Windows 10 STD`, the running service was Core `0.1.0-beta.3` (SHA-256 `bd0c239e8d76ed13ee1efa198778c11a96db30255ebe2675aff96e3f038cc1d0`) with the disposable VPN profile connected. The normal Windows amd64 Desktop `0.2.0` MSI (SHA-256 `3dffc30f569a055a50a52b32bb83bda8263c044b0409ce05f19703b903ec7e71`) installed successfully. Its bundled Core SHA-256 was `174c288a5771d55c48e446fce3deef1f6fc7092d615f8277b5cc2aac75486f0f`. MSI installation left the service binary and VPN unchanged.
+
+The installed normal GUI, with beta updates enabled, discovered published Core `v0.2.0-beta.1` through GitHub Releases and displayed the verified update prompt. The user accepted the VM update and UAC request. The Settings page then displayed that the service update completed, and About reported Core `0.2.0-beta.1`. Independent VM checks found service `Running/Auto` with the original command path, the installed executable SHA-256 `174c288a5771d55c48e446fce3deef1f6fc7092d615f8277b5cc2aac75486f0f`, and IPC revision `6e0c171505be8e349d5f42570f7ceb3e50ac6697`. Core status reported `connected (attempt 1)` with the same profile ID `a2b29dd3a1febcea4b0f48bc5323af78c9431cd28864820e1ba988a663207c48`. VM checkpoint `Published GitHub Core update succeeded Desktop 0.2.0` preserves the successful state. This completes the positive normal-source Windows amd64 update scenario. The final-byte negative cases, helper rollback repeat, and ARM64/Linux runtime checks remain separate work.
+
 ## Final Core assets, 2026-10-23
 
 The final Core assets at `dist/v0.2.0-beta.1/final-assets` differ from the earlier `gui-reviewed-test` bytes. The final manifest SHA-256 is `00816386cf49e072f6a75d9ffb6e9b0a5f5b5c4694e8026a0577cffe3ca96695`; signature SHA-256 is `544f8a22719cbbad819e95e9aca436189c0fd7daa43d323866e34b61739fabc3`. The pinned-key GUI verifier accepted the manifest and all four Windows/Linux amd64/arm64 ZIPs. The final Windows amd64 ZIP SHA-256 is `0b402618b934310b98934b8917832c34c9369f143044e97670710e401b92d22f`; its Core executable SHA-256 is `174c288a5771d55c48e446fce3deef1f6fc7092d615f8277b5cc2aac75486f0f`.
