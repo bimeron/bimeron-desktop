@@ -71,10 +71,10 @@ separately from the program directory and are not deleted during updating.
 The installed core service can update independently from a compatible signed
 `bimeron/bimeron-core` GitHub Release. The GUI checks and downloads quietly,
 then asks before replacing the service because an active VPN will disconnect.
-This feature remains unavailable in default builds until the production Ed25519
-public key is configured and the GUI package bundles a core with the trusted
-`-source` update helper. The installed package directory must not be writable
-by ordinary users. Existing unsigned releases cannot be installed.
+Package builds include the production Ed25519 public key and a core with the
+trusted `-source` update helper. Beta core updates require opting in for the
+current GUI session. The installed package directory must not be writable by
+ordinary users. Existing unsigned releases cannot be installed.
 See [the update contract](docs/core-updates.md).
 
 When you first start the GUI automatically installs the missing core service,
