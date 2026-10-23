@@ -10,6 +10,13 @@ struct Profile {
     QString path;
 };
 
+struct ProfileConnectionInfo {
+    QString protocol;
+    QString interfaceMode;
+    QString keyFile;
+    bool connectable = false;
+};
+
 class ProfileStore {
 public:
     ProfileStore();
@@ -19,6 +26,7 @@ public:
     QString createConfig(const QString &name, const QString &key, QString *error = nullptr) const;
     static QString identity(const QString &absolutePath);
     static QString displayName(const QString &configPath);
+    static ProfileConnectionInfo connectionInfo(const QString &configText);
 
 private:
     QString root_;

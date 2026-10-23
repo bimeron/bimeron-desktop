@@ -187,6 +187,8 @@
   "A session is already running": "Сессия уже запущена",
   "Network": "Сеть",
   "System VPN": "Системный VPN",
+  "Encryption": "Шифрование",
+  "XHTTP extra": "Дополнительные параметры XHTTP",
   "Unknown protocol": "Неизвестный протокол",
   "Dynamic profile": "Динамический профиль",
   "Switch profile": "Сменить профиль",

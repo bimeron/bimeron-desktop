@@ -9,6 +9,7 @@
 #include <QRegularExpression>
 #include <QSaveFile>
 #include <QStandardPaths>
+#include <QUrl>
 #include <QUuid>
 
 ProfileStore::ProfileStore() {
@@ -106,4 +107,62 @@ QString ProfileStore::displayName(const QString &configPath) {
         if (match.hasMatch()) return match.captured(1).trimmed();
     }
     return QFileInfo(configPath).completeBaseName();
+}
+
+ProfileConnectionInfo ProfileStore::connectionInfo(const QString &configText) {
+    ProfileConnectionInfo info;
+    QString section;
+    QString source;
+    QString value;
+    QString type;
+    info.interfaceMode = QStringLiteral("vpn");
+    for (const QString &line : configText.split('\n')) {
+        const QString trimmed = line.trimmed();
+        if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
+            section = trimmed.mid(1, trimmed.size() - 2);
+            continue;
+        }
+        if (trimmed.startsWith('#') || trimmed.startsWith(';')) continue;
+        const qsizetype equal = trimmed.indexOf('=');
+        if (equal < 0) continue;
+        const QString key = trimmed.left(equal).trimmed();
+        const QString field = trimmed.mid(equal + 1).trimmed();
+        if (section == "Interface" && key.compare("Mode", Qt::CaseInsensitive) == 0)
+            info.interfaceMode = field.toLower();
+        if (section != "AccessKey") continue;
+        if (key.compare("Type", Qt::CaseInsensitive) == 0) type = field.toLower();
+        else if (QStringList{"SS", "SSConf", "SOCKS5", "VLESS", "Key", "File"}.contains(key, Qt::CaseInsensitive)) {
+            source = key;
+            value = field;
+        }
+    }
+    if (source.compare("File", Qt::CaseInsensitive) == 0) {
+        info.keyFile = value;
+        info.connectable = !value.isEmpty();
+    } else if (!source.isEmpty()) {
+        const QString scheme = source.compare("Key", Qt::CaseInsensitive) == 0
+            ? value.section("://", 0, 0).toLower() : source.toLower();
+        if (scheme == "ss") info.protocol = QStringLiteral("Shadowsocks");
+        else if (scheme == "ssconf") info.protocol = QStringLiteral("Shadowsocks ⟳");
+        else if (scheme == "socks5") info.protocol = QStringLiteral("SOCKS5");
+        else if (scheme == "vless") info.protocol = QStringLiteral("VLESS");
+        const QUrl uri(value);
+        info.connectable = !info.protocol.isEmpty() && uri.isValid()
+            && uri.scheme().compare(scheme, Qt::CaseInsensitive) == 0
+            && (scheme == "ss" || (!uri.host().isEmpty() && (scheme == "ssconf" || uri.port() > 0)));
+        if (scheme == "vless")
+            info.connectable = info.connectable && QRegularExpression(
+                QStringLiteral("^[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}$"))
+                .match(uri.userName()).hasMatch();
+    } else if (type == "shadowsocks" || type == "ss") {
+        info.protocol = QStringLiteral("Shadowsocks");
+        info.connectable = true;
+    } else if (type == "socks5") {
+        info.protocol = QStringLiteral("SOCKS5");
+        info.connectable = true;
+    } else if (type == "vless") {
+        info.protocol = QStringLiteral("VLESS");
+        info.connectable = true;
+    }
+    return info;
 }

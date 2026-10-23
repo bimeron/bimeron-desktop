@@ -1,6 +1,7 @@
 #include "ProfileEditorDialog.h"
 #include "HiDpiCheckBox.h"
 #include "HiDpiComboBox.h"
+#include "ProfileStore.h"
 
 #include <QCheckBox>
 #include <QComboBox>
@@ -153,6 +154,7 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
     auto *generalForm = new QFormLayout(general);
     name_ = new QLineEdit;
     keySource_ = new HiDpiComboBox(this);
+    keySource_->setObjectName("keySource");
     keySource_->addItem(tr("ss:// key"), "SS");
     keySource_->addItem(tr("Dynamic ssconf://"), "SSConf");
     keySource_->addItem(tr("Remote socks5://"), "SOCKS5");
@@ -207,10 +209,19 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
 
     auto *vlessPage = new QWidget;
     auto *vlessForm = new QFormLayout(vlessPage);
+    auto *vlessEndpoint = new QLineEdit;
+    vlessEndpoint->setObjectName("vlessEndpoint");
+    auto *vlessEncryption = new QLineEdit;
+    auto *vlessExtra = new QPlainTextEdit;
+    vlessExtra->setObjectName("vlessExtra");
+    vlessExtra->setFixedHeight(72);
     vlessId_ = new QLineEdit;
+    vlessId_->setObjectName("vlessId");
     vlessNetwork_ = new HiDpiComboBox;
+    vlessNetwork_->setObjectName("vlessNetwork");
     for (const char *network : {"tcp", "ws", "grpc", "xhttp"}) vlessNetwork_->addItem(network);
     vlessSecurity_ = new HiDpiComboBox;
+    vlessSecurity_->setObjectName("vlessSecurity");
     vlessSecurity_->addItems({"tls", "reality"});
     vlessFlow_ = new HiDpiComboBox;
     vlessFlow_->addItems({"", "xtls-rprx-vision", "xtls-rprx-vision-udp443"});
@@ -222,15 +233,21 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
     vlessSpiderX_ = new QLineEdit;
     vlessAlpn_ = new QLineEdit;
     vlessPath_ = new QLineEdit;
+    vlessPath_->setObjectName("vlessPath");
     vlessHost_ = new QLineEdit;
     vlessEarlyData_ = new QSpinBox;
+    vlessEarlyData_->setObjectName("vlessEarlyData");
     vlessEarlyData_->setRange(0, 8192);
     vlessServiceName_ = new QLineEdit;
+    vlessServiceName_->setObjectName("vlessServiceName");
     vlessServiceName_->setPlaceholderText("proxy or /proxy/Custom");
     vlessAuthority_ = new QLineEdit;
     vlessMultiMode_ = new HiDpiCheckBox;
+    vlessMultiMode_->setObjectName("vlessMultiMode");
     vlessXhttpMode_ = new HiDpiComboBox;
     vlessXhttpMode_->addItems({"packet-up", "stream-up", "auto", "stream-one"});
+    vlessForm->addRow(tr("Server"), vlessEndpoint);
+    vlessForm->addRow(tr("Encryption"), vlessEncryption);
     vlessForm->addRow(tr("User ID"), vlessId_);
     vlessForm->addRow(tr("Transport"), vlessNetwork_);
     vlessForm->addRow(tr("Security"), vlessSecurity_);
@@ -248,6 +265,7 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
     vlessForm->addRow(tr("gRPC authority"), vlessAuthority_);
     vlessForm->addRow(tr("gRPC TunMulti"), vlessMultiMode_);
     vlessForm->addRow(tr("XHTTP mode"), vlessXhttpMode_);
+    vlessForm->addRow(tr("XHTTP extra"), vlessExtra);
     tabs_->addTab(vlessPage, tr("VLESS"));
 
     auto *network = new QWidget;
@@ -368,10 +386,60 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
         }
         return parsed.valid;
     };
-    const auto updateVlessControls = [this, vlessForm] {
+    const auto updateVlessControls = [this, vlessForm, vlessEndpoint, vlessEncryption, vlessExtra] {
         const bool explicitVless = keySource_->currentData().toString() == "ExplicitVLESS";
-        tabs_->setTabVisible(1, explicitVless);
-        if (!explicitVless) return;
+        const QString source = keySource_->currentData().toString();
+        const QUrl url(key_->text().trimmed());
+        const bool uriVless = (source == "VLESS" || source == "Key") && url.scheme() == "vless"
+            && ProfileStore::connectionInfo("[AccessKey]\nKey = " + key_->text()).connectable;
+        tabs_->setTabVisible(1, explicitVless || uriVless);
+        if (!explicitVless && !uriVless) return;
+        vlessForm->setRowVisible(vlessEndpoint, uriVless);
+        vlessForm->setRowVisible(vlessEncryption, uriVless);
+        if (uriVless) {
+            const QUrlQuery query(url);
+            const auto field = [&query](const QString &name) { return query.queryItemValue(name, QUrl::FullyDecoded); };
+            const auto choice = [](QComboBox *combo, const QString &value) {
+                int index = combo->findText(value);
+                if (index < 0 && !value.isEmpty()) { combo->addItem(value); index = combo->count() - 1; }
+                combo->setCurrentIndex(value.isEmpty() ? -1 : index);
+            };
+            vlessId_->setText(url.userName());
+            vlessEndpoint->setText(url.host() + ":" + QString::number(url.port()));
+            vlessEncryption->setText(field("encryption"));
+            server_->setText(url.host());
+            port_->setValue(url.port());
+            choice(vlessNetwork_, field("type").isEmpty() ? "tcp" : field("type"));
+            choice(vlessSecurity_, field("security"));
+            choice(vlessFlow_, field("flow"));
+            vlessServerName_->setText(field("sni"));
+            choice(vlessFingerprint_, field("fp"));
+            vlessPublicKey_->setText(field("pbk"));
+            vlessShortId_->setText(field("sid"));
+            vlessSpiderX_->setText(field("spx"));
+            vlessAlpn_->setText(field("alpn"));
+            QString path = field("path");
+            QString earlyData = field("ed");
+            if (vlessNetwork_->currentText() == "ws" && earlyData.isEmpty() && path.contains("?")) {
+                QUrl pathUrl(path);
+                QUrlQuery pathQuery(pathUrl);
+                if (pathQuery.hasQueryItem("ed")) {
+                    earlyData = pathQuery.queryItemValue("ed");
+                    pathQuery.removeAllQueryItems("ed");
+                    pathUrl.setQuery(pathQuery);
+                    path = pathUrl.toString(QUrl::FullyDecoded);
+                }
+            }
+            vlessPath_->setText(path);
+            vlessHost_->setText(field("host"));
+            vlessEarlyData_->setValue(earlyData.toInt());
+            vlessServiceName_->setText(field("serviceName"));
+            vlessAuthority_->setText(field("authority"));
+            vlessMultiMode_->setChecked(field("mode") == "multi");
+            choice(vlessXhttpMode_, field("mode"));
+            vlessExtra->setPlainText(field("extra"));
+        }
+        tabs_->widget(1)->setEnabled(explicitVless);
         const QString network = vlessNetwork_->currentText();
         if (network == "ws" && vlessSecurity_->currentText() == "reality") {
             const QSignalBlocker blocker(vlessSecurity_);
@@ -399,6 +467,7 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
         vlessForm->setRowVisible(vlessAuthority_, network == "grpc");
         vlessForm->setRowVisible(vlessMultiMode_, network == "grpc");
         vlessForm->setRowVisible(vlessXhttpMode_, network == "xhttp");
+        vlessForm->setRowVisible(vlessExtra, uriVless && network == "xhttp" && !vlessExtra->toPlainText().isEmpty());
     };
     connect(vlessNetwork_, &QComboBox::currentIndexChanged, this, updateVlessControls);
     connect(vlessSecurity_, &QComboBox::currentIndexChanged, this, updateVlessControls);
@@ -439,14 +508,25 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
         keyRevealed_ = false;
         updateKeyControls();
     });
+    const auto updateSourceLock = [this] {
+        const QString source = keySource_->currentData().toString();
+        const QString accessKey = source.startsWith("Explicit")
+            ? "Type = " + QString(source == "ExplicitVLESS" ? "vless" : source == "ExplicitSOCKS5" ? "socks5" : "shadowsocks")
+            : source + " = " + key_->text();
+        keySource_->setEnabled(!ProfileStore::connectionInfo("[AccessKey]\n" + accessKey).connectable);
+    };
+    connect(keySource_, &QComboBox::currentIndexChanged, this, updateSourceLock);
     connect(key_, &QLineEdit::textChanged, this, [this, applySs](const QString &value) {
         if (keySource_->currentData().toString() == "SS") applySs(value);
     });
+    connect(key_, &QLineEdit::textChanged, this, updateVlessControls);
+    connect(key_, &QLineEdit::textChanged, this, updateSourceLock);
     connect(reveal, &QPushButton::clicked, this, [this, updateKeyControls] {
         keyRevealed_ = !keyRevealed_;
         updateKeyControls();
     });
     updateKeyControls();
+    updateSourceLock();
     const auto updateModeControls = [this, killSwitchSupported] {
         bool vpnMode = mode_->currentData().toString() == "vpn";
         if (!vpnMode && (ipv6_->currentData().toString() == "disable" || killSwitch_->isChecked())) {

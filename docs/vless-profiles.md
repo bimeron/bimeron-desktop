@@ -4,7 +4,7 @@ The Add profile dialog accepts a complete `vless://` URI and stores it as the so
 
 Explicit VLESS settings cover TCP with TLS or REALITY (with or without Vision), WebSocket with TLS, gRPC with TLS or REALITY (including authority and TunMulti), and XHTTP with TLS or REALITY in the core's supported modes. XHTTP over HTTP/3 is selected by `ALPN = h3` with TLS and no fingerprint. The GUI leaves core to validate combinations and details such as custom gRPC method paths. One access-key source is written at a time. The GUI sends the validated profile's absolute path through the existing `start` RPC and follows the core's reported session state.
 
-Extended XHTTP settings (`XHTTPExtra` and separate `XHTTP...` option fields) are edited in Raw config. When an explicit VLESS profile contains settings the visual form cannot represent, switching to Raw config must keep the original text, and saving from the visual form must be blocked. Editing Raw config is the explicit way to save such a profile. URI sources remain opaque and are not parsed or rewritten by the visual editor.
+Extended XHTTP settings (`XHTTPExtra` and separate `XHTTP...` option fields) are edited in Raw config. When an explicit VLESS profile contains settings the visual form cannot represent, switching to Raw config must keep the original text, and saving from the visual form must be blocked. Editing Raw config is the explicit way to save such a profile. URI sources remain unchanged on save; the VLESS tab decodes supported URI parameters into disabled fields for inspection, including gRPC `mode=multi`, WebSocket early data encoded in `path`, and XHTTP `extra`.
 
 Acceptance criteria:
 

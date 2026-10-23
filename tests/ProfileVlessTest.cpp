@@ -2,13 +2,17 @@
 #include "ProfileStore.h"
 
 #include <QApplication>
+#include <QComboBox>
+#include <QCheckBox>
 #include <QDialogButtonBox>
 #include <QFile>
+#include <QLineEdit>
 #include <QMessageBox>
 #include <QPlainTextEdit>
 #include <QProcess>
 #include <QPushButton>
 #include <QTabWidget>
+#include <QSpinBox>
 #include <QTemporaryDir>
 #include <QTimer>
 
@@ -52,6 +56,27 @@ int main(int argc, char **argv) {
     check(uriProfile, {"VLESS = " + link}, core, temporary.filePath("uri.conf"));
     check("[Profile]\nVersion = 1\n[AccessKey]\nKey = " + link + "\n",
         {"Key = " + link}, core, temporary.filePath("legacy.conf"));
+    require(ProfileStore::connectionInfo("[AccessKey]\nKey = " + link).protocol == "VLESS");
+    require(ProfileStore::connectionInfo("[AccessKey]\nKey = ssconf://example.com").protocol == QStringLiteral("Shadowsocks ⟳"));
+    require(ProfileStore::connectionInfo("[AccessKey]\nFile = key.txt").connectable);
+    require(ProfileStore::connectionInfo("[AccessKey]\nFile = key.txt").protocol.isEmpty());
+    require(!ProfileStore::connectionInfo("[AccessKey]\nKey = unknown://example.com").connectable);
+    ProfileEditorDialog uriEditor(uriProfile, QJsonObject{{"vpn", true}, {"proxy", true}});
+    require(!uriEditor.findChild<QComboBox *>("keySource")->isEnabled());
+    require(uriEditor.findChild<QLineEdit *>("vlessId")->text() == uuid);
+    require(!uriEditor.findChild<QLineEdit *>("vlessId")->isEnabled());
+    require(uriEditor.findChild<QLineEdit *>("vlessEndpoint")->text().contains("443"));
+    require(uriEditor.findChild<QComboBox *>("vlessNetwork")->currentText() == "grpc");
+    require(uriEditor.findChild<QComboBox *>("vlessSecurity")->currentText() == "tls");
+    require(uriEditor.findChild<QLineEdit *>("vlessServiceName")->text() == "proxy");
+    ProfileEditorDialog grpcEditor(QString(uriProfile).replace("serviceName=proxy", "serviceName=proxy&mode=multi"), QJsonObject{{"vpn", true}});
+    require(grpcEditor.findChild<QCheckBox *>("vlessMultiMode")->isChecked());
+    const QString wsLink = "vless://" + uuid + "@server.example:443?encryption=none&type=ws&security=tls&path=%2Fchat%3Fed%3D2048";
+    ProfileEditorDialog wsEditor("[AccessKey]\nVLESS = " + wsLink + "\n", QJsonObject{{"vpn", true}});
+    require(wsEditor.findChild<QLineEdit *>("vlessPath")->text() == "/chat");
+    require(wsEditor.findChild<QSpinBox *>("vlessEarlyData")->value() == 2048);
+    ProfileEditorDialog invalidEditor("[Profile]\nName = Invalid\n[AccessKey]\nKey = unknown://example.com\n", QJsonObject{{"vpn", true}});
+    require(invalidEditor.findChild<QComboBox *>("keySource")->isEnabled());
     const QString extendedLink = "vless://" + uuid + "@server.example:443?encryption=none&type=xhttp&security=tls"
         "&mode=stream-up&alpn=h3&extra=%7B%22headers%22%3A%7B%22User-Agent%22%3A%22Example%22%7D%7D";
     check("[Profile]\nVersion = 1\n[AccessKey]\nVLESS = " + extendedLink + "\n",

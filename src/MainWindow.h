@@ -39,6 +39,7 @@ private:
     QWidget *logPage();
     QWidget *aboutPage();
     void refreshProfiles();
+    ProfileConnectionInfo profileInfo(int row) const;
     void addProfile();
     void importProfile();
     void removeProfile();
@@ -102,6 +103,7 @@ private:
     QStackedWidget *pages_ = nullptr;
     QTimer *pollTimer_ = nullptr;
     QString state_ = "unknown";
+    QString activeFileProtocol_;
     QString activeProfileId_;
     QString reconnectProfileAfterUpdate_;
     QString reconnectResultProfileId_;

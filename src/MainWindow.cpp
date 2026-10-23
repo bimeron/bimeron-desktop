@@ -46,6 +46,7 @@
 #include <QSignalBlocker>
 #include <QShortcut>
 #include <QStandardPaths>
+#include <QStyledItemDelegate>
 #include <QStyleHints>
 #include <QSystemTrayIcon>
 #include <QSysInfo>
@@ -65,6 +66,31 @@
 #endif
 
 namespace {
+class ProfileRowDelegate final : public QStyledItemDelegate {
+public:
+    using QStyledItemDelegate::QStyledItemDelegate;
+    void paint(QPainter *painter, const QStyleOptionViewItem &option, const QModelIndex &index) const override {
+        if (!index.data(Qt::UserRole + 1).toBool()) {
+            QStyledItemDelegate::paint(painter, option, index);
+            return;
+        }
+        QStyleOptionViewItem row = option;
+        initStyleOption(&row, index);
+        const QString name = row.text.section('\n', 0, 0);
+        row.text.clear();
+        const QWidget *widget = row.widget;
+        (widget ? widget->style() : QApplication::style())->drawControl(QStyle::CE_ItemViewItem, &row, painter, widget);
+        const QRect textRect = (widget ? widget->style() : QApplication::style())->subElementRect(QStyle::SE_ItemViewItemText, &row, widget);
+        painter->save();
+        painter->setFont(row.font);
+        painter->setPen(row.palette.color(QPalette::Text));
+        painter->drawText(textRect.adjusted(0, 2, 0, -textRect.height() / 2), Qt::AlignVCenter, name);
+        painter->setPen(QColor(appDarkMode() ? "#ff9a92" : "#c62828"));
+        painter->drawText(textRect.adjusted(0, textRect.height() / 2, 0, -2), Qt::AlignVCenter, QObject::tr("Unknown protocol"));
+        painter->restore();
+    }
+};
+
 QString themedStyle(QString style) {
     if (!appDarkMode()) return style;
     const QPair<const char *, const char *> colors[] = {
@@ -433,6 +459,7 @@ QWidget *MainWindow::profilesPage() {
     sessionStatsLabel_->setVisible(QSettings().value("app/showDetailedStats", false).toBool());
     layout->addWidget(sessionStatsLabel_);
     profileList_ = new QListWidget;
+    profileList_->setItemDelegate(new ProfileRowDelegate(profileList_));
 #ifdef Q_OS_WIN
     profileList_->setStyleSheet(QStringLiteral("QListWidget { padding: 1px; border: 0; border-radius: 0; }"));
 #else
@@ -484,7 +511,7 @@ QWidget *MainWindow::profilesPage() {
     });
     connect(profileList_, &QListWidget::itemDoubleClicked, this, [this](QListWidgetItem *item) {
         const int row = profileList_->row(item);
-        if (row < 0 || row >= profiles_.size())
+        if (row < 0 || row >= profiles_.size() || !profileInfo(row).connectable)
             return;
         if (profiles_[row].id == activeProfileId_ && state_ != "disconnected" && state_ != "failed")
             return;
@@ -847,16 +874,31 @@ QWidget *MainWindow::aboutPage() {
     return page;
 }
 
+ProfileConnectionInfo MainWindow::profileInfo(int row) const {
+    if (row < 0 || row >= profiles_.size()) return {};
+    QFile file(profiles_[row].path);
+    if (!file.open(QIODevice::ReadOnly)) return {};
+    return ProfileStore::connectionInfo(QString::fromUtf8(file.read(64 * 1024)));
+}
+
 void MainWindow::refreshProfiles() {
     QString error;
     profiles_ = store_.load(&error);
-    if (trayMenu_)
-        rebuildTrayMenu();
     profileList_->clear();
-    for (const auto &profile : profiles_) {
-        auto *item = new QListWidgetItem(statusDot(QColor("#94a3b8")), QString("%1\n%2").arg(profile.name, tr("System VPN")), profileList_);
+    for (int row = 0; row < profiles_.size(); ++row) {
+        const auto &profile = profiles_[row];
+        const auto info = profileInfo(row);
+        const QString interfaceName = info.interfaceMode == "proxy" ? tr("Local SOCKS5") : tr("System VPN");
+        const QString detail = !info.connectable ? tr("Unknown protocol")
+            : info.keyFile.isEmpty() ? QString("%1 → %2").arg(info.protocol, interfaceName)
+            : QString("%1%2").arg(activeProfileId_ == profile.id && state_ == "connected" && !activeFileProtocol_.isEmpty()
+                ? activeFileProtocol_ + QStringLiteral(" → ") : QString(), interfaceName);
+        auto *item = new QListWidgetItem(statusDot(QColor("#94a3b8")), QString("%1\n%2").arg(profile.name, detail), profileList_);
+        item->setData(Qt::UserRole + 1, !info.connectable);
+        if (info.protocol.endsWith(QStringLiteral("⟳"))) item->setToolTip(tr("Dynamic profile"));
         item->setSizeHint(QSize(0, 50));
     }
+    if (trayMenu_) rebuildTrayMenu();
     if (autoConnectProfile_) {
         const QString selected = QSettings().value("app/autoConnectProfile").toString();
         autoConnectProfile_->clear();
@@ -1123,6 +1165,7 @@ void MainWindow::toggleConnection() {
         ? profileList_->currentRow() : -1;
     if (row < 0)
         return;
+    if (!profileInfo(row).connectable && profiles_[row].id != activeProfileId_) return;
     if (state_ == "connected" || state_ == "connecting" || state_ == "reconnecting") {
         if (profiles_[row].id != activeProfileId_)
             pendingStartPath_ = profiles_[row].path;
@@ -1140,12 +1183,24 @@ void MainWindow::toggleConnection() {
 void MainWindow::startProfile(int row) {
     if (row < 0 || row >= profiles_.size())
         return;
+    const auto info = profileInfo(row);
+    if (!info.connectable) return;
     QFile profileFile(profiles_[row].path);
     if (!profileFile.open(QIODevice::ReadOnly)) {
         QMessageBox::warning(this, tr("Profile unavailable"), profileFile.errorString());
         return;
     }
     const QString profileText = QString::fromUtf8(profileFile.readAll());
+    activeFileProtocol_.clear();
+    if (!info.keyFile.isEmpty()) {
+        QFile keyFile(QFileInfo(profiles_[row].path).dir().filePath(info.keyFile));
+        if (QFileInfo(info.keyFile).isAbsolute()) keyFile.setFileName(info.keyFile);
+        if (keyFile.open(QIODevice::ReadOnly)) {
+            QString key = QString::fromUtf8(keyFile.read(64 * 1024)).trimmed();
+            if (key.startsWith(QChar::ByteOrderMark)) key.remove(0, 1);
+            activeFileProtocol_ = ProfileStore::connectionInfo("[AccessKey]\nKey = " + key).protocol;
+        }
+    }
     QString mode = QRegularExpression(R"((?im)^\s*Mode\s*=\s*(vpn|proxy)\s*$)").match(profileText).captured(1).toLower();
     if (mode.isEmpty()) mode = "vpn";
     QString unsupported;
@@ -1336,6 +1391,7 @@ void MainWindow::handleStatus(const QJsonObject &status) {
     const QString previousState = state_;
     const QString previousProfileId = activeProfileId_;
     state_ = status.value("State").toString("unknown");
+    if (state_ != "connected" && state_ != "connecting" && state_ != "reconnecting") activeFileProtocol_.clear();
     if (state_ == "connecting" || state_ == "connected" || state_ == "reconnecting")
         connectionAttempted_ = true;
     else if (state_ == "disconnected")
@@ -1419,10 +1475,11 @@ void MainWindow::updateConnectionButton() {
     QString mode = "connect";
     const int row = profileList_->currentItem() && profileList_->currentItem()->isSelected()
         ? profileList_->currentRow() : -1;
-    bool enabled = row >= 0;
+    bool enabled = row >= 0 && profileInfo(row).connectable;
     const bool activeSelected = row >= 0 && profiles_[row].id == activeProfileId_;
     if ((state_ == "connected" || state_ == "connecting" || state_ == "reconnecting") && activeSelected) {
         connectButton_->setText(state_ == "connected" ? tr("Disconnect") : tr("Cancel connection"));
+        enabled = true;
         mode = "disconnect";
     } else if (row >= 0 && (state_ == "connected" || state_ == "connecting" || state_ == "reconnecting")) {
         connectButton_->setText(tr("Switch profile"));
@@ -1443,6 +1500,13 @@ void MainWindow::updateConnectionButton() {
 void MainWindow::updateProfileAppearance() {
     for (int row = 0; row < profileList_->count() && row < profiles_.size(); ++row) {
         auto *item = profileList_->item(row);
+        const auto info = profileInfo(row);
+        const QString interfaceName = info.interfaceMode == "proxy" ? tr("Local SOCKS5") : tr("System VPN");
+        const QString detail = !info.connectable ? tr("Unknown protocol")
+            : info.keyFile.isEmpty() ? QString("%1 → %2").arg(info.protocol, interfaceName)
+            : QString("%1%2").arg(profiles_[row].id == activeProfileId_ && state_ == "connected" && !activeFileProtocol_.isEmpty()
+                ? activeFileProtocol_ + QStringLiteral(" → ") : QString(), interfaceName);
+        item->setText(QString("%1\n%2").arg(profiles_[row].name, detail));
         item->setBackground(QColor(appDarkMode() ? "#202937" : "#ffffff"));
         QString color = appDarkMode() ? "#e8edf5" : "#152238";
         QString dotColor = "#94a3b8";
@@ -1461,6 +1525,7 @@ void MainWindow::updateProfileAppearance() {
         }
         item->setIcon(statusDot(QColor(dotColor)));
         item->setForeground(QColor(color));
+        item->setData(Qt::UserRole + 1, !info.connectable);
     }
 }
 
@@ -1582,6 +1647,7 @@ void MainWindow::rebuildTrayMenu() {
     trayMenu_->addSeparator();
     for (int row = 0; row < profiles_.size(); ++row) {
         auto *profile = trayMenu_->addAction(profiles_[row].name);
+        profile->setEnabled(profileInfo(row).connectable || (profiles_[row].id == activeProfileId_ && state_ == "connected"));
         profile->setCheckable(true);
         profile->setChecked(profiles_[row].id == activeProfileId_
             && (state_ == "connected" || state_ == "reconnecting" || state_ == "stopping"));
