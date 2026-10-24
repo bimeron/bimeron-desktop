@@ -10,12 +10,16 @@ core integration options, and acceptance criteria. The macOS GUI is not implemen
 
 Click the Desktop version in About five times to restart into a session-only
 Development tab. Choose System service or browse to a local Core executable and
-click Apply. Switching disconnects the VPN and requires elevation; Windows needs
+click Apply. Windows asks for UAC once when Development opens and keeps that GUI
+elevated for the session; Linux elevates individual Core operations. Switching
+disconnects the VPN. Windows needs
 the matching `wintun.dll` beside the local executable. Quit shuts down the local
 daemon and restores a service that this session stopped. Closing to the tray
 keeps the session; the next normal launch hides Development. Theme/language
-restarts also end the developer session. See [developer mode](docs/developer-mode.md)
+restarts also end the developer session. The last valid selected Core path is
+remembered for the next unlock, but never started automatically. See [developer mode](docs/developer-mode.md)
 for lifecycle details and crash limitations.
+The Development tab shows the selected local Core file's modification date and time, not its compilation time.
 
 ```powershell
 cmake --preset windows-amd64-release

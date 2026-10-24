@@ -2,11 +2,15 @@
 #include "DevelopmentCore.h"
 #include "MainWindow.h"
 #include <QApplication>
+#include <QComboBox>
 #include <QElapsedTimer>
 #include <QFile>
+#include <QFileInfo>
 #include <QJsonDocument>
 #include <QLabel>
+#include <QLineEdit>
 #include <QLocalServer>
+#include <QLocale>
 #include <QMouseEvent>
 #include <QPushButton>
 #include <QSettings>
@@ -17,6 +21,11 @@
 #include <QUuid>
 #include <cstdio>
 #include <cstring>
+#ifdef Q_OS_LINUX
+#include <fcntl.h>
+#include <sys/file.h>
+#include <unistd.h>
+#endif
 
 static void require(bool condition, const char *message) {
     if (!condition) qFatal("%s", message);
@@ -147,16 +156,33 @@ int main(int argc, char **argv) {
         require(waitFor([&] { return !backend.busy(); }, 25000) && !backend.failed(), "restart after failed startup");
         backend.select(app.arguments().at(integration + 1));
         require(waitFor([&] { return !backend.busy(); }, 25000) && !backend.failed(), "local-to-local transition");
+#ifdef Q_OS_LINUX
+        const int lock = open("/run/bimeron/vpn.lock", O_CREAT | O_RDWR, 0600);
+        require(lock >= 0 && flock(lock, LOCK_EX | LOCK_NB) == 0, "hold VPN session lock");
+        backend.select({});
+        require(waitFor([&] { return !backend.busy(); }, 25000), "held-lock cleanup timeout");
+        require(backend.failed() && backend.needsCleanup(), "held lock must block system restoration");
+        QFile stopped("/run/bimeron-desktop-integration-service");
+        require(stopped.open(QIODevice::ReadOnly) && stopped.readAll() == "1", "service must remain stopped while lock is held");
+        require(flock(lock, LOCK_UN) == 0, "release VPN session lock");
+        close(lock);
+        backend.select({});
+        require(waitFor([&] { return !backend.busy(); }, 25000) && !backend.failed(), "held-lock restoration retry");
+        require(!backend.needsCleanup(), "retry must finish restoration");
+        backend.select(app.arguments().at(integration + 1));
+        require(waitFor([&] { return !backend.busy(); }, 25000) && !backend.failed(), "restart after held-lock retry");
+#endif
         QFile fault("/run/bimeron-desktop-integration-fail-start");
         require(fault.open(QIODevice::WriteOnly), "restoration fault");
         fault.close();
         backend.select({});
         require(waitFor([&] { return !backend.busy(); }, 25000), "failed restoration timeout");
         require(backend.failed() && backend.needsCleanup() && !backend.local(), "failed restoration must retain retry state");
-        require(fault.remove(), "clear restoration fault");
+        setState("4");
         backend.select({});
         require(waitFor([&] { return !backend.busy(); }, 25000), "restoration retry timeout");
-        require(!backend.failed() && !backend.needsCleanup(), "restoration retry must complete");
+        require(!backend.failed() && !backend.needsCleanup(), "already-running service must complete restoration without another start");
+        require(fault.remove(), "clear restoration fault");
         return 0;
     }
     if (app.arguments().contains("--development")) {
@@ -169,6 +195,28 @@ int main(int argc, char **argv) {
             QCoreApplication::processEvents();
             require(window.grab().save(screenshot), "development screenshot");
         }
+        auto *pathField = window.findChild<QLineEdit *>("developmentPath");
+        require(pathField && pathField->text().isEmpty(), "first unlock must have no remembered path");
+        auto *modified = window.findChild<QLabel *>("developmentModified");
+        auto *backendChoice = window.findChild<QComboBox *>("developmentBackend");
+        require(modified && backendChoice && modified->isHidden(), "system selection must hide local file time");
+        backendChoice->setCurrentIndex(1);
+        pathField->setText(QCoreApplication::applicationFilePath());
+        require(!modified->isHidden() && modified->text().contains(QLocale().toString(
+            QFileInfo(pathField->text()).lastModified().toLocalTime(), QLocale::ShortFormat)),
+            "local file modification time must be displayed");
+        QMetaObject::invokeMethod(pathField, "editingFinished");
+        pathField->setText(temporary.filePath("missing-core"));
+        require(modified->text().contains("unavailable"), "missing file must not show stale modification time");
+        QMetaObject::invokeMethod(pathField, "editingFinished");
+        MainWindow reopened;
+        require(reopened.findChild<QLineEdit *>("developmentPath")->text() == QCoreApplication::applicationFilePath(),
+                "later unlock must restore the last valid path");
+        require(reopened.findChild<QComboBox *>("developmentBackend")->currentIndex() == 0,
+                "remembered path must not select local core");
+        require(reopened.findChild<QLabel *>("developmentModified")->isHidden(),
+                "remembered path must not expose local file time while System is selected");
+        require(!reopened.findChild<DevelopmentCore *>()->local(), "remembered path must not launch a daemon");
         QFile receipt(qEnvironmentVariable("BIMERON_TEST_RESTART_RECEIPT"));
         require(receipt.open(QIODevice::WriteOnly), "restart receipt");
         receipt.write("development");
@@ -186,6 +234,9 @@ int main(int argc, char **argv) {
     const QString receipt = temporary.filePath("restart");
     qputenv("BIMERON_TEST_RESTART_RECEIPT", receipt.toUtf8());
     MainWindow window;
+#ifdef Q_OS_WIN
+    window.setProperty("developmentRestartWithoutElevation", true);
+#endif
     auto *pages = window.findChild<QStackedWidget *>();
     require(pages && pages->count() == 4, "ordinary launch must hide development");
     auto *label = window.findChild<QLabel *>("desktopVersion");

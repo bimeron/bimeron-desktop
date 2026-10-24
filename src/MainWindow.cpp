@@ -11,6 +11,7 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QCoreApplication>
+#include <QDateTime>
 #include <QCloseEvent>
 #include <QDialog>
 #include <QDialogButtonBox>
@@ -61,11 +62,52 @@
 #ifdef Q_OS_WIN
 #include <qt_windows.h>
 #include <shellapi.h>
+#include <sddl.h>
 #elif defined(Q_OS_LINUX)
 #include <unistd.h>
 #endif
 
 namespace {
+#ifdef Q_OS_WIN
+QString processUserSid(HANDLE process) {
+    HANDLE token = nullptr;
+    if (!OpenProcessToken(process, TOKEN_QUERY, &token)) return {};
+    DWORD size = 0;
+    GetTokenInformation(token, TokenUser, nullptr, 0, &size);
+    QByteArray data(static_cast<qsizetype>(size), '\0');
+    QString sid;
+    if (GetTokenInformation(token, TokenUser, data.data(), size, &size)) {
+        LPWSTR value = nullptr;
+        if (ConvertSidToStringSidW(reinterpret_cast<TOKEN_USER *>(data.data())->User.Sid, &value)) {
+            sid = QString::fromWCharArray(value);
+            LocalFree(value);
+        }
+    }
+    CloseHandle(token);
+    return sid;
+}
+
+bool startUnelevated(const QStringList &arguments) {
+    HANDLE token = nullptr;
+    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) return false;
+    TOKEN_LINKED_TOKEN linked{};
+    DWORD size = 0;
+    const bool available = GetTokenInformation(token, TokenLinkedToken, &linked, sizeof(linked), &size);
+    CloseHandle(token);
+    if (!available) return false;
+    const std::wstring executable = QDir::toNativeSeparators(QCoreApplication::applicationFilePath()).toStdWString();
+    std::wstring commandLine = TrustedCore::windowsCommandLine(QStringList{QCoreApplication::applicationFilePath()} + arguments).toStdWString();
+    const std::wstring directory = QDir::toNativeSeparators(QCoreApplication::applicationDirPath()).toStdWString();
+    STARTUPINFOW startup{};
+    startup.cb = sizeof(startup);
+    PROCESS_INFORMATION process{};
+    const bool started = CreateProcessWithTokenW(linked.LinkedToken, LOGON_WITH_PROFILE, executable.c_str(),
+        commandLine.data(), 0, nullptr, directory.c_str(), &startup, &process);
+    CloseHandle(linked.LinkedToken);
+    if (started) { CloseHandle(process.hThread); CloseHandle(process.hProcess); }
+    return started;
+}
+#endif
 class ProfileRowDelegate final : public QStyledItemDelegate {
 public:
     using QStyledItemDelegate::QStyledItemDelegate;
@@ -1827,22 +1869,36 @@ bool MainWindow::runServiceCommand(const QStringList &arguments, const QString &
     const std::wstring file = QDir::toNativeSeparators(executable).toStdWString();
     const std::wstring params = parameters.toStdWString();
     const std::wstring directory = QDir::toNativeSeparators(QCoreApplication::applicationDirPath()).toStdWString();
-    SHELLEXECUTEINFOW info{};
-    info.cbSize = sizeof(info);
-    info.fMask = SEE_MASK_NOCLOSEPROCESS;
-    info.hwnd = reinterpret_cast<HWND>(winId());
-    info.lpVerb = L"runas";
-    info.lpFile = file.c_str();
-    info.lpParameters = params.c_str();
-    info.lpDirectory = directory.c_str();
-    info.nShow = SW_HIDE;
-    if (!ShellExecuteExW(&info) || !info.hProcess) {
+    HANDLE handle = nullptr;
+    if (developerMode_) {
+        std::wstring commandLine = TrustedCore::windowsCommandLine(QStringList{executable} + arguments).toStdWString();
+        STARTUPINFOW startup{};
+        startup.cb = sizeof(startup);
+        PROCESS_INFORMATION process{};
+        if (CreateProcessW(file.c_str(), commandLine.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW,
+                           nullptr, directory.c_str(), &startup, &process)) {
+            CloseHandle(process.hThread);
+            handle = process.hProcess;
+        }
+    } else {
+        SHELLEXECUTEINFOW info{};
+        info.cbSize = sizeof(info);
+        info.fMask = SEE_MASK_NOCLOSEPROCESS;
+        info.hwnd = reinterpret_cast<HWND>(winId());
+        info.lpVerb = L"runas";
+        info.lpFile = file.c_str();
+        info.lpParameters = params.c_str();
+        info.lpDirectory = directory.c_str();
+        info.nShow = SW_HIDE;
+        if (ShellExecuteExW(&info)) handle = info.hProcess;
+    }
+    if (!handle) {
         serviceStatusLabel_->setText(tr("Service: action canceled"));
         serviceStatusLabel_->setStyleSheet(themedStyle("color: #b54708"));
         return false;
     }
 
-    serviceCommandProcess_ = reinterpret_cast<quintptr>(info.hProcess);
+    serviceCommandProcess_ = reinterpret_cast<quintptr>(handle);
     serviceStartAttempted_ = true;
     serviceCommandDescription_ = description;
     serviceStatusLabel_->setText(description + QStringLiteral("…"));
@@ -2116,28 +2172,53 @@ QWidget *MainWindow::developmentPage() {
     auto *title = new QLabel(tr("Development"));
     title->setStyleSheet("font-size: 17px; font-weight: 700");
     layout->addWidget(title);
-    auto *hint = new QLabel(tr("These settings apply only until you quit Bimeron. Closing to the tray keeps this session."));
+    auto *hint = new QLabel(tr("The active core resets when you quit; closing to the tray keeps this session. The last local path is remembered."));
     hint->setWordWrap(true);
     layout->addWidget(hint);
     developmentBackend_ = new HiDpiComboBox;
+    developmentBackend_->setObjectName("developmentBackend");
     developmentBackend_->addItems({tr("System service"), tr("Local core executable")});
     layout->addWidget(developmentBackend_);
     auto *pathRow = new QHBoxLayout;
     developmentPath_ = new QLineEdit;
+    developmentPath_->setObjectName("developmentPath");
     developmentPath_->setPlaceholderText(tr("Absolute path to the core executable"));
+    developmentPath_->setText(QSettings().value("developer/lastCorePath").toString());
     developmentPath_->setEnabled(false);
+    const auto rememberPath = [this] {
+        const QFileInfo file(developmentPath_->text().trimmed());
+        if (file.isAbsolute() && file.isFile())
+            QSettings().setValue("developer/lastCorePath", file.absoluteFilePath());
+    };
+    connect(developmentPath_, &QLineEdit::editingFinished, this, rememberPath);
     auto *browse = new QPushButton(tr("Browse…"));
     browse->setEnabled(false);
     pathRow->addWidget(developmentPath_, 1);
     pathRow->addWidget(browse);
     layout->addLayout(pathRow);
-    connect(developmentBackend_, &QComboBox::currentIndexChanged, this, [this, browse](int index) {
+    developmentModified_ = new QLabel;
+    developmentModified_->setObjectName("developmentModified");
+    layout->addWidget(developmentModified_);
+    const auto updateModified = [this] {
+        const QFileInfo file(developmentPath_->text().trimmed());
+        const QDateTime modified = file.isFile() ? file.lastModified() : QDateTime{};
+        developmentModified_->setText(tr("File modified: %1").arg(modified.isValid()
+            ? QLocale().toString(modified.toLocalTime(), QLocale::ShortFormat) : tr("unavailable")));
+        developmentModified_->setVisible(developmentBackend_->currentIndex() == 1 && !developmentPath_->text().trimmed().isEmpty());
+    };
+    connect(developmentPath_, &QLineEdit::textChanged, this, updateModified);
+    connect(developmentBackend_, &QComboBox::currentIndexChanged, this, [this, browse, updateModified](int index) {
         developmentPath_->setEnabled(index == 1);
         browse->setEnabled(index == 1);
+        updateModified();
     });
-    connect(browse, &QPushButton::clicked, this, [this] {
+    updateModified();
+    connect(browse, &QPushButton::clicked, this, [this, rememberPath] {
         const QString path = QFileDialog::getOpenFileName(this, tr("Select core executable"), developmentPath_->text());
-        if (!path.isEmpty()) developmentPath_->setText(path);
+        if (!path.isEmpty()) {
+            developmentPath_->setText(path);
+            rememberPath();
+        }
     });
     developmentApply_ = new QPushButton(tr("Apply"));
     layout->addWidget(developmentApply_);
@@ -2211,7 +2292,36 @@ void MainWindow::restartApplication(bool development) {
     QStringList arguments{"--restart"};
     if (development) arguments << "--development";
     if (QCoreApplication::arguments().contains("--visual-check")) arguments << "--visual-check";
-    if (QProcess::startDetached(QCoreApplication::applicationFilePath(), arguments)) QApplication::quit();
+    bool started = false;
+#ifdef Q_OS_WIN
+    if (!property("developmentRestartWithoutElevation").toBool()) {
+        if (development) {
+            const std::wstring executable = QDir::toNativeSeparators(QCoreApplication::applicationFilePath()).toStdWString();
+            const std::wstring parameters = TrustedCore::windowsCommandLine(arguments).toStdWString();
+            const std::wstring directory = QDir::toNativeSeparators(QCoreApplication::applicationDirPath()).toStdWString();
+            SHELLEXECUTEINFOW info{};
+            info.cbSize = sizeof(info);
+            info.fMask = SEE_MASK_NOCLOSEPROCESS | SEE_MASK_NOASYNC;
+            info.lpVerb = L"runas";
+            info.lpFile = executable.c_str();
+            info.lpParameters = parameters.c_str();
+            info.lpDirectory = directory.c_str();
+            info.nShow = SW_SHOWNORMAL;
+            if (ShellExecuteExW(&info) && info.hProcess) {
+                const QString sid = processUserSid(info.hProcess);
+                started = !sid.isEmpty() && sid == processUserSid(GetCurrentProcess());
+                if (!started) TerminateProcess(info.hProcess, 1);
+                CloseHandle(info.hProcess);
+            }
+        } else if (developerMode_) {
+            started = startUnelevated(arguments);
+        } else {
+            started = QProcess::startDetached(QCoreApplication::applicationFilePath(), arguments);
+        }
+    } else
+#endif
+        started = QProcess::startDetached(QCoreApplication::applicationFilePath(), arguments);
+    if (started) QApplication::quit();
     else {
         developmentClicks_ = 0;
         restartRequested_ = false;

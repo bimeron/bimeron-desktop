@@ -312,7 +312,7 @@
   "Cannot identify the local daemon; close it before retrying": "Не удалось определить локальный демон; завершите его перед повторной попыткой",
   "System service": "Системная служба",
   "Local core executable": "Локальный бинарник ядра",
-  "These settings apply only until you quit Bimeron. Closing to the tray keeps this session.": "Эти настройки действуют до выхода из Bimeron. Сворачивание в трей сохраняет текущий сеанс.",
+  "The active core resets when you quit; closing to the tray keeps this session. The last local path is remembered.": "Активное ядро сбрасывается при выходе; сворачивание в трей сохраняет сеанс. Последний путь к локальному ядру запоминается.",
   "Absolute path to the core executable": "Абсолютный путь к бинарнику ядра",
   "Select core executable": "Выбрать бинарник ядра",
   "Apply": "Применить",
@@ -341,5 +341,12 @@
   "Local core exited; return to the system service to restore it": "Локальное ядро завершилось; вернитесь к системной службе для её восстановления",
   "Local core did not become ready": "Локальное ядро не стало готово к работе",
   "Local core cleanup timed out; retry returning to the system service": "Превышено время ожидания завершения локального ядра; повторите возврат к системной службе",
-  "Could not restore the system service; retry": "Не удалось восстановить системную службу; повторите попытку"
+  "Could not restore the system service; retry": "Не удалось восстановить системную службу; повторите попытку",
+  "The local daemon still responds; close it before retrying": "Локальный демон всё ещё отвечает; завершите его перед повторной попыткой",
+  "The local VPN did not disconnect; retry after checking the daemon": "Локальный VPN не отключился; проверьте демон и повторите попытку",
+  "The local daemon did not shut down; retry before using the system service": "Локальный демон не завершился; повторите попытку перед использованием системной службы",
+  "The local daemon did not confirm VPN cleanup; retry before using the system service": "Локальный демон не подтвердил отключение VPN; повторите попытку перед использованием системной службы",
+  "The VPN session lock is still held; close the local daemon and retry": "Блокировка VPN-сеанса всё ещё удерживается; завершите локальный демон и повторите попытку",
+  "File modified: %1": "Файл изменён: %1",
+  "unavailable": "недоступно"
 }

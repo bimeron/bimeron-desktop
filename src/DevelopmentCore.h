@@ -32,7 +32,11 @@ private:
     void prepare();
     void launch();
     void shutdown();
+    void verifyExit();
+    void verifyLock();
     void restore();
+    void confirmServiceStarted(int attempts);
+    void completeRestore();
     void tick();
     void finish(bool success, const QString &message);
     void releaseProcess();
@@ -49,10 +53,12 @@ private:
     CoreClient control_{this};
     QTimer timer_{this};
     QElapsedTimer deadline_;
-    enum class Phase { Idle, Starting, Active, Stopping, Failed };
+    enum class Phase { Idle, Starting, Active, Stopping, Verifying, Failed };
     Phase phase_ = Phase::Idle;
+    Phase exitPhase_ = Phase::Idle;
     bool busy_ = false;
     bool failed_ = false;
     bool restoreService_ = false;
     bool shutdownSent_ = false;
+    bool stopConfirmed_ = false;
 };

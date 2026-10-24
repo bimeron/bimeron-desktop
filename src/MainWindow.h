@@ -139,6 +139,7 @@ private:
     DevelopmentCore *development_ = nullptr;
     QLabel *desktopVersionLabel_ = nullptr;
     QLabel *developmentStatus_ = nullptr;
+    QLabel *developmentModified_ = nullptr;
     QComboBox *developmentBackend_ = nullptr;
     QLineEdit *developmentPath_ = nullptr;
     QPushButton *developmentApply_ = nullptr;

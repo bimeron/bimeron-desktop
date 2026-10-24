@@ -4,6 +4,7 @@
 #include <QCryptographicHash>
 #include <QDir>
 #include <QFileInfo>
+#include <QStandardPaths>
 #include <QThread>
 #include <memory>
 #ifdef Q_OS_WIN
@@ -16,6 +17,17 @@
 
 namespace {
 #ifdef Q_OS_WIN
+bool elevatedProcess() {
+    HANDLE token = nullptr;
+    TOKEN_ELEVATION elevation{};
+    DWORD size = 0;
+    const bool elevated = OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)
+        && GetTokenInformation(token, TokenElevation, &elevation, sizeof(elevation), &size)
+        && elevation.TokenIsElevated;
+    if (token) CloseHandle(token);
+    return elevated;
+}
+
 QString processSid(HANDLE process) {
     HANDLE token = nullptr;
     if (!OpenProcessToken(process, TOKEN_QUERY, &token)) return {};
@@ -41,6 +53,18 @@ void elevate(QObject *owner, const QString &file, const QStringList &arguments,
         const auto executable = QDir::toNativeSeparators(file).toStdWString();
         const auto parameters = TrustedCore::windowsCommandLine(arguments).toStdWString();
         const auto directory = QDir::toNativeSeparators(QFileInfo(file).absolutePath()).toStdWString();
+        if (elevatedProcess()) {
+            std::wstring commandLine = TrustedCore::windowsCommandLine(QStringList{file} + arguments).toStdWString();
+            STARTUPINFOW startup{};
+            startup.cb = sizeof(startup);
+            PROCESS_INFORMATION process{};
+            if (CreateProcessW(executable.c_str(), commandLine.data(), nullptr, nullptr, FALSE,
+                               CREATE_NO_WINDOW, nullptr, directory.c_str(), &startup, &process)) {
+                CloseHandle(process.hThread);
+                *handle = process.hProcess;
+            }
+            return;
+        }
         SHELLEXECUTEINFOW info{};
         info.cbSize = sizeof(info);
         info.fMask = SEE_MASK_NOCLOSEPROCESS | SEE_MASK_NOASYNC;
@@ -63,6 +87,10 @@ DevelopmentCore::DevelopmentCore(QString helper, QObject *parent)
     timer_.setInterval(200);
     connect(&timer_, &QTimer::timeout, this, &DevelopmentCore::tick);
     connect(&control_, &CoreClient::replied, this, [this](const QString &command, const QJsonObject &response) {
+        if (phase_ == Phase::Verifying) {
+            finish(false, tr("The local daemon still responds; close it before retrying"));
+            return;
+        }
         if (phase_ == Phase::Starting && command == "hello") {
             if (response.contains("error") || response.value("instance").toString().isEmpty()
                 || response.value("core").toObject().value("version").toString().isEmpty()) {
@@ -73,9 +101,23 @@ DevelopmentCore::DevelopmentCore(QString helper, QObject *parent)
             }
             phase_ = Phase::Active;
             finish(true, tr("Local core: %1").arg(response.value("core").toObject().value("version").toString()));
-        } else if (phase_ == Phase::Stopping && response.contains("error")) {
-            finish(false, tr("Local core cleanup failed; retry returning to the system service"));
+        } else if (phase_ == Phase::Stopping && command == "stop") {
+            if (response.contains("error") || response.value("status").toObject().value("State").toString() != "disconnected") {
+                finish(false, tr("The local VPN did not disconnect; retry after checking the daemon"));
+                return;
+            }
+            stopConfirmed_ = true;
+            shutdownSent_ = true;
+            control_.request("shutdown", {}, 120000);
+        } else if (phase_ == Phase::Stopping && command == "shutdown" &&
+                   (response.contains("error") || response.value("status").toObject().value("State").toString() != "disconnected")) {
+            finish(false, tr("The local daemon did not shut down; retry before using the system service"));
         }
+    });
+    connect(&control_, &CoreClient::unavailable, this, [this](const QString &) {
+        if (phase_ == Phase::Verifying) verifyLock();
+        else if (phase_ == Phase::Stopping)
+            finish(false, tr("The local daemon did not confirm VPN cleanup; retry before using the system service"));
     });
 }
 
@@ -87,7 +129,7 @@ DevelopmentCore::~DevelopmentCore() {
 
 void DevelopmentCore::command(const QString &file, const QStringList &arguments, bool elevated, Result result) {
 #ifdef Q_OS_WIN
-    if (elevated) {
+    if (elevated && !elevatedProcess()) {
         elevate(this, file, arguments, [this, result](HANDLE handle) {
             if (!handle) { result(-1, tr("Elevation was canceled or failed")); return; }
             auto *poller = new QTimer(this);
@@ -135,11 +177,11 @@ void DevelopmentCore::command(const QString &file, const QStringList &arguments,
         if (error == QProcess::FailedToStart) complete(-1);
     });
 #ifdef Q_OS_LINUX
-    if (elevated && geteuid() == 0) process->start(file, arguments);
+    if (elevated && geteuid() != 0)
+        process->start(QStringLiteral("/usr/bin/pkexec"), QStringList{file} + arguments);
     else
 #endif
-    if (elevated) process->start(QStringLiteral("/usr/bin/pkexec"), QStringList{file} + arguments);
-    else process->start(file, arguments);
+        process->start(file, arguments);
     QTimer::singleShot(elevated ? 120000 : 5000, process, [this, process, elevated] {
         if (process->state() == QProcess::NotRunning) return;
         if (!elevated) process->kill();
@@ -285,13 +327,15 @@ void DevelopmentCore::releaseProcess() {
 }
 
 void DevelopmentCore::shutdown() {
-    if (!processRunning()) { releaseProcess(); restore(); return; }
+    if (path_.isEmpty() && !restoreService_) { finish(true, tr("System service")); return; }
+    if (!processRunning()) { verifyExit(); return; }
     if (endpoint_.isEmpty() || processId_ <= 0) {
         finish(false, tr("Cannot identify the local daemon; close it before retrying"));
         return;
     }
     phase_ = Phase::Stopping;
     shutdownSent_ = false;
+    stopConfirmed_ = false;
     control_.setEndpoint(endpoint_, processId_);
     deadline_.restart();
     timer_.start();
@@ -299,21 +343,9 @@ void DevelopmentCore::shutdown() {
 }
 
 void DevelopmentCore::tick() {
+    if (phase_ == Phase::Verifying) return;
     if (!processRunning()) {
-        const bool starting = phase_ == Phase::Starting;
-        const bool unexpected = phase_ == Phase::Active;
-        releaseProcess();
-        if (starting) {
-            failure_ = tr("Local core exited before it became ready");
-            requestedPath_.clear();
-            restore();
-            return;
-        }
-        if (unexpected) {
-            finish(false, tr("Local core exited; return to the system service to restore it"));
-            return;
-        }
-        restore();
+        verifyExit();
         return;
     }
     if (phase_ == Phase::Starting) {
@@ -326,29 +358,92 @@ void DevelopmentCore::tick() {
         if (deadline_.elapsed() > 120000) {
             finish(false, tr("Local core cleanup timed out; retry returning to the system service"));
         } else if (!shutdownSent_ && !control_.busy()) {
-            shutdownSent_ = true;
-            control_.request("shutdown", {}, 120000);
+            control_.request("stop", {}, 120000);
         }
     }
 }
 
-void DevelopmentCore::restore() {
-    const auto restored = [this] {
-        restoreService_ = false;
-        if (!requestedPath_.isEmpty()) prepare();
-        else finish(failure_.isEmpty(), failure_.isEmpty() ? tr("System service") : failure_);
-    };
-    if (!restoreService_) { restored(); return; }
-    command(helper_, {"service", "start"}, true, [this, restored](int code, const QString &) {
-        if (code != 0) {
-            finish(false, tr("Could not restore the system service; retry"));
+void DevelopmentCore::verifyExit() {
+    exitPhase_ = phase_;
+    phase_ = Phase::Verifying;
+    timer_.stop();
+    if (endpoint_.isEmpty()) { verifyLock(); return; }
+    control_.setEndpoint(endpoint_);
+    control_.request("hello", {}, 1000);
+}
+
+void DevelopmentCore::verifyLock() {
+    if (phase_ != Phase::Verifying) return;
+    const auto checked = [this](bool free) {
+        if (!free) {
+            finish(false, tr("The VPN session lock is still held; close the local daemon and retry"));
             return;
         }
-        command(helper_, {"service", "status"}, false, [this, restored](int code, const QString &output) {
-            if (code == 0 && output.section(':', 1).trimmed() == "4") restored();
-            else finish(false, tr("Could not restore the system service; retry"));
+        if (exitPhase_ == Phase::Stopping && !stopConfirmed_) {
+            finish(false, tr("The local daemon did not confirm VPN cleanup; retry before using the system service"));
+            return;
+        }
+        const Phase previous = exitPhase_;
+        releaseProcess();
+        if (previous == Phase::Active) {
+            finish(false, tr("Local core exited; return to the system service to restore it"));
+        } else {
+            if (previous == Phase::Starting) {
+                failure_ = tr("Local core exited before it became ready");
+                requestedPath_.clear();
+            }
+            restore();
+        }
+    };
+#ifdef Q_OS_WIN
+    HANDLE mutex = OpenMutexW(SYNCHRONIZE | MUTEX_MODIFY_STATE, FALSE, L"Global\\BimeronCoreConnect");
+    if (!mutex) { checked(GetLastError() == ERROR_FILE_NOT_FOUND); return; }
+    const DWORD result = WaitForSingleObject(mutex, 0);
+    const bool free = result == WAIT_OBJECT_0 || result == WAIT_ABANDONED;
+    if (free) ReleaseMutex(mutex);
+    CloseHandle(mutex);
+    checked(free);
+#elif defined(Q_OS_LINUX)
+    if (!QFileInfo::exists("/run/bimeron/vpn.lock")) { checked(true); return; }
+    const QString flock = QStandardPaths::findExecutable("flock");
+    const QString trueCommand = QStandardPaths::findExecutable("true");
+    if (flock.isEmpty() || trueCommand.isEmpty()) { checked(false); return; }
+    command(flock, {"-n", "/run/bimeron/vpn.lock", trueCommand}, true,
+            [checked](int code, const QString &) { checked(code == 0); });
+#else
+    checked(false);
+#endif
+}
+
+void DevelopmentCore::restore() {
+    if (!restoreService_) { completeRestore(); return; }
+    command(helper_, {"service", "status"}, false, [this](int code, const QString &output) {
+        if (code != 0) { finish(false, tr("Could not restore the system service; retry")); return; }
+        const QString state = output.section(':', 1).trimmed();
+        if (state == "4") { completeRestore(); return; }
+        if (state != "1") { confirmServiceStarted(40); return; }
+        command(helper_, {"service", "start"}, true, [this](int, const QString &) {
+            confirmServiceStarted(40);
         });
     });
+}
+
+void DevelopmentCore::confirmServiceStarted(int attempts) {
+    command(helper_, {"service", "status"}, false, [this, attempts](int code, const QString &output) {
+        if (code == 0 && output.section(':', 1).trimmed() == "4") {
+            completeRestore();
+        } else if (code == 0 && attempts > 0 && output.section(':', 1).trimmed() != "1") {
+            QTimer::singleShot(250, this, [this, attempts] { confirmServiceStarted(attempts - 1); });
+        } else {
+            finish(false, tr("Could not restore the system service; retry"));
+        }
+    });
+}
+
+void DevelopmentCore::completeRestore() {
+    restoreService_ = false;
+    if (!requestedPath_.isEmpty()) prepare();
+    else finish(failure_.isEmpty(), failure_.isEmpty() ? tr("System service") : failure_);
 }
 
 void DevelopmentCore::finish(bool success, const QString &message) {

@@ -22,6 +22,9 @@
 #include <QSystemTrayIcon>
 #include <QThread>
 #include <QTranslator>
+#ifdef Q_OS_WIN
+#include <qt_windows.h>
+#endif
 
 class AppStyle final : public QProxyStyle {
 public:
@@ -79,6 +82,18 @@ private:
 
 int main(int argc, char *argv[]) {
     QApplication app(argc, argv);
+#ifdef Q_OS_WIN
+    if (app.arguments().contains(QStringLiteral("--development"))) {
+        HANDLE token = nullptr;
+        TOKEN_ELEVATION elevation{};
+        DWORD size = 0;
+        const bool elevated = OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)
+            && GetTokenInformation(token, TokenElevation, &elevation, sizeof(elevation), &size)
+            && elevation.TokenIsElevated;
+        if (token) CloseHandle(token);
+        if (!elevated) return 1;
+    }
+#endif
     app.setStyle(new AppStyle(app.style()));
     QCoreApplication::setOrganizationName(QStringLiteral("Bimeron"));
     QCoreApplication::setApplicationName(QStringLiteral("Bimeron Desktop"));
