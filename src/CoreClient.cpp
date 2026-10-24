@@ -3,10 +3,15 @@
 #include <QJsonDocument>
 #include <QTimer>
 #include <QUuid>
+#ifdef Q_OS_WIN
+#include <qt_windows.h>
+#elif defined(Q_OS_LINUX)
+#include <sys/socket.h>
+#endif
 
 CoreClient::CoreClient(QObject *parent) : QObject(parent) {}
 
-QString CoreClient::endpoint() const {
+QString CoreClient::systemEndpoint() {
 #ifdef Q_OS_WIN
     return QStringLiteral("Bimeron.Core.Service");
 #elif defined(Q_OS_LINUX)
@@ -14,6 +19,22 @@ QString CoreClient::endpoint() const {
 #else
     return QStringLiteral("/var/run/bimeron/control.sock");
 #endif
+}
+
+QString CoreClient::endpoint() const {
+    return endpoint_.isEmpty() ? systemEndpoint() : endpoint_;
+}
+
+void CoreClient::setEndpoint(const QString &endpoint, qint64 expectedProcess) {
+    if (socket_) {
+        socket_->disconnect(this);
+        socket_->abort();
+        socket_->deleteLater();
+        socket_ = nullptr;
+    }
+    input_.clear();
+    endpoint_ = endpoint;
+    expectedProcess_ = expectedProcess;
 }
 
 void CoreClient::request(const QString &command, const QJsonObject &arguments, int timeoutMs) {
@@ -28,11 +49,30 @@ void CoreClient::request(const QString &command, const QJsonObject &arguments, i
 
     socket_ = new QLocalSocket(this);
     auto *current = socket_;
-    connect(current, &QLocalSocket::connected, this, [current, body] {
+    connect(current, &QLocalSocket::connected, this, [this, current, body] {
+        if (socket_ != current) return;
+        if (expectedProcess_) {
+            qint64 peer = 0;
+#ifdef Q_OS_WIN
+            ULONG process = 0;
+            if (GetNamedPipeServerProcessId(reinterpret_cast<HANDLE>(current->socketDescriptor()), &process))
+                peer = process;
+#elif defined(Q_OS_LINUX)
+            struct ucred credentials {};
+            socklen_t size = sizeof(credentials);
+            if (getsockopt(static_cast<int>(current->socketDescriptor()), SOL_SOCKET, SO_PEERCRED, &credentials, &size) == 0)
+                peer = credentials.pid;
+#endif
+            if (peer != expectedProcess_) {
+                finishError(tr("The control endpoint belongs to a different process"));
+                return;
+            }
+        }
         current->write(QJsonDocument(body).toJson(QJsonDocument::Compact) + '\n');
         current->flush();
     });
     connect(current, &QLocalSocket::readyRead, this, [this, current] {
+        if (socket_ != current) return;
         input_ += current->readAll();
         if (input_.size() > 256 * 1024) {
             finishError(tr("The core response exceeds the allowed size"));
@@ -53,16 +93,18 @@ void CoreClient::request(const QString &command, const QJsonObject &arguments, i
             return;
         }
         const QString command = command_;
+        socket_->disconnect(this);
         socket_->deleteLater();
         socket_ = nullptr;
         emit replied(command, response);
     });
-    connect(current, &QLocalSocket::errorOccurred, this, [this](QLocalSocket::LocalSocketError) {
-        if (socket_)
+    connect(current, &QLocalSocket::errorOccurred, this, [this, current](QLocalSocket::LocalSocketError) {
+        if (socket_ == current)
             finishError(socket_->errorString());
     });
-    QTimer::singleShot(timeoutMs, this, [this, current] {
-        if (socket_ == current)
+    const QString requestId = requestId_;
+    QTimer::singleShot(timeoutMs, this, [this, current, requestId] {
+        if (socket_ == current && requestId_ == requestId)
             finishError(tr("Core did not respond in time"));
     });
     current->connectToServer(endpoint(), QIODevice::ReadWrite);
@@ -71,6 +113,7 @@ void CoreClient::request(const QString &command, const QJsonObject &arguments, i
 void CoreClient::finishError(const QString &message) {
     if (!socket_)
         return;
+    socket_->disconnect(this);
     socket_->abort();
     socket_->deleteLater();
     socket_ = nullptr;

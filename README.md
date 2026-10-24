@@ -8,6 +8,15 @@ core integration options, and acceptance criteria. The macOS GUI is not implemen
 
 ## Build
 
+Click the Desktop version in About five times to restart into a session-only
+Development tab. Choose System service or browse to a local Core executable and
+click Apply. Switching disconnects the VPN and requires elevation; Windows needs
+the matching `wintun.dll` beside the local executable. Quit shuts down the local
+daemon and restores a service that this session stopped. Closing to the tray
+keeps the session; the next normal launch hides Development. Theme/language
+restarts also end the developer session. See [developer mode](docs/developer-mode.md)
+for lifecycle details and crash limitations.
+
 ```powershell
 cmake --preset windows-amd64-release
 cmake --build --preset windows-amd64-release

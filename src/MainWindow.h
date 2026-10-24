@@ -3,6 +3,7 @@
 #include "CoreClient.h"
 #include "CoreUpdater.h"
 #include "ProfileStore.h"
+#include "DevelopmentCore.h"
 
 #include <QElapsedTimer>
 #include <QJsonObject>
@@ -22,6 +23,7 @@ class QTextEdit;
 class QTimer;
 class QToolButton;
 class QComboBox;
+class QLineEdit;
 
 class MainWindow final : public QMainWindow {
     Q_OBJECT
@@ -38,6 +40,9 @@ private:
     QWidget *settingsPage();
     QWidget *logPage();
     QWidget *aboutPage();
+    QWidget *developmentPage();
+    void restartApplication(bool development = false);
+    void updateDevelopment();
     void refreshProfiles();
     ProfileConnectionInfo profileInfo(int row) const;
     void addProfile();
@@ -131,4 +136,14 @@ private:
     quintptr serviceCommandProcess_ = 0;
     QProcess *linuxServiceProcess_ = nullptr;
     QString serviceCommandDescription_;
+    DevelopmentCore *development_ = nullptr;
+    QLabel *desktopVersionLabel_ = nullptr;
+    QLabel *developmentStatus_ = nullptr;
+    QComboBox *developmentBackend_ = nullptr;
+    QLineEdit *developmentPath_ = nullptr;
+    QPushButton *developmentApply_ = nullptr;
+    int developmentClicks_ = 0;
+    bool developerMode_ = false;
+    bool developmentExit_ = false;
+    bool restartRequested_ = false;
 };
