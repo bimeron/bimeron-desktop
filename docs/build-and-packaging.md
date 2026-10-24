@@ -233,7 +233,7 @@ The `stage/windows-amd64` or `stage/windows-arm64` tree is the source of the MSI
 - `THIRD_PARTY_NOTICES.txt`.
 - `MONOCYPHER-LICENSE.txt` and `MINIZ-LICENSE.txt`.
 
-The install rule excludes `core-update-test.exe`, `core-update.lib`, and `profile-vless-test.exe` from the MSI even though they share the Visual Studio output directory with the GUI. Use a fresh `stage/upgrade-windows-*` prefix for local upgrade-test packages so previously staged test artifacts cannot survive an incremental install.
+The install rule excludes `core-update-test.exe`, `core-update.lib`, `profile-vless-test.exe`, and `developer-mode-test.exe` from the MSI even though they share the Visual Studio output directory with the GUI. Use a fresh `stage/upgrade-windows-*` prefix for local upgrade-test packages so previously staged test artifacts cannot survive an incremental install.
 
 Wintun is not downloaded during installation or application launch: the required `wintun.dll` is included in the MSI in advance. ARM64 MSI uses the DLL from the ARM64 core release archive.
 
@@ -309,6 +309,8 @@ DEB is not yet subscribed or published to the APT repository. A typical APT sign
 GitHub Actions `Desktop CI` runs on pushes, pull requests and manual dispatch. It configures and compiles the GUI for Windows amd64 and ARM64 (MSVC 2022 and Qt 6.8.3; ARM64 cross-compiles on an x64 runner) and Linux amd64 and arm64 (Ubuntu 24.04 and system Qt 6). CI does not download core, create installation packages or publish them. It checks GUI compilation only. On Windows ARM64, CI sets `BIMERON_DEPLOY_QT=OFF` because the ARM64 deployment tool cannot run on the x64 runner. Local package builds use the default `ON`. Without downloaded core, CMake uses CPack's default license text while configuring CI; package builds require the actual core notices and licenses.
 
 `ctest` also runs `profile-vless-test`, a GUI profile round-trip test. It uses Qt's offscreen platform on Linux and the Windows platform plugin on Windows. Set `BIMERON_VLESS_CORE` to a VLESS-capable core CLI path to additionally validate each generated profile against the core. This variable is for local contract testing and does not affect packages.
+
+`developer-mode-test` checks session activation/restart, local IPC routing and peer-process rejection, canceled requests, and invalid executable handling. It uses isolated settings and the offscreen platform on Linux, never elevates or changes the installed service. Real elevated daemon switching still requires integration checks. The session-only Development tab accepts a local Core executable at runtime without changing the bundled package payload; see [developer mode](developer-mode.md).
 
 After the complete script, `dist` should have exactly four current files:
 

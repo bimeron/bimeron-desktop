@@ -20,15 +20,16 @@ add_library(core-update STATIC
 target_include_directories(core-update PRIVATE third_party/monocypher third_party/miniz)
 target_link_libraries(core-update PUBLIC Qt6::Network)
 
-qt_add_executable(bimeron-desktop WIN32
-    src/main.cpp
+set(BIMERON_DESKTOP_SOURCES
     src/MainWindow.cpp src/MainWindow.h
     src/CoreClient.cpp src/CoreClient.h
+    src/DevelopmentCore.cpp src/DevelopmentCore.h
     src/CoreUpdater.cpp src/CoreUpdater.h
     src/TrustedCore.cpp src/TrustedCore.h
     src/ProfileStore.cpp src/ProfileStore.h
     src/ProfileEditorDialog.cpp src/ProfileEditorDialog.h
 )
+qt_add_executable(bimeron-desktop WIN32 src/main.cpp ${BIMERON_DESKTOP_SOURCES})
 file(GLOB_RECURSE BIMERON_ICON_FILES CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/assets/icons/*.ico"
     "${CMAKE_CURRENT_SOURCE_DIR}/assets/icons/*.png"
@@ -82,6 +83,19 @@ endif()
 
 include(CTest)
 if(BUILD_TESTING)
+    add_executable(developer-mode-test tests/DeveloperModeTest.cpp ${BIMERON_DESKTOP_SOURCES})
+    target_include_directories(developer-mode-test PRIVATE src)
+    target_link_libraries(developer-mode-test PRIVATE Qt6::Widgets Qt6::Network core-update)
+    target_compile_definitions(developer-mode-test PRIVATE
+        BIMERON_GUI_VERSION="${PROJECT_VERSION}"
+        BIMERON_CORE_UPDATE_PUBLIC_KEY="")
+    if(WIN32)
+        target_link_libraries(developer-mode-test PRIVATE advapi32 shell32)
+    endif()
+    add_test(NAME developer-mode-test COMMAND developer-mode-test --visual-check)
+    if(NOT WIN32)
+        set_tests_properties(developer-mode-test PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+    endif()
     add_executable(core-update-test tests/CoreUpdateTest.cpp src/CoreUpdater.cpp src/CoreUpdater.h
         src/TrustedCore.cpp src/TrustedCore.h)
     target_include_directories(core-update-test PRIVATE src third_party/monocypher third_party/miniz)
@@ -191,7 +205,8 @@ if(WIN32)
         DESTINATION .
         USE_SOURCE_PERMISSIONS
         PATTERN "core-update*" EXCLUDE
-        PATTERN "profile-vless-test*" EXCLUDE)
+        PATTERN "profile-vless-test*" EXCLUDE
+        PATTERN "developer-mode-test*" EXCLUDE)
     set(CMAKE_INSTALL_SYSTEM_RUNTIME_DESTINATION ".")
     include(InstallRequiredSystemLibraries)
     if(NOT CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS MATCHES "vcruntime140_1\\.dll")

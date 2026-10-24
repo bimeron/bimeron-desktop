@@ -9,6 +9,8 @@ class CoreClient final : public QObject {
 public:
     explicit CoreClient(QObject *parent = nullptr);
     bool busy() const { return socket_ != nullptr; }
+    static QString systemEndpoint();
+    void setEndpoint(const QString &endpoint = {}, qint64 expectedProcess = 0);
     void request(const QString &command, const QJsonObject &arguments = {}, int timeoutMs = 5000);
 
 signals:
@@ -23,5 +25,7 @@ private:
     QByteArray input_;
     QString command_;
     QString requestId_;
+    QString endpoint_;
+    qint64 expectedProcess_ = 0;
 };
 

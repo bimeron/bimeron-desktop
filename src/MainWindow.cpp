@@ -11,6 +11,7 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QCoreApplication>
+#include <QDateTime>
 #include <QCloseEvent>
 #include <QDialog>
 #include <QDialogButtonBox>
@@ -61,11 +62,52 @@
 #ifdef Q_OS_WIN
 #include <qt_windows.h>
 #include <shellapi.h>
+#include <sddl.h>
 #elif defined(Q_OS_LINUX)
 #include <unistd.h>
 #endif
 
 namespace {
+#ifdef Q_OS_WIN
+QString processUserSid(HANDLE process) {
+    HANDLE token = nullptr;
+    if (!OpenProcessToken(process, TOKEN_QUERY, &token)) return {};
+    DWORD size = 0;
+    GetTokenInformation(token, TokenUser, nullptr, 0, &size);
+    QByteArray data(static_cast<qsizetype>(size), '\0');
+    QString sid;
+    if (GetTokenInformation(token, TokenUser, data.data(), size, &size)) {
+        LPWSTR value = nullptr;
+        if (ConvertSidToStringSidW(reinterpret_cast<TOKEN_USER *>(data.data())->User.Sid, &value)) {
+            sid = QString::fromWCharArray(value);
+            LocalFree(value);
+        }
+    }
+    CloseHandle(token);
+    return sid;
+}
+
+bool startUnelevated(const QStringList &arguments) {
+    HANDLE token = nullptr;
+    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) return false;
+    TOKEN_LINKED_TOKEN linked{};
+    DWORD size = 0;
+    const bool available = GetTokenInformation(token, TokenLinkedToken, &linked, sizeof(linked), &size);
+    CloseHandle(token);
+    if (!available) return false;
+    const std::wstring executable = QDir::toNativeSeparators(QCoreApplication::applicationFilePath()).toStdWString();
+    std::wstring commandLine = TrustedCore::windowsCommandLine(QStringList{QCoreApplication::applicationFilePath()} + arguments).toStdWString();
+    const std::wstring directory = QDir::toNativeSeparators(QCoreApplication::applicationDirPath()).toStdWString();
+    STARTUPINFOW startup{};
+    startup.cb = sizeof(startup);
+    PROCESS_INFORMATION process{};
+    const bool started = CreateProcessWithTokenW(linked.LinkedToken, LOGON_WITH_PROFILE, executable.c_str(),
+        commandLine.data(), 0, nullptr, directory.c_str(), &startup, &process);
+    CloseHandle(linked.LinkedToken);
+    if (started) { CloseHandle(process.hThread); CloseHandle(process.hProcess); }
+    return started;
+}
+#endif
 class ProfileRowDelegate final : public QStyledItemDelegate {
 public:
     using QStyledItemDelegate::QStyledItemDelegate;
@@ -290,6 +332,10 @@ QString safeCoreDiagnostic(QByteArray output) {
 }
 
 MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), core_(this) {
+    developerMode_ = QCoreApplication::arguments().contains("--development")
+        && QCoreApplication::arguments().contains("--restart")
+        && !QCoreApplication::arguments().contains("--autostart");
+    development_ = new DevelopmentCore(coreExecutablePath(), this);
     capabilities_ = {{"vpn", true}, {"proxy", true}, {"ipv4", true}, {"ipv6", true},
                      {"ip_split", true}, {"domain_split", true}, {"kill_switch", false}, {"daemon", true}};
     setWindowTitle(tr("Bimeron"));
@@ -314,10 +360,11 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), core_(this) {
     brand->setObjectName("brand");
     navigation->addWidget(brand);
     navigation->addSpacing(14);
-    const QStringList labels{tr("Profiles"), tr("Settings"), tr("Log"), tr("About")};
+    QStringList labels{tr("Profiles"), tr("Settings"), tr("Log"), tr("About")};
+    if (developerMode_) labels << tr("Development");
     for (int i = 0; i < labels.size(); ++i) {
         auto *button = navButton(labels[i]);
-        if (!i) button->setChecked(true);
+        if (i == (developerMode_ ? 4 : 0)) button->setChecked(true);
         connect(button, &QPushButton::clicked, this, [this, i] { pages_->setCurrentIndex(i); });
         auto *shortcut = new QShortcut(QKeySequence(QStringLiteral("Ctrl+%1").arg(i + 1)), this);
         connect(shortcut, &QShortcut::activated, this, [this, button, i] {
@@ -333,6 +380,11 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), core_(this) {
     pages_->addWidget(settingsPage());
     pages_->addWidget(logPage());
     pages_->addWidget(aboutPage());
+    if (developerMode_) {
+        pages_->addWidget(developmentPage());
+        pages_->setCurrentIndex(4);
+        autoConnectAttempted_ = true;
+    }
     auto *newProfile = new QShortcut(QKeySequence::New, this);
     connect(newProfile, &QShortcut::activated, this, &MainWindow::addProfile);
     layout->addWidget(sidebar);
@@ -423,6 +475,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), core_(this) {
         connectionLabel_->setText(tr("Core unavailable"));
         connectionLabel_->setStyleSheet(themedStyle("color: #c62828; font-weight: 500"));
         connectButton_->setEnabled(false);
+        if (development_->busy() || development_->local() || development_->failed()) return;
         if (quitRequested_) {
             if (tray_)
                 tray_->hide();
@@ -435,6 +488,19 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), core_(this) {
     pollTimer_->setInterval(1000);
     connect(pollTimer_, &QTimer::timeout, this, &MainWindow::poll);
     pollTimer_->start();
+    connect(development_, &DevelopmentCore::changed, this, &MainWindow::updateDevelopment);
+    connect(development_, &DevelopmentCore::completed, this, [this](bool success) {
+        if (!developmentExit_) return;
+        developmentExit_ = false;
+        if (success && !development_->needsCleanup()) {
+            if (restartRequested_) restartApplication();
+            else QApplication::quit();
+        } else {
+            restartRequested_ = false;
+            showWindow();
+            QMessageBox::warning(this, tr("Development"), development_->status());
+        }
+    });
     refreshProfiles();
     core_.request("hello");
 }
@@ -607,8 +673,7 @@ QWidget *MainWindow::settingsPage() {
         prompt.addButton(tr("Cancel"), QMessageBox::RejectRole);
         prompt.exec();
         if (prompt.clickedButton() == restart) {
-            QProcess::startDetached(QCoreApplication::applicationFilePath(), {QStringLiteral("--restart")});
-            QApplication::quit();
+            restartApplication();
             return;
         }
         if (hadOverride) settings.setValue("app/theme", previousTheme);
@@ -649,8 +714,7 @@ QWidget *MainWindow::settingsPage() {
         prompt.addButton(tr("Cancel"), QMessageBox::RejectRole);
         prompt.exec();
         if (prompt.clickedButton() == restart) {
-            QProcess::startDetached(QCoreApplication::applicationFilePath(), {QStringLiteral("--restart")});
-            QApplication::quit();
+            restartApplication();
             return;
         }
 
@@ -867,7 +931,10 @@ QWidget *MainWindow::aboutPage() {
     auto *title = new QLabel(tr("About"));
     title->setStyleSheet("font-size: 17px; font-weight: 700");
     layout->addWidget(title);
-    layout->addWidget(new QLabel(tr("Bimeron Desktop %1").arg(BIMERON_GUI_VERSION)));
+    desktopVersionLabel_ = new QLabel(tr("Bimeron Desktop %1").arg(BIMERON_GUI_VERSION));
+    desktopVersionLabel_->setObjectName("desktopVersion");
+    desktopVersionLabel_->installEventFilter(this);
+    layout->addWidget(desktopVersionLabel_);
     coreVersionLabel_ = new QLabel(tr("Core: unknown"));
     layout->addWidget(coreVersionLabel_);
     layout->addStretch();
@@ -911,6 +978,13 @@ void MainWindow::refreshProfiles() {
 }
 
 bool MainWindow::eventFilter(QObject *watched, QEvent *event) {
+    if (watched == desktopVersionLabel_ && !developerMode_ && developmentClicks_ < 5
+        && event->type() == QEvent::MouseButtonRelease) {
+        const auto *mouse = static_cast<QMouseEvent *>(event);
+        if (mouse->button() == Qt::LeftButton && desktopVersionLabel_->rect().contains(mouse->position().toPoint())
+            && ++developmentClicks_ == 5)
+            QTimer::singleShot(0, this, [this] { restartApplication(true); });
+    }
     if (profileList_ && watched == profileList_->viewport() && event->type() == QEvent::MouseButtonPress) {
         const auto *mouse = static_cast<QMouseEvent *>(event);
         if (mouse->button() == Qt::LeftButton && !profileList_->itemAt(mouse->position().toPoint())) {
@@ -1161,6 +1235,7 @@ void MainWindow::removeProfile() {
 }
 
 void MainWindow::toggleConnection() {
+    if (development_->busy() || development_->failed()) return;
     const int row = profileList_->currentItem() && profileList_->currentItem()->isSelected()
         ? profileList_->currentRow() : -1;
     if (row < 0)
@@ -1181,6 +1256,7 @@ void MainWindow::toggleConnection() {
 }
 
 void MainWindow::startProfile(int row) {
+    if (development_->busy() || development_->failed()) return;
     if (row < 0 || row >= profiles_.size())
         return;
     const auto info = profileInfo(row);
@@ -1231,6 +1307,7 @@ void MainWindow::startProfile(int row) {
 }
 
 void MainWindow::poll() {
+    if (development_->busy() || development_->failed()) return;
     if (core_.busy()) return;
     if (runningCoreVersion_.isEmpty()) { core_.request("hello"); return; }
     if (++pollCount_ % 3 == 0)
@@ -1492,7 +1569,7 @@ void MainWindow::updateConnectionButton() {
         connectButton_->setText(tr("Connect"));
     }
     connectButton_->setProperty("mode", mode);
-    connectButton_->setEnabled(enabled);
+    connectButton_->setEnabled(enabled && !development_->busy() && !development_->failed());
     connectButton_->style()->unpolish(connectButton_);
     connectButton_->style()->polish(connectButton_);
 }
@@ -1542,7 +1619,7 @@ void MainWindow::appendLog(const QString &message) {
 }
 
 bool MainWindow::validateConfig(const QString &path, QString *error) const {
-    const QString executable = coreExecutablePath();
+    const QString executable = development_->local() ? development_->path() : coreExecutablePath();
     if (!QFileInfo::exists(executable)) {
         if (error) *error = tr("The core CLI was not found next to the application; the profile cannot be validated");
         return false;
@@ -1685,6 +1762,15 @@ void MainWindow::showWindow() {
 }
 
 void MainWindow::requestShutdown() {
+    if (development_->busy()) {
+        QTimer::singleShot(250, this, &MainWindow::requestShutdown);
+        return;
+    }
+    if (development_->needsCleanup()) {
+        developmentExit_ = true;
+        development_->select({});
+        return;
+    }
     if (coreUpdateCommand_) {
         QTimer::singleShot(250, this, &MainWindow::requestShutdown);
         return;
@@ -1707,6 +1793,10 @@ void MainWindow::requestShutdown() {
 }
 
 void MainWindow::saveDiagnostics() {
+    if (development_->local() || development_->busy() || development_->failed()) {
+        QMessageBox::information(this, tr("Diagnostics"), tr("Diagnostics are unavailable while using a local core"));
+        return;
+    }
     const QString executable = coreExecutablePath();
     if (!QFileInfo::exists(executable)) {
         QMessageBox::warning(this, tr("Diagnostics"), tr("The core CLI was not found next to the application."));
@@ -1743,6 +1833,7 @@ void MainWindow::saveDiagnostics() {
 }
 
 bool MainWindow::coreUpdatePrerequisite() {
+    if (development_->local() || development_->busy() || development_->failed()) return false;
     if (!updater_.available()) {
         coreUpdateLabel_->setText(tr("Signed updates are not available yet"));
         return false;
@@ -1761,6 +1852,7 @@ bool MainWindow::coreUpdatePrerequisite() {
 }
 
 bool MainWindow::runServiceCommand(const QStringList &arguments, const QString &description) {
+    if (development_->local() || development_->busy() || development_->failed()) return false;
     if (serviceCommandProcess_ || linuxServiceProcess_)
         return false;
     const QString executable = coreExecutablePath();
@@ -1777,22 +1869,36 @@ bool MainWindow::runServiceCommand(const QStringList &arguments, const QString &
     const std::wstring file = QDir::toNativeSeparators(executable).toStdWString();
     const std::wstring params = parameters.toStdWString();
     const std::wstring directory = QDir::toNativeSeparators(QCoreApplication::applicationDirPath()).toStdWString();
-    SHELLEXECUTEINFOW info{};
-    info.cbSize = sizeof(info);
-    info.fMask = SEE_MASK_NOCLOSEPROCESS;
-    info.hwnd = reinterpret_cast<HWND>(winId());
-    info.lpVerb = L"runas";
-    info.lpFile = file.c_str();
-    info.lpParameters = params.c_str();
-    info.lpDirectory = directory.c_str();
-    info.nShow = SW_HIDE;
-    if (!ShellExecuteExW(&info) || !info.hProcess) {
+    HANDLE handle = nullptr;
+    if (developerMode_) {
+        std::wstring commandLine = TrustedCore::windowsCommandLine(QStringList{executable} + arguments).toStdWString();
+        STARTUPINFOW startup{};
+        startup.cb = sizeof(startup);
+        PROCESS_INFORMATION process{};
+        if (CreateProcessW(file.c_str(), commandLine.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW,
+                           nullptr, directory.c_str(), &startup, &process)) {
+            CloseHandle(process.hThread);
+            handle = process.hProcess;
+        }
+    } else {
+        SHELLEXECUTEINFOW info{};
+        info.cbSize = sizeof(info);
+        info.fMask = SEE_MASK_NOCLOSEPROCESS;
+        info.hwnd = reinterpret_cast<HWND>(winId());
+        info.lpVerb = L"runas";
+        info.lpFile = file.c_str();
+        info.lpParameters = params.c_str();
+        info.lpDirectory = directory.c_str();
+        info.nShow = SW_HIDE;
+        if (ShellExecuteExW(&info)) handle = info.hProcess;
+    }
+    if (!handle) {
         serviceStatusLabel_->setText(tr("Service: action canceled"));
         serviceStatusLabel_->setStyleSheet(themedStyle("color: #b54708"));
         return false;
     }
 
-    serviceCommandProcess_ = reinterpret_cast<quintptr>(info.hProcess);
+    serviceCommandProcess_ = reinterpret_cast<quintptr>(handle);
     serviceStartAttempted_ = true;
     serviceCommandDescription_ = description;
     serviceStatusLabel_->setText(description + QStringLiteral("…"));
@@ -1932,6 +2038,7 @@ void MainWindow::reportCoreUpdateResult(const QString &message) {
 }
 
 void MainWindow::refreshServiceStatus() {
+    if (development_->local() || development_->busy() || development_->failed()) return;
 #if defined(Q_OS_WIN) || defined(Q_OS_LINUX)
     if (!serviceStatusLabel_ || serviceCommandProcess_ || linuxServiceProcess_) return;
     const auto showActions = [this](bool install, bool start, bool stop, bool update, bool uninstall) {
@@ -2022,6 +2129,8 @@ void MainWindow::applyStartupSetting(bool enabled) {
 }
 
 void MainWindow::ensureCoreService() {
+    if (QCoreApplication::arguments().contains("--visual-check")) return;
+    if (developerMode_ || developmentClicks_ >= 5 || development_->busy() || development_->local() || development_->failed()) return;
 #if defined(Q_OS_WIN) || defined(Q_OS_LINUX)
     if (serviceStartAttempted_ || linuxServiceProcess_)
         return;
@@ -2052,5 +2161,170 @@ void MainWindow::closeEvent(QCloseEvent *event) {
         event->ignore();
         return;
     }
-    event->accept();
+    event->ignore();
+    requestShutdown();
+}
+
+QWidget *MainWindow::developmentPage() {
+    auto *page = new QWidget;
+    auto *layout = new QVBoxLayout(page);
+    layout->setContentsMargins(18, 16, 18, 16);
+    auto *title = new QLabel(tr("Development"));
+    title->setStyleSheet("font-size: 17px; font-weight: 700");
+    layout->addWidget(title);
+    auto *hint = new QLabel(tr("The active core resets when you quit; closing to the tray keeps this session. The last local path is remembered."));
+    hint->setWordWrap(true);
+    layout->addWidget(hint);
+    developmentBackend_ = new HiDpiComboBox;
+    developmentBackend_->setObjectName("developmentBackend");
+    developmentBackend_->addItems({tr("System service"), tr("Local core executable")});
+    layout->addWidget(developmentBackend_);
+    auto *pathRow = new QHBoxLayout;
+    developmentPath_ = new QLineEdit;
+    developmentPath_->setObjectName("developmentPath");
+    developmentPath_->setPlaceholderText(tr("Absolute path to the core executable"));
+    developmentPath_->setText(QSettings().value("developer/lastCorePath").toString());
+    developmentPath_->setEnabled(false);
+    const auto rememberPath = [this] {
+        const QFileInfo file(developmentPath_->text().trimmed());
+        if (file.isAbsolute() && file.isFile())
+            QSettings().setValue("developer/lastCorePath", file.absoluteFilePath());
+    };
+    connect(developmentPath_, &QLineEdit::editingFinished, this, rememberPath);
+    auto *browse = new QPushButton(tr("Browse…"));
+    browse->setEnabled(false);
+    pathRow->addWidget(developmentPath_, 1);
+    pathRow->addWidget(browse);
+    layout->addLayout(pathRow);
+    developmentModified_ = new QLabel;
+    developmentModified_->setObjectName("developmentModified");
+    layout->addWidget(developmentModified_);
+    const auto updateModified = [this] {
+        const QFileInfo file(developmentPath_->text().trimmed());
+        const QDateTime modified = file.isFile() ? file.lastModified() : QDateTime{};
+        developmentModified_->setText(tr("File modified: %1").arg(modified.isValid()
+            ? QLocale().toString(modified.toLocalTime(), QLocale::ShortFormat) : tr("unavailable")));
+        developmentModified_->setVisible(developmentBackend_->currentIndex() == 1 && !developmentPath_->text().trimmed().isEmpty());
+    };
+    connect(developmentPath_, &QLineEdit::textChanged, this, updateModified);
+    connect(developmentBackend_, &QComboBox::currentIndexChanged, this, [this, browse, updateModified](int index) {
+        developmentPath_->setEnabled(index == 1);
+        browse->setEnabled(index == 1);
+        updateModified();
+    });
+    updateModified();
+    connect(browse, &QPushButton::clicked, this, [this, rememberPath] {
+        const QString path = QFileDialog::getOpenFileName(this, tr("Select core executable"), developmentPath_->text());
+        if (!path.isEmpty()) {
+            developmentPath_->setText(path);
+            rememberPath();
+        }
+    });
+    developmentApply_ = new QPushButton(tr("Apply"));
+    layout->addWidget(developmentApply_);
+    developmentStatus_ = new QLabel(tr("System service"));
+    developmentStatus_->setWordWrap(true);
+    developmentStatus_->setTextFormat(Qt::PlainText);
+    layout->addWidget(developmentStatus_);
+    layout->addStretch();
+    connect(developmentApply_, &QPushButton::clicked, this, [this] {
+        if (development_->busy()) return;
+        if (coreUpdateCommand_ || coreUpdateAwaitingResult_ || serviceCommandProcess_ || linuxServiceProcess_) {
+            QMessageBox::information(this, tr("Development"), tr("Wait for the current service operation to finish"));
+            return;
+        }
+        const QString path = developmentBackend_->currentIndex() == 1 ? developmentPath_->text().trimmed() : QString{};
+        if (developmentBackend_->currentIndex() == 1 && path.isEmpty()) return;
+        if (!development_->failed() && path == development_->path()) return;
+        if (QMessageBox::warning(this, tr("Switch core"),
+                tr("Switching cores disconnects the VPN. The selected local executable will run with administrator privileges. Continue?"),
+                QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes) return;
+        if (coreUpdateCommand_ || coreUpdateAwaitingResult_ || serviceCommandProcess_ || linuxServiceProcess_ || development_->busy()) return;
+        development_->select(path);
+    });
+    return page;
+}
+
+void MainWindow::updateDevelopment() {
+    autoConnectAttempted_ = true;
+    serviceStartAttempted_ = true;
+    pendingStartPath_.clear();
+    stopRequested_ = false;
+    runningCoreVersion_.clear();
+    instance_.clear();
+    sessionId_.clear();
+    eventCursor_ = 0;
+    activeProfileId_.clear();
+    statsClock_.invalidate();
+    previousUp_ = previousDown_ = 0;
+    coreVersionLabel_->setText(tr("Core: unknown"));
+    const bool blocked = development_->busy() || development_->failed();
+    core_.setEndpoint(development_->local() ? development_->endpoint() : QString{}, development_->processId());
+    handleStatus({{"State", blocked ? "unknown" : "disconnected"}});
+    updateConnectionButton();
+    if (developmentStatus_) {
+        developmentStatus_->setText(development_->status()
+            + (development_->local() ? "\n" + QDir::toNativeSeparators(development_->path()) : QString{}));
+        developmentApply_->setEnabled(!development_->busy());
+    }
+    const bool system = !blocked && !development_->local();
+    for (auto *button : {serviceInstallButton_, serviceStartButton_, serviceStopButton_, serviceUpdateButton_, serviceUninstallButton_, serviceRecoveryButton_})
+        button->setEnabled(system);
+    serviceAutomaticCheck_->setEnabled(system);
+    if (!system) serviceStatusLabel_->setText(tr("System service controls are suspended"));
+    if (!blocked) {
+        core_.request("hello");
+        if (system) refreshServiceStatus();
+    }
+}
+
+void MainWindow::restartApplication(bool development) {
+    if (coreUpdateCommand_ || coreUpdateAwaitingResult_ || serviceCommandProcess_ || linuxServiceProcess_ || development_->busy()) {
+        QTimer::singleShot(250, this, [this, development] { restartApplication(development); });
+        return;
+    }
+    if (development_->needsCleanup()) {
+        restartRequested_ = true;
+        developmentExit_ = true;
+        development_->select({});
+        return;
+    }
+    QStringList arguments{"--restart"};
+    if (development) arguments << "--development";
+    if (QCoreApplication::arguments().contains("--visual-check")) arguments << "--visual-check";
+    bool started = false;
+#ifdef Q_OS_WIN
+    if (!property("developmentRestartWithoutElevation").toBool()) {
+        if (development) {
+            const std::wstring executable = QDir::toNativeSeparators(QCoreApplication::applicationFilePath()).toStdWString();
+            const std::wstring parameters = TrustedCore::windowsCommandLine(arguments).toStdWString();
+            const std::wstring directory = QDir::toNativeSeparators(QCoreApplication::applicationDirPath()).toStdWString();
+            SHELLEXECUTEINFOW info{};
+            info.cbSize = sizeof(info);
+            info.fMask = SEE_MASK_NOCLOSEPROCESS | SEE_MASK_NOASYNC;
+            info.lpVerb = L"runas";
+            info.lpFile = executable.c_str();
+            info.lpParameters = parameters.c_str();
+            info.lpDirectory = directory.c_str();
+            info.nShow = SW_SHOWNORMAL;
+            if (ShellExecuteExW(&info) && info.hProcess) {
+                const QString sid = processUserSid(info.hProcess);
+                started = !sid.isEmpty() && sid == processUserSid(GetCurrentProcess());
+                if (!started) TerminateProcess(info.hProcess, 1);
+                CloseHandle(info.hProcess);
+            }
+        } else if (developerMode_) {
+            started = startUnelevated(arguments);
+        } else {
+            started = QProcess::startDetached(QCoreApplication::applicationFilePath(), arguments);
+        }
+    } else
+#endif
+        started = QProcess::startDetached(QCoreApplication::applicationFilePath(), arguments);
+    if (started) QApplication::quit();
+    else {
+        developmentClicks_ = 0;
+        restartRequested_ = false;
+        QMessageBox::warning(this, tr("Restart"), tr("Could not restart Bimeron"));
+    }
 }
