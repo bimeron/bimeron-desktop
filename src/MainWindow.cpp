@@ -1087,6 +1087,7 @@ void MainWindow::editProfile(int row) {
 void MainWindow::addProfile() {
     QDialog dialog(this);
     dialog.setWindowTitle(tr("Add profile"));
+    dialog.setWindowFlag(Qt::MSWindowsFixedSizeDialogHint);
     dialog.setMinimumWidth(440);
     auto *layout = new QVBoxLayout(&dialog);
     auto *hint = new QLabel(tr("Paste a key beginning with ss://, ssconf://, socks5://, or vless://"));
@@ -1109,6 +1110,11 @@ void MainWindow::addProfile() {
     buttons.button(QDialogButtonBox::Cancel)->setText(tr("Cancel"));
     buttons.button(QDialogButtonBox::Save)->setEnabled(false);
     layout->addWidget(&buttons);
+    const auto fitDialog = [&] {
+        layout->invalidate();
+        layout->activate();
+        dialog.setFixedSize(dialog.sizeHint());
+    };
     auto keyName = [](const QString &value) {
         if (value.startsWith("socks5://")) return QString();
         const qsizetype hash = value.indexOf('#');
@@ -1154,6 +1160,7 @@ void MainWindow::addProfile() {
         keyValid = isKey(value);
         nameLabel->setVisible(keyValid);
         name->setVisible(keyValid);
+        fitDialog();
         const QString suggested = keyName(value);
         if (!nameEdited && !suggested.isEmpty())
             name->setText(suggested);
@@ -1163,6 +1170,7 @@ void MainWindow::addProfile() {
         const QString clipboardKey = QApplication::clipboard()->text().trimmed();
         const bool available = isKey(clipboardKey);
         paste->setVisible(available);
+        fitDialog();
         if (available) {
             const QString suggested = keyName(clipboardKey);
             paste->setText(suggested.isEmpty() ? tr("Paste key") : tr("Paste key #%1").arg(suggested));
