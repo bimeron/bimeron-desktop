@@ -2,7 +2,9 @@
 
 #include <QCoreApplication>
 #include <QCryptographicHash>
+#include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -47,6 +49,24 @@ QString CoreUpdater::architecture() const {
 }
 
 void CoreUpdater::fetch(const QUrl &url, qint64 limit, FetchCallback callback) {
+#ifdef BIMERON_LOCAL_UPDATE_TESTING
+    const QFileInfo list(qEnvironmentVariable("BIMERON_TEST_RELEASES_JSON"));
+    const QString root = list.dir().canonicalPath();
+    const QString path = QFileInfo(url.toLocalFile()).canonicalFilePath();
+    if (!url.isLocalFile() || root.isEmpty() || path.isEmpty() ||
+        (path != list.canonicalFilePath() && !path.startsWith(root + QLatin1Char('/')))) {
+        callback({}, tr("Untrusted local update file"));
+        return;
+    }
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly) || file.size() > limit) {
+        callback({}, tr("Local update file is unavailable or exceeds the size limit"));
+        return;
+    }
+    const QByteArray bytes = file.read(limit + 1);
+    if (bytes.size() > limit) callback({}, tr("Local update file exceeds the size limit"));
+    else callback(bytes, {});
+#else
     if (url.scheme() != "https" || !(url.host() == "api.github.com" || url.host() == "github.com" || url.host() == "objects.githubusercontent.com" || url.host().endsWith(".githubusercontent.com"))) {
         callback({}, tr("Untrusted update URL"));
         return;
@@ -71,6 +91,7 @@ void CoreUpdater::fetch(const QUrl &url, qint64 limit, FetchCallback callback) {
         reply->deleteLater();
         callback(error.isEmpty() ? *data : QByteArray{}, error);
     });
+#endif
 }
 
 void CoreUpdater::check(const QString &installedVersion, int ipcVersion, bool betaAllowed) {
@@ -87,7 +108,18 @@ void CoreUpdater::check(const QString &installedVersion, int ipcVersion, bool be
     ipcVersion_ = ipcVersion;
     betaAllowed_ = betaAllowed;
     emit statusChanged(tr("Checking for signed core updates…"));
-    fetch(QUrl(QStringLiteral("https://api.github.com/repos/bimeron/bimeron-core/releases?per_page=100")), 1024 * 1024,
+#ifdef BIMERON_LOCAL_UPDATE_TESTING
+    const QString listPath = qEnvironmentVariable("BIMERON_TEST_RELEASES_JSON");
+    if (!QFileInfo(listPath).isAbsolute()) {
+        busy_ = false;
+        emit statusChanged(tr("Local update release list is not configured"));
+        return;
+    }
+    const QUrl releaseListUrl = QUrl::fromLocalFile(listPath);
+#else
+    const QUrl releaseListUrl(QStringLiteral("https://api.github.com/repos/bimeron/bimeron-core/releases?per_page=100"));
+#endif
+    fetch(releaseListUrl, 1024 * 1024,
           [this](QByteArray bytes, QString error) {
         if (!error.isEmpty()) { busy_ = false; emit statusChanged(tr("Core update check failed: %1").arg(error)); return; }
         const auto doc = QJsonDocument::fromJson(bytes);
