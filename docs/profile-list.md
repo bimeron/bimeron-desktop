@@ -8,4 +8,4 @@ Acceptance: imported and edited profiles show the appropriate labels; file sourc
 
 # Add profile dialog sizing
 
-The Add profile dialog fits its visible controls and cannot be resized by dragging. A valid key in the clipboard shows the paste button; removing it hides the button and restores the shorter height. A valid key in the input shows the profile name controls; clearing or invalidating it hides them and restores the height for the current clipboard state. These transitions work in either order without leaving blank space.
+The Add profile dialog fits its visible controls and cannot be resized by dragging. On Windows, its frame uses the default pointer at every edge instead of a resize pointer. A valid key in the clipboard shows the paste button; removing it hides the button and restores the shorter height. A valid key in the input shows the profile name controls; clearing or invalidating it hides them and restores the height for the current clipboard state. These transitions work in either order without leaving blank space.

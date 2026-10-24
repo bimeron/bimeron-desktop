@@ -1087,6 +1087,7 @@ void MainWindow::editProfile(int row) {
 void MainWindow::addProfile() {
     QDialog dialog(this);
     dialog.setWindowTitle(tr("Add profile"));
+    dialog.setWindowFlag(Qt::MSWindowsFixedSizeDialogHint);
     dialog.setMinimumWidth(440);
     auto *layout = new QVBoxLayout(&dialog);
     auto *hint = new QLabel(tr("Paste a key beginning with ss://, ssconf://, socks5://, or vless://"));
