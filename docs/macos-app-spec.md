@@ -11,9 +11,11 @@ profiles, connection, routing editor, settings, log and menu bar
 menu. The network logic is performed by the existing `bimeron-core`.
 
 “Same application” in this document means functional continuity.
-Exact reproduction of sizes, colors and Qt widgets is not required. Offered
-native macOS design with support for light/dark theme and keyboard. This
-a proposal rather than an already approved design.
+Use [the current GUI reference](current-gui-reference.md) as the source-based
+screen and state checklist for a close SwiftUI port. Native macOS controls,
+menus, system dialogs, and accessibility may differ from Qt widgets. Exact
+pixel reproduction remains an open design decision; compare running builds
+before claiming visual parity.
 
 The document distinguishes:
 
@@ -64,7 +66,8 @@ its root; they are not nested here to avoid creating an outdated copy:
 | `docs/MACOS.MD`, `docs/DOCTOR.MD`, `docs/DNS_METADATA.MD` | Additional required sources when implementing relevant functions |
 
 The analysis was performed using the source code, without launching the interface and without network checks on a Mac.
-Screenshots and visual reference are not prepared. Information about previously run Mac tests
+Screenshots are not prepared. The current source-based GUI reference is in
+[current-gui-reference.md](current-gui-reference.md). Information about previously run Mac tests
 below are taken from the core documentation and are not meant to be re-tested as part of this work.
 When updating the core, you need to check the contract with the new revision. When it diverges
 documents, check the implementation and tests, then correct the specification.
@@ -152,7 +155,8 @@ one address. This is local interface data, not public diagnostics.
 
 ### 4.2. Adding by key
 
-Fact: `ss://` and `ssconf://` are supported. The name is suggested from the URL fragment
+Fact: the current Add profile dialog accepts `ss://`, `ssconf://`, `socks5://`,
+and `vless://`. The name is suggested from the URL fragment
 `#...` after percent-decoding; a manually changed name is not overwritten.
 Saving is available with a non-empty name and a pre-valid key.
 The final check is performed by core. Saving does not connect the VPN.
@@ -203,14 +207,15 @@ and profiles from another OS are not included in the first transfer; explicit im
 
 ### 4.4. Profile editor
 
-Save four logical tabs:
+The current Qt editor has five tabs. Preserve these logical sections:
 
 | Tab | Contents |
 | --- | --- |
-| Basic | Name; key source type; hidden key; server, port, cipher, password and prefix parameters for the corresponding source; mode; SOCKS5 listen, if supported |
+| General | Name; key source type; hidden key; server, port, cipher, password and prefix parameters for the corresponding source; mode; SOCKS5 listen, if supported |
+| VLESS | URI or explicit VLESS parameters, including transport, security, REALITY, gRPC, WebSocket and XHTTP options |
 | Network | Logical interface name, MTU, DNS, IPv6, kill switch availability |
 | Routing | Default Action, Local Network Exception, Ordered Rules |
-| Source config | Editable `.conf` monospace font |
+| Raw config | Editable `.conf` monospace font |
 
 In current Qt, the source type is shown as text, the switch is hidden. For source
 `SS` parsed server parameters are read-only; for explicit group
@@ -320,7 +325,7 @@ activation failure and the need to reboot.
 | Detailed statistics | Off | Switches additional counters |
 | Auto-connect when GUI starts | Off | Explicitly selected profile, one attempt after successful initialization in the absence of an active session |
 | Save previous journal entries | Included | Do not clear the current log on a new connection; it's not a promise of storage between runs |
-| Launch application upon login | Qt only implements Windows | Login item is offered using macOS; disabled by default |
+| Launch application upon login | Qt implements Windows and Linux | Login item is offered using macOS; disabled by default |
 
 GUI autostart, system component startup, and VPN auto-connection are different actions.
 GUI auto-connection does not mean on-demand/restart system extension without host.
@@ -619,16 +624,17 @@ checked. Selecting the final packaging and publishing remains a separate release
 | Identifiers and core integration | Permanent host/provider bundle ID, Keychain group, version and method of delivery of components |
 | Autorecovery without GUI | For the first version, it is proposed not to promise until the completion of the secret storage model system extension |
 | NE Validation and Diagnostics | Approve available core contract, including detailed errors and running provider version |
-| Design | A functionally similar native SwiftUI is offered; the accuracy of visual copying must be confirmed separately |
+| Design | A close native SwiftUI port is desired; use the current GUI reference and compare running builds before deciding the permitted visual differences |
 
 Before making these decisions, you can use the document for assessment and planning.
 They should not be silently assumed to be selected just because a recommendation is listed here.
 
 ## 13. Transfer packet to the next agent
 
-Submit this specification, both repositories with committed revisions, instructions
-`AGENTS.md` of each project and the decisions taken from section 12. For visual parity
-add anonymized screenshots of the main screens and states, if required.
+Submit this specification, the [current GUI reference](current-gui-reference.md),
+both repositories with committed revisions, instructions `AGENTS.md` of each
+project and the decisions taken from section 12. For visual parity, add
+anonymized screenshots of the main screens and states before accepting a port.
 Do not transmit real keys, profiles and signing secrets as part of the job.
 
 Statement of the task for the next stage:
