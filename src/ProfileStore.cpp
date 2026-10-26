@@ -72,9 +72,9 @@ QString ProfileStore::importConfig(const QString &source, QString *error) const 
 
 QString ProfileStore::createConfig(const QString &name, const QString &key, QString *error) const {
     const QString trimmed = key.trimmed();
-    const QString field = trimmed.startsWith("ssconf://") ? "SSConf" : trimmed.startsWith("ss://") ? "SS" : trimmed.startsWith("socks5://") ? "SOCKS5" : trimmed.startsWith("vless://") ? "VLESS" : QString();
+    const QString field = trimmed.startsWith("ssconf://") ? "SSConf" : trimmed.startsWith("ss://") ? "SS" : trimmed.startsWith("socks5://") ? "SOCKS5" : trimmed.startsWith("vless://") ? "VLESS" : trimmed.startsWith("hysteria2://") || trimmed.startsWith("hy2://") ? "Hysteria2" : QString();
     if (field.isEmpty()) {
-        if (error) *error = QObject::tr("The key must begin with ss://, ssconf://, socks5://, or vless://");
+        if (error) *error = QObject::tr("The key must begin with ss://, ssconf://, socks5://, vless://, hysteria2://, or hy2://");
         return {};
     }
     QString safeName = name.trimmed().left(128);
@@ -131,7 +131,7 @@ ProfileConnectionInfo ProfileStore::connectionInfo(const QString &configText) {
             info.interfaceMode = field.toLower();
         if (section != "AccessKey") continue;
         if (key.compare("Type", Qt::CaseInsensitive) == 0) type = field.toLower();
-        else if (QStringList{"SS", "SSConf", "SOCKS5", "VLESS", "Key", "File"}.contains(key, Qt::CaseInsensitive)) {
+        else if (QStringList{"SS", "SSConf", "SOCKS5", "VLESS", "Hysteria2", "Key", "File"}.contains(key, Qt::CaseInsensitive)) {
             source = key;
             value = field;
         }
@@ -146,14 +146,19 @@ ProfileConnectionInfo ProfileStore::connectionInfo(const QString &configText) {
         else if (scheme == "ssconf") info.protocol = QStringLiteral("Shadowsocks ⟳");
         else if (scheme == "socks5") info.protocol = QStringLiteral("SOCKS5");
         else if (scheme == "vless") info.protocol = QStringLiteral("VLESS");
+        else if (scheme == "hysteria2" || scheme == "hy2") info.protocol = QStringLiteral("Hysteria2");
         const QUrl uri(value);
+        const bool hysteria2 = scheme == "hysteria2" || scheme == "hy2";
         info.connectable = !info.protocol.isEmpty() && uri.isValid()
-            && uri.scheme().compare(scheme, Qt::CaseInsensitive) == 0
+            && (hysteria2 ? (uri.scheme() == "hysteria2" || uri.scheme() == "hy2") : uri.scheme().compare(scheme, Qt::CaseInsensitive) == 0)
             && (scheme == "ss" || (!uri.host().isEmpty() && (scheme == "ssconf" || uri.port() > 0)));
         if (scheme == "vless")
             info.connectable = info.connectable && QRegularExpression(
                 QStringLiteral("^[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}$"))
                 .match(uri.userName()).hasMatch();
+        if (hysteria2)
+            info.connectable = info.connectable && !uri.userName().isEmpty()
+                && uri.password().isEmpty() && uri.path().isEmpty() && uri.port() <= 65535;
     } else if (type == "shadowsocks" || type == "ss") {
         info.protocol = QStringLiteral("Shadowsocks");
         info.connectable = true;

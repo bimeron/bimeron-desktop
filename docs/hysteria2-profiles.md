@@ -49,10 +49,11 @@ form in the current Core contract.
    URI into explicit settings. Existing Shadowsocks, SOCKS5 and VLESS profiles
    retain their current behavior. Neither the list nor diagnostic output
    exposes the password.
-4. Focused GUI round-trip tests run without network access. When a Hysteria2
-   capable Core CLI is supplied, generated profiles also pass its `validate`
-   command. A manual integration test with an installed capable service
-   confirms connection, UDP relay, stop, and reconnect; an older service
+4. Focused GUI round-trip tests run without network access. Set
+   `BIMERON_HYSTERIA2_CORE` to a Hysteria2-capable Core CLI path to validate
+   the generated profiles against it. A manual integration test with an
+   installed capable service confirms connection, UDP relay, stop, and
+   reconnect; an older service
    reports its error without claiming that VPN is connected.
 
 ## Implementation and release sequence
@@ -63,7 +64,7 @@ form in the current Core contract.
 2. Add focused round-trip and redaction coverage, then run the relevant
    desktop tests and CI-equivalent builds. No performance benchmark is needed
    for this profile-format/UI change.
-3. Update the GUI reference, profile-list documentation and this specification
+3. Update the profile-list documentation and this specification
    to match the final behavior. If implementation changes the scope, revise
    this specification before implementing that change.
 4. The currently pinned published Core `v0.2.0-beta.1` predates Hysteria2.

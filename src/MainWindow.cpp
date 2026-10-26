@@ -3,6 +3,7 @@
 #include "HiDpiCheckBox.h"
 #include "HiDpiComboBox.h"
 #include "ProfileEditorDialog.h"
+#include "CoreDiagnostic.h"
 #include "TrustedCore.h"
 
 #include <QColor>
@@ -319,16 +320,6 @@ QIcon statusDot(const QColor &color) {
     return QIcon(canvas);
 }
 
-QString safeCoreDiagnostic(QByteArray output) {
-    QString text = QString::fromUtf8(output).trimmed();
-    text.replace(QRegularExpression(R"(((?:ss(?:conf)?|socks5|vless)://)[^\s\"']+)"), QStringLiteral("\\1") + QObject::tr("[hidden]"));
-    text.replace(QRegularExpression(R"((?im)^\s*(Password|Key|SS|SSConf|SOCKS5|VLESS|ID|PublicKey|ShortID)\s*=.*$)"), QStringLiteral("\\1 = ") + QObject::tr("[hidden]"));
-    text.replace("error: [Interface] IPv6 = disable requires Mode = vpn",
-                 QObject::tr("IPv6 can only be disabled in system VPN mode."));
-    text.replace("error: KillSwitch requires Mode = vpn",
-                 QObject::tr("The kill switch is only available in system VPN mode."));
-    return text.left(1000);
-}
 }
 
 MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), core_(this) {
@@ -1090,9 +1081,9 @@ void MainWindow::addProfile() {
     dialog.setWindowFlag(Qt::MSWindowsFixedSizeDialogHint);
     dialog.setMinimumWidth(440);
     auto *layout = new QVBoxLayout(&dialog);
-    auto *hint = new QLabel(tr("Paste a key beginning with ss://, ssconf://, socks5://, or vless://"));
+    auto *hint = new QLabel(tr("Paste a Shadowsocks, SOCKS5, VLESS, or Hysteria2 key"));
     auto *key = new QLineEdit;
-    key->setPlaceholderText(tr("ss://, ssconf://, socks5://, or vless://"));
+    key->setPlaceholderText(tr("ss://, ssconf://, socks5://, vless://, hysteria2://, or hy2://"));
     key->setMinimumHeight(30);
     auto *paste = new QPushButton;
     auto *nameLabel = new QLabel(tr("Profile name"));
@@ -1137,6 +1128,9 @@ void MainWindow::addProfile() {
             return url.isValid() && !url.host().isEmpty() && url.port() > 0 && url.port() <= 65535
                 && url.password().isEmpty() && url.path().isEmpty()
                 && QRegularExpression("^[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}$").match(url.userName()).hasMatch();
+        if (url.scheme() == "hysteria2" || url.scheme() == "hy2")
+            return url.isValid() && !url.host().isEmpty() && url.port() > 0 && url.port() <= 65535
+                && !url.userName().isEmpty() && url.password().isEmpty() && url.path().isEmpty();
         if (url.scheme() != "ss") return false;
 
         QString body = trimmed.mid(5);

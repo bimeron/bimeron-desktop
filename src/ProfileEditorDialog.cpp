@@ -159,6 +159,7 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
     keySource_->addItem(tr("Dynamic ssconf://"), "SSConf");
     keySource_->addItem(tr("Remote socks5://"), "SOCKS5");
     keySource_->addItem(tr("vless:// key"), "VLESS");
+    keySource_->addItem(tr("Hysteria2 key"), "Hysteria2");
     if (!valueFor(text, "AccessKey", "Key").isEmpty())
         keySource_->addItem(tr("Legacy key"), "Key");
     if (!valueFor(text, "AccessKey", "File").isEmpty())
@@ -487,7 +488,7 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
         generalForm->setRowVisible(keyRow, !explicitKey && !explicitSocks5 && !explicitVless);
         key_->setVisible(file || keyRevealed_);
         browse->setVisible(file);
-        reveal->setVisible(ss || ssconf || socks5 || source == "VLESS" || source == "Key");
+        reveal->setVisible(ss || ssconf || socks5 || source == "VLESS" || source == "Hysteria2" || source == "Key");
         reveal->setText(keyRevealed_ ? tr("Hide") : tr("Show"));
 
         generalForm->setRowVisible(server_, showParameters);
@@ -560,6 +561,7 @@ void ProfileEditorDialog::loadText(const QString &text) {
     if (value.isEmpty()) { source = "SSConf"; value = valueFor(text, "AccessKey", "SSConf"); }
     if (value.isEmpty()) { source = "SOCKS5"; value = valueFor(text, "AccessKey", "SOCKS5"); }
     if (value.isEmpty()) { source = "VLESS"; value = valueFor(text, "AccessKey", "VLESS"); }
+    if (value.isEmpty()) { source = "Hysteria2"; value = valueFor(text, "AccessKey", "Hysteria2"); }
     if (value.isEmpty()) { source = "Key"; value = valueFor(text, "AccessKey", "Key"); }
     if (value.isEmpty()) { source = "File"; value = valueFor(text, "AccessKey", "File"); }
     if (value.isEmpty() && !valueFor(text, "AccessKey", "Server").isEmpty()) {
@@ -641,7 +643,7 @@ void ProfileEditorDialog::loadText(const QString &text) {
     finishRule(rule);
     const QHash<QString, QSet<QString>> known{
         {"Profile", {"Version", "Name"}},
-        {"AccessKey", {"SS", "SSConf", "SOCKS5", "VLESS", "Key", "File", "Type", "Server", "Port", "Method", "Username", "Password", "Prefix", "ID", "Encryption", "Flow", "Network", "Security", "ServerName", "PublicKey", "ShortID", "Fingerprint", "SpiderX", "ALPN", "WSPath", "WSHost", "WSEarlyData", "GRPCServiceName", "GRPCAuthority", "GRPCMultiMode", "XHTTPPath", "XHTTPHost", "XHTTPMode"}},
+        {"AccessKey", {"SS", "SSConf", "SOCKS5", "VLESS", "Hysteria2", "Key", "File", "Type", "Server", "Port", "Method", "Username", "Password", "Prefix", "ID", "Encryption", "Flow", "Network", "Security", "ServerName", "PublicKey", "ShortID", "Fingerprint", "SpiderX", "ALPN", "WSPath", "WSHost", "WSEarlyData", "GRPCServiceName", "GRPCAuthority", "GRPCMultiMode", "XHTTPPath", "XHTTPHost", "XHTTPMode"}},
         {"Interface", {"Mode", "Name", "MTU", "DNS", "IPv6", "KillSwitch", "Listen"}},
         {"Routing", {"Default"}}, {"Rule", {"CIDR", "Domain", "Action"}}};
     QString currentSection;
