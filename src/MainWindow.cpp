@@ -58,6 +58,7 @@
 #include <QTime>
 #include <QToolButton>
 #include <QUrl>
+#include <QUrlQuery>
 #include <QUuid>
 #include <QVBoxLayout>
 #ifdef Q_OS_WIN
@@ -1128,9 +1129,12 @@ void MainWindow::addProfile() {
             return url.isValid() && !url.host().isEmpty() && url.port() > 0 && url.port() <= 65535
                 && url.password().isEmpty() && url.path().isEmpty()
                 && QRegularExpression("^[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}$").match(url.userName()).hasMatch();
-        if (url.scheme() == "hysteria2" || url.scheme() == "hy2")
+        if (url.scheme() == "hysteria2" || url.scheme() == "hy2") {
+            const QUrlQuery query(url);
+            const bool auth = !query.queryItemValue("auth", QUrl::FullyDecoded).isEmpty();
             return url.isValid() && !url.host().isEmpty() && url.port() > 0 && url.port() <= 65535
-                && !url.userName().isEmpty() && url.password().isEmpty() && url.path().isEmpty();
+                && (auth != !url.userName().isEmpty()) && url.password().isEmpty() && url.path().isEmpty();
+        }
         if (url.scheme() != "ss") return false;
 
         QString body = trimmed.mid(5);

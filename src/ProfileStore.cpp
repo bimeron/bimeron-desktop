@@ -8,8 +8,10 @@
 #include <QJsonDocument>
 #include <QRegularExpression>
 #include <QSaveFile>
+#include <QSet>
 #include <QStandardPaths>
 #include <QUrl>
+#include <QUrlQuery>
 #include <QUuid>
 
 ProfileStore::ProfileStore() {
@@ -156,9 +158,21 @@ ProfileConnectionInfo ProfileStore::connectionInfo(const QString &configText) {
             info.connectable = info.connectable && QRegularExpression(
                 QStringLiteral("^[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}$"))
                 .match(uri.userName()).hasMatch();
-        if (hysteria2)
-            info.connectable = info.connectable && !uri.userName().isEmpty()
+        if (hysteria2) {
+            const QUrlQuery query(uri);
+            const bool auth = !query.queryItemValue("auth", QUrl::FullyDecoded).isEmpty();
+            info.connectable = info.connectable && (auth != !uri.userName().isEmpty())
                 && uri.password().isEmpty() && uri.path().isEmpty() && uri.port() <= 65535;
+            QSet<QString> seen;
+            for (const auto &option : query.queryItems(QUrl::FullyDecoded)) {
+                const QString &key = option.first, &setting = option.second;
+                if (seen.contains(key) || (key != "auth" && key != "sni" && key != "insecure" && key != "alpn")
+                    || ((key == "auth" || key == "sni") && setting.isEmpty())
+                    || (key == "insecure" && setting != "0") || (key == "alpn" && setting != "h3"))
+                    info.connectable = false;
+                seen.insert(key);
+            }
+        }
     } else if (type == "shadowsocks" || type == "ss") {
         info.protocol = QStringLiteral("Shadowsocks");
         info.connectable = true;
