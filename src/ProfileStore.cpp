@@ -166,9 +166,10 @@ ProfileConnectionInfo ProfileStore::connectionInfo(const QString &configText) {
             QSet<QString> seen;
             for (const auto &option : query.queryItems(QUrl::FullyDecoded)) {
                 const QString &key = option.first, &setting = option.second;
-                if (seen.contains(key) || (key != "auth" && key != "sni" && key != "insecure" && key != "alpn")
+                if (seen.contains(key) || (key != "auth" && key != "sni" && key != "insecure" && key != "alpn" && key != "fp")
                     || ((key == "auth" || key == "sni") && setting.isEmpty())
-                    || (key == "insecure" && setting != "0") || (key == "alpn" && setting != "h3"))
+                    || (key == "insecure" && setting != "0") || (key == "alpn" && setting != "h3")
+                    || (key == "fp" && !QStringList{"firefox", "firefox-116", "firefox-116b", "firefox-116c", "chrome"}.contains(setting)))
                     info.connectable = false;
                 seen.insert(key);
             }

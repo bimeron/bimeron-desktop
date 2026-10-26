@@ -113,13 +113,19 @@ int main(int argc, char **argv) {
     require(ProfileStore::connectionInfo(queryProfile).connectable);
     ProfileEditorDialog queryEditor(queryProfile, QJsonObject{{"vpn", true}});
     require(queryEditor.configText().contains("Hysteria2 = " + queryLink));
-    require(!ProfileStore::connectionInfo("[AccessKey]\nHysteria2 = hy2://server.example:443?auth=secret&fp=firefox").connectable);
+    for (const QString &fp : {"firefox", "firefox-116", "firefox-116b", "firefox-116c", "chrome"}) {
+        const QString fingerprintLink = queryLink.section('#', 0, 0) + "&fp=" + fp + "#Example";
+        require(ProfileStore::connectionInfo("[AccessKey]\nHysteria2 = " + fingerprintLink).connectable);
+        check("[Profile]\nVersion = 1\n[AccessKey]\nHysteria2 = " + fingerprintLink + "\n",
+            {"Hysteria2 = " + fingerprintLink}, hysteriaCore, temporary.filePath("fingerprint-" + fp + ".conf"));
+    }
+    require(!ProfileStore::connectionInfo("[AccessKey]\nHysteria2 = hy2://server.example:443?auth=secret&fp=firefox-117").connectable);
     require(!ProfileStore::connectionInfo("[AccessKey]\nHysteria2 = hy2://secret@server.example:443?auth=other").connectable);
     require(!safeCoreDiagnostic("error: hy2://secret@server.example:443").contains("secret"));
     require(!safeCoreDiagnostic("Hysteria2 = hysteria2://secret@server.example:443").contains("secret"));
     rejectWithCore("hy2://secret@server.example:443?obfs=salamander", hysteriaCore, temporary.filePath("unsupported-hy2.conf"));
     rejectWithCore("hy2://secret@server.example:443?sni=one.example&sni=two.example", hysteriaCore, temporary.filePath("duplicate-hy2.conf"));
-    rejectWithCore("hy2://server.example:443?auth=secret&fp=firefox", hysteriaCore, temporary.filePath("fingerprint-hy2.conf"), "Firefox");
+    rejectWithCore("hy2://server.example:443?auth=secret&fp=firefox-117", hysteriaCore, temporary.filePath("fingerprint-hy2.conf"));
     ProfileEditorDialog uriEditor(uriProfile, QJsonObject{{"vpn", true}, {"proxy", true}});
     require(!uriEditor.findChild<QComboBox *>("keySource")->isEnabled());
     require(uriEditor.findChild<QLineEdit *>("vlessId")->text() == uuid);
