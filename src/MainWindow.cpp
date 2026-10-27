@@ -720,7 +720,7 @@ QWidget *MainWindow::settingsPage() {
         const QSignalBlocker blocker(language);
         language->setCurrentIndex(language->findData(previousLanguage));
     });
-    auto *stopOnExit = new HiDpiCheckBox(tr("Disconnect the VPN and stop core when quitting"));
+    auto *stopOnExit = new HiDpiCheckBox(tr("Disconnect and stop core when quitting"));
     stopOnExit->setEnabled(false);
     stopOnExit->setChecked(QSettings().value("app/stopCoreOnExit", false).toBool());
     connect(stopOnExit, &QCheckBox::toggled, this, [](bool checked) {
@@ -837,9 +837,10 @@ QWidget *MainWindow::settingsPage() {
     connect(&updater_, &CoreUpdater::statusChanged, coreUpdateLabel_, &QLabel::setText);
     connect(&updater_, &CoreUpdater::ready, this, [this](const QString &version, const QString &path, const QString &digest) {
         if (!coreUpdatePrerequisite()) { updater_.discardStaged(); return; }
-        const bool vpnActive = state_ == "connected" || state_ == "connecting" || state_ == "reconnecting";
-        const QString warning = vpnActive
-            ? tr("Installing Core %1 will interrupt the active VPN. Bimeron will reconnect the same profile after a successful update. Update now?").arg(version)
+        const bool sessionActive = state_ == "connected" || state_ == "connecting" || state_ == "reconnecting";
+        const QString warning = sessionActive
+            ? (activeProxyMode() ? tr("Installing Core %1 will interrupt the active proxy. Bimeron will reconnect the same profile after a successful update. Update now?")
+                                 : tr("Installing Core %1 will interrupt the active VPN. Bimeron will reconnect the same profile after a successful update. Update now?")).arg(version)
             : tr("Core %1 is downloaded and verified. Update the service now?").arg(version);
         if (QMessageBox::question(this, tr("Core update ready"), warning,
                                   QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes) {
@@ -847,7 +848,7 @@ QWidget *MainWindow::settingsPage() {
             return;
         }
         autoConnectAttempted_ = true;
-        reconnectProfileAfterUpdate_ = vpnActive ? activeProfileId_ : QString{};
+        reconnectProfileAfterUpdate_ = sessionActive ? activeProfileId_ : QString{};
         expectedCoreVersionAfterUpdate_ = version;
         updater_.setInstalling(true);
         coreUpdateCommand_ = true;
@@ -955,6 +956,13 @@ ProfileConnectionInfo MainWindow::profileInfo(int row) const {
     QFile file(profiles_[row].path);
     if (!file.open(QIODevice::ReadOnly)) return {};
     return ProfileStore::connectionInfo(QString::fromUtf8(file.read(64 * 1024)));
+}
+
+bool MainWindow::activeProxyMode() const {
+    for (int row = 0; row < profiles_.size(); ++row)
+        if (profiles_[row].id == activeProfileId_)
+            return profileInfo(row).interfaceMode == "proxy";
+    return lastProxyMode_;
 }
 
 void MainWindow::refreshProfiles() {
@@ -1346,6 +1354,7 @@ void MainWindow::startProfile(int row) {
         log_->clear();
     connectionAttempted_ = true;
     activeProfileId_ = profiles_[row].id;
+    lastProxyMode_ = profileInfo(row).interfaceMode == "proxy";
     state_ = "connecting";
     updateConnectionButton();
     updateProfileAppearance();
@@ -1375,11 +1384,11 @@ void MainWindow::handleReply(const QString &command, const QJsonObject &response
             coreUpdateAwaitingResult_ = false;
             reconnectProfileAfterUpdate_.clear();
             expectedCoreVersionAfterUpdate_.clear();
-            reportCoreUpdateResult(tr("Core update could not be verified; VPN was not reconnected"));
+            reportCoreUpdateResult(activeProxyMode() ? tr("Core update could not be verified; proxy was not reconnected") : tr("Core update could not be verified; VPN was not reconnected"));
         }
         if (command == "start" && !reconnectResultProfileId_.isEmpty()) {
             reconnectResultProfileId_.clear();
-            reportCoreUpdateResult(tr("Core %1 installed, but VPN reconnection failed").arg(runningCoreVersion_));
+            reportCoreUpdateResult((activeProxyMode() ? tr("Core %1 installed, but proxy reconnection failed") : tr("Core %1 installed, but VPN reconnection failed")).arg(runningCoreVersion_));
         }
         if (command == "stop")
             pendingStartPath_.clear();
@@ -1427,23 +1436,23 @@ void MainWindow::handleReply(const QString &command, const QJsonObject &response
             expectedCoreVersionAfterUpdate_.clear();
             reconnectProfileAfterUpdate_.clear();
             if (!verified) {
-                reportCoreUpdateResult(tr("Core update could not be verified; VPN was not reconnected"));
+                reportCoreUpdateResult(activeProxyMode() ? tr("Core update could not be verified; proxy was not reconnected") : tr("Core update could not be verified; VPN was not reconnected"));
             } else if (profileId.isEmpty()) {
-                reportCoreUpdateResult(tr("Core %1 installed and verified; VPN remains disconnected").arg(version));
+                reportCoreUpdateResult(tr("Core %1 installed and verified; connection remains disconnected").arg(version));
             } else {
                 bool found = false;
                 for (int row = 0; row < profiles_.size(); ++row) {
                     if (profiles_[row].id == profileId) {
                         found = true;
                         reconnectResultProfileId_ = profileId;
-                        coreUpdateLabel_->setText(tr("Core %1 installed and verified; reconnecting VPN…").arg(version));
+                        coreUpdateLabel_->setText((activeProxyMode() ? tr("Core %1 installed and verified; reconnecting proxy…") : tr("Core %1 installed and verified; reconnecting VPN…")).arg(version));
                         profileList_->setCurrentRow(row);
                         startProfile(row);
                         break;
                     }
                 }
                 if (!found)
-                    reportCoreUpdateResult(tr("Core %1 installed, but the previous VPN profile is unavailable").arg(version));
+                    reportCoreUpdateResult(tr("Core %1 installed, but the previous profile is unavailable").arg(version));
             }
         }
         if (!autoConnectAttempted_ && state_ == "disconnected" && QSettings().value("app/autoConnect", false).toBool()) {
@@ -1476,7 +1485,9 @@ void MainWindow::handleReply(const QString &command, const QJsonObject &response
         const qint64 rate = seconds > 0 ? qMax<qint64>(0, up + down - previousUp_ - previousDown_) / seconds : 0;
         previousUp_ = up; previousDown_ = down;
         trafficLabel_->setText(tr("Traffic: ↑ %1  ↓ %2  ·  %3/s").arg(humanBytes(up), humanBytes(down), humanBytes(rate)));
-        sessionStatsLabel_->setText(tr("TCP: %1 active / %2 total / %3 errors  ·  UDP: %4 / %5 / %6  ·  DNS: %7 requests / %8 errors  ·  Routes: VPN %9, direct %10, blocked %11")
+        sessionStatsLabel_->setText((activeProxyMode()
+            ? tr("TCP: %1 active / %2 total / %3 errors  ·  UDP: %4 / %5 / %6  ·  DNS: %7 requests / %8 errors  ·  Routes: proxy %9, direct %10, blocked %11")
+            : tr("TCP: %1 active / %2 total / %3 errors  ·  UDP: %4 / %5 / %6  ·  DNS: %7 requests / %8 errors  ·  Routes: VPN %9, direct %10, blocked %11"))
             .arg(stats.value("tcp_active").toInteger()).arg(stats.value("tcp_total").toInteger()).arg(stats.value("tcp_failed").toInteger())
             .arg(stats.value("udp_active").toInteger()).arg(stats.value("udp_total").toInteger()).arg(stats.value("udp_failed").toInteger())
             .arg(stats.value("dns_queries").toInteger()).arg(stats.value("dns_failed").toInteger())
@@ -1513,6 +1524,7 @@ void MainWindow::handleReply(const QString &command, const QJsonObject &response
 void MainWindow::handleStatus(const QJsonObject &status) {
     const QString previousState = state_;
     const QString previousProfileId = activeProfileId_;
+    lastProxyMode_ = activeProxyMode();
     state_ = status.value("State").toString("unknown");
     if (state_ != "connected" && state_ != "connecting" && state_ != "reconnecting") activeFileProtocol_.clear();
     if (state_ == "connecting" || state_ == "connected" || state_ == "reconnecting")
@@ -1524,10 +1536,10 @@ void MainWindow::handleStatus(const QJsonObject &status) {
     if (!reconnectResultProfileId_.isEmpty()) {
         if (state_ == "connected" && activeProfileId_ == reconnectResultProfileId_) {
             reconnectResultProfileId_.clear();
-            reportCoreUpdateResult(tr("Core %1 installed and verified; VPN reconnected").arg(runningCoreVersion_));
+            reportCoreUpdateResult((activeProxyMode() ? tr("Core %1 installed and verified; proxy reconnected") : tr("Core %1 installed and verified; VPN reconnected")).arg(runningCoreVersion_));
         } else if (state_ == "failed" || (state_ == "connected" && activeProfileId_ != reconnectResultProfileId_)) {
             reconnectResultProfileId_.clear();
-            reportCoreUpdateResult(tr("Core %1 installed, but VPN reconnection failed").arg(runningCoreVersion_));
+            reportCoreUpdateResult((activeProxyMode() ? tr("Core %1 installed, but proxy reconnection failed") : tr("Core %1 installed, but VPN reconnection failed")).arg(runningCoreVersion_));
         }
     }
     if (trayMenu_ && (state_ != previousState || activeProfileId_ != previousProfileId))
@@ -1578,11 +1590,11 @@ void MainWindow::handleStatus(const QJsonObject &status) {
             trayStatusAction_->setText(tr("Status: %1").arg(connectionLabel_->text()));
         const bool notifications = QSettings().value("app/notifications", true).toBool();
         if (notifications && state_ == "connected" && previousState != "connected")
-            tray_->showMessage(tr("Bimeron"), tr("VPN connected"), QSystemTrayIcon::Information, 3000);
+            tray_->showMessage(tr("Bimeron"), activeProxyMode() ? tr("Proxy connected") : tr("VPN connected"), QSystemTrayIcon::Information, 3000);
         else if (notifications && state_ == "failed" && connectionAttempted_ && previousState != "failed")
-            tray_->showMessage(tr("Bimeron"), tr("Failed to connect the VPN"), QSystemTrayIcon::Critical, 4000);
+            tray_->showMessage(tr("Bimeron"), activeProxyMode() ? tr("Failed to connect the proxy") : tr("Failed to connect the VPN"), QSystemTrayIcon::Critical, 4000);
         else if (notifications && state_ == "disconnected" && previousState != "disconnected" && previousState != "unknown")
-            tray_->showMessage(tr("Bimeron"), tr("VPN disconnected"), QSystemTrayIcon::Information, 3000);
+            tray_->showMessage(tr("Bimeron"), activeProxyMode() ? tr("Proxy disconnected") : tr("VPN disconnected"), QSystemTrayIcon::Information, 3000);
     }
     const QString lastError = status.value("LastError").toString();
     if (lastError != lastCoreError_) {
@@ -2045,7 +2057,7 @@ void MainWindow::finishServiceCommand(int exitCode, const QString &details) {
         refreshServiceStatus();
         if (finishedCoreUpdate) {
             coreUpdateAwaitingResult_ = true;
-            coreUpdateLabel_->setText(tr("Core service updated; verifying version and VPN state…"));
+            coreUpdateLabel_->setText(tr("Core service updated; verifying version and connection state…"));
         }
     }
     if (finishedCoreUpdate)
@@ -2262,7 +2274,8 @@ QWidget *MainWindow::developmentPage() {
         if (developmentBackend_->currentIndex() == 1 && path.isEmpty()) return;
         if (!development_->failed() && path == development_->path()) return;
         if (QMessageBox::warning(this, tr("Switch core"),
-                tr("Switching cores disconnects the VPN. The selected local executable will run with administrator privileges. Continue?"),
+                activeProxyMode() ? tr("Switching cores disconnects the proxy. The selected local executable will run with administrator privileges. Continue?")
+                                  : tr("Switching cores disconnects the VPN. The selected local executable will run with administrator privileges. Continue?"),
                 QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes) return;
         if (coreUpdateCommand_ || coreUpdateAwaitingResult_ || serviceCommandProcess_ || linuxServiceProcess_ || development_->busy()) return;
         development_->select(path);

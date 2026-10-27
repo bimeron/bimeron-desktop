@@ -45,6 +45,7 @@ private:
     void updateDevelopment();
     void refreshProfiles();
     ProfileConnectionInfo profileInfo(int row) const;
+    bool activeProxyMode() const;
     void addProfile();
     void importProfile();
     void removeProfile();
@@ -111,6 +112,7 @@ private:
     QString state_ = "unknown";
     QString activeFileProtocol_;
     QString activeProfileId_;
+    bool lastProxyMode_ = false;
     QString reconnectProfileAfterUpdate_;
     QString reconnectResultProfileId_;
     QString expectedCoreVersionAfterUpdate_;
