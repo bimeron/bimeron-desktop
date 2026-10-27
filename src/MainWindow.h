@@ -48,6 +48,7 @@ private:
     void addProfile();
     void importProfile();
     void removeProfile();
+    void moveProfile(int delta);
     void toggleConnection();
     void poll();
     void handleReply(const QString &command, const QJsonObject &response);
@@ -97,6 +98,7 @@ private:
     QCheckBox *betaUpdatesCheck_ = nullptr;
     QComboBox *autoConnectProfile_ = nullptr;
     QPushButton *connectButton_ = nullptr;
+    QPushButton *removeProfileButton_ = nullptr;
     QToolButton *profileGear_ = nullptr;
     int gearRow_ = -1;
     QTextEdit *log_ = nullptr;
@@ -106,7 +108,6 @@ private:
     QAction *trayTrafficAction_ = nullptr;
     QString trayTraffic_ = tr("Traffic: —");
     QStackedWidget *pages_ = nullptr;
-    QTimer *pollTimer_ = nullptr;
     QString state_ = "unknown";
     QString activeFileProtocol_;
     QString activeProfileId_;
