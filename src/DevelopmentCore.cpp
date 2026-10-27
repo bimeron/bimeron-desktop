@@ -103,7 +103,7 @@ DevelopmentCore::DevelopmentCore(QString helper, QObject *parent)
             finish(true, tr("Local core: %1").arg(response.value("core").toObject().value("version").toString()));
         } else if (phase_ == Phase::Stopping && command == "stop") {
             if (response.contains("error") || response.value("status").toObject().value("State").toString() != "disconnected") {
-                finish(false, tr("The local VPN did not disconnect; retry after checking the daemon"));
+                finish(false, tr("The local connection did not disconnect; retry after checking the daemon"));
                 return;
             }
             stopConfirmed_ = true;
@@ -117,7 +117,7 @@ DevelopmentCore::DevelopmentCore(QString helper, QObject *parent)
     connect(&control_, &CoreClient::unavailable, this, [this](const QString &) {
         if (phase_ == Phase::Verifying) verifyLock();
         else if (phase_ == Phase::Stopping)
-            finish(false, tr("The local daemon did not confirm VPN cleanup; retry before using the system service"));
+            finish(false, tr("The local daemon did not confirm connection cleanup; retry before using the system service"));
     });
 }
 
@@ -376,11 +376,11 @@ void DevelopmentCore::verifyLock() {
     if (phase_ != Phase::Verifying) return;
     const auto checked = [this](bool free) {
         if (!free) {
-            finish(false, tr("The VPN session lock is still held; close the local daemon and retry"));
+            finish(false, tr("The session lock is still held; close the local daemon and retry"));
             return;
         }
         if (exitPhase_ == Phase::Stopping && !stopConfirmed_) {
-            finish(false, tr("The local daemon did not confirm VPN cleanup; retry before using the system service"));
+            finish(false, tr("The local daemon did not confirm connection cleanup; retry before using the system service"));
             return;
         }
         const Phase previous = exitPhase_;

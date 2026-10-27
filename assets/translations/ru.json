@@ -355,5 +355,22 @@
   "Discard changes": "Отменить изменения",
   "Discard unsaved changes?": "Отменить несохранённые изменения?",
   "Continue editing": "Продолжить редактирование",
-  "Quit Bimeron": "Выйти из Bimeron"
+  "Quit Bimeron": "Выйти из Bimeron",
+  "Disconnect and stop core when quitting": "При выходе отключать соединение и завершать службу core",
+  "Proxy connected": "Прокси подключён",
+  "Proxy disconnected": "Прокси отключён",
+  "Failed to connect the proxy": "Не удалось подключить прокси",
+  "Installing Core %1 will interrupt the active proxy. Bimeron will reconnect the same profile after a successful update. Update now?": "Установка ядра %1 прервёт работу прокси. После успешного обновления Bimeron снова подключит тот же профиль. Обновить сейчас?",
+  "Core update could not be verified; proxy was not reconnected": "Не удалось подтвердить обновление ядра; прокси не переподключён",
+  "Core %1 installed, but proxy reconnection failed": "Ядро %1 установлено, но переподключить прокси не удалось",
+  "Core %1 installed and verified; connection remains disconnected": "Ядро %1 установлено и проверено; соединение остаётся отключённым",
+  "Core %1 installed and verified; reconnecting proxy…": "Ядро %1 установлено и проверено; переподключаем прокси…",
+  "Core %1 installed, but the previous profile is unavailable": "Ядро %1 установлено, но прежний профиль недоступен",
+  "Core %1 installed and verified; proxy reconnected": "Ядро %1 установлено и проверено; прокси переподключён",
+  "Core service updated; verifying version and connection state…": "Служба ядра обновлена; проверяем версию и состояние соединения…",
+  "Switching cores disconnects the proxy. The selected local executable will run with administrator privileges. Continue?": "Переключение ядра отключит прокси. Выбранный локальный бинарник будет запущен с правами администратора. Продолжить?",
+  "TCP: %1 active / %2 total / %3 errors  ·  UDP: %4 / %5 / %6  ·  DNS: %7 requests / %8 errors  ·  Routes: proxy %9, direct %10, blocked %11": "TCP: %1 активных / %2 всего / %3 ошибок  ·  UDP: %4 / %5 / %6  ·  DNS: %7 запросов / %8 ошибок  ·  Маршруты: прокси %9, напрямую %10, блок %11",
+  "The local connection did not disconnect; retry after checking the daemon": "Локальное соединение не отключилось; проверьте демон и повторите попытку",
+  "The local daemon did not confirm connection cleanup; retry before using the system service": "Локальный демон не подтвердил отключение соединения; повторите попытку перед использованием системной службы",
+  "The session lock is still held; close the local daemon and retry": "Блокировка сеанса всё ещё удерживается; завершите локальный демон и повторите попытку"
 }
