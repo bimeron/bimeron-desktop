@@ -1,5 +1,6 @@
 #include "ProfileEditorDialog.h"
 #include "ProfileStore.h"
+#include "CoreDiagnostic.h"
 
 #include <QApplication>
 #include <QComboBox>
@@ -35,6 +36,21 @@ void check(const QString &profile, const QStringList &fields, const QString &cor
     require(process.waitForStarted(5000) && process.waitForFinished(20000));
     require(process.exitStatus() == QProcess::NormalExit && process.exitCode() == 0);
 }
+
+void rejectWithCore(const QString &uri, const QString &core, const QString &path, const QString &expected = {}) {
+    if (core.isEmpty()) return;
+    QFile file(path);
+    require(file.open(QIODevice::WriteOnly));
+    const QByteArray profile = ("[Profile]\nVersion = 1\nName = Invalid\n[AccessKey]\nHysteria2 = " + uri + "\n").toUtf8();
+    require(file.write(profile) == profile.size());
+    file.close();
+    QProcess process;
+    process.start(core, {"validate", path});
+    require(process.waitForStarted(5000) && process.waitForFinished(20000));
+    require(process.exitStatus() == QProcess::NormalExit && process.exitCode() != 0);
+    const QString diagnostic = QString::fromUtf8(process.readAllStandardError() + process.readAllStandardOutput());
+    require(!diagnostic.contains("secret") && (expected.isEmpty() || diagnostic.contains(expected)));
+}
 }
 
 int main(int argc, char **argv) {
@@ -61,6 +77,55 @@ int main(int argc, char **argv) {
     require(ProfileStore::connectionInfo("[AccessKey]\nFile = key.txt").connectable);
     require(ProfileStore::connectionInfo("[AccessKey]\nFile = key.txt").protocol.isEmpty());
     require(!ProfileStore::connectionInfo("[AccessKey]\nKey = unknown://example.com").connectable);
+    const QString hysteriaCore = qEnvironmentVariable("BIMERON_HYSTERIA2_CORE");
+    const QString hysteriaLink = "hysteria2://p%40ss@[2001:db8::1]:443?sni=server.example#Example";
+    const QString hysteriaPath = store.createConfig("Example", hysteriaLink, &error);
+    require(!hysteriaPath.isEmpty());
+    QFile hysteriaFile(hysteriaPath);
+    require(hysteriaFile.open(QIODevice::ReadOnly));
+    const QString hysteriaProfile = QString::fromUtf8(hysteriaFile.readAll());
+    check(hysteriaProfile, {"Hysteria2 = " + hysteriaLink}, hysteriaCore, temporary.filePath("hysteria2.conf"));
+    require(ProfileStore::connectionInfo(hysteriaProfile).protocol == "Hysteria2");
+    require(ProfileStore::connectionInfo(hysteriaProfile).connectable);
+    ProfileEditorDialog hysteriaEditor(hysteriaProfile, QJsonObject{{"vpn", true}, {"proxy", true}});
+    require(hysteriaEditor.configText().contains("Hysteria2 = " + hysteriaLink));
+    require(!hysteriaEditor.findChild<QComboBox *>("keySource")->isEnabled());
+    const QString alias = "hy2://secret@server.example:443#Alias";
+    const QString aliasPath = store.createConfig("Alias", alias, &error);
+    require(!aliasPath.isEmpty());
+    QFile aliasFile(aliasPath);
+    require(aliasFile.open(QIODevice::ReadOnly));
+    require(QString::fromUtf8(aliasFile.readAll()).contains("Hysteria2 = " + alias));
+    check("[Profile]\nVersion = 1\n[AccessKey]\nKey = " + alias + "\n",
+        {"Key = " + alias}, hysteriaCore, temporary.filePath("hy2-key.conf"));
+    require(ProfileStore::connectionInfo("[AccessKey]\nKey = " + alias).protocol == "Hysteria2");
+    require(ProfileStore::connectionInfo("[AccessKey]\nHysteria2 = " + alias).connectable);
+    require(!ProfileStore::connectionInfo("[AccessKey]\nHysteria2 = hy2://@server.example:443").connectable);
+    require(!ProfileStore::connectionInfo("[AccessKey]\nHysteria2 = hy2://secret@server.example").connectable);
+    require(!ProfileStore::connectionInfo("[AccessKey]\nHysteria2 = hy2://secret@server.example:443/path").connectable);
+    const QString queryLink = "hysteria2://[2001:db8::1]:443?auth=p%40ss&sni=server.example&insecure=0&alpn=h3#Example";
+    const QString queryPath = store.createConfig("Query", queryLink, &error);
+    require(!queryPath.isEmpty());
+    QFile queryFile(queryPath);
+    require(queryFile.open(QIODevice::ReadOnly));
+    const QString queryProfile = QString::fromUtf8(queryFile.readAll());
+    check(queryProfile, {"Hysteria2 = " + queryLink}, hysteriaCore, temporary.filePath("query-hy2.conf"));
+    require(ProfileStore::connectionInfo(queryProfile).connectable);
+    ProfileEditorDialog queryEditor(queryProfile, QJsonObject{{"vpn", true}});
+    require(queryEditor.configText().contains("Hysteria2 = " + queryLink));
+    for (const QString &fp : {"firefox", "firefox-116", "firefox-116b", "firefox-116c", "chrome", "chrome-115", "chrome-146"}) {
+        const QString fingerprintLink = queryLink.section('#', 0, 0) + "&fp=" + fp + "#Example";
+        require(ProfileStore::connectionInfo("[AccessKey]\nHysteria2 = " + fingerprintLink).connectable);
+        check("[Profile]\nVersion = 1\n[AccessKey]\nHysteria2 = " + fingerprintLink + "\n",
+            {"Hysteria2 = " + fingerprintLink}, hysteriaCore, temporary.filePath("fingerprint-" + fp + ".conf"));
+    }
+    require(!ProfileStore::connectionInfo("[AccessKey]\nHysteria2 = hy2://server.example:443?auth=secret&fp=firefox-117").connectable);
+    require(!ProfileStore::connectionInfo("[AccessKey]\nHysteria2 = hy2://secret@server.example:443?auth=other").connectable);
+    require(!safeCoreDiagnostic("error: hy2://secret@server.example:443").contains("secret"));
+    require(!safeCoreDiagnostic("Hysteria2 = hysteria2://secret@server.example:443").contains("secret"));
+    rejectWithCore("hy2://secret@server.example:443?obfs=salamander", hysteriaCore, temporary.filePath("unsupported-hy2.conf"));
+    rejectWithCore("hy2://secret@server.example:443?sni=one.example&sni=two.example", hysteriaCore, temporary.filePath("duplicate-hy2.conf"));
+    rejectWithCore("hy2://server.example:443?auth=secret&fp=firefox-117", hysteriaCore, temporary.filePath("fingerprint-hy2.conf"));
     ProfileEditorDialog uriEditor(uriProfile, QJsonObject{{"vpn", true}, {"proxy", true}});
     require(!uriEditor.findChild<QComboBox *>("keySource")->isEnabled());
     require(uriEditor.findChild<QLineEdit *>("vlessId")->text() == uuid);
