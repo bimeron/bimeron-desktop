@@ -2,7 +2,8 @@
 
 ## Contract and scope
 
-The Core contract is `bimeron-core` branch `feat/hysteria2` at `3911a42`,
+The Core contract is `bimeron-core` branch `feat/hysteria2-chrome-fingerprints`
+at `81f1ff7`,
 `docs/GUI_INTEGRATION.MD` and `docs/CONF.MD` as inspected on October 27, 2026.
 The desktop GUI supports a complete `hysteria2://` or `hy2://` URI as one
 `[AccessKey] Hysteria2` source. Existing generic `Key` and `File` sources
@@ -16,7 +17,8 @@ constraints.
 Hysteria2 requires a nonempty password and a server port. `sni` is optional;
 `insecure=0` retains TLS verification and `alpn=h3` is the only accepted ALPN
 option. `insecure=1` is rejected. Core supports `fp=firefox`, `firefox-116`,
-`firefox-116b`, `firefox-116c`, and `chrome`; omission retains the default.
+`firefox-116b`, `firefox-116c`, `chrome`, `chrome-115`, and `chrome-146`;
+omission retains the default.
 The GUI preserves the chosen spelling. Unknown or empty values are rejected,
 and there is no fallback to another fingerprint. VPN mode uses TCP and UDP
 through QUIC, and the server must support UDP relay. Local proxy mode provides

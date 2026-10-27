@@ -113,7 +113,7 @@ int main(int argc, char **argv) {
     require(ProfileStore::connectionInfo(queryProfile).connectable);
     ProfileEditorDialog queryEditor(queryProfile, QJsonObject{{"vpn", true}});
     require(queryEditor.configText().contains("Hysteria2 = " + queryLink));
-    for (const QString &fp : {"firefox", "firefox-116", "firefox-116b", "firefox-116c", "chrome"}) {
+    for (const QString &fp : {"firefox", "firefox-116", "firefox-116b", "firefox-116c", "chrome", "chrome-115", "chrome-146"}) {
         const QString fingerprintLink = queryLink.section('#', 0, 0) + "&fp=" + fp + "#Example";
         require(ProfileStore::connectionInfo("[AccessKey]\nHysteria2 = " + fingerprintLink).connectable);
         check("[Profile]\nVersion = 1\n[AccessKey]\nHysteria2 = " + fingerprintLink + "\n",
