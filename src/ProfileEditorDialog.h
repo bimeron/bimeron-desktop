@@ -2,6 +2,7 @@
 
 #include <QDialog>
 #include <QJsonObject>
+#include <functional>
 
 class QCheckBox;
 class QComboBox;
@@ -15,8 +16,12 @@ class QTabWidget;
 class ProfileEditorDialog final : public QDialog {
     Q_OBJECT
 public:
-    explicit ProfileEditorDialog(const QString &text, const QJsonObject &capabilities, QWidget *parent = nullptr);
+    explicit ProfileEditorDialog(const QString &text, const QJsonObject &capabilities, QWidget *parent = nullptr,
+                                 std::function<bool(const QString &, QString *)> validateRaw = {});
     QString configText() const;
+
+protected:
+    void reject() override;
 
 private:
     struct Rule { QString target; QString action; bool enabled = true; bool domain = false; };
@@ -69,4 +74,6 @@ private:
     bool rawOnlyVless_ = false;
     bool vlessMultiModeConfigured_ = false;
     bool keyRevealed_ = false;
+    QString originalText_;
+    std::function<bool(const QString &, QString *)> validateRaw_;
 };

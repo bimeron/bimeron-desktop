@@ -150,7 +150,7 @@
   "Cancel": "Отмена",
   "Cancel connection": "Отменить подключение",
   "Restart": "Перезапустить",
-  "Show": "Отобразить",
+  "Show": "Показать",
   "The report has been saved. It contains no keys, IP addresses, or profile paths.": "Отчёт сохранён. Он не содержит ключей, IP-адресов и путей профилей.",
   "Clear": "Очистить",
   "Connection failed": "Ошибка подключения",
@@ -348,5 +348,12 @@
   "The local daemon did not confirm VPN cleanup; retry before using the system service": "Локальный демон не подтвердил отключение VPN; повторите попытку перед использованием системной службы",
   "The VPN session lock is still held; close the local daemon and retry": "Блокировка VPN-сеанса всё ещё удерживается; завершите локальный демон и повторите попытку",
   "File modified: %1": "Файл изменён: %1",
-  "unavailable": "недоступно"
+  "unavailable": "недоступно",
+  "Paste": "Вставить",
+  "Error": "Ошибка",
+  "Traffic: ↑ 0 B  ↓ 0 B": "Трафик: ↑ 0 Б  ↓ 0 Б",
+  "Discard changes": "Отменить изменения",
+  "Discard unsaved changes?": "Отменить несохранённые изменения?",
+  "Continue editing": "Продолжить редактирование",
+  "Quit Bimeron": "Выйти из Bimeron"
 }

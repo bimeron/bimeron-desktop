@@ -366,7 +366,12 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), core_(this) {
         auto *button = navButton(labels[i]);
         if (i == (developerMode_ ? 4 : 0)) button->setChecked(true);
         connect(button, &QPushButton::clicked, this, [this, i] { pages_->setCurrentIndex(i); });
-        auto *shortcut = new QShortcut(QKeySequence(QStringLiteral("Ctrl+%1").arg(i + 1)), this);
+        const QString key = i == 1 ? QStringLiteral(",") : QString::number(i + 1);
+#ifdef Q_OS_MACOS
+        auto *shortcut = new QShortcut(QKeySequence(QStringLiteral("Meta+") + key), this);
+#else
+        auto *shortcut = new QShortcut(QKeySequence(QStringLiteral("Ctrl+") + key), this);
+#endif
         connect(shortcut, &QShortcut::activated, this, [this, button, i] {
             pages_->setCurrentIndex(i);
             button->setChecked(true);
@@ -386,7 +391,9 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), core_(this) {
         autoConnectAttempted_ = true;
     }
     auto *newProfile = new QShortcut(QKeySequence::New, this);
-    connect(newProfile, &QShortcut::activated, this, &MainWindow::addProfile);
+    connect(newProfile, &QShortcut::activated, this, [this] {
+        if (pages_->currentIndex() == 0) addProfile();
+    });
     layout->addWidget(sidebar);
     layout->addWidget(pages_, 1);
     setCentralWidget(root);
@@ -484,10 +491,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), core_(this) {
         else if (!serviceCommandProcess_ && !linuxServiceProcess_)
             ensureCoreService();
     });
-    pollTimer_ = new QTimer(this);
-    pollTimer_->setInterval(1000);
-    connect(pollTimer_, &QTimer::timeout, this, &MainWindow::poll);
-    pollTimer_->start();
+    // Connection polling remains off until core integration is enabled.
     connect(development_, &DevelopmentCore::changed, this, &MainWindow::updateDevelopment);
     connect(development_, &DevelopmentCore::completed, this, [this](bool success) {
         if (!developmentExit_) return;
@@ -502,7 +506,11 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), core_(this) {
         }
     });
     refreshProfiles();
-    core_.request("hello");
+    state_ = "disconnected";
+    connectionLabel_->setText(tr("Disconnected"));
+    trafficLabel_->setText(tr("Traffic: ↑ 0 B  ↓ 0 B"));
+    updateConnectionButton();
+    if (trayMenu_) rebuildTrayMenu();
 }
 
 QWidget *MainWindow::profilesPage() {
@@ -513,10 +521,10 @@ QWidget *MainWindow::profilesPage() {
     auto *title = new QLabel(tr("Profiles"));
     title->setStyleSheet("font-size: 17px; font-weight: 700");
     layout->addWidget(title);
-    connectionLabel_ = new QLabel(tr("Connecting to core…"));
+    connectionLabel_ = new QLabel(tr("Disconnected"));
     connectionLabel_->setStyleSheet(themedStyle("color: #66768a"));
     layout->addWidget(connectionLabel_);
-    trafficLabel_ = new QLabel(tr("Traffic: —"));
+    trafficLabel_ = new QLabel(tr("Traffic: ↑ 0 B  ↓ 0 B"));
     trafficLabel_->setStyleSheet(themedStyle("color: #66768a"));
     layout->addWidget(trafficLabel_);
     sessionStatsLabel_ = new QLabel(tr("Connections: —"));
@@ -561,6 +569,8 @@ QWidget *MainWindow::profilesPage() {
         });
     });
     connect(profileList_, &QListWidget::itemSelectionChanged, this, [this] {
+        if (removeProfileButton_)
+            removeProfileButton_->setEnabled(!profileList_->selectedItems().isEmpty());
         if (profileList_->selectedItems().isEmpty()) {
             profileGear_->hide();
             gearRow_ = -1;
@@ -576,29 +586,22 @@ QWidget *MainWindow::profilesPage() {
         updateConnectionButton();
     });
     connect(profileList_, &QListWidget::itemDoubleClicked, this, [this](QListWidgetItem *item) {
-        const int row = profileList_->row(item);
-        if (row < 0 || row >= profiles_.size() || !profileInfo(row).connectable)
-            return;
-        if (profiles_[row].id == activeProfileId_ && state_ != "disconnected" && state_ != "failed")
-            return;
-        profileList_->setCurrentRow(row);
-        if (state_ == "connected" || state_ == "connecting" || state_ == "reconnecting" || state_ == "stopping") {
-            pendingStartPath_ = profiles_[row].path;
-            if (state_ != "stopping")
-                toggleConnection();
-        } else {
-            startProfile(row);
-        }
+        profileList_->setCurrentItem(item);
     });
     auto *activateProfile = new QShortcut(QKeySequence(Qt::Key_Return), profileList_);
     activateProfile->setContext(Qt::WidgetWithChildrenShortcut);
-    connect(activateProfile, &QShortcut::activated, this, &MainWindow::toggleConnection);
+    connect(activateProfile, &QShortcut::activated, this, [] {});
     auto *activateProfileNumpad = new QShortcut(QKeySequence(Qt::Key_Enter), profileList_);
     activateProfileNumpad->setContext(Qt::WidgetWithChildrenShortcut);
-    connect(activateProfileNumpad, &QShortcut::activated, this, &MainWindow::toggleConnection);
+    connect(activateProfileNumpad, &QShortcut::activated, this, [] {});
     auto *deleteProfile = new QShortcut(QKeySequence(Qt::Key_Delete), profileList_);
     deleteProfile->setContext(Qt::WidgetWithChildrenShortcut);
     connect(deleteProfile, &QShortcut::activated, this, &MainWindow::removeProfile);
+    for (int delta : {-1, 1}) {
+        auto *shortcut = new QShortcut(QKeySequence(delta < 0 ? Qt::SHIFT | Qt::Key_Up : Qt::SHIFT | Qt::Key_Down), profileList_);
+        shortcut->setContext(Qt::WidgetWithChildrenShortcut);
+        connect(shortcut, &QShortcut::activated, this, [this, delta] { moveProfile(delta); });
+    }
 #ifdef Q_OS_WIN
     layout->addWidget(new ProfileListFrame(profileList_), 1);
 #else
@@ -608,6 +611,8 @@ QWidget *MainWindow::profilesPage() {
     auto *add = new QPushButton(tr("+  Add key"));
     auto *import = new QPushButton(tr("Import .conf"));
     auto *remove = new QPushButton(tr("Remove"));
+    removeProfileButton_ = remove;
+    remove->setEnabled(false);
     connectButton_ = new ConnectionButton(tr("Connect"));
     connectButton_->setObjectName("connectButton");
     connectButton_->setProperty("mode", "connect");
@@ -724,16 +729,19 @@ QWidget *MainWindow::settingsPage() {
         language->setCurrentIndex(language->findData(previousLanguage));
     });
     auto *stopOnExit = new HiDpiCheckBox(tr("Disconnect the VPN and stop core when quitting"));
+    stopOnExit->setEnabled(false);
     stopOnExit->setChecked(QSettings().value("app/stopCoreOnExit", false).toBool());
     connect(stopOnExit, &QCheckBox::toggled, this, [](bool checked) {
         QSettings().setValue("app/stopCoreOnExit", checked);
     });
     general->addWidget(stopOnExit);
     auto *notifications = new HiDpiCheckBox(tr("Show system notifications"));
+    notifications->setEnabled(false);
     notifications->setChecked(QSettings().value("app/notifications", true).toBool());
     connect(notifications, &QCheckBox::toggled, this, [](bool checked) { QSettings().setValue("app/notifications", checked); });
     general->addWidget(notifications);
     auto *detailedStats = new HiDpiCheckBox(tr("Show detailed connection statistics"));
+    detailedStats->setEnabled(false);
     detailedStats->setChecked(QSettings().value("app/showDetailedStats", false).toBool());
     connect(detailedStats, &QCheckBox::toggled, this, [this](bool checked) {
         QSettings().setValue("app/showDetailedStats", checked);
@@ -741,9 +749,10 @@ QWidget *MainWindow::settingsPage() {
     });
     general->addWidget(detailedStats);
     auto *autoConnect = new HiDpiCheckBox(tr("Connect automatically on startup"));
+    autoConnect->setEnabled(false);
     autoConnect->setChecked(QSettings().value("app/autoConnect", false).toBool());
     autoConnectProfile_ = new HiDpiComboBox;
-    autoConnectProfile_->setEnabled(autoConnect->isChecked());
+    autoConnectProfile_->setEnabled(false);
     connect(autoConnect, &QCheckBox::toggled, this, [this](bool checked) {
         QSettings().setValue("app/autoConnect", checked);
         autoConnectProfile_->setEnabled(checked);
@@ -897,6 +906,7 @@ QWidget *MainWindow::logPage() {
     title->setStyleSheet("font-size: 17px; font-weight: 700");
     layout->addWidget(title);
     auto *keepPrevious = new HiDpiCheckBox(tr("Keep previous entries"));
+    keepPrevious->setEnabled(false);
     keepPrevious->setChecked(QSettings().value("logs/keepPrevious", true).toBool());
     connect(keepPrevious, &QCheckBox::toggled, this, [](bool checked) {
         QSettings().setValue("logs/keepPrevious", checked);
@@ -908,6 +918,13 @@ QWidget *MainWindow::logPage() {
     auto *logButtons = new QHBoxLayout;
     auto *save = new QPushButton(tr("Save log…"));
     auto *clear = new QPushButton(tr("Clear"));
+    const auto updateLogActions = [this, save, clear] {
+        const bool hasEntries = !log_->document()->isEmpty();
+        save->setEnabled(hasEntries);
+        clear->setEnabled(hasEntries);
+    };
+    connect(log_, &QTextEdit::textChanged, this, updateLogActions);
+    updateLogActions();
     connect(save, &QPushButton::clicked, this, [this] {
         const QString path = QFileDialog::getSaveFileName(this, tr("Save log"), QDir::homePath() + "/bimeron.log", tr("Text (*.log *.txt)"));
         if (path.isEmpty()) return;
@@ -1024,64 +1041,72 @@ void MainWindow::editProfile(int row) {
     }
     const QByteArray originalData = source.readAll();
     source.close();
-    ProfileEditorDialog dialog(QString::fromUtf8(originalData), capabilities_, this);
-    if (dialog.exec() != QDialog::Accepted)
-        return;
-    const QByteArray data = dialog.configText().toUtf8();
-    const QFileInfo profileInfo(profiles_[row].path);
-    const QString temporary = profileInfo.dir().filePath(QString(".bimeron-validate-%1.conf").arg(QUuid::createUuid().toString(QUuid::WithoutBraces)));
-    QSaveFile validationFile(temporary);
-    QString error;
-    if (!validationFile.open(QIODevice::WriteOnly) || validationFile.write(data) != data.size() || !validationFile.commit()) {
-        QMessageBox::warning(this, tr("Profile was not saved"), validationFile.errorString());
-        return;
-    }
-    QFile::setPermissions(temporary, QFileDevice::ReadOwner | QFileDevice::WriteOwner);
-    const bool valid = validateConfig(temporary, &error);
-    QFile::remove(temporary);
-    if (!valid) {
-        QMessageBox::warning(this, tr("Invalid configuration"), error);
-        return;
-    }
-    QSaveFile output(profiles_[row].path);
-    if (!output.open(QIODevice::WriteOnly)) {
-        QMessageBox::warning(this, tr("Profile was not saved"), tr("Failed to open the file for writing: %1").arg(output.errorString()));
-        return;
-    }
-    if (output.write(data) != data.size()) {
-        output.cancelWriting();
-        QMessageBox::warning(this, tr("Profile was not saved"), tr("Failed to write data: %1").arg(output.errorString()));
-        return;
-    }
-    if (!output.commit()) {
-        // Windows can reject an atomic replacement even though the profile itself is writable.
-        QFile direct(profiles_[row].path);
-        if (!direct.open(QIODevice::WriteOnly | QIODevice::Truncate) || direct.write(data) != data.size()) {
-            const QString directError = direct.errorString();
-            direct.close();
-            QFile restore(profiles_[row].path);
-            if (restore.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-                restore.write(originalData);
-                restore.close();
-            }
-            QMessageBox::warning(this, tr("Profile was not saved"), tr("Windows denied both file replacement and direct writing: %1").arg(directError));
-            return;
+    const auto validateDraft = [this, row](const QString &text, QString *error) {
+        const QByteArray data = text.toUtf8();
+        const QFileInfo profileInfo(profiles_[row].path);
+        const QString temporary = profileInfo.dir().filePath(QString(".bimeron-validate-%1.conf").arg(QUuid::createUuid().toString(QUuid::WithoutBraces)));
+        QSaveFile validationFile(temporary);
+        if (!validationFile.open(QIODevice::WriteOnly) || validationFile.write(data) != data.size() || !validationFile.commit()) {
+            if (error) *error = validationFile.errorString();
+            return false;
         }
-        direct.close();
+        QFile::setPermissions(temporary, QFileDevice::ReadOwner | QFileDevice::WriteOwner);
+        const bool valid = validateConfig(temporary, error);
+        QFile::remove(temporary);
+        return valid;
+    };
+    ProfileEditorDialog dialog(QString::fromUtf8(originalData), capabilities_, this, validateDraft);
+    while (dialog.exec() == QDialog::Accepted) {
+        const QByteArray data = dialog.configText().toUtf8();
+        QString error;
+        if (!validateDraft(dialog.configText(), &error)) {
+            QMessageBox::warning(&dialog, tr("Error"), error, QMessageBox::Ok);
+            continue;
+        }
+        QSaveFile output(profiles_[row].path);
+        if (!output.open(QIODevice::WriteOnly)) {
+            QMessageBox::warning(&dialog, tr("Error"), tr("Failed to open the file for writing: %1").arg(output.errorString()), QMessageBox::Ok);
+            continue;
+        }
+        if (output.write(data) != data.size()) {
+            output.cancelWriting();
+            QMessageBox::warning(&dialog, tr("Error"), tr("Failed to write data: %1").arg(output.errorString()), QMessageBox::Ok);
+            continue;
+        }
+        if (!output.commit()) {
+            // Windows can reject an atomic replacement even though the profile itself is writable.
+            QFile direct(profiles_[row].path);
+            if (!direct.open(QIODevice::WriteOnly | QIODevice::Truncate) || direct.write(data) != data.size()) {
+                const QString directError = direct.errorString();
+                direct.close();
+                QFile restore(profiles_[row].path);
+                if (restore.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+                    restore.write(originalData);
+                    restore.close();
+                }
+                QMessageBox::warning(&dialog, tr("Error"), tr("Windows denied both file replacement and direct writing: %1").arg(directError), QMessageBox::Ok);
+                continue;
+            }
+            direct.close();
+        }
+        if (QFileInfo(profiles_[row].path).size() != data.size()) {
+            QMessageBox::warning(&dialog, tr("Error"), tr("The written file size does not match the expected size."), QMessageBox::Ok);
+            continue;
+        }
+        QFile::setPermissions(profiles_[row].path, QFileDevice::ReadOwner | QFileDevice::WriteOwner);
+        profiles_[row].name = ProfileStore::displayName(profiles_[row].path);
+        if (!store_.save(profiles_, &error)) {
+            QMessageBox::warning(&dialog, tr("Error"), error, QMessageBox::Ok);
+            continue;
+        }
+        const QString editedId = profiles_[row].id;
+        refreshProfiles();
+        for (int index = 0; index < profiles_.size(); ++index)
+            if (profiles_[index].id == editedId) profileList_->setCurrentRow(index);
+        if (editedId == activeProfileId_ && state_ != "disconnected")
+            QMessageBox::information(this, tr("Reconnect required"), tr("Changes have been saved and will apply after disconnecting and reconnecting."));
+        break;
     }
-    if (QFileInfo(profiles_[row].path).size() != data.size()) {
-        QMessageBox::warning(this, tr("Profile was not saved"), tr("The written file size does not match the expected size."));
-        return;
-    }
-    QFile::setPermissions(profiles_[row].path, QFileDevice::ReadOwner | QFileDevice::WriteOwner);
-    profiles_[row].name = ProfileStore::displayName(profiles_[row].path);
-    store_.save(profiles_, &error);
-    const QString editedId = profiles_[row].id;
-    refreshProfiles();
-    for (int index = 0; index < profiles_.size(); ++index)
-        if (profiles_[index].id == editedId) profileList_->setCurrentRow(index);
-    if (editedId == activeProfileId_ && state_ != "disconnected")
-        QMessageBox::information(this, tr("Reconnect required"), tr("Changes have been saved and will apply after disconnecting and reconnecting."));
 }
 
 void MainWindow::addProfile() {
@@ -1095,6 +1120,9 @@ void MainWindow::addProfile() {
     key->setPlaceholderText(tr("ss://, ssconf://, socks5://, or vless://"));
     key->setMinimumHeight(30);
     auto *paste = new QPushButton;
+    paste->setText(tr("Paste"));
+    auto *revealKey = new QPushButton(tr("Show"));
+    key->setEchoMode(QLineEdit::Password);
     auto *nameLabel = new QLabel(tr("Profile name"));
     auto *name = new QLineEdit;
     name->setMinimumHeight(30);
@@ -1102,7 +1130,13 @@ void MainWindow::addProfile() {
     name->hide();
     layout->addWidget(hint);
     layout->addWidget(key);
+    layout->addWidget(revealKey);
     layout->addWidget(paste);
+    connect(revealKey, &QPushButton::clicked, &dialog, [key, revealKey] {
+        const bool showing = key->echoMode() == QLineEdit::Normal;
+        key->setEchoMode(showing ? QLineEdit::Password : QLineEdit::Normal);
+        revealKey->setText(showing ? QObject::tr("Show") : QObject::tr("Hide"));
+    });
     layout->addWidget(nameLabel);
     layout->addWidget(name);
     QDialogButtonBox buttons(QDialogButtonBox::Save | QDialogButtonBox::Cancel);
@@ -1168,13 +1202,10 @@ void MainWindow::addProfile() {
     });
     auto updatePaste = [&] {
         const QString clipboardKey = QApplication::clipboard()->text().trimmed();
-        const bool available = isKey(clipboardKey);
-        paste->setVisible(available);
-        fitDialog();
-        if (available) {
+        if (isKey(clipboardKey)) {
             const QString suggested = keyName(clipboardKey);
             paste->setText(suggested.isEmpty() ? tr("Paste key") : tr("Paste key #%1").arg(suggested));
-        }
+        } else paste->setText(tr("Paste"));
     };
     connect(QApplication::clipboard(), &QClipboard::dataChanged, &dialog, updatePaste);
     connect(paste, &QPushButton::clicked, &dialog, [&] {
@@ -1187,23 +1218,30 @@ void MainWindow::addProfile() {
         if (keyValid && !name->text().trimmed().isEmpty()) dialog.accept();
     });
     connect(&buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
-    if (dialog.exec() != QDialog::Accepted) return;
-    QString error;
-    const QString path = store_.createConfig(name->text(), key->text(), &error);
-    key->clear();
-    if (path.isEmpty()) {
-        QMessageBox::warning(this, tr("Profile was not created"), error);
-        return;
+    while (dialog.exec() == QDialog::Accepted) {
+        QString error;
+        const QString path = store_.createConfig(name->text(), key->text(), &error);
+        if (path.isEmpty()) {
+            QMessageBox::warning(&dialog, tr("Error"), error, QMessageBox::Ok);
+            continue;
+        }
+        if (!validateConfig(path, &error)) {
+            QFile::remove(path);
+            QMessageBox::warning(&dialog, tr("Error"), error, QMessageBox::Ok);
+            continue;
+        }
+        const QString profileName = name->text().trimmed();
+        profiles_.append({ProfileStore::identity(path), profileName, path});
+        if (!store_.save(profiles_, &error)) {
+            profiles_.removeLast();
+            QFile::remove(path);
+            QMessageBox::warning(&dialog, tr("Error"), error, QMessageBox::Ok);
+            continue;
+        }
+        key->clear();
+        refreshProfiles();
+        break;
     }
-    if (!validateConfig(path, &error)) {
-        QFile::remove(path);
-        QMessageBox::warning(this, tr("Profile was not created"), error);
-        return;
-    }
-    const QString profileName = name->text().trimmed().isEmpty() ? tr("Untitled") : name->text().trimmed();
-    profiles_.append({ProfileStore::identity(path), profileName, path});
-    store_.save(profiles_, &error);
-    refreshProfiles();
 }
 
 void MainWindow::importProfile() {
@@ -1227,14 +1265,17 @@ void MainWindow::importProfile() {
 
 void MainWindow::removeProfile() {
     const int row = profileList_->currentRow();
-    if (row < 0) return;
+    if (row < 0 || !profileList_->currentItem()->isSelected()) return;
     if (profiles_[row].id == activeProfileId_) {
         QMessageBox::information(this, tr("Profile in use"), tr("Disconnect the active session first."));
         return;
     }
-    if (QMessageBox::question(this, tr("Delete profile"), tr("Delete profile “%1”?").arg(profiles_[row].name),
-            QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes)
-        return;
+    QMessageBox confirmation(QMessageBox::Question, tr("Delete profile"),
+        tr("Delete profile “%1”?").arg(profiles_[row].name), QMessageBox::NoButton, this);
+    auto *confirm = confirmation.addButton(tr("Remove"), QMessageBox::DestructiveRole);
+    confirmation.addButton(tr("Cancel"), QMessageBox::RejectRole);
+    confirmation.exec();
+    if (confirmation.clickedButton() != confirm) return;
     QFile::remove(profiles_[row].path);
     profiles_.removeAt(row);
     QString error;
@@ -1242,25 +1283,24 @@ void MainWindow::removeProfile() {
     refreshProfiles();
 }
 
-void MainWindow::toggleConnection() {
-    if (development_->busy() || development_->failed()) return;
-    const int row = profileList_->currentItem() && profileList_->currentItem()->isSelected()
-        ? profileList_->currentRow() : -1;
-    if (row < 0)
-        return;
-    if (!profileInfo(row).connectable && profiles_[row].id != activeProfileId_) return;
-    if (state_ == "connected" || state_ == "connecting" || state_ == "reconnecting") {
-        if (profiles_[row].id != activeProfileId_)
-            pendingStartPath_ = profiles_[row].path;
-        state_ = "stopping";
-        updateConnectionButton();
-        if (core_.busy())
-            stopRequested_ = true;
-        else
-            core_.request("stop", {}, 120000);
+void MainWindow::moveProfile(int delta) {
+    const int row = profileList_->currentRow();
+    const int target = row + delta;
+    if (row < 0 || !profileList_->currentItem()->isSelected() || target < 0 || target >= profiles_.size()) return;
+    profiles_.swapItemsAt(row, target);
+    QString error;
+    if (!store_.save(profiles_, &error)) {
+        profiles_.swapItemsAt(row, target);
+        QMessageBox::warning(this, tr("Error"), error, QMessageBox::Ok);
         return;
     }
-    startProfile(row);
+    refreshProfiles();
+    profileList_->setCurrentRow(target, QItemSelectionModel::ClearAndSelect);
+    profileList_->setFocus();
+}
+
+void MainWindow::toggleConnection() {
+    // VPN controls are intentionally unavailable in this navigation phase.
 }
 
 void MainWindow::startProfile(int row) {
@@ -1557,29 +1597,8 @@ void MainWindow::handleStatus(const QJsonObject &status) {
 }
 
 void MainWindow::updateConnectionButton() {
-    QString mode = "connect";
-    const int row = profileList_->currentItem() && profileList_->currentItem()->isSelected()
-        ? profileList_->currentRow() : -1;
-    bool enabled = row >= 0 && profileInfo(row).connectable;
-    const bool activeSelected = row >= 0 && profiles_[row].id == activeProfileId_;
-    if ((state_ == "connected" || state_ == "connecting" || state_ == "reconnecting") && activeSelected) {
-        connectButton_->setText(state_ == "connected" ? tr("Disconnect") : tr("Cancel connection"));
-        enabled = true;
-        mode = "disconnect";
-    } else if (row >= 0 && (state_ == "connected" || state_ == "connecting" || state_ == "reconnecting")) {
-        connectButton_->setText(tr("Switch profile"));
-    } else if (state_ == "failed" && activeSelected) {
-        connectButton_->setText(tr("Reconnect"));
-    } else if (state_ == "stopping") {
-        connectButton_->setText(tr("Disconnecting…"));
-        enabled = false;
-    } else {
-        connectButton_->setText(tr("Connect"));
-    }
-    connectButton_->setProperty("mode", mode);
-    connectButton_->setEnabled(enabled && !development_->busy() && !development_->failed());
-    connectButton_->style()->unpolish(connectButton_);
-    connectButton_->style()->polish(connectButton_);
+    connectButton_->setText(tr("Connect"));
+    connectButton_->setEnabled(false);
 }
 
 void MainWindow::updateProfileAppearance() {
@@ -1619,7 +1638,7 @@ void MainWindow::showCoreError(const QJsonObject &response) {
     const QHash<QString, QString> messages{{"unsupported_protocol", tr("The GUI and core protocol versions are incompatible")}, {"absolute_config_path_required", tr("Core requires an absolute profile path")}, {"invalid_configuration", tr("The profile configuration is invalid")}, {"session_already_running", tr("A session is already running")}, {"session_start_failed", tr("Failed to start the session")}, {"session_stop_failed", tr("Failed to fully clean up network settings")}, {"daemon_shutting_down", tr("Core is shutting down")}};
     const QString message = messages.value(code, tr("Core error: %1").arg(code));
     appendLog(message);
-    QMessageBox::warning(this, tr("Bimeron Core"), message);
+    QMessageBox::warning(this, tr("Error"), message, QMessageBox::Ok);
 }
 
 void MainWindow::appendLog(const QString &message) {
@@ -1732,7 +1751,7 @@ void MainWindow::rebuildTrayMenu() {
     trayMenu_->addSeparator();
     for (int row = 0; row < profiles_.size(); ++row) {
         auto *profile = trayMenu_->addAction(profiles_[row].name);
-        profile->setEnabled(profileInfo(row).connectable || (profiles_[row].id == activeProfileId_ && state_ == "connected"));
+        profile->setEnabled(false);
         profile->setCheckable(true);
         profile->setChecked(profiles_[row].id == activeProfileId_
             && (state_ == "connected" || state_ == "reconnecting" || state_ == "stopping"));
@@ -1757,7 +1776,7 @@ void MainWindow::rebuildTrayMenu() {
     trayMenu_->addSeparator();
     auto *open = trayMenu_->addAction(tr("Open Bimeron"));
     connect(open, &QAction::triggered, this, &MainWindow::showWindow);
-    auto *quit = trayMenu_->addAction(tr("Quit"));
+    auto *quit = trayMenu_->addAction(tr("Quit Bimeron"));
     connect(quit, &QAction::triggered, this, &MainWindow::requestShutdown);
 }
 

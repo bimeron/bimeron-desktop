@@ -141,7 +141,9 @@ QCheckBox *ruleEnabled(QTableWidget *table, int row) {
 }
 }
 
-ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject &capabilities, QWidget *parent) : QDialog(parent) {
+ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject &capabilities, QWidget *parent,
+                                         std::function<bool(const QString &, QString *)> validateRaw)
+    : QDialog(parent), originalText_(text), validateRaw_(validateRaw) {
     setWindowTitle(tr("Profile settings"));
     resize(680, 520);
     setMinimumSize(620, 460);
@@ -326,10 +328,21 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
     auto *remove = new QPushButton(tr("Remove"));
     auto *up = new QPushButton(tr("Move up"));
     auto *down = new QPushButton(tr("Move down"));
+    const auto updateRuleActions = [this, remove, up, down] {
+        const int row = rules_->currentRow();
+        const bool selected = row >= 0 && rules_->selectionModel()->hasSelection();
+        remove->setEnabled(selected);
+        up->setEnabled(selected && row > 0);
+        down->setEnabled(selected && row + 1 < rules_->rowCount());
+    };
+    connect(rules_, &QTableWidget::itemSelectionChanged, this, updateRuleActions);
+    connect(rules_->model(), &QAbstractItemModel::rowsInserted, this, updateRuleActions);
+    connect(rules_->model(), &QAbstractItemModel::rowsRemoved, this, updateRuleActions);
+    updateRuleActions();
     connect(add, &QPushButton::clicked, this, [this] { addRule(Rule{}); });
     connect(remove, &QPushButton::clicked, this, [this] { if (rules_->currentRow() >= 0) rules_->removeRow(rules_->currentRow()); });
-    connect(up, &QPushButton::clicked, this, [this] { moveRule(-1); });
-    connect(down, &QPushButton::clicked, this, [this] { moveRule(1); });
+    connect(up, &QPushButton::clicked, this, [this, updateRuleActions] { moveRule(-1); updateRuleActions(); });
+    connect(down, &QPushButton::clicked, this, [this, updateRuleActions] { moveRule(1); updateRuleActions(); });
     for (auto *button : {add, remove, up, down}) ruleButtons->addWidget(button);
     ruleButtons->addStretch();
     routingLayout->addLayout(ruleButtons);
@@ -357,6 +370,7 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
     layout->addWidget(tabs_);
     QDialogButtonBox *buttons = new QDialogButtonBox(QDialogButtonBox::Save | QDialogButtonBox::Cancel);
     buttons->button(QDialogButtonBox::Save)->setText(tr("Save"));
+    buttons->button(QDialogButtonBox::Save)->setDefault(true);
     buttons->button(QDialogButtonBox::Cancel)->setText(tr("Cancel"));
     connect(buttons, &QDialogButtonBox::accepted, this, [this] {
         if (rawOnlyVless_ && !rawDirty_) {
@@ -392,7 +406,6 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
         const QUrl url(key_->text().trimmed());
         const bool uriVless = (source == "VLESS" || source == "Key") && url.scheme() == "vless"
             && ProfileStore::connectionInfo("[AccessKey]\nKey = " + key_->text()).connectable;
-        tabs_->setTabVisible(1, explicitVless || uriVless);
         if (!explicitVless && !uriVless) return;
         vlessForm->setRowVisible(vlessEndpoint, uriVless);
         vlessForm->setRowVisible(vlessEncryption, uriVless);
@@ -551,10 +564,34 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
     connect(mode_, &QComboBox::currentIndexChanged, this, updateModeControls);
     updateModeControls();
     connect(raw_, &QPlainTextEdit::textChanged, this, [this] { rawDirty_ = true; });
-    connect(tabs_, &QTabWidget::currentChanged, this, [this](int index) { if (index == tabs_->count() - 1 && !rawDirty_) syncRaw(); });
+    connect(tabs_, &QTabWidget::currentChanged, this, [this](int index) {
+        const int rawIndex = tabs_->count() - 1;
+        if (index == rawIndex) {
+            if (!rawDirty_) syncRaw();
+        } else if (rawDirty_) {
+            const QString text = raw_->toPlainText();
+            QString error;
+            const bool structureValid = text.contains(QRegularExpression(QStringLiteral("(?m)^\\s*\\[Profile\\]\\s*$")))
+                && text.contains(QRegularExpression(QStringLiteral("(?m)^\\s*\\[AccessKey\\]\\s*$")))
+                && !valueFor(text, "Profile", "Name").isEmpty();
+            if (!structureValid || (validateRaw_ && !validateRaw_(text, &error))) {
+                const QSignalBlocker blocker(tabs_);
+                tabs_->setCurrentIndex(rawIndex);
+                QMessageBox::warning(this, tr("Error"), error.isEmpty() ? tr("Invalid configuration") : error, QMessageBox::Ok);
+                return;
+            }
+            loadText(text);
+            rawDirty_ = false;
+        }
+    });
+    originalText_ = configText();
 }
 
 void ProfileEditorDialog::loadText(const QString &text) {
+    rules_->setRowCount(0);
+    ignoreLocalNetwork_->setChecked(false);
+    hasUnknownSettings_ = false;
+    rawOnlyVless_ = false;
     name_->setText(valueFor(text, "Profile", "Name"));
     QString source = "SS", value = valueFor(text, "AccessKey", "SS");
     if (value.isEmpty()) { source = "SSConf"; value = valueFor(text, "AccessKey", "SSConf"); }
@@ -784,3 +821,14 @@ void ProfileEditorDialog::syncRaw() {
 }
 
 QString ProfileEditorDialog::configText() const { return rawDirty_ || rawOnlyVless_ ? raw_->toPlainText() : buildText(); }
+
+void ProfileEditorDialog::reject() {
+    if (configText() != originalText_) {
+        QMessageBox prompt(QMessageBox::Question, tr("Discard changes"), tr("Discard unsaved changes?"), QMessageBox::NoButton, this);
+        auto *discard = prompt.addButton(tr("Discard changes"), QMessageBox::DestructiveRole);
+        prompt.addButton(tr("Continue editing"), QMessageBox::RejectRole);
+        prompt.exec();
+        if (prompt.clickedButton() != discard) return;
+    }
+    QDialog::reject();
+}
