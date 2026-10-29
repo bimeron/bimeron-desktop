@@ -332,8 +332,33 @@ static void preservationRegressions(const QString &directory) {
             "Naive = naive+quic://alice:SENTINEL@example.invalid:443",
             "MASQUE = masque://alice:SENTINEL@example.invalid:443"
         };
+        ProfileStore targetStore(directory + "/target-import");
+        for (const auto &source : sources) {
+            if (source.startsWith("SSH")) continue;
+            const QString uri = source.mid(source.indexOf(" = ") + 3);
+            QString error;
+            const QString path = targetStore.createConfig("Target Core", uri, &error);
+            require(!path.isEmpty());
+            QFile file(path);
+            require(file.open(QIODevice::ReadOnly));
+            const QString created = QString::fromUtf8(file.readAll());
+            check(created, {uri}, contractCore, path + ".validated");
+        }
         for (const auto &source : sources)
             fixtures.append("[Profile]\nVersion = 1\nName = Preserve\n[AccessKey]\n" + source + "\n");
+        for (const QString &uri : {"trojan://SENTINEL@host:443?security=none",
+                "tuic://bad:SENTINEL@host:443", "anytls://SENTINEL@host?insecure=1",
+                "naive+https://alice:SENTINEL@host?insecure=1", "masque://host?unknown=SENTINEL",
+                "vmess://not-base64"}) {
+            const QString field = ProfileStore::uriSourceField(uri);
+            const QString path = directory + "/invalid-protocol.conf";
+            require(ProfileStore::writeConfig(path, ("[Profile]\nVersion = 1\nName = Invalid\n[AccessKey]\n" + field + " = " + uri + "\n").toUtf8()));
+            QProcess process;
+            process.start(contractCore, {"validate", path});
+            require(process.waitForStarted(5000) && process.waitForFinished(20000));
+            require(process.exitStatus() == QProcess::NormalExit && process.exitCode() != 0);
+            require(!safeCoreDiagnostic(process.readAllStandardError() + process.readAllStandardOutput()).contains("SENTINEL"));
+        }
         int index = 0;
         for (const auto &fixture : fixtures)
             check(fixture, {fixture}, contractCore, directory + "/contract-" + QString::number(index++) + ".conf");
@@ -403,6 +428,38 @@ int main(int argc, char **argv) {
     }
     preservationRegressions(temporary.path());
     sshProfiles(temporary.path());
+    ProfileStore uriStore(temporary.path() + "/uri-import");
+    for (const QString &scheme : {"vmess", "trojan", "tuic", "http", "https", "anytls", "naive+https", "naive+quic", "masque"}) {
+        const QString uri = scheme + "://synthetic:443";
+        const QString field = ProfileStore::uriSourceField(uri);
+        require(!field.isEmpty());
+        QString error;
+        const QString path = uriStore.createConfig("URI", uri, &error);
+        require(!path.isEmpty());
+        QFile file(path);
+        require(file.open(QIODevice::ReadOnly));
+        const QString text = QString::fromUtf8(file.readAll());
+        require(text.contains(field + " = " + uri));
+        require(ProfileStore::connectionInfo(text).protocol == field);
+        ProfileEditorDialog editor(text, {});
+        require(editor.configText() == text);
+        require(!editor.findChild<QTabWidget *>()->isTabVisible(1));
+    }
+    require(ProfileStore::uriSourceField("trojan://secret\n[Future]").isEmpty());
+    for (const QString &bad : {"http://host", "https://host:443/", "http://host:80?q=x",
+            "https://host:443#secret", "https://user@host:443", "future://host:443",
+            "masque://host?ca=relative.pem"}) {
+        QString error;
+        const auto before = QDir(temporary.path() + "/uri-import").entryList(QDir::Files);
+        require(uriStore.createConfig("Invalid", bad, &error).isEmpty());
+        require(!error.isEmpty());
+        require(QDir(temporary.path() + "/uri-import").entryList(QDir::Files) == before);
+    }
+    QString oversizedError = "old error";
+    require(uriStore.createConfig("Large", "vmess://" + QString(65536, 'A'), &oversizedError).isEmpty());
+    require(oversizedError != "old error");
+
+
     const QString core = qEnvironmentVariable("BIMERON_VLESS_CORE");
     const QString uuid = "123e4567-e89b-12d3-a456-426614174000";
     const QString link = "vless://" + uuid + "@[2001:db8::1]:443?encryption=none&type=grpc&security=tls&serviceName=proxy#Example";
@@ -416,6 +473,8 @@ int main(int argc, char **argv) {
     const QString uriProfile = QString::fromUtf8(savedFile.readAll());
     savedFile.close();
     check(uriProfile, {"VLESS = " + link}, core, temporary.filePath("uri.conf"));
+    ProfileEditorDialog vlessTabs(uriProfile, {});
+    require(vlessTabs.findChild<QTabWidget *>()->isTabVisible(1));
     check("[Profile]\nVersion = 1\n[AccessKey]\nKey = " + link + "\n",
         {"Key = " + link}, core, temporary.filePath("legacy.conf"));
     require(ProfileStore::connectionInfo("[AccessKey]\nKey = " + link).protocol == "VLESS");

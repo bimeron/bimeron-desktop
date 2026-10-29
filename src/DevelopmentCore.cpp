@@ -88,6 +88,9 @@ DevelopmentCore::DevelopmentCore(QString helper, QObject *parent)
     connect(&timer_, &QTimer::timeout, this, &DevelopmentCore::tick);
     connect(&control_, &CoreClient::replied, this, [this](const QString &command, const QJsonObject &response) {
         if (phase_ == Phase::Verifying) {
+#ifdef Q_OS_WIN
+            orphanAvailable_ = !path_.isEmpty();
+#endif
             finish(false, tr("The local daemon still responds; close it before retrying"));
             return;
         }
@@ -324,6 +327,62 @@ void DevelopmentCore::releaseProcess() {
     endpoint_.clear();
     phase_ = Phase::Idle;
     timer_.stop();
+}
+
+void DevelopmentCore::stopOrphan(bool force) {
+#ifdef Q_OS_WIN
+    if (busy_ || !orphanAvailable_ || endpoint_.isEmpty() || path_.isEmpty()) return;
+    busy_ = true;
+    emit changed();
+    auto *socket = new QLocalSocket(this);
+    const auto fail = [this, socket] {
+        if (socket->property("finished").toBool()) return;
+        socket->setProperty("finished", true);
+        socket->disconnect(this);
+        socket->abort();
+        socket->deleteLater();
+        finish(false, tr("Cannot verify the remaining daemon; no shutdown was sent"));
+    };
+    connect(socket, &QLocalSocket::connected, this, [this, socket, fail, force] {
+        ULONG pid = 0;
+        if (!GetNamedPipeServerProcessId(reinterpret_cast<HANDLE>(socket->socketDescriptor()), &pid)) { fail(); return; }
+        HANDLE handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE | (force ? PROCESS_TERMINATE : 0), FALSE, pid);
+        wchar_t image[32768];
+        DWORD length = 32768;
+        if (!handle || QFileInfo(path_).canonicalFilePath().isEmpty()
+            || !QueryFullProcessImageNameW(handle, 0, image, &length)
+            || QFileInfo(QString::fromWCharArray(image, length)).canonicalFilePath().compare(
+                QFileInfo(path_).canonicalFilePath(), Qt::CaseInsensitive) != 0
+            || processSid(handle).isEmpty() || processSid(handle) != processSid(GetCurrentProcess())) {
+            if (handle) CloseHandle(handle);
+            fail(); return;
+        }
+        if (force) {
+            const bool stopped = TerminateProcess(handle, 1);
+            CloseHandle(handle);
+            if (!stopped) { fail(); return; }
+            socket->setProperty("finished", true);
+            socket->disconnect(this);
+            socket->deleteLater();
+            emit forcedExitReady();
+            return;
+        }
+        if (processHandle_) CloseHandle(reinterpret_cast<HANDLE>(processHandle_));
+        processHandle_ = reinterpret_cast<quintptr>(handle);
+        processId_ = pid;
+        socket->setProperty("finished", true);
+        socket->disconnect(this);
+        socket->deleteLater();
+        orphanAvailable_ = false;
+        requestedPath_.clear();
+        shutdown();
+    });
+    connect(socket, &QLocalSocket::errorOccurred, this, [fail](QLocalSocket::LocalSocketError) { fail(); });
+    socket->connectToServer(endpoint_);
+    QTimer::singleShot(3000, socket, [socket, fail] {
+        if (socket->state() == QLocalSocket::ConnectingState) fail();
+    });
+#endif
 }
 
 void DevelopmentCore::shutdown() {

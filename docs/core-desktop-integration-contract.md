@@ -131,7 +131,8 @@ requires a selected CLI accepting the profile; it does not imply safe visual sav
 | SOCKS5 | Yes | Yes, after CLI validation | URI and explicit parameters |
 | VLESS | Yes | Yes, after CLI validation | URI inspection/editing and represented explicit fields; advanced explicit settings use Raw |
 | Hysteria2/hy2 | Yes | Conditional; bundle CLI rejects it | URI source; no explicit form |
-| VMess, Trojan, AnyTLS, TUIC, SSH, HTTP/HTTPS, Naive, MASQUE | No | Conditional; bundle CLI rejects them | No dedicated forms or list protocol recognition; generic Key/File is not feature support |
+| VMess, Trojan, AnyTLS, TUIC, HTTP/HTTPS, Naive, MASQUE | Yes, with target Core validation | Conditional; old bundle CLI rejects them | Protected Raw; source and protocol labels recognized; no new visual forms |
+| SSH | Yes, with target Core validation | Conditional; old bundle CLI rejects it | URI and explicit forms, identity/known_hosts and transient authentication; see SSH profiles |
 | ShadowTLS section | Only as part of a profile, not a standalone URI | Conditional; bundle CLI rejects it | Not represented; current warning-based save risks dropping the section |
 | Native IKEv2 | No | Rejected by current AccessKey import requirement | No form; outside the packet connection flow |
 
@@ -392,3 +393,4 @@ It adds SSH import/forms and transient authentication while retaining stages 1-3
 The older coverage table remains a baseline record. Bundled `v0.2.0-beta.1`
 does not support SSH. Bundle pins, release hashes, signed manifests and compatibility
 gates are one shared pre-release dependency across stages, not part of stage 7.
+See [Protocol URI import](protocol-uri-import.md) for stage 5 URI coverage, Raw editing and target Core requirements.

@@ -382,7 +382,10 @@ Do not create DEB directly in the directory on `/mnt/c`. The current configurati
 
 ### During Windows build the old GUI is running
 
-Before linking, `scripts/stop-build-app.ps1` completes only the `bimeron-desktop.exe` instance launched from the build directory being updated. The installed application and core service should not terminate with this script.
+Before linking, the script refuses to terminate the GUI if its adjacent local
+Core is running (or its path cannot be inspected). Return to the system backend
+and quit Development normally before rebuilding; this preserves daemon cleanup.
+Otherwise, `scripts/stop-build-app.ps1` completes only the `bimeron-desktop.exe` instance launched from the build directory being updated. The installed application and core service should not terminate with this script.
 
 ### Only some of the packages remain in `dist`
 
@@ -406,3 +409,6 @@ SSH profile fixtures can additionally use `BIMERON_SSH_CORE` pointing to Core
 `v0.3.0-beta.1` built from `9f527efe0a4959786084675f1ff795edb8a0d910`.
 This optional validation path does not change the bundled Core. The existing
 connection test executable also covers transient SSH challenge UI and private IPC.
+Protocol URI import tests use `BIMERON_PRESERVATION_CORE` targeting Core
+`v0.3.0-beta.1` revision `9f527efe0a4959786084675f1ff795edb8a0d910`.
+The current bundle pin is not evidence of support for these new protocols.

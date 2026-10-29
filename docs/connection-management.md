@@ -99,3 +99,10 @@ startup-profile identity, update restoration, secret handling and scope boundari
 Live VPN/proxy, service-update, UAC/polkit and multi-user ACL checks were not run.
 They remain separately authorized disposable-environment checks; this change
 does not establish new protocol interoperability or authorize a release.
+
+Connection state labels do not include profile names. Profile identity remains
+visible in the profile list and is retained internally for session management.
+
+Notification, detailed-statistics and keep-previous-log settings are editable.
+Update status and beta-update options are hidden whenever service update actions
+are unavailable, including local Development and failed backend transitions.

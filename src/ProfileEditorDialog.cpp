@@ -470,6 +470,8 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
         const bool explicitVless = keySource_->currentData().toString() == "ExplicitVLESS";
         const QString source = keySource_->currentData().toString();
         const QUrl url(key_->text().trimmed());
+        tabs_->setTabVisible(1, explicitVless || source == "VLESS"
+            || (source == "Key" && url.scheme() == "vless"));
         const bool uriVless = (source == "VLESS" || source == "Key") && url.scheme() == "vless"
             && ProfileStore::connectionInfo("[AccessKey]\nKey = " + key_->text()).connectable;
         if (!explicitVless && !uriVless) return;
