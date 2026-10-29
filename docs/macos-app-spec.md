@@ -1,7 +1,23 @@
 # Bimeron for macOS: port specification for Swift and SwiftUI
 
 Status: Draft specification for product owner review. macOS implementation
-GUI has not yet been executed. Date of analysis: October 12, 2026.
+GUI has not yet been executed. Architecture analysis: October 12, 2026;
+Qt GUI inventory refreshed October 30, 2026 at the fixed baseline below.
+
+## Current GUI baseline and precedence
+
+The current Qt parity baseline is Desktop
+`7f44c7309fc4cf9e91554f6bed8f167cefcda35d`, reconciled with the prior
+`67658368c2342ec95547cd0f0579a9d5aca28128` parity reference.
+Use [current GUI reference](current-gui-reference.md) for implemented screens,
+protocol/form/runtime boundaries and interaction states, and
+[design implementation reference](swiftui-gui-design.md) for measured Qt tokens
+and proposed SwiftUI mappings. These current-source inventories supersede older
+Qt observations below; macOS architecture/storage proposals remain proposals.
+The actual bundled Core is v0.2.0-beta.1; v0.3.0-beta.1 at
+`9f527efe0a4959786084675f1ff795edb8a0d910` is the stages 1–7 target, not a
+bundled-runtime guarantee. Stage 8 Windows IKEv2 is deferred and unimplemented;
+there is no macOS IKEv2 parity claim. Rejected candidate `62438a9` is not ready.
 
 ## 1. Purpose and boundaries
 
@@ -156,7 +172,7 @@ one address. This is local interface data, not public diagnostics.
 ### 4.2. Adding by key
 
 Fact: the current Add profile dialog accepts `ss://`, `ssconf://`, `socks5://`,
-and `vless://`. The name is suggested from the URL fragment
+and `vless://`, plus Hysteria2, VMess, Trojan, TUIC, HTTP(S), AnyTLS, Naive, MASQUE and SSH schemes listed in [URI import](protocol-uri-import.md). The name is suggested from the URL fragment
 `#...` after percent-decoding; a manually changed name is not overwritten.
 Saving is available with a non-empty name and a pre-valid key.
 The final check is performed by core. Saving does not connect the VPN.
@@ -207,7 +223,7 @@ and profiles from another OS are not included in the first transfer; explicit im
 
 ### 4.4. Profile editor
 
-The current Qt editor has five tabs. Preserve these logical sections:
+The current Qt editor has six logical tabs with conditional visibility. Preserve these logical sections:
 
 | Tab | Contents |
 | --- | --- |
@@ -215,7 +231,8 @@ The current Qt editor has five tabs. Preserve these logical sections:
 | VLESS | URI or explicit VLESS parameters, including transport, security, REALITY, gRPC, WebSocket and XHTTP options |
 | Network | Logical interface name, MTU, DNS, IPv6, kill switch availability |
 | Routing | Default Action, Local Network Exception, Ordered Rules |
-| Raw config | Editable `.conf` monospace font |
+| Parameters / ShadowTLS | Conditional explicit protocol options and independent outer credentials |
+| Raw config | Protected Show/Edit `.conf` monospace text; validate before returning to forms |
 
 In current Qt, the source type is shown as text, the switch is hidden. For source
 `SS` parsed server parameters are read-only; for explicit group
@@ -225,7 +242,7 @@ even if there is no separate visual form for it.
 
 Field restrictions: port `1..65535`, MTU `1280..1500`, from one to four different
 unicast IPv4 DNS. Ciphers: `chacha20-ietf-poly1305`, `aes-128-gcm`, `aes-192-gcm`,
-`aes-256-gcm`. Prefix restrictions are checked by core. On macOS the interface name is
+`aes-256-gcm`, plus the three SS2022 methods listed in [SS profiles](shadowsocks-profiles.md). Prefix restrictions are checked by core. On macOS the interface name is
 logical label: real `utunN` selects OS.
 
 Features that the selected backend does not have are disabled with an explanation. Import
