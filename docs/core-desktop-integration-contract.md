@@ -383,3 +383,12 @@ changes. Full release testing remains governed by
 [build-and-packaging.md](build-and-packaging.md); this document authorizes no release.
 
 Desktop explicit SS extension editing is specified in [Shadowsocks profiles](shadowsocks-profiles.md). Runtime support still requires a compatible Core.
+
+## Desktop SSH implementation
+
+[SSH profiles](ssh-profiles.md) defines stage 7 Desktop support targeting Core
+`v0.3.0-beta.1` at `9f527efe0a4959786084675f1ff795edb8a0d910`.
+It adds SSH import/forms and transient authentication while retaining stages 1-3.
+The older coverage table remains a baseline record. Bundled `v0.2.0-beta.1`
+does not support SSH. Bundle pins, release hashes, signed manifests and compatibility
+gates are one shared pre-release dependency across stages, not part of stage 7.

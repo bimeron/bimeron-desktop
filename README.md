@@ -116,3 +116,6 @@ unless the user has explicitly enabled the appropriate setting.
 The profile dialog accepts `ss://`, `ssconf://`, `socks5://`, `vless://`, `hysteria2://`, and `hy2://` links. Import, editing, and runtime support are separate: see the [Core/Desktop integration contract](docs/core-desktop-integration-contract.md). The current navigation baseline disables connection controls and regular IPC polling. The bundled Core `v0.2.0-beta.1` supports VLESS but predates Hysteria2; validation by a different selected CLI does not establish support in the installed service.
 
 See [Shadowsocks extensions](docs/shadowsocks-profiles.md) for SS2022 and embedded plugin editor support and Core requirements.
+
+SSH integration targets Core v0.3.0-beta.1; see [SSH profiles](docs/ssh-profiles.md)
+for Desktop behavior, the older bundled Core limitation and verification scope.

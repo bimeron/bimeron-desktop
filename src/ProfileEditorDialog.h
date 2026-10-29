@@ -44,6 +44,8 @@ private:
     QLineEdit *username_ = nullptr;
     QComboBox *ssPlugin_ = nullptr;
     QLineEdit *ssPluginOpts_ = nullptr;
+    QLineEdit *sshIdentity_ = nullptr;
+    QLineEdit *sshKnownHosts_ = nullptr;
     QLineEdit *prefix_ = nullptr;
     QLineEdit *vlessId_ = nullptr;
     QComboBox *vlessNetwork_ = nullptr;

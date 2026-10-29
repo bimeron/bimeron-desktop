@@ -23,7 +23,9 @@ public:
     QList<Profile> load(QString *error = nullptr) const;
     bool save(const QList<Profile> &profiles, QString *error = nullptr) const;
     QString importConfig(const QString &source, QString *error = nullptr) const;
-    QString createConfig(const QString &name, const QString &key, QString *error = nullptr) const;
+    QString createConfig(const QString &name, const QString &key, QString *error = nullptr,
+                         const QString &identityFile = {}, const QString &knownHostsFile = {}) const;
+    static bool sshFilesReadable(const QString &configText, const QString &profilePath, QString *error = nullptr);
     static QString identity(const QString &absolutePath);
     static QString displayName(const QString &configPath);
     static ProfileConnectionInfo connectionInfo(const QString &configText);

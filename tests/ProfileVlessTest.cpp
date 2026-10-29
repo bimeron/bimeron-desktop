@@ -340,6 +340,39 @@ static void preservationRegressions(const QString &directory) {
     }
 }
 
+static void sshProfiles(const QString &directory) {
+    ProfileStore store(directory + "/ssh-profiles");
+    const QString uri = "ssh://alice@[2001:db8::1]?identity=%2Ftmp%2Fkey&known_hosts=%2Ftmp%2Fhosts#SSH";
+    QString error;
+    const QString path = store.createConfig("SSH", uri, &error);
+    require(!path.isEmpty());
+    QFile file(path);
+    require(file.open(QIODevice::ReadOnly));
+    const QString text = QString::fromUtf8(file.readAll());
+    require(text.contains("SSH = " + uri) && text.contains("Mode = proxy"));
+    const QJsonObject caps{{"vpn", true}, {"proxy", true}};
+    for (QString input : {text, QString(text).replace("SSH =", "Key ="),
+        QString("[Profile]\nName = SSH\n[AccessKey]\nType = ssh\nServer = example.invalid\nPort = 22\nUsername = alice\n[Interface]\nMode = vpn\n")}) {
+        require(ProfileStore::connectionInfo(input).protocol == "SSH");
+        require(ProfileStore::connectionInfo(input).connectable);
+        ProfileEditorDialog editor(input, caps);
+        require(editor.configText() == input);
+        require(editor.findChild<QTabWidget *>()->isTabEnabled(0));
+    }
+    for (const QString &bad : {"ssh://alice:password@example.invalid", "ssh://alice:@example.invalid", "ssh://alice@example.invalid:0", "ssh://alice@example.invalid/path", "ssh://alice@example.invalid?unknown=value"})
+        require(!ProfileStore::connectionInfo("[AccessKey]\nSSH = " + bad).connectable);
+    require(!ProfileStore::sshFilesReadable(text, path, &error));
+    const QString hosts = directory + "/known_hosts";
+    require(ProfileStore::writeConfig(hosts, "synthetic-host-key"));
+    require(ProfileStore::sshFilesReadable("[AccessKey]\nSSH = ssh://alice@example.invalid\nKnownHostsFile = " + hosts, path, &error));
+    const QString core = qEnvironmentVariable("BIMERON_SSH_CORE");
+    if (!core.isEmpty()) {
+        QProcess process;
+        process.start(core, {"validate", path});
+        require(process.waitForFinished(15000) && process.exitCode() == 0);
+    }
+}
+
 int main(int argc, char **argv) {
     QApplication app(argc, argv);
     if (app.arguments().size() == 3 && app.arguments().at(1) == "--permission-fixture")
@@ -369,6 +402,7 @@ int main(int argc, char **argv) {
         return 0;
     }
     preservationRegressions(temporary.path());
+    sshProfiles(temporary.path());
     const QString core = qEnvironmentVariable("BIMERON_VLESS_CORE");
     const QString uuid = "123e4567-e89b-12d3-a456-426614174000";
     const QString link = "vless://" + uuid + "@[2001:db8::1]:443?encryption=none&type=grpc&security=tls&serviceName=proxy#Example";

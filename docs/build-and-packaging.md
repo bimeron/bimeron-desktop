@@ -401,3 +401,8 @@ The complete script cleans up old packages before building begins. If one of the
 - `packaging/windows/options.wxs` - MSI interface and behavior;
 - `packaging/linux/bimeron.desktop` — desktop entry Linux;
 - `.gitignore` - exclusion of generated directories and local secrets.
+
+SSH profile fixtures can additionally use `BIMERON_SSH_CORE` pointing to Core
+`v0.3.0-beta.1` built from `9f527efe0a4959786084675f1ff795edb8a0d910`.
+This optional validation path does not change the bundled Core. The existing
+connection test executable also covers transient SSH challenge UI and private IPC.

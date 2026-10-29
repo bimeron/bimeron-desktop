@@ -10,6 +10,7 @@
 #include <QComboBox>
 #include <QDialogButtonBox>
 #include <QFileDialog>
+#include <QFileInfo>
 #include <QFontDatabase>
 #include <QFormLayout>
 #include <QHeaderView>
@@ -166,6 +167,7 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
     keySource_->addItem(tr("Remote socks5://"), "SOCKS5");
     keySource_->addItem(tr("vless:// key"), "VLESS");
     keySource_->addItem(tr("Hysteria2 key"), "Hysteria2");
+    keySource_->addItem(tr("SSH link"), "SSH");
     if (!valueFor(text, "AccessKey", "Key").isEmpty())
         keySource_->addItem(tr("Legacy key"), "Key");
     if (!valueFor(text, "AccessKey", "File").isEmpty())
@@ -173,6 +175,7 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
     keySource_->addItem(tr("Explicit Shadowsocks settings"), "Explicit");
     keySource_->addItem(tr("Explicit SOCKS5 settings"), "ExplicitSOCKS5");
     keySource_->addItem(tr("Explicit VLESS settings"), "ExplicitVLESS");
+    keySource_->addItem(tr("Explicit SSH settings"), "ExplicitSSH");
     key_ = new QLineEdit;
     auto *keyRow = new QWidget;
     auto *keyLayout = new QHBoxLayout(keyRow);
@@ -196,6 +199,29 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
     password_ = new QLineEdit;
     password_->setEchoMode(QLineEdit::Password);
     username_ = new QLineEdit;
+    sshIdentity_ = new QLineEdit;
+    sshKnownHosts_ = new QLineEdit;
+    auto *identityRow = new QWidget;
+    auto *identityLayout = new QHBoxLayout(identityRow);
+    identityLayout->setContentsMargins(0, 0, 0, 0);
+    identityLayout->addWidget(sshIdentity_);
+    auto *chooseIdentity = new QPushButton(tr("Browse…"));
+    identityLayout->addWidget(chooseIdentity);
+    connect(chooseIdentity, &QPushButton::clicked, this, [this] {
+        const QString path = QFileDialog::getOpenFileName(this, tr("SSH identity file"));
+        if (!path.isEmpty()) sshIdentity_->setText(QFileInfo(path).absoluteFilePath());
+    });
+    auto *hostsRow = new QWidget;
+    auto *hostsLayout = new QHBoxLayout(hostsRow);
+    hostsLayout->setContentsMargins(0, 0, 0, 0);
+    hostsLayout->addWidget(sshKnownHosts_);
+    auto *chooseHosts = new QPushButton(tr("Browse…"));
+    hostsLayout->addWidget(chooseHosts);
+    connect(chooseHosts, &QPushButton::clicked, this, [this] {
+        const QString path = QFileDialog::getOpenFileName(this, tr("SSH known_hosts file"));
+        if (!path.isEmpty()) sshKnownHosts_->setText(QFileInfo(path).absoluteFilePath());
+    });
+
     username_->setEchoMode(QLineEdit::Password);
     ssPlugin_ = new HiDpiComboBox;
     ssPlugin_->setObjectName("ssPlugin");
@@ -216,6 +242,8 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
     generalForm->addRow(tr("Port"), port_);
     generalForm->addRow(tr("Cipher"), method_);
     generalForm->addRow(tr("Username"), username_);
+    generalForm->addRow(tr("SSH identity file"), identityRow);
+    generalForm->addRow(tr("SSH known_hosts file"), hostsRow);
     generalForm->addRow(tr("Password"), password_);
     generalForm->addRow(tr("Prefix"), prefix_);
     generalForm->addRow(tr("Plugin"), ssPlugin_);
@@ -522,7 +550,7 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
     };
     connect(vlessNetwork_, &QComboBox::currentIndexChanged, this, updateVlessControls);
     connect(vlessSecurity_, &QComboBox::currentIndexChanged, this, updateVlessControls);
-    const auto updateKeyControls = [this, generalForm, keyRow, keyLabel, browse, reveal, applySs, updateVlessControls] {
+    const auto updateKeyControls = [this, generalForm, keyRow, keyLabel, browse, reveal, identityRow, hostsRow, applySs, updateVlessControls] {
         const QString source = keySource_->currentData().toString();
         const bool ss = source == "SS";
         const bool ssconf = source == "SSConf";
@@ -531,30 +559,36 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
         const bool explicitKey = source == "Explicit";
         const bool explicitSocks5 = source == "ExplicitSOCKS5";
         const bool explicitVless = source == "ExplicitVLESS";
-        const bool showParameters = ss || explicitKey || explicitSocks5 || explicitVless;
+        const bool explicitSsh = source == "ExplicitSSH";
+        const bool ssh = source == "SSH" || explicitSsh || ((source == "Key") && QUrl(key_->text()).scheme() == "ssh");
+        const bool showParameters = ss || explicitKey || explicitSocks5 || explicitVless || explicitSsh;
+        mode_->setToolTip(ssh ? tr("SSH VPN carries TCP and captured DNS only; other proxied UDP is dropped.") : QString());
 
         keyLabel->setText(file ? tr("File path") : tr("URL"));
         key_->setEnabled(true);
-        generalForm->setRowVisible(keyRow, !explicitKey && !explicitSocks5 && !explicitVless);
+        generalForm->setRowVisible(keyRow, !explicitKey && !explicitSocks5 && !explicitVless && !explicitSsh);
         key_->setVisible(file || keyRevealed_);
         browse->setVisible(file);
-        reveal->setVisible(ss || ssconf || socks5 || source == "VLESS" || source == "Hysteria2" || source == "Key");
+        reveal->setVisible(ss || ssconf || socks5 || source == "VLESS" || source == "Hysteria2" || source == "SSH" || source == "Key");
         reveal->setText(keyRevealed_ ? tr("Hide") : tr("Show"));
 
         generalForm->setRowVisible(server_, showParameters);
         generalForm->setRowVisible(port_, showParameters);
         generalForm->setRowVisible(method_, ss || explicitKey);
-        generalForm->setRowVisible(username_, explicitSocks5);
-        generalForm->setRowVisible(password_, showParameters && !explicitVless);
+        generalForm->setRowVisible(username_, explicitSocks5 || explicitSsh);
+        generalForm->setRowVisible(identityRow, ssh);
+        generalForm->setRowVisible(hostsRow, ssh);
+        generalForm->setRowVisible(password_, showParameters && !explicitVless && !explicitSsh);
         generalForm->setRowVisible(prefix_, ss || explicitKey);
         generalForm->setRowVisible(ssPlugin_, explicitKey);
         generalForm->setRowVisible(ssPluginOpts_, explicitKey);
         for (auto *widget : {static_cast<QWidget *>(server_), static_cast<QWidget *>(port_), static_cast<QWidget *>(method_), static_cast<QWidget *>(username_), static_cast<QWidget *>(password_), static_cast<QWidget *>(prefix_)})
-            widget->setEnabled(explicitKey || explicitSocks5 || explicitVless);
+            widget->setEnabled(explicitKey || explicitSocks5 || explicitVless || explicitSsh);
         if (ss) applySs(key_->text());
         if (explicitKey && port_->value() == 0) port_->setValue(8388);
         if (explicitSocks5 && port_->value() == 0) port_->setValue(1080);
         if (explicitVless && port_->value() == 0) port_->setValue(443);
+        if (explicitSsh && port_->value() == 0) port_->setValue(22);
         updateVlessControls();
     };
     connect(keySource_, &QComboBox::currentIndexChanged, this, [this, updateKeyControls] {
@@ -564,7 +598,7 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
     const auto updateSourceLock = [this] {
         const QString source = keySource_->currentData().toString();
         const QString accessKey = source.startsWith("Explicit")
-            ? "Type = " + QString(source == "ExplicitVLESS" ? "vless" : source == "ExplicitSOCKS5" ? "socks5" : "shadowsocks")
+            ? "Type = " + QString(source == "ExplicitVLESS" ? "vless" : source == "ExplicitSOCKS5" ? "socks5" : source == "ExplicitSSH" ? "ssh" : "shadowsocks")
             : source + " = " + key_->text();
         keySource_->setEnabled(!ProfileStore::connectionInfo("[AccessKey]\n" + accessKey).connectable);
     };
@@ -573,6 +607,7 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
         if (keySource_->currentData().toString() == "SS") applySs(value);
     });
     connect(key_, &QLineEdit::textChanged, this, updateVlessControls);
+    connect(key_, &QLineEdit::textChanged, this, updateKeyControls);
     connect(key_, &QLineEdit::textChanged, this, updateSourceLock);
     connect(reveal, &QPushButton::clicked, this, [this, updateKeyControls] {
         keyRevealed_ = !keyRevealed_;
@@ -643,11 +678,12 @@ void ProfileEditorDialog::loadText(const QString &text) {
     if (value.isEmpty()) { source = "SOCKS5"; value = valueFor(text, "AccessKey", "SOCKS5"); }
     if (value.isEmpty()) { source = "VLESS"; value = valueFor(text, "AccessKey", "VLESS"); }
     if (value.isEmpty()) { source = "Hysteria2"; value = valueFor(text, "AccessKey", "Hysteria2"); }
+    if (value.isEmpty()) { source = "SSH"; value = valueFor(text, "AccessKey", "SSH"); }
     if (value.isEmpty()) { source = "Key"; value = valueFor(text, "AccessKey", "Key"); }
     if (value.isEmpty()) { source = "File"; value = valueFor(text, "AccessKey", "File"); }
     if (value.isEmpty() && !valueFor(text, "AccessKey", "Server").isEmpty()) {
         const QString type = valueFor(text, "AccessKey", "Type");
-        source = type == "socks5" ? "ExplicitSOCKS5" : type == "vless" ? "ExplicitVLESS"
+        source = type == "socks5" ? "ExplicitSOCKS5" : type == "vless" ? "ExplicitVLESS" : type == "ssh" ? "ExplicitSSH"
             : (type == "shadowsocks" || type == "ss") ? "Explicit" : QString();
         if (source.isEmpty()) rawOnly_ = true;
     }
@@ -659,6 +695,8 @@ void ProfileEditorDialog::loadText(const QString &text) {
     if (source == "Explicit" && methodIndex < 0) rawOnly_ = true;
     password_->setText(valueFor(text, "AccessKey", "Password"));
     username_->setText(valueFor(text, "AccessKey", "Username"));
+    sshIdentity_->setText(valueFor(text, "AccessKey", "IdentityFile"));
+    sshKnownHosts_->setText(valueFor(text, "AccessKey", "KnownHostsFile"));
     prefix_->setText(valueFor(text, "AccessKey", "Prefix"));
     ssPlugin_->setCurrentIndex(ssPlugin_->findText(valueFor(text, "AccessKey", "Plugin")));
     ssPluginOpts_->setText(valueFor(text, "AccessKey", "PluginOpts"));
@@ -732,7 +770,7 @@ void ProfileEditorDialog::loadText(const QString &text) {
     finishRule(rule);
     const QHash<QString, QSet<QString>> known{
         {"Profile", {"Version", "Name"}},
-        {"AccessKey", {"SS", "SSConf", "SOCKS5", "VLESS", "Hysteria2", "Key", "File", "Type", "Server", "Port", "Method", "Username", "Password", "Prefix", "Plugin", "PluginOpts", "ID", "Encryption", "Flow", "Network", "Security", "ServerName", "PublicKey", "ShortID", "Fingerprint", "SpiderX", "ALPN", "WSPath", "WSHost", "WSEarlyData", "GRPCServiceName", "GRPCAuthority", "GRPCMultiMode", "XHTTPPath", "XHTTPHost", "XHTTPMode"}},
+        {"AccessKey", {"SS", "SSConf", "SOCKS5", "VLESS", "Hysteria2", "SSH", "Key", "File", "Type", "Server", "Port", "Method", "Username", "Password", "Prefix", "Plugin", "PluginOpts", "IdentityFile", "KnownHostsFile", "ID", "Encryption", "Flow", "Network", "Security", "ServerName", "PublicKey", "ShortID", "Fingerprint", "SpiderX", "ALPN", "WSPath", "WSHost", "WSEarlyData", "GRPCServiceName", "GRPCAuthority", "GRPCMultiMode", "XHTTPPath", "XHTTPHost", "XHTTPMode"}},
         {"Interface", {"Mode", "Name", "MTU", "DNS", "IPv6", "KillSwitch", "Listen"}},
         {"Routing", {"Default"}}, {"Rule", {"CIDR", "Domain", "Action"}}};
     QString currentSection;
@@ -801,7 +839,9 @@ void ProfileEditorDialog::moveRule(int delta) {
 
 QString ProfileEditorDialog::buildText() const {
     QString accessKey;
-    if (keySource_->currentData().toString() == "ExplicitSOCKS5")
+    if (keySource_->currentData().toString() == "ExplicitSSH")
+        accessKey = "Type = ssh\nServer = " + server_->text() + "\nPort = " + QString::number(port_->value()) + "\nUsername = " + username_->text();
+    else if (keySource_->currentData().toString() == "ExplicitSOCKS5")
         accessKey = "Type = socks5\nServer = " + server_->text()
             + "\nPort = " + QString::number(port_->value())
             + (username_->text().isEmpty() && password_->text().isEmpty() ? QString()
@@ -849,6 +889,11 @@ QString ProfileEditorDialog::buildText() const {
     }
     else
         accessKey = keySource_->currentData().toString() + " = " + key_->text();
+    const QString source = keySource_->currentData().toString();
+    if (source == "SSH" || source == "ExplicitSSH" || (source == "Key" && QUrl(key_->text()).scheme() == "ssh")) {
+        if (!sshIdentity_->text().isEmpty()) accessKey += "\nIdentityFile = " + sshIdentity_->text();
+        if (!sshKnownHosts_->text().isEmpty()) accessKey += "\nKnownHostsFile = " + sshKnownHosts_->text();
+    }
     QString text = "[Profile]\nVersion = 1\nName = " + name_->text()
         + "\n\n[AccessKey]\n" + accessKey
         + "\n\n[Interface]\nMode = " + mode_->currentData().toString()
@@ -914,8 +959,10 @@ void ProfileEditorDialog::assessRepresentation() {
     };
     bool valid = true;
     const QString source = keySource_->currentData().toString();
-    if (source == "Key" && !QStringList{"ss", "ssconf", "socks5", "vless", "hysteria2", "hy2"}
+    if (source == "Key" && !QStringList{"ss", "ssconf", "socks5", "vless", "hysteria2", "hy2", "ssh"}
             .contains(QUrl(key_->text()).scheme())) valid = false;
+    if ((source == "SSH" || (source == "Key" && QUrl(key_->text()).scheme() == "ssh"))
+        && !ProfileStore::connectionInfo(loadedText_).connectable) valid = false;
     const auto original = tokens(loadedText_, &valid);
     const auto generated = tokens(visualBaseline_, &valid);
     for (auto it = original.begin(); it != original.end(); ++it)

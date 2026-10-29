@@ -185,18 +185,26 @@ QString ProfileStore::importConfig(const QString &source, QString *error) const 
     return QFileInfo(destination).absoluteFilePath();
 }
 
-QString ProfileStore::createConfig(const QString &name, const QString &key, QString *error) const {
+QString ProfileStore::createConfig(const QString &name, const QString &key, QString *error, const QString &identityFile, const QString &knownHostsFile) const {
     const QString trimmed = key.trimmed();
-    const QString field = trimmed.startsWith("ssconf://") ? "SSConf" : trimmed.startsWith("ss://") ? "SS" : trimmed.startsWith("socks5://") ? "SOCKS5" : trimmed.startsWith("vless://") ? "VLESS" : trimmed.startsWith("hysteria2://") || trimmed.startsWith("hy2://") ? "Hysteria2" : QString();
+    const QString field = trimmed.startsWith("ssh://") ? "SSH" : trimmed.startsWith("ssconf://") ? "SSConf" : trimmed.startsWith("ss://") ? "SS" : trimmed.startsWith("socks5://") ? "SOCKS5" : trimmed.startsWith("vless://") ? "VLESS" : trimmed.startsWith("hysteria2://") || trimmed.startsWith("hy2://") ? "Hysteria2" : QString();
     if (field.isEmpty()) {
-        if (error) *error = QObject::tr("The key must begin with ss://, ssconf://, socks5://, vless://, hysteria2://, or hy2://");
+        if (error) *error = QObject::tr("The key must begin with ss://, ssconf://, socks5://, vless://, hysteria2://, hy2://, or ssh://");
         return {};
     }
     QString safeName = name.trimmed().left(128);
     safeName.remove(QRegularExpression(QStringLiteral("[\\x00-\\x1f\\x7f]")));
-    const QByteArray data = QString("[Profile]\nVersion = 1\nName = %1\n\n[AccessKey]\n%2 = %3\n\n[Interface]\nMode = vpn\nName = Bimeron\nMTU = 1420\nDNS = 1.1.1.1\nIPv6 = disable\nKillSwitch = false\n\n[Routing]\nDefault = proxy\n")
-                                .arg(safeName, field, trimmed).toUtf8();
+    QString access = field + " = " + trimmed;
+    if (field == "SSH") {
+        if (!identityFile.isEmpty()) access += "\nIdentityFile = " + identityFile;
+        if (!knownHostsFile.isEmpty()) access += "\nKnownHostsFile = " + knownHostsFile;
+    }
+    const QString interfaceSettings = field == "SSH" ? "Mode = proxy\nListen = 127.0.0.1:1080"
+        : "Mode = vpn\nName = Bimeron\nMTU = 1420\nDNS = 1.1.1.1\nIPv6 = disable\nKillSwitch = false";
+    const QByteArray data = QString("[Profile]\nVersion = 1\nName = %1\n\n[AccessKey]\n%2\n\n[Interface]\n%3\n\n[Routing]\nDefault = proxy\n")
+        .arg(safeName, access, interfaceSettings).toUtf8();
     const QString destination = QDir(root_).filePath(QUuid::createUuid().toString(QUuid::WithoutBraces) + ".conf");
+    if (field == "SSH" && !importReferencesSafe(data, error)) return {};
     if (!writeConfig(destination, data, error)) return {};
     return QFileInfo(destination).absoluteFilePath();
 }
@@ -241,7 +249,7 @@ ProfileConnectionInfo ProfileStore::connectionInfo(const QString &configText) {
             info.interfaceMode = field.toLower();
         if (section != "AccessKey") continue;
         if (key.compare("Type", Qt::CaseInsensitive) == 0) type = field.toLower();
-        else if (QStringList{"SS", "SSConf", "SOCKS5", "VLESS", "Hysteria2", "Key", "File"}.contains(key, Qt::CaseInsensitive)) {
+        else if (QStringList{"SS", "SSConf", "SOCKS5", "VLESS", "Hysteria2", "SSH", "Key", "File"}.contains(key, Qt::CaseInsensitive)) {
             source = key;
             value = field;
         }
@@ -257,11 +265,23 @@ ProfileConnectionInfo ProfileStore::connectionInfo(const QString &configText) {
         else if (scheme == "socks5") info.protocol = QStringLiteral("SOCKS5");
         else if (scheme == "vless") info.protocol = QStringLiteral("VLESS");
         else if (scheme == "hysteria2" || scheme == "hy2") info.protocol = QStringLiteral("Hysteria2");
+        else if (scheme == "ssh") info.protocol = QStringLiteral("SSH");
         const QUrl uri(value);
         const bool hysteria2 = scheme == "hysteria2" || scheme == "hy2";
         info.connectable = !info.protocol.isEmpty() && uri.isValid()
             && (hysteria2 ? (uri.scheme() == "hysteria2" || uri.scheme() == "hy2") : uri.scheme().compare(scheme, Qt::CaseInsensitive) == 0)
-            && (scheme == "ss" || (!uri.host().isEmpty() && (scheme == "ssconf" || uri.port() > 0)));
+            && (scheme == "ss" || (!uri.host().isEmpty() && (scheme == "ssconf" || scheme == "ssh" || uri.port() > 0)));
+        if (scheme == "ssh") {
+            info.connectable = info.connectable && (info.interfaceMode == "proxy" || info.interfaceMode == "vpn")
+                && !uri.userName().isEmpty() && !uri.userInfo(QUrl::FullyEncoded).contains(':') && uri.path().isEmpty()
+                && (uri.port() == -1 || (uri.port() > 0 && uri.port() <= 65535));
+            QSet<QString> seen;
+            for (const auto &option : QUrlQuery(uri).queryItems(QUrl::FullyDecoded)) {
+                if (seen.contains(option.first) || (option.first != "identity" && option.first != "known_hosts") || option.second.isEmpty())
+                    info.connectable = false;
+                seen.insert(option.first);
+            }
+        }
         if (scheme == "vless")
             info.connectable = info.connectable && QRegularExpression(
                 QStringLiteral("^[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}$"))
@@ -291,6 +311,48 @@ ProfileConnectionInfo ProfileStore::connectionInfo(const QString &configText) {
     } else if (type == "vless") {
         info.protocol = QStringLiteral("VLESS");
         info.connectable = true;
+    } else if (type == "ssh") {
+        info.protocol = QStringLiteral("SSH");
+        info.connectable = info.interfaceMode == "proxy" || info.interfaceMode == "vpn";
     }
     return info;
+}
+
+bool ProfileStore::sshFilesReadable(const QString &configText, const QString &profilePath, QString *error) {
+    const auto fields = [](const QString &text) {
+        QMap<QString, QString> result;
+        bool access = false;
+        for (const QString &line : text.split('\n')) {
+            const QString value = QString(line).remove(QChar(0xfeff)).trimmed();
+            if (value.startsWith('[')) { access = value == "[AccessKey]"; continue; }
+            const auto equal = value.indexOf('=');
+            if (access && equal > 0 && !value.startsWith('#') && !value.startsWith(';'))
+                result.insert(value.left(equal).trimmed(), value.mid(equal + 1).trimmed());
+        }
+        return result;
+    };
+    const auto values = fields(configText);
+    QString source = values.value("SSH", values.value("Key"));
+    const QDir base = QFileInfo(profilePath).absoluteDir();
+    if (values.contains("File")) {
+        QFile file(base.filePath(values.value("File")));
+        if (!file.open(QIODevice::ReadOnly)) return false;
+        source = QString::fromUtf8(file.read(64 * 1024 + 1)).trimmed();
+        if (source.startsWith(QChar(0xfeff))) source.remove(0, 1);
+    }
+    const QUrl uri(source);
+    if (values.value("Type") != "ssh" && uri.scheme() != "ssh") return true;
+    const QUrlQuery query(uri);
+    const QString hosts = values.value("KnownHostsFile", query.queryItemValue("known_hosts", QUrl::FullyDecoded));
+    const QString identity = values.value("IdentityFile", query.queryItemValue("identity", QUrl::FullyDecoded));
+    const auto readable = [&base](const QString &path) {
+        if (path.startsWith('~') || !QFileInfo(base.filePath(path)).isFile()) return false;
+        QFile file(base.filePath(path));
+        return file.open(QIODevice::ReadOnly);
+    };
+    if (hosts.isEmpty() || !readable(hosts) || (!identity.isEmpty() && !readable(identity))) {
+        if (error) *error = QObject::tr("SSH requires a readable known_hosts file and, when selected, a readable identity file. Use explicit paths accessible to Core; service access can differ from GUI access.");
+        return false;
+    }
+    return true;
 }

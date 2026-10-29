@@ -59,8 +59,8 @@ Do not use shutdown or recover for ordinary disconnect.
 
 ## Boundaries and acceptance
 
-No new protocol sources/forms, SSH interactive authentication or native IKEv2
-foreground backend are added. Preserved opaque profiles are not a support claim;
+SSH profiles and transient authentication are specified in [SSH profiles](ssh-profiles.md).
+Native IKEv2 foreground backend is not added. Preserved opaque profiles are not a support claim;
 native IKEv2 is not started through packet controls. Bundle pins, signed manifests,
 dependencies, packaging and release policy are unchanged.
 

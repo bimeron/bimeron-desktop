@@ -42,10 +42,13 @@
 #include <QPainter>
 #include <QPalette>
 #include <QPixmap>
+#include <QPlainTextEdit>
 #include <QProcess>
 #include <QPushButton>
 #include <QRegularExpression>
 #include <QSaveFile>
+#include <QScrollArea>
+#include <QSet>
 #include <QSettings>
 #include <QSignalBlocker>
 #include <QShortcut>
@@ -1113,9 +1116,9 @@ void MainWindow::addProfile() {
     dialog.setWindowFlag(Qt::MSWindowsFixedSizeDialogHint);
     dialog.setMinimumWidth(440);
     auto *layout = new QVBoxLayout(&dialog);
-    auto *hint = new QLabel(tr("Paste a Shadowsocks, SOCKS5, VLESS, or Hysteria2 key"));
+    auto *hint = new QLabel(tr("Paste a Shadowsocks, SOCKS5, VLESS, Hysteria2, or SSH key"));
     auto *key = new QLineEdit;
-    key->setPlaceholderText(tr("ss://, ssconf://, socks5://, vless://, hysteria2://, or hy2://"));
+    key->setPlaceholderText(tr("ss://, ssconf://, socks5://, vless://, hysteria2://, hy2://, or ssh://"));
     key->setMinimumHeight(30);
     auto *paste = new QPushButton;
     paste->setText(tr("Paste"));
@@ -1126,6 +1129,33 @@ void MainWindow::addProfile() {
     name->setMinimumHeight(30);
     nameLabel->hide();
     name->hide();
+    auto *sshFiles = new QWidget;
+    auto *sshForm = new QFormLayout(sshFiles);
+    auto *identity = new QLineEdit;
+    auto *hosts = new QLineEdit;
+    auto *identityBrowse = new QPushButton(tr("Browse…"));
+    auto *hostsBrowse = new QPushButton(tr("Browse…"));
+    auto *identityRow = new QWidget;
+    auto *identityLayout = new QHBoxLayout(identityRow);
+    identityLayout->setContentsMargins(0, 0, 0, 0);
+    identityLayout->addWidget(identity);
+    identityLayout->addWidget(identityBrowse);
+    auto *hostsRow = new QWidget;
+    auto *hostsLayout = new QHBoxLayout(hostsRow);
+    hostsLayout->setContentsMargins(0, 0, 0, 0);
+    hostsLayout->addWidget(hosts);
+    hostsLayout->addWidget(hostsBrowse);
+    sshForm->addRow(tr("Identity file (optional)"), identityRow);
+    sshForm->addRow(tr("Known hosts file"), hostsRow);
+    sshFiles->hide();
+    connect(identityBrowse, &QPushButton::clicked, &dialog, [&] {
+        const QString path = QFileDialog::getOpenFileName(&dialog, tr("SSH identity file"));
+        if (!path.isEmpty()) identity->setText(QFileInfo(path).absoluteFilePath());
+    });
+    connect(hostsBrowse, &QPushButton::clicked, &dialog, [&] {
+        const QString path = QFileDialog::getOpenFileName(&dialog, tr("SSH known_hosts file"));
+        if (!path.isEmpty()) hosts->setText(QFileInfo(path).absoluteFilePath());
+    });
     layout->addWidget(hint);
     layout->addWidget(key);
     layout->addWidget(revealKey);
@@ -1137,6 +1167,7 @@ void MainWindow::addProfile() {
     });
     layout->addWidget(nameLabel);
     layout->addWidget(name);
+    layout->addWidget(sshFiles);
     QDialogButtonBox buttons(QDialogButtonBox::Save | QDialogButtonBox::Cancel);
     buttons.button(QDialogButtonBox::Save)->setText(tr("Save"));
     buttons.button(QDialogButtonBox::Cancel)->setText(tr("Cancel"));
@@ -1159,6 +1190,8 @@ void MainWindow::addProfile() {
         const QUrl url(trimmed);
         if (url.scheme() == "ssconf")
             return url.isValid() && !url.host().isEmpty();
+        if (url.scheme() == "ssh")
+            return ProfileStore::connectionInfo("[AccessKey]\nSSH = " + trimmed).connectable;
         if (url.scheme() == "socks5") {
             if (!url.isValid() || url.host().isEmpty() || url.port() < 1 || url.port() > 65535
                 || !url.path().isEmpty() || url.hasQuery() || url.hasFragment()) return false;
@@ -1190,14 +1223,22 @@ void MainWindow::addProfile() {
     bool nameEdited = false;
     bool keyValid = false;
     const auto updateSave = [&] {
-        buttons.button(QDialogButtonBox::Save)->setEnabled(keyValid && !name->text().trimmed().isEmpty());
+        const QString uriHosts = QUrlQuery(QUrl(key->text())).queryItemValue("known_hosts", QUrl::FullyDecoded);
+        const bool sshHostsReady = QFileInfo(hosts->text()).isAbsolute()
+            || (hosts->text().isEmpty() && QFileInfo(uriHosts).isAbsolute());
+        buttons.button(QDialogButtonBox::Save)->setEnabled(keyValid && !name->text().trimmed().isEmpty()
+            && (!key->text().startsWith("ssh://") || (sshHostsReady
+                && (identity->text().isEmpty() || QFileInfo(identity->text()).isAbsolute()))));
     };
     connect(name, &QLineEdit::textEdited, &dialog, [&] { nameEdited = true; });
     connect(name, &QLineEdit::textChanged, &dialog, updateSave);
+    connect(hosts, &QLineEdit::textChanged, &dialog, updateSave);
+    connect(identity, &QLineEdit::textChanged, &dialog, updateSave);
     connect(key, &QLineEdit::textChanged, &dialog, [&](const QString &value) {
         keyValid = isKey(value);
         nameLabel->setVisible(keyValid);
         name->setVisible(keyValid);
+        sshFiles->setVisible(keyValid && value.startsWith("ssh://"));
         fitDialog();
         const QString suggested = keyName(value);
         if (!nameEdited && !suggested.isEmpty())
@@ -1224,12 +1265,16 @@ void MainWindow::addProfile() {
     connect(&buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
     while (dialog.exec() == QDialog::Accepted) {
         QString error;
-        const QString path = store_.createConfig(name->text(), key->text(), &error);
+        const QString path = store_.createConfig(name->text(), key->text(), &error, identity->text(), hosts->text());
         if (path.isEmpty()) {
             QMessageBox::warning(&dialog, tr("Error"), error, QMessageBox::Ok);
             continue;
         }
-        if (!validateConfig(path, &error)) {
+        QFile imported(path);
+        const bool referencesReady = imported.open(QIODevice::ReadOnly)
+            && ProfileStore::sshFilesReadable(QString::fromUtf8(imported.read(64 * 1024 + 1)), path, &error);
+        imported.close();
+        if (!referencesReady || !validateConfig(path, &error)) {
             QFile::remove(path);
             QMessageBox::warning(&dialog, tr("Error"), error, QMessageBox::Ok);
             continue;
@@ -1371,6 +1416,9 @@ void MainWindow::resetMeasurements() {
 }
 
 void MainWindow::invalidateConnection() {
+    clearSSHAuthentication();
+    sshSeen_.clear();
+    sshAuthSupported_ = true;
     ++connectionGeneration_;
     if (validationProcess_) {
         validationProcess_->disconnect(this);
@@ -1445,6 +1493,7 @@ void MainWindow::toggleConnection() {
             pendingStartPath_ = profiles_[row].path;
         }
         operation_ = "stop";
+        clearSSHAuthentication();
         stopRequested_ = true;
         updateConnectionButton();
         poll();
@@ -1481,6 +1530,12 @@ bool MainWindow::startProfile(int row) {
             if (key.startsWith(QChar::ByteOrderMark)) key.remove(0, 1);
             activeFileProtocol_ = ProfileStore::connectionInfo("[AccessKey]\nKey = " + key).protocol;
         }
+    }
+    QString sshFileError;
+    if (!ProfileStore::sshFilesReadable(profileText, profiles_[row].path, &sshFileError)) {
+        QMessageBox::warning(this, tr("SSH files unavailable"), sshFileError.isEmpty()
+            ? tr("The profile dependency file is unavailable.") : sshFileError);
+        return false;
     }
     QString mode = QRegularExpression(R"((?im)^\s*Mode\s*=\s*(vpn|proxy)\s*$)").match(profileText).captured(1).toLower();
     if (mode.isEmpty()) mode = "vpn";
@@ -1556,6 +1611,7 @@ void MainWindow::poll() {
         return;
     }
     if (stopRequested_) {
+        clearSSHAuthentication();
         stopRequested_ = false;
         core_.request("stop", {}, 120000);
         return;
@@ -1575,6 +1631,21 @@ void MainWindow::poll() {
                 reportCoreUpdateResult(tr("Core was updated, but reconnection was canceled"));
             }
         }
+        return;
+    }
+    if (sshReplyReady_) {
+        sshReplyReady_ = false;
+        const QJsonObject arguments{{"challenge_id", sshChallenge_}, {"answers", sshAnswers_}};
+        sshAnswers_ = {};
+        core_.request("auth_reply", arguments);
+        return;
+    }
+    // Prefer the oldest due read so delayed status/events cannot starve authentication.
+    if (!nativeSession_ && sshAuthSupported_ && now >= nextSSHAuth_
+        && nextSSHAuth_ <= nextStatus_ && nextSSHAuth_ <= nextEvents_
+        && (state_ == "connecting" || state_ == "reconnecting")) {
+        nextSSHAuth_ = now + 1000;
+        core_.request("auth_pending");
         return;
     }
     if (now >= nextStatus_) {
@@ -1604,6 +1675,7 @@ void MainWindow::handleReply(const QString &command, const QJsonObject &response
         appendLog(tr("Core was restarted"));
     }
     instance_ = newInstance;
+    sshAuthSupported_ = sshUnsupportedInstance_ != instance_;
     if (recoveryVerified_ && recoveredInstance_ != instance_) recoveryVerified_ = false;
     if (command != "hello" && !helloReady_) {
         if (quitRequested_) connectionFailure(command, CoreClient::Failure::InvalidResponse,
@@ -1645,6 +1717,20 @@ void MainWindow::handleReply(const QString &command, const QJsonObject &response
         }
     }
     handleStatus(status);
+    if (command == "auth_pending" || command == "auth_reply") {
+        if (error == "unknown_command") {
+            sshAuthSupported_ = false;
+            sshUnsupportedInstance_ = instance_;
+            clearSSHAuthentication();
+        } else if (!error.isEmpty()) {
+            clearSSHAuthentication();
+            statusNeeded_ = true;
+            appendLog(tr("SSH authentication could not be completed. Check the connection state."));
+        } else if (command == "auth_pending") {
+            handleSSHAuthentication(response.value("auth").toObject());
+        }
+        return;
+    }
     if (command == "status") {
         statusNeeded_ = false;
         nextStatus_ = pollClock_.elapsed() + 2000;
@@ -1828,9 +1914,12 @@ void MainWindow::handleStatus(const QJsonObject &status) {
         rebuildTrayMenu();
     const QString newSession = session.value("id").toString();
     if (newSession != sessionId_) {
+        clearSSHAuthentication();
+        sshSeen_.clear();
         sessionId_ = newSession;
         resetMeasurements();
     }
+    if ((state_ != "connecting" && state_ != "reconnecting") || nativeSession_) clearSSHAuthentication();
     const QHash<QString, QString> labels{{"disconnected", tr("Disconnected")}, {"connecting", tr("Connecting…")}, {"connected", tr("Connected")}, {"reconnecting", tr("Reconnecting…")}, {"stopping", tr("Disconnecting…")}, {"failed", tr("Connection failed")}};
     QString connectionText = labels.value(state_, tr("Unknown state"));
     if (sessionActive_) {
@@ -2092,6 +2181,7 @@ void MainWindow::showWindow() {
 }
 
 void MainWindow::requestShutdown() {
+    clearSSHAuthentication();
     if (development_->busy()) {
         QTimer::singleShot(250, this, &MainWindow::requestShutdown);
         return;
@@ -2687,4 +2777,101 @@ void MainWindow::restartApplication(bool development) {
         restartRequested_ = false;
         QMessageBox::warning(this, tr("Restart"), tr("Could not restart Bimeron"));
     }
+}
+
+void MainWindow::clearSSHAuthentication() {
+    sshReplyReady_ = false;
+    sshAnswers_ = {};
+    sshChallenge_.clear();
+    if (sshAuthExpiry_) sshAuthExpiry_->stop();
+    if (sshDialog_) { sshDialog_->reject(); sshDialog_->deleteLater(); sshDialog_ = nullptr; }
+}
+
+void MainWindow::handleSSHAuthentication(const QJsonObject &auth) {
+    if (auth.isEmpty()) { clearSSHAuthentication(); return; }
+    if (state_ != "connecting" && state_ != "reconnecting") return;
+    const QString id = auth.value("id").toString();
+    if (id != sshChallenge_) clearSSHAuthentication();
+    const QString kind = auth.value("kind").toString();
+    const auto prompts = auth.value("prompts").toArray();
+    const auto echo = auth.value("echo").toArray();
+    if (id.isEmpty() || id.size() > 256 || !QStringList{"key_passphrase", "password", "keyboard_interactive"}.contains(kind)
+        || prompts.isEmpty() || prompts.size() > 8 || prompts.size() != echo.size()) { clearSSHAuthentication(); return; }
+    for (qsizetype i = 0; i < prompts.size(); ++i)
+        if (!prompts[i].isString() || prompts[i].toString().toUtf8().size() > 256 || !echo[i].isBool()) { clearSSHAuthentication(); return; }
+    if (id == sshChallenge_ || sshSeen_.contains(id)) return;
+    clearSSHAuthentication();
+    if (sshSeen_.size() >= 256) return; // Bound server-controlled state within one session.
+    sshSeen_.insert(id);
+    sshChallenge_ = id;
+    auto *dialog = new QDialog(this);
+    sshDialog_ = dialog;
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    dialog->setWindowTitle(tr("SSH authentication"));
+    auto *layout = new QVBoxLayout(dialog);
+    auto *form = new QFormLayout;
+    QList<QLineEdit *> inputs;
+    for (qsizetype i = 0; i < prompts.size(); ++i) {
+        auto *input = new QLineEdit(dialog);
+        input->setMaxLength(1024);
+        input->setEchoMode(kind == "keyboard_interactive" && echo[i].toBool() ? QLineEdit::Normal : QLineEdit::Password);
+        const QString prompt = prompts[i].toString();
+        auto *label = new QPlainTextEdit(dialog);
+        label->setReadOnly(true);
+        label->setPlainText(prompt);
+        label->setWordWrapMode(QTextOption::WrapAnywhere);
+        label->setFrameShape(QFrame::NoFrame);
+        label->setFixedWidth(300);
+        label->setFixedHeight(label->fontMetrics().boundingRect(QRect(0, 0, 280, 4096),
+            Qt::TextWrapAnywhere, prompt).height() + 16);
+        input->setAccessibleName(prompt);
+        form->addRow(label, input);
+        inputs.append(input);
+    }
+    if (prompts.size() > 3) {
+        auto *body = new QWidget(dialog);
+        body->setLayout(form);
+        auto *scroll = new QScrollArea(dialog);
+        scroll->setWidgetResizable(true);
+        scroll->setWidget(body);
+        scroll->setMinimumHeight(240);
+        scroll->setMaximumHeight(400);
+        layout->addWidget(scroll);
+    } else {
+        layout->addLayout(form);
+    }
+    auto *answerError = new QLabel(tr("SSH answers exceed the allowed size."), dialog);
+    answerError->setObjectName("sshAnswerError");
+    answerError->setTextFormat(Qt::PlainText);
+    answerError->setWordWrap(true);
+    answerError->hide();
+    layout->addWidget(answerError);
+    auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, dialog);
+    layout->addWidget(buttons);
+    connect(buttons, &QDialogButtonBox::rejected, dialog, &QDialog::reject);
+    connect(buttons, &QDialogButtonBox::accepted, dialog, [this, dialog, inputs, id, answerError] {
+        if (sshDialog_ != dialog || sshChallenge_ != id || stopRequested_
+            || (state_ != "connecting" && state_ != "reconnecting")) return;
+        QJsonArray answers;
+        for (auto *input : inputs) {
+            if (input->text().toUtf8().size() > 1024) { answerError->show(); return; }
+            answers.append(input->text());
+        }
+        const QJsonObject request{{"version", 1}, {"id", QString(32, 'x')}, {"command", "auth_reply"},
+            {"challenge_id", id}, {"answers", answers}};
+        if (QJsonDocument(request).toJson(QJsonDocument::Compact).size() + 1 > 16 * 1024) { answerError->show(); return; }
+        sshAnswers_ = answers;
+        sshReplyReady_ = true;
+        for (auto *input : inputs) input->clear();
+        sshDialog_ = nullptr;
+        dialog->accept();
+    });
+    connect(dialog, &QDialog::rejected, this, [inputs] { for (auto *input : inputs) input->clear(); });
+    if (!sshAuthExpiry_) {
+        sshAuthExpiry_ = new QTimer(this);
+        sshAuthExpiry_->setSingleShot(true);
+        connect(sshAuthExpiry_, &QTimer::timeout, this, &MainWindow::clearSSHAuthentication);
+    }
+    sshAuthExpiry_->start(120000);
+    dialog->show();
 }

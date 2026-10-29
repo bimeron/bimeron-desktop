@@ -44,7 +44,7 @@ CLI and IPC free text is not trusted. Display only known safe diagnostic templat
 and known error codes; otherwise show a generic redacted diagnostic. Redact before
 truncation, rendering, logging, or exporting. This covers malformed/unknown URI
 schemes, explicit credentials, VMess JSON, XHTTP headers, SS2022 chains, ShadowTLS,
-and transient SSH answers. Do not add SSH authentication or persistent answers.
+and transient SSH answers. SSH authentication follows [SSH profiles](ssh-profiles.md); answers remain transient.
 
 Diagnostic JSON exports retain only verified fields from the existing report
 schema; unknown fields and free text are excluded. The projection retains
