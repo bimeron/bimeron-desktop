@@ -22,9 +22,12 @@
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QRegularExpression>
+#include <QRegularExpressionValidator>
 #include <QShortcut>
 #include <QSignalBlocker>
 #include <QSet>
+#include <QScrollArea>
+#include <QStandardItemModel>
 #include <QSpinBox>
 #include <QSyntaxHighlighter>
 #include <QTabBar>
@@ -176,6 +179,11 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
     keySource_->addItem(tr("Explicit SOCKS5 settings"), "ExplicitSOCKS5");
     keySource_->addItem(tr("Explicit VLESS settings"), "ExplicitVLESS");
     keySource_->addItem(tr("Explicit SSH settings"), "ExplicitSSH");
+    keySource_->addItem(tr("Explicit Trojan settings"), "ExplicitTrojan");
+    keySource_->addItem(tr("Explicit HTTP settings"), "Explicithttp");
+    keySource_->addItem(tr("Explicit HTTPS settings"), "Explicithttps");
+    keySource_->addItem(tr("Explicit Naive H2 settings"), "Explicitnaive");
+    keySource_->addItem(tr("Explicit MASQUE settings"), "Explicitmasque");
     key_ = new QLineEdit;
     auto *keyRow = new QWidget;
     auto *keyLayout = new QHBoxLayout(keyRow);
@@ -448,10 +456,67 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
             QMessageBox::warning(this, tr("Error"), tr("SS2022 does not support Prefix. Clear Prefix before saving."));
             return;
         }
+        if (!rawOnly_ && !rawDirty_ && !parameterError().isEmpty()) {
+            QMessageBox::warning(this, tr("Error"), parameterError());
+            return;
+        }
         accept();
     });
     connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
     layout->addWidget(buttons);
+    parameterPage_ = new QWidget;
+    auto *parameterLayout = new QVBoxLayout(parameterPage_);
+    auto *scroll = new QScrollArea;
+    scroll->setWidgetResizable(true);
+    auto *fields = new QWidget;
+    auto *form = new QFormLayout(fields);
+    trojanNetwork_ = new HiDpiComboBox;
+    trojanNetwork_->setObjectName("trojanNetwork");
+    trojanNetwork_->addItems({"", "tcp", "ws", "grpc"});
+    form->addRow(tr("Trojan transport"), trojanNetwork_);
+    const QList<QPair<QString, QString>> labels{
+        {"ServerName", tr("Server name (SNI)")}, {"Security", tr("Security")},
+        {"ALPN", tr("ALPN")}, {"WSPath", tr("Path")}, {"WSHost", tr("Host")},
+        {"GRPCServiceName", tr("gRPC service name")}, {"GRPCAuthority", tr("gRPC authority")},
+        {"GRPCMultiMode", tr("gRPC TunMulti")}, {"CAFile", tr("CA file")},
+        {"MASQUEPath", tr("MASQUE UDP path")}};
+    for (const auto &entry : labels) {
+        auto *edit = new QLineEdit;
+        edit->setObjectName("parameter" + entry.first);
+        parameters_.insert(entry.first, edit);
+        form->addRow(entry.second, edit);
+    }
+    parameters_["Security"]->setValidator(new QRegularExpressionValidator(QRegularExpression("tls"), this));
+    parameters_["GRPCMultiMode"]->setValidator(new QRegularExpressionValidator(QRegularExpression("true|false"), this));
+    parameters_["Security"]->setPlaceholderText(tr("Empty uses TLS"));
+    parameters_["GRPCMultiMode"]->setPlaceholderText(tr("Empty, true or false"));
+    auto *browseCa = new QPushButton(tr("Choose CA file…"));
+    browseCa->setObjectName("browseParameterCa");
+    form->addRow(browseCa);
+    connect(browseCa, &QPushButton::clicked, this, [this] {
+        const QString path = QFileDialog::getOpenFileName(this, tr("CA file"));
+        if (!path.isEmpty()) parameters_["CAFile"]->setText(QFileInfo(path).absoluteFilePath());
+    });
+    shadowTls_ = new HiDpiCheckBox(tr("Enable ShadowTLS v3"));
+    shadowTls_->setObjectName("shadowTls");
+    shadowName_ = new QLineEdit;
+    shadowName_->setObjectName("shadowName");
+    shadowPassword_ = new QLineEdit;
+    shadowPassword_->setObjectName("shadowPassword");
+    shadowPassword_->setEchoMode(QLineEdit::Password);
+    form->addRow(shadowTls_);
+    form->addRow(tr("ShadowTLS handshake name"), shadowName_);
+    form->addRow(tr("ShadowTLS password"), shadowPassword_);
+    scroll->setWidget(fields);
+    parameterLayout->addWidget(scroll);
+    tabs_->insertTab(tabs_->count() - 1, parameterPage_, tr("Parameters / ShadowTLS"));
+    connect(trojanNetwork_, &QComboBox::currentTextChanged, this, [this] { refreshParameters(); });
+    connect(shadowTls_, &QCheckBox::toggled, this, [this] { refreshParameters(); });
+    connect(keySource_, &QComboBox::currentIndexChanged, this, [this, browseCa] {
+        refreshParameters();
+        browseCa->setVisible(keySource_->currentData() == "Explicitmasque");
+    });
+    browseCa->setVisible(valueFor(text, "AccessKey", "Type") == "masque");
     loadText(text);
     const auto applySs = [this](const QString &value) {
         const SsParameters parsed = parseSsUrl(value);
@@ -522,10 +587,8 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
         }
         tabs_->widget(1)->setEnabled(explicitVless);
         const QString network = vlessNetwork_->currentText();
-        if (network == "ws" && vlessSecurity_->currentText() == "reality") {
-            const QSignalBlocker blocker(vlessSecurity_);
-            vlessSecurity_->setCurrentText("tls");
-        }
+        if (auto *model = qobject_cast<QStandardItemModel *>(vlessSecurity_->model()))
+            model->item(vlessSecurity_->findText("reality"))->setEnabled(network != "ws");
         const bool reality = vlessSecurity_->currentText() == "reality";
         if (network == "xhttp") {
             const QString current = vlessXhttpMode_->currentText();
@@ -533,20 +596,25 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
             vlessXhttpMode_->clear();
             vlessXhttpMode_->addItems(reality ? QStringList{"stream-one", "stream-up", "auto"}
                                                : QStringList{"packet-up", "stream-up", "auto"});
-            const int index = vlessXhttpMode_->findText(current);
-            vlessXhttpMode_->setCurrentIndex(index < 0 ? 0 : index);
+            int index = vlessXhttpMode_->findText(current);
+            if (index < 0 && !current.isEmpty()) {
+                vlessXhttpMode_->addItem(current);
+                index = vlessXhttpMode_->count() - 1;
+                qobject_cast<QStandardItemModel *>(vlessXhttpMode_->model())->item(index)->setEnabled(false);
+            }
+            vlessXhttpMode_->setCurrentIndex(index);
         }
-        vlessForm->setRowVisible(vlessFlow_, network == "tcp" && reality);
-        vlessForm->setRowVisible(vlessPublicKey_, reality);
-        vlessForm->setRowVisible(vlessShortId_, reality);
-        vlessForm->setRowVisible(vlessSpiderX_, reality);
+        vlessForm->setRowVisible(vlessFlow_, (network == "tcp" && reality) || !vlessFlow_->currentText().isEmpty());
+        vlessForm->setRowVisible(vlessPublicKey_, reality || !vlessPublicKey_->text().isEmpty());
+        vlessForm->setRowVisible(vlessShortId_, reality || !vlessShortId_->text().isEmpty());
+        vlessForm->setRowVisible(vlessSpiderX_, reality || !vlessSpiderX_->text().isEmpty());
         vlessForm->setRowVisible(vlessAlpn_, !(network == "tcp" && reality));
         vlessForm->setRowVisible(vlessPath_, network == "ws" || network == "xhttp");
         vlessForm->setRowVisible(vlessHost_, network == "ws" || network == "xhttp");
-        vlessForm->setRowVisible(vlessEarlyData_, network == "ws");
-        vlessForm->setRowVisible(vlessServiceName_, network == "grpc");
-        vlessForm->setRowVisible(vlessAuthority_, network == "grpc");
-        vlessForm->setRowVisible(vlessMultiMode_, network == "grpc");
+        vlessForm->setRowVisible(vlessEarlyData_, network == "ws" || vlessEarlyData_->value() != 0);
+        vlessForm->setRowVisible(vlessServiceName_, network == "grpc" || !vlessServiceName_->text().isEmpty());
+        vlessForm->setRowVisible(vlessAuthority_, network == "grpc" || !vlessAuthority_->text().isEmpty());
+        vlessForm->setRowVisible(vlessMultiMode_, network == "grpc" || vlessMultiModeConfigured_ || vlessMultiMode_->isChecked());
         vlessForm->setRowVisible(vlessXhttpMode_, network == "xhttp");
         vlessForm->setRowVisible(vlessExtra, uriVless && network == "xhttp" && !vlessExtra->toPlainText().isEmpty());
     };
@@ -563,12 +631,13 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
         const bool explicitVless = source == "ExplicitVLESS";
         const bool explicitSsh = source == "ExplicitSSH";
         const bool ssh = source == "SSH" || explicitSsh || ((source == "Key") && QUrl(key_->text()).scheme() == "ssh");
-        const bool showParameters = ss || explicitKey || explicitSocks5 || explicitVless || explicitSsh;
+        const bool added = source == "ExplicitTrojan" || QStringList{"Explicithttp", "Explicithttps", "Explicitnaive", "Explicitmasque"}.contains(source);
+        const bool showParameters = ss || explicitKey || explicitSocks5 || explicitVless || explicitSsh || added;
         mode_->setToolTip(ssh ? tr("SSH VPN carries TCP and captured DNS only; other proxied UDP is dropped.") : QString());
 
         keyLabel->setText(file ? tr("File path") : tr("URL"));
         key_->setEnabled(true);
-        generalForm->setRowVisible(keyRow, !explicitKey && !explicitSocks5 && !explicitVless && !explicitSsh);
+        generalForm->setRowVisible(keyRow, !explicitKey && !explicitSocks5 && !explicitVless && !explicitSsh && !added);
         key_->setVisible(file || keyRevealed_);
         browse->setVisible(file);
         reveal->setVisible(ss || ssconf || socks5 || source == "VLESS" || source == "Hysteria2" || source == "SSH" || source == "Key");
@@ -577,7 +646,7 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
         generalForm->setRowVisible(server_, showParameters);
         generalForm->setRowVisible(port_, showParameters);
         generalForm->setRowVisible(method_, ss || explicitKey);
-        generalForm->setRowVisible(username_, explicitSocks5 || explicitSsh);
+        generalForm->setRowVisible(username_, explicitSocks5 || explicitSsh || (added && source != "ExplicitTrojan"));
         generalForm->setRowVisible(identityRow, ssh);
         generalForm->setRowVisible(hostsRow, ssh);
         generalForm->setRowVisible(password_, showParameters && !explicitVless && !explicitSsh);
@@ -585,13 +654,14 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
         generalForm->setRowVisible(ssPlugin_, explicitKey);
         generalForm->setRowVisible(ssPluginOpts_, explicitKey);
         for (auto *widget : {static_cast<QWidget *>(server_), static_cast<QWidget *>(port_), static_cast<QWidget *>(method_), static_cast<QWidget *>(username_), static_cast<QWidget *>(password_), static_cast<QWidget *>(prefix_)})
-            widget->setEnabled(explicitKey || explicitSocks5 || explicitVless || explicitSsh);
+            widget->setEnabled(explicitKey || explicitSocks5 || explicitVless || explicitSsh || added);
         if (ss) applySs(key_->text());
         if (explicitKey && port_->value() == 0) port_->setValue(8388);
         if (explicitSocks5 && port_->value() == 0) port_->setValue(1080);
         if (explicitVless && port_->value() == 0) port_->setValue(443);
         if (explicitSsh && port_->value() == 0) port_->setValue(22);
         updateVlessControls();
+        refreshParameters();
     };
     connect(keySource_, &QComboBox::currentIndexChanged, this, [this, updateKeyControls] {
         keyRevealed_ = false;
@@ -600,7 +670,7 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
     const auto updateSourceLock = [this] {
         const QString source = keySource_->currentData().toString();
         const QString accessKey = source.startsWith("Explicit")
-            ? "Type = " + QString(source == "ExplicitVLESS" ? "vless" : source == "ExplicitSOCKS5" ? "socks5" : source == "ExplicitSSH" ? "ssh" : "shadowsocks")
+            ? "Type = " + QString(source == "ExplicitVLESS" ? "vless" : source == "ExplicitSOCKS5" ? "socks5" : source == "ExplicitSSH" ? "ssh" : source == "ExplicitTrojan" ? "trojan" : source == "Explicit" ? "shadowsocks" : source.mid(8))
             : source + " = " + key_->text();
         keySource_->setEnabled(!ProfileStore::connectionInfo("[AccessKey]\n" + accessKey).connectable);
     };
@@ -646,6 +716,9 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
     };
     updateModeControls(false);
     connect(raw_, &QPlainTextEdit::textChanged, this, [this] { rawDirty_ = true; });
+    connect(method_, &QComboBox::currentTextChanged, this, [this] { refreshParameters(); });
+    connect(ssPlugin_, &QComboBox::currentTextChanged, this, [this] { refreshParameters(); });
+    connect(vlessAlpn_, &QLineEdit::textChanged, this, [this] { refreshParameters(); });
     assessRepresentation();
     connect(tabs_, &QTabWidget::currentChanged, this, [this](int index) {
         const int rawIndex = tabs_->count() - 1;
@@ -658,6 +731,86 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
             }
         }
     });
+}
+
+QStringList ProfileEditorDialog::parameterFields() const {
+    const QString source = keySource_->currentData().toString();
+    if (source == "Explicitnaive") return {"ServerName"};
+    if (source == "Explicitmasque") return {"ServerName", "CAFile", "MASQUEPath"};
+    if (source != "ExplicitTrojan") return {};
+    QStringList fields{"ServerName", "Security", "ALPN"};
+    const QString network = trojanNetwork_->currentText();
+    if (network == "ws") fields << "WSPath" << "WSHost";
+    if (network == "grpc") fields << "GRPCServiceName" << "GRPCAuthority" << "GRPCMultiMode";
+    return fields;
+}
+
+void ProfileEditorDialog::refreshParameters() {
+    if (!parameterPage_) return;
+    auto *form = qobject_cast<QFormLayout *>(parameters_.first()->parentWidget()->layout());
+    findChild<QPushButton *>("browseParameterCa")->setVisible(keySource_->currentData() == "Explicitmasque");
+    const auto fields = parameterFields();
+    for (auto it = parameters_.cbegin(); it != parameters_.cend(); ++it)
+        form->setRowVisible(it.value(), fields.contains(it.key()) || !it.value()->text().isEmpty());
+    form->setRowVisible(trojanNetwork_, keySource_->currentData() == "ExplicitTrojan");
+    shadowName_->setEnabled(shadowTls_->isChecked());
+    shadowPassword_->setEnabled(shadowTls_->isChecked());
+    const QString source = keySource_->currentData().toString();
+    const bool wrapper = source == "Explicit" || source == "ExplicitVLESS" || source == "ExplicitSSH"
+        || source == "ExplicitTrojan" || source == "Explicitnaive";
+    const bool compatible = wrapper && !(source == "Explicit" && (method_->currentText() == "aes-192-gcm"
+        || !ssPlugin_->currentText().isEmpty()))
+        && !(source == "ExplicitVLESS" && vlessAlpn_->text().split(',').contains("h3"));
+    shadowTls_->setEnabled(compatible || shadowTls_->isChecked());
+    const bool added = source == "ExplicitTrojan" || source == "Explicitnaive" || source == "Explicitmasque"
+        || source == "Explicithttp" || source == "Explicithttps";
+    tabs_->setTabVisible(tabs_->indexOf(parameterPage_), added || wrapper || shadowTls_->isChecked());
+}
+
+QString ProfileEditorDialog::parameterError() const {
+    const QString source = keySource_->currentData().toString();
+    const bool added = source == "ExplicitTrojan" || QStringList{"Explicithttp", "Explicithttps", "Explicitnaive", "Explicitmasque"}.contains(source);
+    const auto invalid = [this] { return tr("Unsupported parameter combination. Correct the settings or use protected Raw config; no values were discarded."); };
+    if (added) {
+        if (server_->text().isEmpty() || port_->value() < 1) return invalid();
+        const auto allowed = parameterFields();
+        for (auto it = parameters_.cbegin(); it != parameters_.cend(); ++it) {
+            if ((!allowed.contains(it.key()) && !it.value()->text().isEmpty())
+                || it.value()->text().contains(QRegularExpression("[\\r\\n]"))) return invalid();
+        }
+        if (source == "ExplicitTrojan") {
+            if (password_->text().isEmpty() || trojanNetwork_->currentIndex() < 0) return invalid();
+            const QString security = parameters_["Security"]->text();
+            if (!security.isEmpty() && security != "tls") return invalid();
+            const QString alpn = parameters_["ALPN"]->text(), network = trojanNetwork_->currentText();
+            if (!alpn.isEmpty() && ((network == "ws" && alpn != "http/1.1") || (network == "grpc" && alpn != "h2"))) return invalid();
+            if (network == "grpc" && parameters_["GRPCServiceName"]->text().isEmpty()) return invalid();
+            const QString multi = parameters_["GRPCMultiMode"]->text();
+            if (!multi.isEmpty() && multi != "true" && multi != "false") return invalid();
+        } else if (source == "Explicitnaive") {
+            if (username_->text().isEmpty() || password_->text().isEmpty()) return invalid();
+        } else if (username_->text().isEmpty() != password_->text().isEmpty()) return invalid();
+    }
+    if (source == "ExplicitVLESS") {
+        const QString network = vlessNetwork_->currentText(), security = vlessSecurity_->currentText(), alpn = vlessAlpn_->text();
+        if ((security != "reality" && (!vlessPublicKey_->text().isEmpty() || !vlessShortId_->text().isEmpty() || !vlessSpiderX_->text().isEmpty()))
+            || (network != "grpc" && (!vlessServiceName_->text().isEmpty() || !vlessAuthority_->text().isEmpty() || vlessMultiModeConfigured_ || vlessMultiMode_->isChecked()))
+            || (network != "ws" && vlessEarlyData_->value() != 0)
+            || (network != "ws" && network != "xhttp" && (!vlessPath_->text().isEmpty() || !vlessHost_->text().isEmpty()))
+            || (network == "xhttp" && !(security == "reality" ? QStringList{"stream-one", "stream-up", "auto"} : QStringList{"packet-up", "stream-up", "auto"}).contains(vlessXhttpMode_->currentText()))
+            || (network == "ws" && security != "tls")
+            || (!vlessFlow_->currentText().isEmpty() && !(network == "tcp" && security == "reality"))
+            || (!alpn.isEmpty() && ((network == "ws" && alpn != "http/1.1") || (network == "grpc" && alpn != "h2")))
+            || (network == "xhttp" && !alpn.isEmpty() && !(security == "reality" ? alpn == "h2" : QStringList{"h2", "h2,http/1.1", "h3"}.contains(alpn)))
+            || (network == "xhttp" && alpn == "h3" && (security != "tls" || !vlessFingerprint_->currentText().isEmpty()))) return invalid();
+    }
+    if (shadowTls_->isChecked()) {
+        if (shadowName_->text().isEmpty() || shadowPassword_->text().isEmpty()) return invalid();
+        if (!(source == "Explicit" || source == "ExplicitVLESS" || source == "ExplicitSSH" || source == "ExplicitTrojan" || source == "Explicitnaive")) return invalid();
+        if (source == "Explicit" && (method_->currentText() == "aes-192-gcm" || !ssPlugin_->currentText().isEmpty())) return invalid();
+        if (source == "ExplicitVLESS" && vlessAlpn_->text().split(',').contains("h3")) return invalid();
+    }
+    return {};
 }
 
 void ProfileEditorDialog::loadText(const QString &text) {
@@ -686,6 +839,8 @@ void ProfileEditorDialog::loadText(const QString &text) {
     if (value.isEmpty() && !valueFor(text, "AccessKey", "Server").isEmpty()) {
         const QString type = valueFor(text, "AccessKey", "Type");
         source = type == "socks5" ? "ExplicitSOCKS5" : type == "vless" ? "ExplicitVLESS" : type == "ssh" ? "ExplicitSSH"
+            : type == "trojan" ? "ExplicitTrojan"
+            : QStringList{"http", "https", "naive", "masque"}.contains(type) ? "Explicit" + type
             : (type == "shadowsocks" || type == "ss") ? "Explicit" : QString();
         if (source.isEmpty()) rawOnly_ = true;
     }
@@ -695,6 +850,12 @@ void ProfileEditorDialog::loadText(const QString &text) {
     const int methodIndex = method_->findText(valueFor(text, "AccessKey", "Method"));
     method_->setCurrentIndex(methodIndex);
     if (source == "Explicit" && methodIndex < 0) rawOnly_ = true;
+    for (auto it = parameters_.begin(); it != parameters_.end(); ++it)
+        it.value()->setText(QStringList{"ExplicitTrojan", "Explicithttp", "Explicithttps", "Explicitnaive", "Explicitmasque"}.contains(source) ? valueFor(text, "AccessKey", it.key()) : QString());
+    trojanNetwork_->setCurrentIndex(trojanNetwork_->findText(valueFor(text, "AccessKey", "Network")));
+    shadowTls_->setChecked(text.contains("[ShadowTLS]"));
+    shadowName_->setText(valueFor(text, "ShadowTLS", "ServerName"));
+    shadowPassword_->setText(valueFor(text, "ShadowTLS", "Password"));
     password_->setText(valueFor(text, "AccessKey", "Password"));
     username_->setText(valueFor(text, "AccessKey", "Username"));
     sshIdentity_->setText(valueFor(text, "AccessKey", "IdentityFile"));
@@ -772,7 +933,8 @@ void ProfileEditorDialog::loadText(const QString &text) {
     finishRule(rule);
     const QHash<QString, QSet<QString>> known{
         {"Profile", {"Version", "Name"}},
-        {"AccessKey", {"SS", "SSConf", "SOCKS5", "VLESS", "Hysteria2", "SSH", "Key", "File", "Type", "Server", "Port", "Method", "Username", "Password", "Prefix", "Plugin", "PluginOpts", "IdentityFile", "KnownHostsFile", "ID", "Encryption", "Flow", "Network", "Security", "ServerName", "PublicKey", "ShortID", "Fingerprint", "SpiderX", "ALPN", "WSPath", "WSHost", "WSEarlyData", "GRPCServiceName", "GRPCAuthority", "GRPCMultiMode", "XHTTPPath", "XHTTPHost", "XHTTPMode"}},
+        {"AccessKey", {"SS", "SSConf", "SOCKS5", "VLESS", "Hysteria2", "SSH", "Key", "File", "Type", "Server", "Port", "Method", "Username", "Password", "Prefix", "Plugin", "PluginOpts", "IdentityFile", "KnownHostsFile", "CAFile", "MASQUEPath", "ID", "Encryption", "Flow", "Network", "Security", "ServerName", "PublicKey", "ShortID", "Fingerprint", "SpiderX", "ALPN", "WSPath", "WSHost", "WSEarlyData", "GRPCServiceName", "GRPCAuthority", "GRPCMultiMode", "XHTTPPath", "XHTTPHost", "XHTTPMode"}},
+        {"ShadowTLS", {"ServerName", "Password"}},
         {"Interface", {"Mode", "Name", "MTU", "DNS", "IPv6", "KillSwitch", "Listen"}},
         {"Routing", {"Default"}}, {"Rule", {"CIDR", "Domain", "Action"}}};
     QString currentSection;
@@ -841,7 +1003,19 @@ void ProfileEditorDialog::moveRule(int delta) {
 
 QString ProfileEditorDialog::buildText() const {
     QString accessKey;
-    if (keySource_->currentData().toString() == "ExplicitSSH")
+    const QString selected = keySource_->currentData().toString();
+    if (selected == "ExplicitTrojan" || QStringList{"Explicithttp", "Explicithttps", "Explicitnaive", "Explicitmasque"}.contains(selected)) {
+        const QString type = selected == "ExplicitTrojan" ? "trojan" : selected.mid(8);
+        accessKey = "Type = " + type + "\nServer = " + server_->text() + "\nPort = " + QString::number(port_->value());
+        if (type != "trojan" && !username_->text().isEmpty()) accessKey += "\nUsername = " + username_->text();
+        if (!password_->text().isEmpty()) accessKey += "\nPassword = " + password_->text();
+        if (type == "trojan" && !trojanNetwork_->currentText().isEmpty()) accessKey += "\nNetwork = " + trojanNetwork_->currentText();
+        // Serialize inactive configured values too: the validation guard blocks
+        // incompatible edits without silently deleting the user's draft.
+        for (auto it = parameters_.cbegin(); it != parameters_.cend(); ++it)
+            if (!it.value()->text().isEmpty()) accessKey += "\n" + it.key() + " = " + it.value()->text();
+    }
+    else if (keySource_->currentData().toString() == "ExplicitSSH")
         accessKey = "Type = ssh\nServer = " + server_->text() + "\nPort = " + QString::number(port_->value()) + "\nUsername = " + username_->text();
     else if (keySource_->currentData().toString() == "ExplicitSOCKS5")
         accessKey = "Type = socks5\nServer = " + server_->text()
@@ -858,7 +1032,6 @@ QString ProfileEditorDialog::buildText() const {
             + (ssPluginOpts_->text().isEmpty() ? QString() : "\nPluginOpts = " + ssPluginOpts_->text());
     else if (keySource_->currentData().toString() == "ExplicitVLESS") {
         const QString network = vlessNetwork_->currentText();
-        const bool reality = vlessSecurity_->currentText() == "reality";
         accessKey = "Type = vless\nServer = " + server_->text()
             + "\nPort = " + QString::number(port_->value())
             + "\nID = " + vlessId_->text()
@@ -867,21 +1040,19 @@ QString ProfileEditorDialog::buildText() const {
         const auto append = [&accessKey](const QString &field, const QString &value) {
             if (!value.isEmpty()) accessKey += "\n" + field + " = " + value;
         };
-        if (network == "tcp" && reality) append("Flow", vlessFlow_->currentText());
+        append("Flow", vlessFlow_->currentText());
         append("ServerName", vlessServerName_->text());
         append("Fingerprint", vlessFingerprint_->currentText());
-        if (reality) {
-            append("PublicKey", vlessPublicKey_->text());
-            append("ShortID", vlessShortId_->text());
-            append("SpiderX", vlessSpiderX_->text());
-        }
-        if (!(network == "tcp" && reality)) append("ALPN", vlessAlpn_->text());
+        append("PublicKey", vlessPublicKey_->text());
+        append("ShortID", vlessShortId_->text());
+        append("SpiderX", vlessSpiderX_->text());
+        append("ALPN", vlessAlpn_->text());
         if (network == "ws" || network == "xhttp") {
             append(network == "ws" ? "WSPath" : "XHTTPPath", vlessPath_->text());
             append(network == "ws" ? "WSHost" : "XHTTPHost", vlessHost_->text());
         }
-        if (network == "ws" && vlessEarlyData_->value()) append("WSEarlyData", QString::number(vlessEarlyData_->value()));
-        if (network == "grpc") {
+        if (vlessEarlyData_->value()) append("WSEarlyData", QString::number(vlessEarlyData_->value()));
+        {
             append("GRPCServiceName", vlessServiceName_->text());
             append("GRPCAuthority", vlessAuthority_->text());
             if (vlessMultiMode_->isChecked() || vlessMultiModeConfigured_)
@@ -896,6 +1067,8 @@ QString ProfileEditorDialog::buildText() const {
         if (!sshIdentity_->text().isEmpty()) accessKey += "\nIdentityFile = " + sshIdentity_->text();
         if (!sshKnownHosts_->text().isEmpty()) accessKey += "\nKnownHostsFile = " + sshKnownHosts_->text();
     }
+    if (shadowTls_->isChecked())
+        accessKey += "\n\n[ShadowTLS]\nServerName = " + shadowName_->text() + "\nPassword = " + shadowPassword_->text();
     QString text = "[Profile]\nVersion = 1\nName = " + name_->text()
         + "\n\n[AccessKey]\n" + accessKey
         + "\n\n[Interface]\nMode = " + mode_->currentData().toString()
@@ -983,7 +1156,7 @@ void ProfileEditorDialog::assessRepresentation() {
         if (QStringList{"Profile/", "AccessKey/", "Interface/", "Routing/"}.contains(it.key())) continue;
         if (!defaults.contains(it.key()) || defaults.value(it.key()) != it.value()) valid = false;
     }
-    rawOnly_ = rawOnly_ || hasUnknownSettings_ || !valid;
+    rawOnly_ = rawOnly_ || hasUnknownSettings_ || !valid || !parameterError().isEmpty();
     const int rawIndex = tabs_->count() - 1;
     for (int i = 0; i < rawIndex; ++i) tabs_->setTabEnabled(i, !rawOnly_);
     tabs_->widget(1)->setEnabled(!rawOnly_ && keySource_->currentData().toString() == "ExplicitVLESS");

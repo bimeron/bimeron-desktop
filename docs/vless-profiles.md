@@ -14,3 +14,8 @@ Acceptance criteria:
 - A service without VLESS support may reject `start` even when the bundled CLI validates a profile. The GUI reports the service error and its authoritative state; installing a VLESS-capable service is required to connect.
 
 Desktop source version 0.2.0 includes VLESS import and editing. The current bundle pin is published Core `v0.2.0-beta.1`, revision `6e0c171505be8e349d5f42570f7ceb3e50ac6697`, which supports VLESS. Historical candidate and VM results do not establish connectivity of the current Desktop baseline. See the [integration contract](core-desktop-integration-contract.md) for exact baselines, preservation requirements and the distinction between CLI validation, installed service support and runtime evidence.
+
+Stage 6 adds explicit Trojan, HTTP(S), Naive H2 and MASQUE forms and a separate
+ShadowTLS v3 block for represented compatible explicit profiles. URI sources and
+extended XHTTP remain protected Raw. See [Parameter forms and ShadowTLS](parameter-forms-and-shadowtls.md).
+This does not change the bundled Core or establish runtime interoperability.

@@ -50,3 +50,8 @@ Review retained SSH authentication, SS editor extensions and stage 2/3 guards.
 No performance-sensitive runtime path changed; no benchmark was needed.
 Live protocol interoperability, installed-service compatibility and complete
 English/Russian 100/150 percent visual verification remain separate checks.
+
+Stage 6 adds explicit Trojan, HTTP(S), Naive H2 and MASQUE forms and a separate
+ShadowTLS v3 block for represented compatible explicit profiles. URI sources and
+extended XHTTP remain protected Raw. See [Parameter forms and ShadowTLS](parameter-forms-and-shadowtls.md).
+This does not change the bundled Core or establish runtime interoperability.
