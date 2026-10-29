@@ -2,6 +2,13 @@
 
 Status: implemented; validation results and remaining release checks are recorded below.
 
+Restored [connection management](connection-management.md) uses the selected
+Development endpoint and validation CLI. Backend transitions cancel pending
+connection/validation intentions, suspend regular polling, and require fresh
+hello/status before controls become available. Process ownership, cleanup, VPN-lock
+checks and service restoration remain owned by DevelopmentCore. IPC failure never
+falls back to another backend or installs/starts a service automatically.
+
 ## User-visible behavior
 
 - Count five left clicks on the Desktop version label in About, not the Core version label. Count within the current application process, without a timing requirement; leaving About does not reset the count. Double-click events must not add extra synthetic clicks.
@@ -104,3 +111,15 @@ sudo unshare --mount --net --pid --fork --mount-proc bash -c '
     --integration-core "$PWD/.tools/core/linux-amd64/bimeron"
 '
 ```
+
+On Windows, a responding leftover daemon exposes Stop remaining local daemon.
+After confirmation, verify its named-pipe peer PID, executable path and current-user
+SID before adopting a query/synchronize handle for graceful stop/shutdown. Never
+terminate the process. Reuse endpoint disappearance and session-lock checks before
+restoring service availability. A verification failure sends no command.
+
+On failed local cleanup, explicit Quit offers Stay or Close GUI only (leaving
+the daemon running). For a verified leftover Windows daemon, a separately
+confirmed Force stop Core and close action is available. Verify pipe peer PID,
+path and SID on the same process handle used for termination. Forced exit does
+not claim network cleanup or restore/start the service automatically.

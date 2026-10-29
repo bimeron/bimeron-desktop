@@ -3,6 +3,7 @@
 #include "HiDpiCheckBox.h"
 #include "HiDpiComboBox.h"
 #include "ProfileEditorDialog.h"
+#include "CoreDiagnostic.h"
 #include "TrustedCore.h"
 
 #include <QColor>
@@ -28,6 +29,8 @@
 #include <QImage>
 #include <QItemSelectionModel>
 #include <QJsonArray>
+#include <QJsonDocument>
+#include <limits>
 #include <QKeyEvent>
 #include <QLabel>
 #include <QLineEdit>
@@ -39,16 +42,21 @@
 #include <QPainter>
 #include <QPalette>
 #include <QPixmap>
+#include <QPlainTextEdit>
 #include <QProcess>
 #include <QPushButton>
 #include <QRegularExpression>
 #include <QSaveFile>
+#include <QScrollArea>
+#include <QSet>
 #include <QSettings>
 #include <QSignalBlocker>
 #include <QShortcut>
 #include <QStandardPaths>
 #include <QStyledItemDelegate>
+#include <QToolTip>
 #include <QStyleHints>
+#include <QStyle>
 #include <QSystemTrayIcon>
 #include <QSysInfo>
 #include <QStackedWidget>
@@ -57,6 +65,7 @@
 #include <QTime>
 #include <QToolButton>
 #include <QUrl>
+#include <QUrlQuery>
 #include <QUuid>
 #include <QVBoxLayout>
 #ifdef Q_OS_WIN
@@ -68,6 +77,21 @@
 #endif
 
 namespace {
+QJsonObject coreIdentity(const QJsonObject &identity) {
+    QJsonObject result;
+    const QString version = identity.value("version").toString();
+    const QString revision = identity.value("revision").toString();
+    if (QRegularExpression(QStringLiteral("^v?[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}(?:-(?:dev|(?:alpha|beta|rc)\\.[0-9]{1,4})(?:-dev)?)?$")).match(version).hasMatch())
+        result.insert("version", version);
+    if (QRegularExpression(QStringLiteral("^[0-9a-f]{40}$")).match(revision).hasMatch()) result.insert("revision", revision);
+    if (identity.value("modified").isBool()) result.insert("modified", identity.value("modified"));
+    if (QStringList{"windows", "linux", "darwin"}.contains(identity.value("platform").toString()))
+        result.insert("platform", identity.value("platform"));
+    if (QStringList{"amd64", "arm64"}.contains(identity.value("architecture").toString()))
+        result.insert("architecture", identity.value("architecture"));
+    return result;
+}
+
 #ifdef Q_OS_WIN
 QString processUserSid(HANDLE process) {
     HANDLE token = nullptr;
@@ -118,12 +142,15 @@ public:
         }
         QStyleOptionViewItem row = option;
         initStyleOption(&row, index);
-        const QString name = row.text.section('\n', 0, 0);
-        row.text.clear();
+        // initStyleOption converts newlines to Unicode line separators.
+        const QString name = index.data(Qt::DisplayRole).toString().section('\n', 0, 0);
         const QWidget *widget = row.widget;
-        (widget ? widget->style() : QApplication::style())->drawControl(QStyle::CE_ItemViewItem, &row, painter, widget);
-        const QRect textRect = (widget ? widget->style() : QApplication::style())->subElementRect(QStyle::SE_ItemViewItemText, &row, widget);
+        const QStyle *style = widget ? widget->style() : QApplication::style();
+        const QRect textRect = style->subElementRect(QStyle::SE_ItemViewItemText, &row, widget);
+        row.text.clear();
+        style->drawControl(QStyle::CE_ItemViewItem, &row, painter, widget);
         painter->save();
+        painter->setClipRect(row.rect);
         painter->setFont(row.font);
         painter->setPen(row.palette.color(QPalette::Text));
         painter->drawText(textRect.adjusted(0, 2, 0, -textRect.height() / 2), Qt::AlignVCenter, name);
@@ -319,16 +346,6 @@ QIcon statusDot(const QColor &color) {
     return QIcon(canvas);
 }
 
-QString safeCoreDiagnostic(QByteArray output) {
-    QString text = QString::fromUtf8(output).trimmed();
-    text.replace(QRegularExpression(R"(((?:ss(?:conf)?|socks5|vless)://)[^\s\"']+)"), QStringLiteral("\\1") + QObject::tr("[hidden]"));
-    text.replace(QRegularExpression(R"((?im)^\s*(Password|Key|SS|SSConf|SOCKS5|VLESS|ID|PublicKey|ShortID)\s*=.*$)"), QStringLiteral("\\1 = ") + QObject::tr("[hidden]"));
-    text.replace("error: [Interface] IPv6 = disable requires Mode = vpn",
-                 QObject::tr("IPv6 can only be disabled in system VPN mode."));
-    text.replace("error: KillSwitch requires Mode = vpn",
-                 QObject::tr("The kill switch is only available in system VPN mode."));
-    return text.left(1000);
-}
 }
 
 MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), core_(this) {
@@ -336,8 +353,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), core_(this) {
         && QCoreApplication::arguments().contains("--restart")
         && !QCoreApplication::arguments().contains("--autostart");
     development_ = new DevelopmentCore(coreExecutablePath(), this);
-    capabilities_ = {{"vpn", true}, {"proxy", true}, {"ipv4", true}, {"ipv6", true},
-                     {"ip_split", true}, {"domain_split", true}, {"kill_switch", false}, {"daemon", true}};
+    validationExecutable_ = coreExecutablePath();
     setWindowTitle(tr("Bimeron"));
 #ifdef Q_OS_LINUX
     setWindowIcon(QIcon(QStringLiteral(":/icons/tray/png/light-disconnected-64.png")));
@@ -366,7 +382,12 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), core_(this) {
         auto *button = navButton(labels[i]);
         if (i == (developerMode_ ? 4 : 0)) button->setChecked(true);
         connect(button, &QPushButton::clicked, this, [this, i] { pages_->setCurrentIndex(i); });
-        auto *shortcut = new QShortcut(QKeySequence(QStringLiteral("Ctrl+%1").arg(i + 1)), this);
+        const QString key = i == 1 ? QStringLiteral(",") : QString::number(i + 1);
+#ifdef Q_OS_MACOS
+        auto *shortcut = new QShortcut(QKeySequence(QStringLiteral("Meta+") + key), this);
+#else
+        auto *shortcut = new QShortcut(QKeySequence(QStringLiteral("Ctrl+") + key), this);
+#endif
         connect(shortcut, &QShortcut::activated, this, [this, button, i] {
             pages_->setCurrentIndex(i);
             button->setChecked(true);
@@ -386,7 +407,9 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), core_(this) {
         autoConnectAttempted_ = true;
     }
     auto *newProfile = new QShortcut(QKeySequence::New, this);
-    connect(newProfile, &QShortcut::activated, this, &MainWindow::addProfile);
+    connect(newProfile, &QShortcut::activated, this, [this] {
+        if (pages_->currentIndex() == 0) addProfile();
+    });
     layout->addWidget(sidebar);
     layout->addWidget(pages_, 1);
     setCentralWidget(root);
@@ -471,24 +494,17 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), core_(this) {
     setStyleSheet(themedStyle(applicationStyle));
 
     connect(&core_, &CoreClient::replied, this, &MainWindow::handleReply);
-    connect(&core_, &CoreClient::unavailable, this, [this](const QString &message) {
-        connectionLabel_->setText(tr("Core unavailable"));
-        connectionLabel_->setStyleSheet(themedStyle("color: #c62828; font-weight: 500"));
-        connectButton_->setEnabled(false);
-        if (development_->busy() || development_->local() || development_->failed()) return;
-        if (quitRequested_) {
-            if (tray_)
-                tray_->hide();
-            QApplication::quit();
-        }
-        else if (!serviceCommandProcess_ && !linuxServiceProcess_)
-            ensureCoreService();
-    });
-    pollTimer_ = new QTimer(this);
-    pollTimer_->setInterval(1000);
-    connect(pollTimer_, &QTimer::timeout, this, &MainWindow::poll);
-    pollTimer_->start();
+    connect(&core_, &CoreClient::failed, this, &MainWindow::connectionFailure);
+    pollClock_.start();
+    auto *pollTimer = new QTimer(this);
+    pollTimer->setInterval(250);
+    connect(pollTimer, &QTimer::timeout, this, &MainWindow::poll);
+    if (!QCoreApplication::arguments().contains("--visual-check")) {
+        pollTimer->start();
+        QTimer::singleShot(0, this, &MainWindow::poll);
+    }
     connect(development_, &DevelopmentCore::changed, this, &MainWindow::updateDevelopment);
+    connect(development_, &DevelopmentCore::forcedExitReady, this, [] { QApplication::quit(); });
     connect(development_, &DevelopmentCore::completed, this, [this](bool success) {
         if (!developmentExit_) return;
         developmentExit_ = false;
@@ -498,11 +514,29 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), core_(this) {
         } else {
             restartRequested_ = false;
             showWindow();
-            QMessageBox::warning(this, tr("Development"), development_->status());
+            QMessageBox prompt(QMessageBox::Warning, tr("Development"), development_->status(), QMessageBox::NoButton, this);
+            auto *stay = prompt.addButton(tr("Stay"), QMessageBox::RejectRole);
+            auto *close = prompt.addButton(tr("Close GUI only"), QMessageBox::DestructiveRole);
+            QPushButton *force = nullptr;
+            if (development_->orphanAvailable())
+                force = prompt.addButton(tr("Force stop Core and close"), QMessageBox::DestructiveRole);
+            prompt.setDefaultButton(stay);
+            prompt.exec();
+            if (prompt.clickedButton() == close) QApplication::quit();
+            else if (force && prompt.clickedButton() == force) {
+                if (QMessageBox::warning(this, tr("Force stop Core and close"),
+                        tr("Core will be terminated without network cleanup. Routes, DNS and the kill switch may remain. Continue?"),
+                        QMessageBox::Yes | QMessageBox::No, QMessageBox::No) == QMessageBox::Yes)
+                    development_->stopOrphan(true);
+            }
         }
     });
     refreshProfiles();
-    core_.request("hello");
+    connectionLabel_->setText(tr("Connecting to core…"));
+    resetMeasurements();
+    probeValidationCli();
+    updateConnectionButton();
+    if (trayMenu_) rebuildTrayMenu();
 }
 
 QWidget *MainWindow::profilesPage() {
@@ -513,10 +547,10 @@ QWidget *MainWindow::profilesPage() {
     auto *title = new QLabel(tr("Profiles"));
     title->setStyleSheet("font-size: 17px; font-weight: 700");
     layout->addWidget(title);
-    connectionLabel_ = new QLabel(tr("Connecting to core…"));
+    connectionLabel_ = new QLabel(tr("Disconnected"));
     connectionLabel_->setStyleSheet(themedStyle("color: #66768a"));
     layout->addWidget(connectionLabel_);
-    trafficLabel_ = new QLabel(tr("Traffic: —"));
+    trafficLabel_ = new QLabel(tr("Traffic: ↑ 0 B  ↓ 0 B"));
     trafficLabel_->setStyleSheet(themedStyle("color: #66768a"));
     layout->addWidget(trafficLabel_);
     sessionStatsLabel_ = new QLabel(tr("Connections: —"));
@@ -561,6 +595,8 @@ QWidget *MainWindow::profilesPage() {
         });
     });
     connect(profileList_, &QListWidget::itemSelectionChanged, this, [this] {
+        if (removeProfileButton_)
+            removeProfileButton_->setEnabled(!profileList_->selectedItems().isEmpty());
         if (profileList_->selectedItems().isEmpty()) {
             profileGear_->hide();
             gearRow_ = -1;
@@ -576,19 +612,8 @@ QWidget *MainWindow::profilesPage() {
         updateConnectionButton();
     });
     connect(profileList_, &QListWidget::itemDoubleClicked, this, [this](QListWidgetItem *item) {
-        const int row = profileList_->row(item);
-        if (row < 0 || row >= profiles_.size() || !profileInfo(row).connectable)
-            return;
-        if (profiles_[row].id == activeProfileId_ && state_ != "disconnected" && state_ != "failed")
-            return;
-        profileList_->setCurrentRow(row);
-        if (state_ == "connected" || state_ == "connecting" || state_ == "reconnecting" || state_ == "stopping") {
-            pendingStartPath_ = profiles_[row].path;
-            if (state_ != "stopping")
-                toggleConnection();
-        } else {
-            startProfile(row);
-        }
+        profileList_->setCurrentItem(item);
+        toggleConnection();
     });
     auto *activateProfile = new QShortcut(QKeySequence(Qt::Key_Return), profileList_);
     activateProfile->setContext(Qt::WidgetWithChildrenShortcut);
@@ -599,6 +624,11 @@ QWidget *MainWindow::profilesPage() {
     auto *deleteProfile = new QShortcut(QKeySequence(Qt::Key_Delete), profileList_);
     deleteProfile->setContext(Qt::WidgetWithChildrenShortcut);
     connect(deleteProfile, &QShortcut::activated, this, &MainWindow::removeProfile);
+    for (int delta : {-1, 1}) {
+        auto *shortcut = new QShortcut(QKeySequence(delta < 0 ? Qt::SHIFT | Qt::Key_Up : Qt::SHIFT | Qt::Key_Down), profileList_);
+        shortcut->setContext(Qt::WidgetWithChildrenShortcut);
+        connect(shortcut, &QShortcut::activated, this, [this, delta] { moveProfile(delta); });
+    }
 #ifdef Q_OS_WIN
     layout->addWidget(new ProfileListFrame(profileList_), 1);
 #else
@@ -608,8 +638,11 @@ QWidget *MainWindow::profilesPage() {
     auto *add = new QPushButton(tr("+  Add key"));
     auto *import = new QPushButton(tr("Import .conf"));
     auto *remove = new QPushButton(tr("Remove"));
+    removeProfileButton_ = remove;
+    remove->setEnabled(false);
     connectButton_ = new ConnectionButton(tr("Connect"));
     connectButton_->setObjectName("connectButton");
+    connectionLabel_->setObjectName("connectionStatus");
     connectButton_->setProperty("mode", "connect");
     connectButton_->setEnabled(false);
     connect(add, &QPushButton::clicked, this, &MainWindow::addProfile);
@@ -723,7 +756,7 @@ QWidget *MainWindow::settingsPage() {
         const QSignalBlocker blocker(language);
         language->setCurrentIndex(language->findData(previousLanguage));
     });
-    auto *stopOnExit = new HiDpiCheckBox(tr("Disconnect the VPN and stop core when quitting"));
+    auto *stopOnExit = new HiDpiCheckBox(tr("Disconnect and stop core when quitting"));
     stopOnExit->setChecked(QSettings().value("app/stopCoreOnExit", false).toBool());
     connect(stopOnExit, &QCheckBox::toggled, this, [](bool checked) {
         QSettings().setValue("app/stopCoreOnExit", checked);
@@ -836,17 +869,29 @@ QWidget *MainWindow::settingsPage() {
     connect(&updater_, &CoreUpdater::statusChanged, coreUpdateLabel_, &QLabel::setText);
     connect(&updater_, &CoreUpdater::ready, this, [this](const QString &version, const QString &path, const QString &digest) {
         if (!coreUpdatePrerequisite()) { updater_.discardStaged(); return; }
-        const bool vpnActive = state_ == "connected" || state_ == "connecting" || state_ == "reconnecting";
-        const QString warning = vpnActive
-            ? tr("Installing Core %1 will interrupt the active VPN. Bimeron will reconnect the same profile after a successful update. Update now?").arg(version)
+        if (!helloReady_ || statusNeeded_ || !operation_.isEmpty() || state_ == "stopping" || cleanupBlocked_) {
+            updater_.discardStaged();
+            return;
+        }
+        const QString confirmedInstance = instance_;
+        const QString confirmedSession = sessionId_;
+        const bool sessionActive = state_ == "connected" || state_ == "connecting" || state_ == "reconnecting";
+        const QString warning = sessionActive
+            ? (activeProxyMode() ? tr("Installing Core %1 will interrupt the active proxy. Bimeron will reconnect the same profile after a successful update. Update now?")
+                                 : tr("Installing Core %1 will interrupt the active VPN. Bimeron will reconnect the same profile after a successful update. Update now?")).arg(version)
             : tr("Core %1 is downloaded and verified. Update the service now?").arg(version);
         if (QMessageBox::question(this, tr("Core update ready"), warning,
                                   QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes) {
             updater_.discardStaged();
             return;
         }
+        if (!helloReady_ || statusNeeded_ || !operation_.isEmpty() || cleanupBlocked_
+            || instance_ != confirmedInstance || sessionId_ != confirmedSession) {
+            updater_.discardStaged();
+            return;
+        }
         autoConnectAttempted_ = true;
-        reconnectProfileAfterUpdate_ = vpnActive ? activeProfileId_ : QString{};
+        reconnectProfileAfterUpdate_ = sessionActive ? activeProfileId_ : QString{};
         expectedCoreVersionAfterUpdate_ = version;
         updater_.setInstalling(true);
         coreUpdateCommand_ = true;
@@ -865,6 +910,8 @@ QWidget *MainWindow::settingsPage() {
     QSettings().remove("app/coreBetaUpdates");
     betaUpdatesCheck_ = new HiDpiCheckBox(tr("Include beta core updates"));
     service->addWidget(betaUpdatesCheck_);
+    coreUpdateLabel_->hide();
+    betaUpdatesCheck_->hide();
     service->addWidget(serviceAutomaticCheck_);
     serviceRecoveryButton_ = new QPushButton(tr("Emergency network recovery"));
     serviceRecoveryButton_->setObjectName("dangerButton");
@@ -908,6 +955,13 @@ QWidget *MainWindow::logPage() {
     auto *logButtons = new QHBoxLayout;
     auto *save = new QPushButton(tr("Save log…"));
     auto *clear = new QPushButton(tr("Clear"));
+    const auto updateLogActions = [this, save, clear] {
+        const bool hasEntries = !log_->document()->isEmpty();
+        save->setEnabled(hasEntries);
+        clear->setEnabled(hasEntries);
+    };
+    connect(log_, &QTextEdit::textChanged, this, updateLogActions);
+    updateLogActions();
     connect(save, &QPushButton::clicked, this, [this] {
         const QString path = QFileDialog::getSaveFileName(this, tr("Save log"), QDir::homePath() + "/bimeron.log", tr("Text (*.log *.txt)"));
         if (path.isEmpty()) return;
@@ -948,6 +1002,14 @@ ProfileConnectionInfo MainWindow::profileInfo(int row) const {
     return ProfileStore::connectionInfo(QString::fromUtf8(file.read(64 * 1024)));
 }
 
+bool MainWindow::activeProxyMode() const {
+    if (sessionMode_ == "proxy" || sessionMode_ == "vpn") return sessionMode_ == "proxy";
+    for (int row = 0; row < profiles_.size(); ++row)
+        if (profiles_[row].id == activeProfileId_)
+            return profileInfo(row).interfaceMode == "proxy";
+    return lastProxyMode_;
+}
+
 void MainWindow::refreshProfiles() {
     QString error;
     profiles_ = store_.load(&error);
@@ -968,10 +1030,11 @@ void MainWindow::refreshProfiles() {
     if (trayMenu_) rebuildTrayMenu();
     if (autoConnectProfile_) {
         const QString selected = QSettings().value("app/autoConnectProfile").toString();
+        const QSignalBlocker blocker(autoConnectProfile_);
         autoConnectProfile_->clear();
         for (const auto &profile : profiles_) autoConnectProfile_->addItem(profile.name, profile.id);
         const int index = autoConnectProfile_->findData(selected);
-        if (index >= 0) autoConnectProfile_->setCurrentIndex(index);
+        autoConnectProfile_->setCurrentIndex(index);
     }
     updateProfileAppearance();
     if (!error.isEmpty()) appendLog(tr("Failed to load profiles: %1").arg(error));
@@ -1024,93 +1087,121 @@ void MainWindow::editProfile(int row) {
     }
     const QByteArray originalData = source.readAll();
     source.close();
-    ProfileEditorDialog dialog(QString::fromUtf8(originalData), capabilities_, this);
-    if (dialog.exec() != QDialog::Accepted)
-        return;
-    const QByteArray data = dialog.configText().toUtf8();
-    const QFileInfo profileInfo(profiles_[row].path);
-    const QString temporary = profileInfo.dir().filePath(QString(".bimeron-validate-%1.conf").arg(QUuid::createUuid().toString(QUuid::WithoutBraces)));
-    QSaveFile validationFile(temporary);
-    QString error;
-    if (!validationFile.open(QIODevice::WriteOnly) || validationFile.write(data) != data.size() || !validationFile.commit()) {
-        QMessageBox::warning(this, tr("Profile was not saved"), validationFile.errorString());
-        return;
-    }
-    QFile::setPermissions(temporary, QFileDevice::ReadOwner | QFileDevice::WriteOwner);
-    const bool valid = validateConfig(temporary, &error);
-    QFile::remove(temporary);
-    if (!valid) {
-        QMessageBox::warning(this, tr("Invalid configuration"), error);
-        return;
-    }
-    QSaveFile output(profiles_[row].path);
-    if (!output.open(QIODevice::WriteOnly)) {
-        QMessageBox::warning(this, tr("Profile was not saved"), tr("Failed to open the file for writing: %1").arg(output.errorString()));
-        return;
-    }
-    if (output.write(data) != data.size()) {
-        output.cancelWriting();
-        QMessageBox::warning(this, tr("Profile was not saved"), tr("Failed to write data: %1").arg(output.errorString()));
-        return;
-    }
-    if (!output.commit()) {
-        // Windows can reject an atomic replacement even though the profile itself is writable.
-        QFile direct(profiles_[row].path);
-        if (!direct.open(QIODevice::WriteOnly | QIODevice::Truncate) || direct.write(data) != data.size()) {
-            const QString directError = direct.errorString();
-            direct.close();
-            QFile restore(profiles_[row].path);
-            if (restore.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-                restore.write(originalData);
-                restore.close();
-            }
-            QMessageBox::warning(this, tr("Profile was not saved"), tr("Windows denied both file replacement and direct writing: %1").arg(directError));
-            return;
+    const auto validateDraft = [this, row](const QString &text, QString *error) {
+        const QByteArray data = text.toUtf8();
+        const QFileInfo profileInfo(profiles_[row].path);
+        const QString temporary = profileInfo.dir().filePath(QString(".bimeron-validate-%1.conf").arg(QUuid::createUuid().toString(QUuid::WithoutBraces)));
+        if (!ProfileStore::writeConfig(temporary, data, error)) return false;
+        const bool valid = validateConfig(temporary, error);
+        if (!QFile::remove(temporary)) {
+            if (error) *error = tr("Cannot remove the protected validation draft; the original profile was retained.");
+            return false;
         }
-        direct.close();
+        return valid;
+    };
+    ProfileEditorDialog dialog(QString::fromUtf8(originalData), capabilities_, this, validateDraft);
+    while (dialog.exec() == QDialog::Accepted) {
+        if (dialog.configText() == QString::fromUtf8(originalData)) break;
+        const QByteArray data = dialog.configText().toUtf8();
+        QString error;
+        if (!validateDraft(dialog.configText(), &error)) {
+            QMessageBox::warning(&dialog, tr("Error"), error, QMessageBox::Ok);
+            continue;
+        }
+        if (!ProfileStore::writeConfig(profiles_[row].path, data, &error)) {
+            QMessageBox::warning(&dialog, tr("Error"), error, QMessageBox::Ok);
+            continue;
+        }
+        profiles_[row].name = ProfileStore::displayName(profiles_[row].path);
+        if (!store_.save(profiles_, &error)) {
+            QMessageBox::warning(&dialog, tr("Error"),
+                tr("The profile was saved, but its list entry could not be updated. Retry Save to update the list."), QMessageBox::Ok);
+            continue;
+        }
+        const QString editedId = profiles_[row].id;
+        refreshProfiles();
+        for (int index = 0; index < profiles_.size(); ++index)
+            if (profiles_[index].id == editedId) profileList_->setCurrentRow(index);
+        if (editedId == activeProfileId_ && state_ != "disconnected")
+            QMessageBox::information(this, tr("Reconnect required"), tr("Changes have been saved and will apply after disconnecting and reconnecting."));
+        break;
     }
-    if (QFileInfo(profiles_[row].path).size() != data.size()) {
-        QMessageBox::warning(this, tr("Profile was not saved"), tr("The written file size does not match the expected size."));
-        return;
-    }
-    QFile::setPermissions(profiles_[row].path, QFileDevice::ReadOwner | QFileDevice::WriteOwner);
-    profiles_[row].name = ProfileStore::displayName(profiles_[row].path);
-    store_.save(profiles_, &error);
-    const QString editedId = profiles_[row].id;
-    refreshProfiles();
-    for (int index = 0; index < profiles_.size(); ++index)
-        if (profiles_[index].id == editedId) profileList_->setCurrentRow(index);
-    if (editedId == activeProfileId_ && state_ != "disconnected")
-        QMessageBox::information(this, tr("Reconnect required"), tr("Changes have been saved and will apply after disconnecting and reconnecting."));
 }
 
 void MainWindow::addProfile() {
     QDialog dialog(this);
     dialog.setWindowTitle(tr("Add profile"));
+    dialog.setWindowFlag(Qt::MSWindowsFixedSizeDialogHint);
     dialog.setMinimumWidth(440);
     auto *layout = new QVBoxLayout(&dialog);
-    auto *hint = new QLabel(tr("Paste a key beginning with ss://, ssconf://, socks5://, or vless://"));
+    auto *hint = new QLabel(tr("Enter a supported protocol URI"));
+    auto *hintRow = new QHBoxLayout;
+    auto *uriHelp = new QToolButton(&dialog);
+    uriHelp->setText("?");
+    uriHelp->setAutoRaise(true);
+    uriHelp->setAccessibleName(tr("Supported protocol URIs"));
+    connect(uriHelp, &QToolButton::clicked, &dialog, [uriHelp] {
+        QToolTip::showText(uriHelp->mapToGlobal(QPoint(0, uriHelp->height())),
+            QStringLiteral("ss://, ssconf://, socks5://, vless://,\nhysteria2://, hy2://, vmess://, trojan://, tuic://,\nhttp://, https://, anytls://,\nnaive+https://, naive+quic://, masque://, ssh://"), uriHelp, uriHelp->rect());
+    });
+    hintRow->addWidget(hint);
+    hintRow->addWidget(uriHelp);
+    hintRow->addStretch();
     auto *key = new QLineEdit;
-    key->setPlaceholderText(tr("ss://, ssconf://, socks5://, or vless://"));
+    key->setObjectName("profileUri");
+    key->setPlaceholderText(tr("Protocol URI"));
     key->setMinimumHeight(30);
     auto *paste = new QPushButton;
+    paste->setText(tr("Paste"));
     auto *nameLabel = new QLabel(tr("Profile name"));
     auto *name = new QLineEdit;
+    name->setObjectName("profileName");
     name->setMinimumHeight(30);
-    nameLabel->hide();
-    name->hide();
-    layout->addWidget(hint);
-    layout->addWidget(key);
-    layout->addWidget(paste);
+    auto *sshFiles = new QWidget;
+    auto *sshForm = new QFormLayout(sshFiles);
+    auto *identity = new QLineEdit;
+    auto *hosts = new QLineEdit;
+    auto *identityBrowse = new QPushButton(tr("Browse…"));
+    auto *hostsBrowse = new QPushButton(tr("Browse…"));
+    auto *identityRow = new QWidget;
+    auto *identityLayout = new QHBoxLayout(identityRow);
+    identityLayout->setContentsMargins(0, 0, 0, 0);
+    identityLayout->addWidget(identity);
+    identityLayout->addWidget(identityBrowse);
+    auto *hostsRow = new QWidget;
+    auto *hostsLayout = new QHBoxLayout(hostsRow);
+    hostsLayout->setContentsMargins(0, 0, 0, 0);
+    hostsLayout->addWidget(hosts);
+    hostsLayout->addWidget(hostsBrowse);
+    sshForm->addRow(tr("Identity file (optional)"), identityRow);
+    sshForm->addRow(tr("Known hosts file"), hostsRow);
+    sshFiles->hide();
+    connect(identityBrowse, &QPushButton::clicked, &dialog, [&] {
+        const QString path = QFileDialog::getOpenFileName(&dialog, tr("SSH identity file"));
+        if (!path.isEmpty()) identity->setText(QFileInfo(path).absoluteFilePath());
+    });
+    connect(hostsBrowse, &QPushButton::clicked, &dialog, [&] {
+        const QString path = QFileDialog::getOpenFileName(&dialog, tr("SSH known_hosts file"));
+        if (!path.isEmpty()) hosts->setText(QFileInfo(path).absoluteFilePath());
+    });
     layout->addWidget(nameLabel);
     layout->addWidget(name);
+    nameLabel->hide();
+    name->hide();
+    layout->addLayout(hintRow);
+    layout->addWidget(key);
+    layout->addWidget(paste);
+    layout->addWidget(sshFiles);
     QDialogButtonBox buttons(QDialogButtonBox::Save | QDialogButtonBox::Cancel);
     buttons.button(QDialogButtonBox::Save)->setText(tr("Save"));
     buttons.button(QDialogButtonBox::Cancel)->setText(tr("Cancel"));
     buttons.button(QDialogButtonBox::Save)->setEnabled(false);
     layout->addWidget(&buttons);
+    layout->activate();
+    dialog.setFixedWidth(440);
+    dialog.setFixedHeight(dialog.sizeHint().height());
     auto keyName = [](const QString &value) {
-        if (value.startsWith("socks5://")) return QString();
+        if (!QStringList{"SS", "SSConf", "VLESS", "Hysteria2"}.contains(ProfileStore::uriSourceField(value))) return QString();
         const qsizetype hash = value.indexOf('#');
         if (hash < 0 || hash + 1 >= value.size()) return QString();
         return QUrl::fromPercentEncoding(value.mid(hash + 1).toUtf8()).trimmed();
@@ -1118,9 +1209,12 @@ void MainWindow::addProfile() {
     auto isKey = [](const QString &value) {
         const QString trimmed = value.trimmed();
         if (trimmed.contains(QRegularExpression("\\s"))) return false;
+        if (QStringList{"VMess", "Trojan", "TUIC", "HTTP", "AnyTLS", "Naive", "MASQUE"}.contains(ProfileStore::uriSourceField(trimmed))) return true;
         const QUrl url(trimmed);
         if (url.scheme() == "ssconf")
             return url.isValid() && !url.host().isEmpty();
+        if (url.scheme() == "ssh")
+            return ProfileStore::connectionInfo("[AccessKey]\nSSH = " + trimmed).connectable;
         if (url.scheme() == "socks5") {
             if (!url.isValid() || url.host().isEmpty() || url.port() < 1 || url.port() > 65535
                 || !url.path().isEmpty() || url.hasQuery() || url.hasFragment()) return false;
@@ -1131,6 +1225,12 @@ void MainWindow::addProfile() {
             return url.isValid() && !url.host().isEmpty() && url.port() > 0 && url.port() <= 65535
                 && url.password().isEmpty() && url.path().isEmpty()
                 && QRegularExpression("^[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}$").match(url.userName()).hasMatch();
+        if (url.scheme() == "hysteria2" || url.scheme() == "hy2") {
+            const QUrlQuery query(url);
+            const bool auth = !query.queryItemValue("auth", QUrl::FullyDecoded).isEmpty();
+            return url.isValid() && !url.host().isEmpty() && url.port() > 0 && url.port() <= 65535
+                && (auth != !url.userName().isEmpty()) && url.password().isEmpty() && url.path().isEmpty();
+        }
         if (url.scheme() != "ss") return false;
 
         QString body = trimmed.mid(5);
@@ -1146,14 +1246,25 @@ void MainWindow::addProfile() {
     bool nameEdited = false;
     bool keyValid = false;
     const auto updateSave = [&] {
-        buttons.button(QDialogButtonBox::Save)->setEnabled(keyValid && !name->text().trimmed().isEmpty());
+        const QString uriHosts = QUrlQuery(QUrl(key->text())).queryItemValue("known_hosts", QUrl::FullyDecoded);
+        const bool sshHostsReady = QFileInfo(hosts->text()).isAbsolute()
+            || (hosts->text().isEmpty() && QFileInfo(uriHosts).isAbsolute());
+        buttons.button(QDialogButtonBox::Save)->setEnabled(keyValid && !name->text().trimmed().isEmpty()
+            && (!key->text().startsWith("ssh://") || (sshHostsReady
+                && (identity->text().isEmpty() || QFileInfo(identity->text()).isAbsolute()))));
     };
     connect(name, &QLineEdit::textEdited, &dialog, [&] { nameEdited = true; });
     connect(name, &QLineEdit::textChanged, &dialog, updateSave);
+    connect(hosts, &QLineEdit::textChanged, &dialog, updateSave);
+    connect(identity, &QLineEdit::textChanged, &dialog, updateSave);
     connect(key, &QLineEdit::textChanged, &dialog, [&](const QString &value) {
         keyValid = isKey(value);
         nameLabel->setVisible(keyValid);
         name->setVisible(keyValid);
+        sshFiles->setVisible(keyValid && value.startsWith("ssh://"));
+        layout->invalidate();
+        layout->activate();
+        dialog.setFixedHeight(dialog.sizeHint().height());
         const QString suggested = keyName(value);
         if (!nameEdited && !suggested.isEmpty())
             name->setText(suggested);
@@ -1161,12 +1272,15 @@ void MainWindow::addProfile() {
     });
     auto updatePaste = [&] {
         const QString clipboardKey = QApplication::clipboard()->text().trimmed();
-        const bool available = isKey(clipboardKey);
-        paste->setVisible(available);
-        if (available) {
+        paste->setEnabled(isKey(clipboardKey));
+        paste->setVisible(paste->isEnabled());
+        if (paste->isEnabled()) {
             const QString suggested = keyName(clipboardKey);
             paste->setText(suggested.isEmpty() ? tr("Paste key") : tr("Paste key #%1").arg(suggested));
-        }
+        } else paste->setText(tr("Paste"));
+        layout->invalidate();
+        layout->activate();
+        dialog.setFixedHeight(dialog.sizeHint().height());
     };
     connect(QApplication::clipboard(), &QClipboard::dataChanged, &dialog, updatePaste);
     connect(paste, &QPushButton::clicked, &dialog, [&] {
@@ -1179,23 +1293,34 @@ void MainWindow::addProfile() {
         if (keyValid && !name->text().trimmed().isEmpty()) dialog.accept();
     });
     connect(&buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
-    if (dialog.exec() != QDialog::Accepted) return;
-    QString error;
-    const QString path = store_.createConfig(name->text(), key->text(), &error);
-    key->clear();
-    if (path.isEmpty()) {
-        QMessageBox::warning(this, tr("Profile was not created"), error);
-        return;
+    while (dialog.exec() == QDialog::Accepted) {
+        QString error;
+        const QString path = store_.createConfig(name->text(), key->text(), &error, identity->text(), hosts->text());
+        if (path.isEmpty()) {
+            QMessageBox::warning(&dialog, tr("Error"), error, QMessageBox::Ok);
+            continue;
+        }
+        QFile imported(path);
+        const bool referencesReady = imported.open(QIODevice::ReadOnly)
+            && ProfileStore::sshFilesReadable(QString::fromUtf8(imported.read(64 * 1024 + 1)), path, &error);
+        imported.close();
+        if (!referencesReady || !validateConfig(path, &error)) {
+            QFile::remove(path);
+            QMessageBox::warning(&dialog, tr("Error"), error, QMessageBox::Ok);
+            continue;
+        }
+        const QString profileName = name->text().trimmed();
+        profiles_.append({ProfileStore::identity(path), profileName, path});
+        if (!store_.save(profiles_, &error)) {
+            profiles_.removeLast();
+            QFile::remove(path);
+            QMessageBox::warning(&dialog, tr("Error"), error, QMessageBox::Ok);
+            continue;
+        }
+        key->clear();
+        refreshProfiles();
+        break;
     }
-    if (!validateConfig(path, &error)) {
-        QFile::remove(path);
-        QMessageBox::warning(this, tr("Profile was not created"), error);
-        return;
-    }
-    const QString profileName = name->text().trimmed().isEmpty() ? tr("Untitled") : name->text().trimmed();
-    profiles_.append({ProfileStore::identity(path), profileName, path});
-    store_.save(profiles_, &error);
-    refreshProfiles();
 }
 
 void MainWindow::importProfile() {
@@ -1213,20 +1338,28 @@ void MainWindow::importProfile() {
         return;
     }
     profiles_.append({ProfileStore::identity(path), ProfileStore::displayName(path), path});
-    store_.save(profiles_, &error);
+    if (!store_.save(profiles_, &error)) {
+        profiles_.removeLast();
+        QFile::remove(path);
+        QMessageBox::warning(this, tr("Import failed"), error);
+        return;
+    }
     refreshProfiles();
 }
 
 void MainWindow::removeProfile() {
     const int row = profileList_->currentRow();
-    if (row < 0) return;
+    if (row < 0 || !profileList_->currentItem()->isSelected()) return;
     if (profiles_[row].id == activeProfileId_) {
         QMessageBox::information(this, tr("Profile in use"), tr("Disconnect the active session first."));
         return;
     }
-    if (QMessageBox::question(this, tr("Delete profile"), tr("Delete profile “%1”?").arg(profiles_[row].name),
-            QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes)
-        return;
+    QMessageBox confirmation(QMessageBox::Question, tr("Delete profile"),
+        tr("Delete profile “%1”?").arg(profiles_[row].name), QMessageBox::NoButton, this);
+    auto *confirm = confirmation.addButton(tr("Remove"), QMessageBox::DestructiveRole);
+    confirmation.addButton(tr("Cancel"), QMessageBox::RejectRole);
+    confirmation.exec();
+    if (confirmation.clickedButton() != confirm) return;
     QFile::remove(profiles_[row].path);
     profiles_.removeAt(row);
     QString error;
@@ -1234,39 +1367,190 @@ void MainWindow::removeProfile() {
     refreshProfiles();
 }
 
-void MainWindow::toggleConnection() {
-    if (development_->busy() || development_->failed()) return;
-    const int row = profileList_->currentItem() && profileList_->currentItem()->isSelected()
-        ? profileList_->currentRow() : -1;
-    if (row < 0)
-        return;
-    if (!profileInfo(row).connectable && profiles_[row].id != activeProfileId_) return;
-    if (state_ == "connected" || state_ == "connecting" || state_ == "reconnecting") {
-        if (profiles_[row].id != activeProfileId_)
-            pendingStartPath_ = profiles_[row].path;
-        state_ = "stopping";
-        updateConnectionButton();
-        if (core_.busy())
-            stopRequested_ = true;
-        else
-            core_.request("stop", {}, 120000);
+void MainWindow::moveProfile(int delta) {
+    const int row = profileList_->currentRow();
+    const int target = row + delta;
+    if (row < 0 || !profileList_->currentItem()->isSelected() || target < 0 || target >= profiles_.size()) return;
+    profiles_.swapItemsAt(row, target);
+    QString error;
+    if (!store_.save(profiles_, &error)) {
+        profiles_.swapItemsAt(row, target);
+        QMessageBox::warning(this, tr("Error"), error, QMessageBox::Ok);
         return;
     }
-    startProfile(row);
+    refreshProfiles();
+    profileList_->setCurrentRow(target, QItemSelectionModel::ClearAndSelect);
+    profileList_->setFocus();
 }
 
-void MainWindow::startProfile(int row) {
-    if (development_->busy() || development_->failed()) return;
+bool MainWindow::controlBlocked() const {
+    return development_->busy() || development_->failed() || coreUpdateCommand_
+        || coreUpdateAwaitingResult_ || serviceCommandProcess_ || linuxServiceProcess_ || quitRequested_;
+}
+
+bool MainWindow::cleanDisconnected() const {
+    return state_ == "disconnected" && !sessionActive_ && !cleanupBlocked_;
+}
+
+bool MainWindow::canActivateProfile(int row) const {
+    if (row < 0 || row >= profiles_.size() || !helloReady_ || statusNeeded_ || controlBlocked()
+        || nativeSession_ || !operation_.isEmpty() || state_ == "stopping") return false;
+    const bool active = sessionActive_ || state_ == "connecting" || state_ == "connected" || state_ == "reconnecting";
+    return (active && profiles_[row].id == activeProfileId_) || (!cleanupBlocked_ && profileInfo(row).connectable);
+}
+
+void MainWindow::probeValidationCli() {
+    if (QCoreApplication::arguments().contains("--visual-check")) return;
+    auto *process = new QProcess(this);
+    const quint64 generation = connectionGeneration_;
+    const QString executable = validationExecutable_;
+    connect(process, qOverload<int, QProcess::ExitStatus>(&QProcess::finished), this,
+        [this, process, generation, executable](int code, QProcess::ExitStatus status) {
+        process->deleteLater();
+        if (generation != connectionGeneration_ || executable != validationExecutable_) return;
+        validationIdentity_ = {};
+        if (code == 0 && status == QProcess::NormalExit) {
+            validationIdentity_ = coreIdentity(QJsonDocument::fromJson(process->readAllStandardOutput().left(16384)).object());
+        }
+        updateCoreIdentity();
+    });
+    connect(process, &QProcess::errorOccurred, process, [process](QProcess::ProcessError error) {
+        if (error == QProcess::FailedToStart) process->deleteLater();
+    });
+    connect(process, &QProcess::readyReadStandardError, process, [process] { process->readAllStandardError(); });
+    connect(process, &QProcess::readyReadStandardOutput, process, [process] {
+        if (process->bytesAvailable() > 16384) process->kill();
+    });
+    QTimer::singleShot(5000, process, [process] { if (process->state() != QProcess::NotRunning) process->kill(); });
+    process->start(executable, {"version"});
+}
+
+void MainWindow::updateCoreIdentity() {
+    const auto describe = [this](const QJsonObject &identity) {
+        return QString("%1; %2; %3/%4; %5").arg(identity.value("version").toString(tr("unknown")),
+            identity.value("revision").toString(tr("unknown")), identity.value("platform").toString(tr("unknown")),
+            identity.value("architecture").toString(tr("unknown")), identity.contains("modified")
+                ? (identity.value("modified").toBool() ? tr("modified") : tr("unmodified")) : tr("unknown"));
+    };
+    coreVersionLabel_->setText(tr("Core: %1").arg(runtimeIdentity_.value("version").toString(tr("unknown"))));
+    coreVersionLabel_->setToolTip(tr("Validation CLI: %1\nRuntime Core: %2").arg(describe(validationIdentity_), describe(runtimeIdentity_)));
+}
+
+void MainWindow::resetMeasurements() {
+    statsClock_.invalidate();
+    previousUp_ = previousDown_ = 0;
+    trafficLabel_->setText(tr("Traffic: —"));
+    sessionStatsLabel_->setText(tr("Connections: —"));
+    trayTraffic_ = trafficLabel_->text();
+    if (trayTrafficAction_) trayTrafficAction_->setText(trayTraffic_);
+}
+
+void MainWindow::invalidateConnection() {
+    clearSSHAuthentication();
+    sshSeen_.clear();
+    sshAuthSupported_ = true;
+    ++connectionGeneration_;
+    if (validationProcess_) {
+        validationProcess_->disconnect(this);
+        validationProcess_->kill();
+        validationProcess_->deleteLater();
+        validationProcess_ = nullptr;
+    }
+    core_.cancel();
+    if (serviceStatusProcess_) {
+        serviceStatusProcess_->disconnect(this);
+        serviceStatusProcess_->kill();
+        serviceStatusProcess_->deleteLater();
+        serviceStatusProcess_ = nullptr;
+    }
+    operation_.clear();
+    pendingStartPath_.clear();
+    startReadyPath_.clear();
+    stopRequested_ = false;
+    helloReady_ = false;
+    statusNeeded_ = true;
+    capabilities_ = {};
+    runtimeIdentity_ = {};
+    runningCoreVersion_.clear();
+    updateCoreIdentity();
+    instance_.clear();
+    sessionId_.clear();
+    eventCursor_ = 0;
+    nextEvents_ = nextStatus_ = nextStats_ = 0;
+    resetMeasurements();
+    connectionLabel_->setText(tr("Connecting to core…"));
+    updateConnectionButton();
+    updateProfileAppearance();
+    if (tray_) tray_->setIcon(trayIcon(false));
+    if (trayMenu_) rebuildTrayMenu();
+}
+
+void MainWindow::connectionFailure(const QString &, CoreClient::Failure reason, const QString &message) {
+    invalidateConnection();
+    autoConnectAttempted_ = true;
+    reconnectProfileAfterUpdate_.clear();
+    if (coreUpdateAwaitingResult_ || !reconnectResultProfileId_.isEmpty()) {
+        coreUpdateAwaitingResult_ = false;
+        expectedCoreVersionAfterUpdate_.clear();
+        reconnectResultProfileId_.clear();
+        reportCoreUpdateResult(tr("Core connection could not be verified; reconnection was canceled"));
+    }
+    static const int delays[]{1000, 2000, 5000, 10000};
+    retryAt_ = pollClock_.elapsed() + delays[qMin(retryCount_++, 3)];
+    const QString text = reason == CoreClient::Failure::AccessDenied ? tr("Access to Core was denied")
+        : reason == CoreClient::Failure::Incompatible ? tr("The GUI and core protocol versions are incompatible")
+        : tr("Core unavailable");
+    connectionLabel_->setText(text);
+    connectionLabel_->setStyleSheet(themedStyle("color: #c62828; font-weight: 500"));
+    if (tray_) { tray_->setIcon(trayIcon(false)); tray_->setToolTip(tr("Bimeron — %1").arg(text)); }
+    if (lastCoreError_ != message) { appendLog(message); lastCoreError_ = message; }
+    updateConnectionButton();
+    if (trayMenu_) rebuildTrayMenu();
+    if (quitRequested_) { quitRequested_ = false; if (tray_) tray_->show(); showWindow(); }
+}
+
+void MainWindow::toggleConnection() {
+    if (controlBlocked() || !helloReady_ || statusNeeded_ || !operation_.isEmpty() || nativeSession_) return;
+    autoConnectAttempted_ = true;
+    const int row = profileList_->currentItem() && profileList_->currentItem()->isSelected()
+        ? profileList_->currentRow() : -1;
+    const bool active = sessionActive_ || state_ == "connected" || state_ == "connecting"
+        || state_ == "reconnecting" || state_ == "stopping";
+    if (active) {
+        if (state_ == "stopping") return;
+        if (row >= 0 && profiles_[row].id != activeProfileId_) {
+            if (!profileInfo(row).connectable || cleanupBlocked_) return;
+            pendingStartPath_ = profiles_[row].path;
+        }
+        operation_ = "stop";
+        clearSSHAuthentication();
+        stopRequested_ = true;
+        updateConnectionButton();
+        poll();
+    } else if (row >= 0 && !cleanupBlocked_) {
+        startProfile(row);
+    }
+}
+
+bool MainWindow::startProfile(int row) {
+    if (controlBlocked() || !helloReady_ || statusNeeded_ || !operation_.isEmpty() || cleanupBlocked_
+        || nativeSession_ || sessionActive_ || (state_ != "disconnected" && state_ != "failed")) return false;
     if (row < 0 || row >= profiles_.size())
-        return;
+        return false;
     const auto info = profileInfo(row);
-    if (!info.connectable) return;
+    if (!info.connectable) return false;
     QFile profileFile(profiles_[row].path);
     if (!profileFile.open(QIODevice::ReadOnly)) {
         QMessageBox::warning(this, tr("Profile unavailable"), profileFile.errorString());
-        return;
+        return false;
     }
-    const QString profileText = QString::fromUtf8(profileFile.readAll());
+    const QByteArray profileBytes = profileFile.read(64 * 1024 + 1);
+    const QString profileText = QString::fromUtf8(profileBytes);
+    if (profileBytes.size() > 64 * 1024) return false;
+    if (profileText.contains(QRegularExpression(QStringLiteral("(?m)^\\s*\\[IKEv2\\]\\s*$")))) {
+        QMessageBox::warning(this, tr("Feature not supported"), tr("Native IKEv2 requires a separate foreground backend"));
+        return false;
+    }
     activeFileProtocol_.clear();
     if (!info.keyFile.isEmpty()) {
         QFile keyFile(QFileInfo(profiles_[row].path).dir().filePath(info.keyFile));
@@ -1276,6 +1560,12 @@ void MainWindow::startProfile(int row) {
             if (key.startsWith(QChar::ByteOrderMark)) key.remove(0, 1);
             activeFileProtocol_ = ProfileStore::connectionInfo("[AccessKey]\nKey = " + key).protocol;
         }
+    }
+    QString sshFileError;
+    if (!ProfileStore::sshFilesReadable(profileText, profiles_[row].path, &sshFileError)) {
+        QMessageBox::warning(this, tr("SSH files unavailable"), sshFileError.isEmpty()
+            ? tr("The profile dependency file is unavailable.") : sshFileError);
+        return false;
     }
     QString mode = QRegularExpression(R"((?im)^\s*Mode\s*=\s*(vpn|proxy)\s*$)").match(profileText).captured(1).toLower();
     if (mode.isEmpty()) mode = "vpn";
@@ -1289,78 +1579,160 @@ void MainWindow::startProfile(int row) {
     else if (QRegularExpression(R"((?im)^\s*KillSwitch\s*=\s*true\s*$)").match(profileText).hasMatch() && !capabilities_.value("kill_switch").toBool()) unsupported = tr("kill switch");
     if (!unsupported.isEmpty()) {
         QMessageBox::warning(this, tr("Feature not supported"), tr("The current core build does not support: %1.").arg(unsupported));
-        return;
+        return false;
     }
-    QString validationError;
-    if (!validateConfig(profiles_[row].path, &validationError)) {
-        QMessageBox::warning(this, tr("Invalid profile"), validationError);
-        return;
-    }
-    if (!QSettings().value("logs/keepPrevious", true).toBool())
-        log_->clear();
-    connectionAttempted_ = true;
-    activeProfileId_ = profiles_[row].id;
-    state_ = "connecting";
+    const QString path = QFileInfo(profiles_[row].path).absoluteFilePath();
+    const QString executable = validationExecutable_;
+    const quint64 generation = connectionGeneration_;
+    operation_ = "validate";
     updateConnectionButton();
-    updateProfileAppearance();
-    core_.request("start", {{"config", QFileInfo(profiles_[row].path).absoluteFilePath()}});
+    auto *process = new QProcess(this);
+    validationProcess_ = process;
+    process->setProgram(executable);
+    process->setArguments({"validate", path});
+    connect(process, &QProcess::readyReadStandardOutput, this, [process] { process->readAllStandardOutput(); });
+    connect(process, &QProcess::readyReadStandardError, this, [process] { process->readAllStandardError(); });
+    const auto finished = [this, process, path, generation, profileBytes](int code, QProcess::ExitStatus status) {
+        if (validationProcess_ != process || generation != connectionGeneration_) return;
+        validationProcess_ = nullptr;
+        process->deleteLater();
+        operation_.clear();
+        QFile current(path);
+        const bool unchanged = current.open(QIODevice::ReadOnly) && current.read(64 * 1024 + 1) == profileBytes;
+        if (status != QProcess::NormalExit || code != 0) {
+            appendLog(tr("Core rejected the configuration. Check the key and profile settings."));
+            if (!reconnectResultProfileId_.isEmpty())
+                reportCoreUpdateResult(tr("Core was updated, but profile validation failed; reconnection was canceled"));
+            reconnectResultProfileId_.clear();
+        } else if (unchanged && !controlBlocked() && helloReady_ && !statusNeeded_ && !sessionActive_
+                   && !cleanupBlocked_ && (state_ == "disconnected" || state_ == "failed")) {
+            for (const auto &profile : profiles_) {
+                if (QFileInfo(profile.path).absoluteFilePath() == path && QFileInfo::exists(path)) {
+                    startReadyPath_ = path;
+                    operation_ = "start";
+                    break;
+                }
+            }
+        }
+        if (startReadyPath_.isEmpty() && !reconnectResultProfileId_.isEmpty()) {
+            reconnectResultProfileId_.clear();
+            reportCoreUpdateResult(tr("Core was updated, but reconnection was canceled"));
+        }
+        updateConnectionButton();
+        poll();
+    };
+    connect(process, qOverload<int, QProcess::ExitStatus>(&QProcess::finished), this, finished);
+    connect(process, &QProcess::errorOccurred, this, [finished](QProcess::ProcessError error) {
+        if (error == QProcess::FailedToStart) finished(-1, QProcess::CrashExit);
+    });
+    QTimer::singleShot(20000, process, [this, process, generation] {
+        if (validationProcess_ == process && generation == connectionGeneration_) process->kill();
+    });
+    process->start();
+    return true;
 }
 
 void MainWindow::poll() {
-    if (development_->busy() || development_->failed()) return;
-    if (core_.busy()) return;
-    if (runningCoreVersion_.isEmpty()) { core_.request("hello"); return; }
-    if (++pollCount_ % 3 == 0)
-        core_.request("events", {{"after", static_cast<qint64>(eventCursor_)}});
-    else
-        core_.request(state_ == "connected" ? "stats" : "status");
-}
-
-void MainWindow::handleReply(const QString &command, const QJsonObject &response) {
-    if (stopRequested_ && command != "stop") {
+    if (development_->busy() || development_->failed() || coreUpdateCommand_
+        || serviceCommandProcess_ || linuxServiceProcess_ || quitRequested_ || core_.busy()) return;
+    const qint64 now = pollClock_.elapsed();
+    if (!helloReady_) {
+        if (now >= retryAt_) core_.request("hello");
+        return;
+    }
+    if (stopRequested_) {
+        clearSSHAuthentication();
         stopRequested_ = false;
         core_.request("stop", {}, 120000);
         return;
     }
-    if (command == "stop")
-        stopRequested_ = false;
-    if (response.contains("error")) {
-        if (command == "hello" && coreUpdateAwaitingResult_) {
-            coreUpdateAwaitingResult_ = false;
-            reconnectProfileAfterUpdate_.clear();
-            expectedCoreVersionAfterUpdate_.clear();
-            reportCoreUpdateResult(tr("Core update could not be verified; VPN was not reconnected"));
+    if (statusNeeded_) { core_.request("status"); return; }
+    if (!startReadyPath_.isEmpty()) {
+        const QString path = startReadyPath_;
+        startReadyPath_.clear();
+        if (!controlBlocked() && !cleanupBlocked_ && !sessionActive_ && !nativeSession_
+            && (state_ == "disconnected" || state_ == "failed") && QFileInfo::exists(path)) {
+            if (!QSettings().value("logs/keepPrevious", true).toBool()) log_->clear();
+            core_.request("start", {{"config", path}});
+        } else {
+            operation_.clear();
+            if (!reconnectResultProfileId_.isEmpty()) {
+                reconnectResultProfileId_.clear();
+                reportCoreUpdateResult(tr("Core was updated, but reconnection was canceled"));
+            }
         }
-        if (command == "start" && !reconnectResultProfileId_.isEmpty()) {
-            reconnectResultProfileId_.clear();
-            reportCoreUpdateResult(tr("Core %1 installed, but VPN reconnection failed").arg(runningCoreVersion_));
-        }
-        if (command == "stop")
-            pendingStartPath_.clear();
-        if (command == "events" && response.value("error").toString() == "invalid_cursor") {
-            const QString newInstance = response.value("instance").toString();
-            if (!newInstance.isEmpty()) instance_ = newInstance;
-            eventCursor_ = 0;
-            core_.request("status");
-            return;
-        }
-        showCoreError(response);
-        if (command != "status") core_.request("status");
         return;
     }
-    if (command == "shutdown") {
-        if (tray_)
-            tray_->hide();
-        QApplication::quit();
+    if (sshReplyReady_) {
+        sshReplyReady_ = false;
+        const QJsonObject arguments{{"challenge_id", sshChallenge_}, {"answers", sshAnswers_}};
+        sshAnswers_ = {};
+        core_.request("auth_reply", arguments);
         return;
     }
-    if (command == "hello") {
-        instance_ = response.value("instance").toString();
-        const QJsonObject reportedCapabilities = response.value("capabilities").toObject();
-        if (!reportedCapabilities.isEmpty()) capabilities_ = reportedCapabilities;
-        const auto version = response.value("core").toObject().value("version").toString();
-        runningCoreVersion_ = version;
-        coreVersionLabel_->setText(tr("Core: %1").arg(version.isEmpty() ? tr("unknown") : version));
+    // Prefer the oldest due read so delayed status/events cannot starve authentication.
+    if (!nativeSession_ && sshAuthSupported_ && now >= nextSSHAuth_
+        && nextSSHAuth_ <= nextStatus_ && nextSSHAuth_ <= nextEvents_
+        && (state_ == "connecting" || state_ == "reconnecting")) {
+        nextSSHAuth_ = now + 1000;
+        core_.request("auth_pending");
+        return;
+    }
+    if (now >= nextStatus_) {
+        nextStatus_ = now + 2000;
+        core_.request("status");
+    } else if (now >= nextEvents_) {
+        nextEvents_ = now + 1000;
+        core_.request("events", {{"after", static_cast<qint64>(eventCursor_)}});
+    } else if (state_ == "connected" && !nativeSession_ && now >= nextStats_) {
+        nextStats_ = now + 1000;
+        core_.request("stats");
+    }
+}
+
+void MainWindow::handleReply(const QString &command, const QJsonObject &response) {
+    const bool wasReady = helloReady_ && !statusNeeded_ && operation_.isEmpty();
+    const QString previousSession = sessionId_;
+    const QString newInstance = response.value("instance").toString();
+    if (newInstance.isEmpty()) {
+        connectionFailure(command, CoreClient::Failure::InvalidResponse, tr("Incompatible response from core"));
+        return;
+    }
+    if (!instance_.isEmpty() && newInstance != instance_) {
+        invalidateConnection();
+        autoConnectAttempted_ = true;
+        retryAt_ = 0;
+        appendLog(tr("Core was restarted"));
+    }
+    instance_ = newInstance;
+    sshAuthSupported_ = sshUnsupportedInstance_ != instance_;
+    if (recoveryVerified_ && recoveredInstance_ != instance_) recoveryVerified_ = false;
+    if (command != "hello" && !helloReady_) {
+        if (quitRequested_) connectionFailure(command, CoreClient::Failure::InvalidResponse,
+            tr("Core cleanup could not be confirmed; check Core before quitting"));
+        else poll();
+        return;
+    }
+    const QString error = response.value("error").toString();
+    if (error == "unsupported_protocol") {
+        connectionFailure(command, CoreClient::Failure::Incompatible, tr("The GUI and core protocol versions are incompatible"));
+        return;
+    }
+    const auto status = response.value("status").toObject();
+    if (!QStringList{"disconnected", "connecting", "connected", "reconnecting", "stopping", "failed"}
+            .contains(status.value("State").toString())) {
+        connectionFailure(command, CoreClient::Failure::InvalidResponse, tr("Incompatible response from core"));
+        return;
+    }
+    if (command == "hello" && error.isEmpty()) {
+        helloReady_ = true;
+        statusNeeded_ = true;
+        retryCount_ = 0;
+        capabilities_ = response.value("capabilities").toObject();
+        runtimeIdentity_ = coreIdentity(response.value("core").toObject());
+        runningCoreVersion_ = runtimeIdentity_.value("version").toString();
+        const QString version = runningCoreVersion_;
+        updateCoreIdentity();
         if (!coreUpdateCheckStarted_ && !version.isEmpty() && updater_.available()) {
             coreUpdateCheckStarted_ = true;
             QTimer::singleShot(3000, this, [this] {
@@ -1373,64 +1745,100 @@ void MainWindow::handleReply(const QString &command, const QJsonObject &response
             });
             updateTimer->start();
         }
-        handleStatus(response.value("status").toObject());
-        if (coreUpdateAwaitingResult_ && !coreUpdateCommand_ && !expectedCoreVersionAfterUpdate_.isEmpty()) {
-            const QString profileId = reconnectProfileAfterUpdate_;
-            const bool verified = version == expectedCoreVersionAfterUpdate_ && state_ == "disconnected";
-            coreUpdateAwaitingResult_ = false;
-            expectedCoreVersionAfterUpdate_.clear();
-            reconnectProfileAfterUpdate_.clear();
-            if (!verified) {
-                reportCoreUpdateResult(tr("Core update could not be verified; VPN was not reconnected"));
-            } else if (profileId.isEmpty()) {
-                reportCoreUpdateResult(tr("Core %1 installed and verified; VPN remains disconnected").arg(version));
-            } else {
-                bool found = false;
-                for (int row = 0; row < profiles_.size(); ++row) {
-                    if (profiles_[row].id == profileId) {
-                        found = true;
-                        reconnectResultProfileId_ = profileId;
-                        coreUpdateLabel_->setText(tr("Core %1 installed and verified; reconnecting VPN…").arg(version));
-                        profileList_->setCurrentRow(row);
-                        startProfile(row);
-                        break;
-                    }
-                }
-                if (!found)
-                    reportCoreUpdateResult(tr("Core %1 installed, but the previous VPN profile is unavailable").arg(version));
-            }
+    }
+    handleStatus(status);
+    if (command == "auth_pending" || command == "auth_reply") {
+        if (error == "unknown_command") {
+            sshAuthSupported_ = false;
+            sshUnsupportedInstance_ = instance_;
+            clearSSHAuthentication();
+        } else if (!error.isEmpty()) {
+            clearSSHAuthentication();
+            statusNeeded_ = true;
+            appendLog(tr("SSH authentication could not be completed. Check the connection state."));
+        } else if (command == "auth_pending") {
+            handleSSHAuthentication(response.value("auth").toObject());
         }
-        if (!autoConnectAttempted_ && state_ == "disconnected" && QSettings().value("app/autoConnect", false).toBool()) {
-            autoConnectAttempted_ = true;
-            const QString wanted = QSettings().value("app/autoConnectProfile").toString();
-            for (int row = 0; row < profiles_.size(); ++row)
-                if (profiles_[row].id == wanted) { profileList_->setCurrentRow(row); startProfile(row); break; }
-        }
-    } else if (command == "status" || command == "start" || command == "stop") {
-        const auto status = response.value("status").toObject();
-        if (!status.isEmpty()) handleStatus(status); else core_.request("status");
-        if (command == "stop") {
-            const QString path = pendingStartPath_;
+        return;
+    }
+    if (command == "status") {
+        statusNeeded_ = false;
+        nextStatus_ = pollClock_.elapsed() + 2000;
+    }
+    if (!error.isEmpty()) {
+        if (command == "start" || command == "stop") {
+            operation_.clear();
+            startReadyPath_.clear();
             pendingStartPath_.clear();
-            if (state_ == "disconnected" && !path.isEmpty()) {
-                for (int row = 0; row < profiles_.size(); ++row)
-                    if (profiles_[row].path == path) {
-                        profileList_->setCurrentRow(row);
-                        startProfile(row);
-                        break;
-                    }
+            if (!reconnectResultProfileId_.isEmpty())
+                reportCoreUpdateResult(tr("Core was updated, but reconnection failed"));
+            reconnectResultProfileId_.clear();
+        }
+        if (command == "stop") {
+            cleanupBlocked_ = true;
+            autoConnectAttempted_ = true;
+            if (serviceRecoveryButton_) serviceRecoveryButton_->show();
+        }
+        if (command == "events" && error == "invalid_cursor") {
+            eventCursor_ = 0;
+            statusNeeded_ = true;
+        } else {
+            if (command == "hello") {
+                connectionFailure(command, CoreClient::Failure::InvalidResponse, tr("Incompatible response from core"));
+                return;
+            }
+            if (command == "start" || command == "stop" || command == "shutdown") showCoreError(response);
+            else if (lastCoreError_ != error) { appendLog(safeCoreCode(error)); lastCoreError_ = error; }
+            if (command != "status") statusNeeded_ = true;
+            if (command == "shutdown") { quitRequested_ = false; if (tray_) tray_->show(); showWindow(); }
+        }
+    } else if (command == "shutdown") {
+        if (cleanDisconnected()) {
+            if (tray_) tray_->hide();
+            QApplication::quit();
+        } else {
+            quitRequested_ = false;
+            if (tray_) tray_->show();
+            showWindow();
+            appendLog(tr("Core cleanup could not be confirmed; check Core before quitting"));
+        }
+    } else if (command == "start") {
+        operation_.clear();
+        statusNeeded_ = true;
+    } else if (command == "stop") {
+        operation_.clear();
+        stopRequested_ = false;
+        const QString path = pendingStartPath_;
+        pendingStartPath_.clear();
+        if (cleanDisconnected() && !path.isEmpty()) {
+            for (int row = 0; row < profiles_.size(); ++row) {
+                if (profiles_[row].path == path) {
+                    profileList_->setCurrentRow(row);
+                    startProfile(row);
+                    break;
+                }
             }
         }
-    } else if (command == "stats") {
+    } else if (command == "stats" && state_ == "connected" && !nativeSession_) {
+        if (sessionId_ != previousSession) { resetMeasurements(); return; }
         const auto stats = response.value("stats").toObject();
-        const qint64 up = stats.value("bytes_up").toInteger();
-        const qint64 down = stats.value("bytes_down").toInteger();
-        double seconds = statsClock_.isValid() ? statsClock_.restart() / 1000.0 : 0;
+        if (stats.value("unavailable").toBool() || !stats.value("bytes_up").isDouble()
+            || !stats.value("bytes_down").isDouble()) { resetMeasurements(); return; }
+        const qint64 up = stats.value("bytes_up").toInteger(-1);
+        const qint64 down = stats.value("bytes_down").toInteger(-1);
+        if (up < 0 || down < 0) { resetMeasurements(); return; }
+        const bool baseline = statsClock_.isValid() && up >= previousUp_ && down >= previousDown_;
+        const double seconds = statsClock_.isValid() ? statsClock_.restart() / 1000.0 : 0;
         if (!statsClock_.isValid()) statsClock_.start();
-        const qint64 rate = seconds > 0 ? qMax<qint64>(0, up + down - previousUp_ - previousDown_) / seconds : 0;
+        const double rate = baseline && seconds > 0
+            ? ((double(up) - previousUp_) + (double(down) - previousDown_)) / seconds : 0;
         previousUp_ = up; previousDown_ = down;
-        trafficLabel_->setText(tr("Traffic: ↑ %1  ↓ %2  ·  %3/s").arg(humanBytes(up), humanBytes(down), humanBytes(rate)));
-        sessionStatsLabel_->setText(tr("TCP: %1 active / %2 total / %3 errors  ·  UDP: %4 / %5 / %6  ·  DNS: %7 requests / %8 errors  ·  Routes: VPN %9, direct %10, blocked %11")
+        const QString speed = baseline && seconds > 0
+            ? humanBytes(static_cast<qint64>(qMin(rate, double(std::numeric_limits<qint64>::max() / 2)))) + "/s" : QStringLiteral("—");
+        trafficLabel_->setText(tr("Traffic: ↑ %1  ↓ %2  ·  %3").arg(humanBytes(up), humanBytes(down), speed));
+        sessionStatsLabel_->setText((activeProxyMode()
+            ? tr("TCP: %1 active / %2 total / %3 errors  ·  UDP: %4 / %5 / %6  ·  DNS: %7 requests / %8 errors  ·  Routes: proxy %9, direct %10, blocked %11")
+            : tr("TCP: %1 active / %2 total / %3 errors  ·  UDP: %4 / %5 / %6  ·  DNS: %7 requests / %8 errors  ·  Routes: VPN %9, direct %10, blocked %11"))
             .arg(stats.value("tcp_active").toInteger()).arg(stats.value("tcp_total").toInteger()).arg(stats.value("tcp_failed").toInteger())
             .arg(stats.value("udp_active").toInteger()).arg(stats.value("udp_total").toInteger()).arg(stats.value("udp_failed").toInteger())
             .arg(stats.value("dns_queries").toInteger()).arg(stats.value("dns_failed").toInteger())
@@ -1438,35 +1846,69 @@ void MainWindow::handleReply(const QString &command, const QJsonObject &response
         trayTraffic_ = trafficLabel_->text();
         if (trayTrafficAction_)
             trayTrafficAction_->setText(trayTraffic_);
-        core_.request("status");
     } else if (command == "events") {
-        const QString newInstance = response.value("instance").toString();
-        if (newInstance != instance_) {
-            instance_ = newInstance;
-            eventCursor_ = 0;
-            previousUp_ = previousDown_ = 0;
-            statsClock_.invalidate();
-            appendLog(tr("Core was restarted"));
-        } else {
-            eventCursor_ = static_cast<quint64>(response.value("cursor").toInteger());
+        const qint64 cursor = response.value("cursor").toInteger();
+        if (cursor >= 0) eventCursor_ = static_cast<quint64>(cursor);
+        if (response.value("dropped").toBool()) {
+            appendLog(tr("Some events were missed; reloading state from Core"));
+            statusNeeded_ = true;
         }
-        if (response.value("dropped").toBool())
-            appendLog(tr("Some events were missed; the state was reloaded from core"));
         for (const auto &item : response.value("events").toArray()) {
             const auto event = item.toObject().value("event").toObject();
-            const QString code = event.value("Code").toString();
-            const QString message = event.value("Message").toString();
-            appendLog(code.isEmpty() ? message : QString("%1 · %2").arg(code, message));
+            appendLog(safeCoreEvent(event.value("Code").toString(), event.value("Message").toString()));
         }
-        core_.request("status");
     }
-    if (command != "start" && command != "stop")
-        updateConnectionButton();
+    if (command == "status" && error.isEmpty()) completeSynchronization();
+    updateConnectionButton();
+    if (trayMenu_ && wasReady != (helloReady_ && !statusNeeded_ && operation_.isEmpty())) rebuildTrayMenu();
+    if (statusNeeded_ || stopRequested_ || !startReadyPath_.isEmpty())
+        QTimer::singleShot(0, this, &MainWindow::poll);
+}
+
+void MainWindow::completeSynchronization() {
+    if (coreUpdateAwaitingResult_ && !coreUpdateCommand_ && !expectedCoreVersionAfterUpdate_.isEmpty()) {
+        const QString profileId = reconnectProfileAfterUpdate_;
+        const bool verified = runningCoreVersion_ == expectedCoreVersionAfterUpdate_ && cleanDisconnected();
+        coreUpdateAwaitingResult_ = false;
+        expectedCoreVersionAfterUpdate_.clear();
+        reconnectProfileAfterUpdate_.clear();
+        if (!verified) {
+            reportCoreUpdateResult(activeProxyMode() ? tr("Core update could not be verified; proxy was not reconnected") : tr("Core update could not be verified; VPN was not reconnected"));
+        } else if (profileId.isEmpty()) {
+            reportCoreUpdateResult(tr("Core %1 installed and verified; connection remains disconnected").arg(runningCoreVersion_));
+        } else {
+            bool found = false;
+            for (int row = 0; row < profiles_.size(); ++row) {
+                if (profiles_[row].id == profileId) {
+                    found = true;
+                    reconnectResultProfileId_ = profileId;
+                    coreUpdateLabel_->setText((activeProxyMode() ? tr("Core %1 installed and verified; reconnecting proxy…") : tr("Core %1 installed and verified; reconnecting VPN…")).arg(runningCoreVersion_));
+                    profileList_->setCurrentRow(row);
+                    if (!startProfile(row)) {
+                        reconnectResultProfileId_.clear();
+                        reportCoreUpdateResult(tr("Core was updated, but reconnection was canceled"));
+                    }
+                    break;
+                }
+            }
+            if (!found)
+                reportCoreUpdateResult(tr("Core %1 installed, but the previous profile is unavailable").arg(runningCoreVersion_));
+        }
+    }
+    if (!autoConnectAttempted_) {
+        autoConnectAttempted_ = true;
+        if (cleanDisconnected() && QSettings().value("app/autoConnect", false).toBool()) {
+            const QString wanted = QSettings().value("app/autoConnectProfile").toString();
+            for (int row = 0; row < profiles_.size(); ++row)
+                if (profiles_[row].id == wanted) { profileList_->setCurrentRow(row); startProfile(row); break; }
+        }
+    }
 }
 
 void MainWindow::handleStatus(const QJsonObject &status) {
     const QString previousState = state_;
     const QString previousProfileId = activeProfileId_;
+    lastProxyMode_ = activeProxyMode();
     state_ = status.value("State").toString("unknown");
     if (state_ != "connected" && state_ != "connecting" && state_ != "reconnecting") activeFileProtocol_.clear();
     if (state_ == "connecting" || state_ == "connected" || state_ == "reconnecting")
@@ -1474,27 +1916,43 @@ void MainWindow::handleStatus(const QJsonObject &status) {
     else if (state_ == "disconnected")
         connectionAttempted_ = false;
     const auto session = status.value("Session").toObject();
+    sessionActive_ = session.value("active").toBool();
+    sessionMode_ = session.value("mode").toString();
+    if (recoveryVerified_ && session.value("id").toString() != recoveredSession_) recoveryVerified_ = false;
+    nativeSession_ = session.value("backend").toString() == "ikev2";
+    if (sessionActive_ && !startReadyPath_.isEmpty()) {
+        startReadyPath_.clear();
+        operation_.clear();
+    }
+    if (status.value("LastError").toString().endsWith("cleanup_failed_run_recover") && !recoveryVerified_) {
+        cleanupBlocked_ = true;
+        autoConnectAttempted_ = true;
+        pendingStartPath_.clear();
+        if (serviceRecoveryButton_) serviceRecoveryButton_->show();
+    }
     activeProfileId_ = session.value("profile_id").toString();
     if (!reconnectResultProfileId_.isEmpty()) {
         if (state_ == "connected" && activeProfileId_ == reconnectResultProfileId_) {
             reconnectResultProfileId_.clear();
-            reportCoreUpdateResult(tr("Core %1 installed and verified; VPN reconnected").arg(runningCoreVersion_));
+            reportCoreUpdateResult((activeProxyMode() ? tr("Core %1 installed and verified; proxy reconnected") : tr("Core %1 installed and verified; VPN reconnected")).arg(runningCoreVersion_));
         } else if (state_ == "failed" || (state_ == "connected" && activeProfileId_ != reconnectResultProfileId_)) {
             reconnectResultProfileId_.clear();
-            reportCoreUpdateResult(tr("Core %1 installed, but VPN reconnection failed").arg(runningCoreVersion_));
+            reportCoreUpdateResult((activeProxyMode() ? tr("Core %1 installed, but proxy reconnection failed") : tr("Core %1 installed, but VPN reconnection failed")).arg(runningCoreVersion_));
         }
     }
     if (trayMenu_ && (state_ != previousState || activeProfileId_ != previousProfileId))
         rebuildTrayMenu();
     const QString newSession = session.value("id").toString();
     if (newSession != sessionId_) {
+        clearSSHAuthentication();
+        sshSeen_.clear();
         sessionId_ = newSession;
-        previousUp_ = previousDown_ = 0;
-        statsClock_.invalidate();
+        resetMeasurements();
     }
+    if ((state_ != "connecting" && state_ != "reconnecting") || nativeSession_) clearSSHAuthentication();
     const QHash<QString, QString> labels{{"disconnected", tr("Disconnected")}, {"connecting", tr("Connecting…")}, {"connected", tr("Connected")}, {"reconnecting", tr("Reconnecting…")}, {"stopping", tr("Disconnecting…")}, {"failed", tr("Connection failed")}};
-    QString connectionText = state_ == "failed" && !connectionAttempted_
-        ? tr("Disconnected") : labels.value(state_, tr("Unknown state: %1").arg(state_));
+    QString connectionText = labels.value(state_, tr("Unknown state"));
+    if (state_ != "connected" || nativeSession_) resetMeasurements();
     if (state_ == "connected") {
         const auto displayEndpoint = [](QString endpoint) {
             static const QRegularExpression mappedIpv4(QStringLiteral(R"(^\[::ffff:(\d{1,3}(?:\.\d{1,3}){3})\]:(\d+)$)"), QRegularExpression::CaseInsensitiveOption);
@@ -1519,7 +1977,7 @@ void MainWindow::handleStatus(const QJsonObject &status) {
         connectionLabel_->setStyleSheet(themedStyle("color: #16803c; font-weight: 500"));
     else if (state_ == "connecting" || state_ == "reconnecting" || state_ == "stopping")
         connectionLabel_->setStyleSheet(themedStyle("color: #d69200; font-weight: 500"));
-    else if (state_ == "failed" && connectionAttempted_)
+    else if (state_ == "failed")
         connectionLabel_->setStyleSheet(themedStyle("color: #c62828; font-weight: 500"));
     else
         connectionLabel_->setStyleSheet(themedStyle("color: #66768a"));
@@ -1532,16 +1990,16 @@ void MainWindow::handleStatus(const QJsonObject &status) {
             trayStatusAction_->setText(tr("Status: %1").arg(connectionLabel_->text()));
         const bool notifications = QSettings().value("app/notifications", true).toBool();
         if (notifications && state_ == "connected" && previousState != "connected")
-            tray_->showMessage(tr("Bimeron"), tr("VPN connected"), QSystemTrayIcon::Information, 3000);
+            tray_->showMessage(tr("Bimeron"), activeProxyMode() ? tr("Proxy connected") : tr("VPN connected"), QSystemTrayIcon::Information, 3000);
         else if (notifications && state_ == "failed" && connectionAttempted_ && previousState != "failed")
-            tray_->showMessage(tr("Bimeron"), tr("Failed to connect the VPN"), QSystemTrayIcon::Critical, 4000);
+            tray_->showMessage(tr("Bimeron"), activeProxyMode() ? tr("Failed to connect the proxy") : tr("Failed to connect the VPN"), QSystemTrayIcon::Critical, 4000);
         else if (notifications && state_ == "disconnected" && previousState != "disconnected" && previousState != "unknown")
-            tray_->showMessage(tr("Bimeron"), tr("VPN disconnected"), QSystemTrayIcon::Information, 3000);
+            tray_->showMessage(tr("Bimeron"), activeProxyMode() ? tr("Proxy disconnected") : tr("VPN disconnected"), QSystemTrayIcon::Information, 3000);
     }
     const QString lastError = status.value("LastError").toString();
     if (lastError != lastCoreError_) {
         lastCoreError_ = lastError;
-        if (!lastError.isEmpty()) appendLog(tr("Core: %1").arg(lastError));
+        if (!lastError.isEmpty()) appendLog(tr("Core: %1").arg(safeCoreCode(lastError)));
     }
     if (state_ == "failed" && previousState != "failed" && lastError == "access_key_unavailable")
         QMessageBox::warning(this, tr("Key unavailable"),
@@ -1549,29 +2007,26 @@ void MainWindow::handleStatus(const QJsonObject &status) {
 }
 
 void MainWindow::updateConnectionButton() {
-    QString mode = "connect";
-    const int row = profileList_->currentItem() && profileList_->currentItem()->isSelected()
-        ? profileList_->currentRow() : -1;
-    bool enabled = row >= 0 && profileInfo(row).connectable;
-    const bool activeSelected = row >= 0 && profiles_[row].id == activeProfileId_;
-    if ((state_ == "connected" || state_ == "connecting" || state_ == "reconnecting") && activeSelected) {
-        connectButton_->setText(state_ == "connected" ? tr("Disconnect") : tr("Cancel connection"));
-        enabled = true;
-        mode = "disconnect";
-    } else if (row >= 0 && (state_ == "connected" || state_ == "connecting" || state_ == "reconnecting")) {
-        connectButton_->setText(tr("Switch profile"));
-    } else if (state_ == "failed" && activeSelected) {
-        connectButton_->setText(tr("Reconnect"));
-    } else if (state_ == "stopping") {
-        connectButton_->setText(tr("Disconnecting…"));
-        enabled = false;
-    } else {
-        connectButton_->setText(tr("Connect"));
+    const int row = profileList_->currentRow();
+    const bool active = sessionActive_ || state_ == "connecting" || state_ == "connected" || state_ == "reconnecting";
+    const bool selected = row >= 0 && row < profiles_.size() && profileList_->currentItem()->isSelected();
+    const bool switchProfile = active && selected && profiles_[row].id != activeProfileId_;
+    connectButton_->setText(!operation_.isEmpty() ? tr("Please wait…")
+        : state_ == "stopping" ? tr("Disconnecting…")
+        : active && !switchProfile ? tr("Disconnect") : tr("Connect"));
+    const QString mode = active && !switchProfile ? "disconnect" : "connect";
+    if (connectButton_->property("mode").toString() != mode) {
+        connectButton_->setProperty("mode", mode);
+        connectButton_->style()->unpolish(connectButton_);
+        connectButton_->style()->polish(connectButton_);
     }
-    connectButton_->setProperty("mode", mode);
-    connectButton_->setEnabled(enabled && !development_->busy() && !development_->failed());
-    connectButton_->style()->unpolish(connectButton_);
-    connectButton_->style()->polish(connectButton_);
+    connectButton_->setEnabled(helloReady_ && !statusNeeded_ && !controlBlocked() && !nativeSession_
+        && operation_.isEmpty() && state_ != "stopping"
+        && ((active && !switchProfile) || (selected && canActivateProfile(row))));
+    if (trayMenu_) {
+        for (auto *action : trayMenu_->actions())
+            if (action->data().isValid()) action->setEnabled(canActivateProfile(action->data().toInt()));
+    }
 }
 
 void MainWindow::updateProfileAppearance() {
@@ -1587,15 +2042,15 @@ void MainWindow::updateProfileAppearance() {
         item->setBackground(QColor(appDarkMode() ? "#202937" : "#ffffff"));
         QString color = appDarkMode() ? "#e8edf5" : "#152238";
         QString dotColor = "#94a3b8";
-        if (profiles_[row].id == activeProfileId_ && state_ == "connected") {
+        if (helloReady_ && profiles_[row].id == activeProfileId_ && state_ == "connected") {
             color = appDarkMode() ? "#76d49a" : "#16803c";
             dotColor = "#19c15f";
             item->setBackground(QColor(appDarkMode() ? "#1d4235" : "#e8f7ed"));
-        } else if (profiles_[row].id == activeProfileId_ && (state_ == "connecting" || state_ == "reconnecting" || state_ == "stopping")) {
+        } else if (helloReady_ && profiles_[row].id == activeProfileId_ && (state_ == "connecting" || state_ == "reconnecting" || state_ == "stopping")) {
             color = appDarkMode() ? "#f3cf72" : "#d69200";
             dotColor = "#f4c20d";
             item->setBackground(QColor(appDarkMode() ? "#493e23" : "#fff4bf"));
-        } else if (profiles_[row].id == activeProfileId_ && state_ == "failed") {
+        } else if (helloReady_ && profiles_[row].id == activeProfileId_ && state_ == "failed") {
             color = appDarkMode() ? "#ff9a92" : "#c62828";
             dotColor = "#dc3545";
             item->setBackground(QColor(appDarkMode() ? "#492d35" : "#fdecec"));
@@ -1609,13 +2064,13 @@ void MainWindow::updateProfileAppearance() {
 void MainWindow::showCoreError(const QJsonObject &response) {
     const QString code = response.value("error").toString();
     const QHash<QString, QString> messages{{"unsupported_protocol", tr("The GUI and core protocol versions are incompatible")}, {"absolute_config_path_required", tr("Core requires an absolute profile path")}, {"invalid_configuration", tr("The profile configuration is invalid")}, {"session_already_running", tr("A session is already running")}, {"session_start_failed", tr("Failed to start the session")}, {"session_stop_failed", tr("Failed to fully clean up network settings")}, {"daemon_shutting_down", tr("Core is shutting down")}};
-    const QString message = messages.value(code, tr("Core error: %1").arg(code));
+    const QString message = messages.value(code, tr("Core error: %1").arg(safeCoreCode(code)));
     appendLog(message);
-    QMessageBox::warning(this, tr("Bimeron Core"), message);
+    QMessageBox::warning(this, tr("Error"), message, QMessageBox::Ok);
 }
 
 void MainWindow::appendLog(const QString &message) {
-    if (log_) log_->append(QString("[%1] %2").arg(QTime::currentTime().toString("HH:mm:ss"), message.toHtmlEscaped()));
+    if (log_) log_->append(QString("[%1] %2").arg(QTime::currentTime().toString("HH:mm:ss"), safeLogMessage(message).toHtmlEscaped()));
 }
 
 bool MainWindow::validateConfig(const QString &path, QString *error) const {
@@ -1717,39 +2172,28 @@ void MainWindow::initTray() {
 void MainWindow::rebuildTrayMenu() {
     trayMenu_->clear();
     const QHash<QString, QString> labels{{"disconnected", tr("Disconnected")}, {"connecting", tr("Connecting…")}, {"connected", tr("Connected")}, {"reconnecting", tr("Reconnecting…")}, {"stopping", tr("Disconnecting…")}, {"failed", tr("Connection failed")}};
-    trayStatusAction_ = trayMenu_->addAction(tr("Status: %1").arg(labels.value(state_, tr("Core unavailable"))));
+    trayStatusAction_ = trayMenu_->addAction(tr("Status: %1").arg(helloReady_
+        ? labels.value(state_, tr("Unknown state")) : connectionLabel_->text()));
     trayStatusAction_->setEnabled(false);
     trayTrafficAction_ = trayMenu_->addAction(trayTraffic_);
     trayTrafficAction_->setEnabled(false);
     trayMenu_->addSeparator();
     for (int row = 0; row < profiles_.size(); ++row) {
         auto *profile = trayMenu_->addAction(profiles_[row].name);
-        profile->setEnabled(profileInfo(row).connectable || (profiles_[row].id == activeProfileId_ && state_ == "connected"));
+        profile->setData(row);
+        profile->setEnabled(canActivateProfile(row));
         profile->setCheckable(true);
-        profile->setChecked(profiles_[row].id == activeProfileId_
+        profile->setChecked(helloReady_ && profiles_[row].id == activeProfileId_
             && (state_ == "connected" || state_ == "reconnecting" || state_ == "stopping"));
-        connect(profile, &QAction::triggered, this, [this, row, profile] {
-            profile->setChecked(profiles_[row].id == activeProfileId_
-                && (state_ == "connected" || state_ == "reconnecting" || state_ == "stopping"));
-            if (state_ == "stopping") {
-                if (profiles_[row].id != activeProfileId_)
-                    pendingStartPath_ = profiles_[row].path;
-                return;
-            }
+        connect(profile, &QAction::triggered, this, [this, row] {
             profileList_->setCurrentRow(row, QItemSelectionModel::ClearAndSelect);
-            if (state_ == "connected" || state_ == "connecting" || state_ == "reconnecting") {
-                if (profiles_[row].id != activeProfileId_)
-                    pendingStartPath_ = profiles_[row].path;
-                toggleConnection();
-            } else {
-                startProfile(row);
-            }
+            toggleConnection();
         });
     }
     trayMenu_->addSeparator();
     auto *open = trayMenu_->addAction(tr("Open Bimeron"));
     connect(open, &QAction::triggered, this, &MainWindow::showWindow);
-    auto *quit = trayMenu_->addAction(tr("Quit"));
+    auto *quit = trayMenu_->addAction(tr("Quit Bimeron"));
     connect(quit, &QAction::triggered, this, &MainWindow::requestShutdown);
 }
 
@@ -1762,6 +2206,7 @@ void MainWindow::showWindow() {
 }
 
 void MainWindow::requestShutdown() {
+    clearSSHAuthentication();
     if (development_->busy()) {
         QTimer::singleShot(250, this, &MainWindow::requestShutdown);
         return;
@@ -1771,11 +2216,17 @@ void MainWindow::requestShutdown() {
         development_->select({});
         return;
     }
-    if (coreUpdateCommand_) {
+    if (coreUpdateCommand_ || coreUpdateAwaitingResult_ || serviceCommandProcess_ || linuxServiceProcess_) {
         QTimer::singleShot(250, this, &MainWindow::requestShutdown);
         return;
     }
     if (!quitRequested_) {
+        const bool compatible = helloReady_ && !statusNeeded_;
+        const QString currentInstance = instance_;
+        invalidateConnection();
+        helloReady_ = compatible;
+        instance_ = currentInstance;
+        autoConnectAttempted_ = true;
         quitRequested_ = true;
         hide();
         if (tray_)
@@ -1783,6 +2234,13 @@ void MainWindow::requestShutdown() {
     }
     if (!QSettings().value("app/stopCoreOnExit", false).toBool()) {
         QApplication::quit();
+        return;
+    }
+    if (!helloReady_ || nativeSession_) {
+        quitRequested_ = false;
+        if (tray_) tray_->show();
+        showWindow();
+        appendLog(tr("Core cleanup could not be confirmed; check Core before quitting"));
         return;
     }
     if (core_.busy()) {
@@ -1815,7 +2273,7 @@ void MainWindow::saveDiagnostics() {
 
     QProcess process;
     process.setProgram(executable);
-    process.setArguments({"doctor", "-output", QDir::toNativeSeparators(path)});
+    process.setArguments({"doctor"});
     process.setProcessChannelMode(QProcess::SeparateChannels);
     process.start();
     if (!process.waitForStarted(5000) || !process.waitForFinished(30000)) {
@@ -1828,6 +2286,24 @@ void MainWindow::saveDiagnostics() {
         QMessageBox::warning(this, tr("Diagnostics"), details.isEmpty() ? tr("Failed to create the report.") : details);
         return;
     }
+    const QByteArray report = safeDiagnosticReport(process.readAllStandardOutput());
+    if (report.isEmpty()) {
+        QMessageBox::warning(this, tr("Diagnostics"), tr("Core returned an invalid diagnostic report; no report was saved."));
+        return;
+    }
+    QFile output(path);
+    if (!output.open(QIODevice::WriteOnly | QIODevice::NewOnly)) {
+        QMessageBox::warning(this, tr("Diagnostics"), tr("Cannot create a new diagnostic report."));
+        return;
+    }
+    if (!output.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner)
+        || output.write(report) != report.size() || !output.flush()) {
+        output.close();
+        output.remove();
+        QMessageBox::warning(this, tr("Diagnostics"), tr("Cannot save the diagnostic report."));
+        return;
+    }
+    output.close();
     appendLog(tr("Diagnostic report saved: %1").arg(QDir::toNativeSeparators(path)));
     QMessageBox::information(this, tr("Diagnostics"), tr("The report has been saved. It contains no keys, IP addresses, or profile paths."));
 }
@@ -1853,6 +2329,7 @@ bool MainWindow::coreUpdatePrerequisite() {
 
 bool MainWindow::runServiceCommand(const QStringList &arguments, const QString &description) {
     if (development_->local() || development_->busy() || development_->failed()) return false;
+    if (!operation_.isEmpty()) return false;
     if (serviceCommandProcess_ || linuxServiceProcess_)
         return false;
     const QString executable = coreExecutablePath();
@@ -1864,6 +2341,15 @@ bool MainWindow::runServiceCommand(const QStringList &arguments, const QString &
         QMessageBox::warning(this, description, tr("The core CLI was not found next to the application."));
         return false;
     }
+    if (arguments == QStringList{"recover"}) {
+        recoveredSession_ = sessionId_;
+        recoveredInstance_ = instance_;
+    }
+    invalidateConnection();
+    autoConnectAttempted_ = true;
+    retryAt_ = 0;
+    recoveryCommand_ = arguments == QStringList{"recover"};
+    updateConnectionButton();
 #ifdef Q_OS_WIN
     const QString parameters = TrustedCore::windowsCommandLine(arguments);
     const std::wstring file = QDir::toNativeSeparators(executable).toStdWString();
@@ -1899,7 +2385,6 @@ bool MainWindow::runServiceCommand(const QStringList &arguments, const QString &
     }
 
     serviceCommandProcess_ = reinterpret_cast<quintptr>(handle);
-    serviceStartAttempted_ = true;
     serviceCommandDescription_ = description;
     serviceStatusLabel_->setText(description + QStringLiteral("…"));
     serviceStatusLabel_->setStyleSheet(themedStyle("color: #1267d6; font-weight: 600"));
@@ -1928,7 +2413,6 @@ bool MainWindow::runServiceCommand(const QStringList &arguments, const QString &
     }
     auto *process = new QProcess(this);
     linuxServiceProcess_ = process;
-    serviceStartAttempted_ = true;
     serviceCommandDescription_ = description;
     serviceStatusLabel_->setText(description + QStringLiteral("…"));
     serviceStatusLabel_->setStyleSheet(themedStyle("color: #1267d6; font-weight: 600"));
@@ -1978,6 +2462,11 @@ void MainWindow::pollServiceCommand() {
 }
 
 void MainWindow::finishServiceCommand(int exitCode, const QString &details) {
+    if (recoveryCommand_ && exitCode == 0) {
+        cleanupBlocked_ = false;
+        recoveryVerified_ = true;
+    }
+    recoveryCommand_ = false;
     const bool finishedCoreUpdate = coreUpdateCommand_;
     coreUpdateCommand_ = false;
     if (finishedCoreUpdate) { updater_.setInstalling(false); updater_.discardStaged(); }
@@ -2020,7 +2509,7 @@ void MainWindow::finishServiceCommand(int exitCode, const QString &details) {
         refreshServiceStatus();
         if (finishedCoreUpdate) {
             coreUpdateAwaitingResult_ = true;
-            coreUpdateLabel_->setText(tr("Core service updated; verifying version and VPN state…"));
+            coreUpdateLabel_->setText(tr("Core service updated; verifying version and connection state…"));
         }
     }
     if (finishedCoreUpdate)
@@ -2029,7 +2518,7 @@ void MainWindow::finishServiceCommand(int exitCode, const QString &details) {
 
 void MainWindow::refreshCoreAfterUpdate() {
     if (core_.busy()) QTimer::singleShot(250, this, &MainWindow::refreshCoreAfterUpdate);
-    else core_.request("hello");
+    else { invalidateConnection(); core_.request("hello"); }
 }
 
 void MainWindow::reportCoreUpdateResult(const QString &message) {
@@ -2038,47 +2527,63 @@ void MainWindow::reportCoreUpdateResult(const QString &message) {
 }
 
 void MainWindow::refreshServiceStatus() {
+    if (QCoreApplication::arguments().contains("--visual-check")) return;
     if (development_->local() || development_->busy() || development_->failed()) return;
 #if defined(Q_OS_WIN) || defined(Q_OS_LINUX)
-    if (!serviceStatusLabel_ || serviceCommandProcess_ || linuxServiceProcess_) return;
-    const auto showActions = [this](bool install, bool start, bool stop, bool update, bool uninstall) {
-        serviceInstallButton_->setVisible(install);
-        serviceAutomaticCheck_->setVisible(install);
-        serviceStartButton_->setVisible(start);
-        serviceStopButton_->setVisible(stop);
-        serviceUpdateButton_->setVisible(update);
-        serviceUninstallButton_->setVisible(uninstall);
+    if (!serviceStatusLabel_ || serviceCommandProcess_ || linuxServiceProcess_ || serviceStatusProcess_) return;
+    auto *process = new QProcess(this);
+    serviceStatusProcess_ = process;
+    const quint64 generation = connectionGeneration_;
+    const auto finished = [this, process, generation](int exitCode, QProcess::ExitStatus exitStatus) {
+        if (serviceStatusProcess_ != process) return;
+        serviceStatusProcess_ = nullptr;
+        process->deleteLater();
+        if (generation != connectionGeneration_ || development_->local() || development_->busy() || development_->failed()) return;
+        const auto showActions = [this](bool install, bool start, bool stop, bool update, bool uninstall) {
+            serviceInstallButton_->setVisible(install);
+            serviceAutomaticCheck_->setVisible(install);
+            serviceStartButton_->setVisible(start);
+            serviceStopButton_->setVisible(stop);
+            serviceUpdateButton_->setVisible(update);
+            coreUpdateLabel_->setVisible(update);
+            betaUpdatesCheck_->setVisible(update);
+            serviceUninstallButton_->setVisible(uninstall);
+        };
+        if (exitStatus != QProcess::NormalExit || exitCode != 0) {
+            const QString diagnostic = QString::fromUtf8(process->readAllStandardError() + process->readAllStandardOutput());
+            const bool notInstalled = QRegularExpression(QStringLiteral("service (?:is )?not installed"), QRegularExpression::CaseInsensitiveOption).match(diagnostic).hasMatch();
+            serviceStatusLabel_->setText(notInstalled ? tr("Service: not installed") : tr("Service: unavailable"));
+            serviceStatusLabel_->setStyleSheet(themedStyle("color: #66768a"));
+            showActions(notInstalled, false, false, false, false);
+            return;
+        }
+        const QString output = QString::fromUtf8(process->readAllStandardOutput()).trimmed();
+        const QHash<QString, QString> states{{"1", tr("stopped")}, {"2", tr("starting")}, {"3", tr("stopping")}, {"4", tr("running")}, {"5", tr("resuming")}, {"6", tr("pausing")}, {"7", tr("paused")}};
+        const QString code = output.section(':', 1).trimmed();
+        const QString state = states.value(code, tr("unknown"));
+        if (code == "4") {
+            serviceStatusLabel_->setText(tr("Service: <span style=\"color:#15803d; font-weight:600\">%1</span>").arg(state));
+            serviceStatusLabel_->setStyleSheet(themedStyle("color: #66768a"));
+        } else {
+            serviceStatusLabel_->setText(tr("Service: %1").arg(state));
+            serviceStatusLabel_->setStyleSheet(themedStyle((code == "2" || code == "3" || code == "5" || code == "6")
+                ? "color: #b54708; font-weight: 600"
+                : "color: #66768a"));
+        }
+        if (code == "1") showActions(false, true, false, true, true);
+        else if (code == "4") showActions(false, false, true, true, false);
+        else if (code == "7") showActions(false, false, true, false, false);
+        else {
+            showActions(false, false, false, false, false);
+            QTimer::singleShot(1000, this, &MainWindow::refreshServiceStatus);
+        }
     };
-    QProcess process;
-    process.start(coreExecutablePath(), {"service", "status"});
-    if (!process.waitForFinished(5000) || process.exitStatus() != QProcess::NormalExit || process.exitCode() != 0) {
-        const QString diagnostic = QString::fromUtf8(process.readAllStandardError() + process.readAllStandardOutput());
-        const bool notInstalled = QRegularExpression(QStringLiteral("service (?:is )?not installed"), QRegularExpression::CaseInsensitiveOption).match(diagnostic).hasMatch();
-        serviceStatusLabel_->setText(notInstalled ? tr("Service: not installed") : tr("Service: unavailable"));
-        serviceStatusLabel_->setStyleSheet(themedStyle("color: #66768a"));
-        showActions(notInstalled, false, false, false, false);
-        return;
-    }
-    const QString output = QString::fromUtf8(process.readAllStandardOutput()).trimmed();
-    const QHash<QString, QString> states{{"1", tr("stopped")}, {"2", tr("starting")}, {"3", tr("stopping")}, {"4", tr("running")}, {"5", tr("resuming")}, {"6", tr("pausing")}, {"7", tr("paused")}};
-    const QString code = output.section(':', 1).trimmed();
-    const QString state = states.value(code, output);
-    if (code == "4") {
-        serviceStatusLabel_->setText(tr("Service: <span style=\"color:#15803d; font-weight:600\">%1</span>").arg(state));
-        serviceStatusLabel_->setStyleSheet(themedStyle("color: #66768a"));
-    } else {
-        serviceStatusLabel_->setText(tr("Service: %1").arg(state));
-        serviceStatusLabel_->setStyleSheet(themedStyle((code == "2" || code == "3" || code == "5" || code == "6")
-            ? "color: #b54708; font-weight: 600"
-            : "color: #66768a"));
-    }
-    if (code == "1") showActions(false, true, false, true, true);
-    else if (code == "4") showActions(false, false, true, true, false);
-    else if (code == "7") showActions(false, false, true, false, false);
-    else {
-        showActions(false, false, false, false, false);
-        QTimer::singleShot(1000, this, &MainWindow::refreshServiceStatus);
-    }
+    connect(process, qOverload<int, QProcess::ExitStatus>(&QProcess::finished), this, finished);
+    connect(process, &QProcess::errorOccurred, this, [finished](QProcess::ProcessError error) {
+        if (error == QProcess::FailedToStart) finished(-1, QProcess::CrashExit);
+    });
+    QTimer::singleShot(5000, process, [process] { if (process->state() != QProcess::NotRunning) process->kill(); });
+    process->start(coreExecutablePath(), {"service", "status"});
 #endif
 }
 
@@ -2125,33 +2630,6 @@ void MainWindow::applyStartupSetting(bool enabled) {
     }
 #else
     Q_UNUSED(enabled);
-#endif
-}
-
-void MainWindow::ensureCoreService() {
-    if (QCoreApplication::arguments().contains("--visual-check")) return;
-    if (developerMode_ || developmentClicks_ >= 5 || development_->busy() || development_->local() || development_->failed()) return;
-#if defined(Q_OS_WIN) || defined(Q_OS_LINUX)
-    if (serviceStartAttempted_ || linuxServiceProcess_)
-        return;
-    if (serviceCommandProcess_)
-        return;
-    QProcess status;
-    status.start(coreExecutablePath(), {"service", "status"});
-    serviceStartAttempted_ = true;
-    if (status.waitForFinished(5000) && status.exitCode() == 0) {
-        if (QString::fromUtf8(status.readAllStandardOutput()).section(':', 1).trimmed() != "4")
-            runServiceCommand({"service", "start"}, tr("Starting service"));
-        return;
-    }
-
-    QStringList command{"service", "install", "-automatic"};
-#ifdef Q_OS_LINUX
-    command << "-owner" << QString::number(getuid());
-#endif
-    startServiceAfterInstall_ = true;
-    if (!runServiceCommand(command, tr("Installing service")))
-        startServiceAfterInstall_ = false;
 #endif
 }
 
@@ -2226,6 +2704,15 @@ QWidget *MainWindow::developmentPage() {
     developmentStatus_->setWordWrap(true);
     developmentStatus_->setTextFormat(Qt::PlainText);
     layout->addWidget(developmentStatus_);
+    developmentStopOrphan_ = new QPushButton(tr("Stop remaining local daemon"));
+    developmentStopOrphan_->hide();
+    layout->addWidget(developmentStopOrphan_);
+    connect(developmentStopOrphan_, &QPushButton::clicked, this, [this] {
+        if (QMessageBox::warning(this, tr("Stop remaining local daemon"),
+                tr("Disconnect and shut down the remaining local Core?"),
+                QMessageBox::Yes | QMessageBox::No, QMessageBox::No) == QMessageBox::Yes)
+            development_->stopOrphan();
+    });
     layout->addStretch();
     connect(developmentApply_, &QPushButton::clicked, this, [this] {
         if (development_->busy()) return;
@@ -2237,7 +2724,8 @@ QWidget *MainWindow::developmentPage() {
         if (developmentBackend_->currentIndex() == 1 && path.isEmpty()) return;
         if (!development_->failed() && path == development_->path()) return;
         if (QMessageBox::warning(this, tr("Switch core"),
-                tr("Switching cores disconnects the VPN. The selected local executable will run with administrator privileges. Continue?"),
+                activeProxyMode() ? tr("Switching cores disconnects the proxy. The selected local executable will run with administrator privileges. Continue?")
+                                  : tr("Switching cores disconnects the VPN. The selected local executable will run with administrator privileges. Continue?"),
                 QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes) return;
         if (coreUpdateCommand_ || coreUpdateAwaitingResult_ || serviceCommandProcess_ || linuxServiceProcess_ || development_->busy()) return;
         development_->select(path);
@@ -2247,33 +2735,38 @@ QWidget *MainWindow::developmentPage() {
 
 void MainWindow::updateDevelopment() {
     autoConnectAttempted_ = true;
-    serviceStartAttempted_ = true;
-    pendingStartPath_.clear();
-    stopRequested_ = false;
-    runningCoreVersion_.clear();
-    instance_.clear();
-    sessionId_.clear();
-    eventCursor_ = 0;
+    invalidateConnection();
     activeProfileId_.clear();
-    statsClock_.invalidate();
-    previousUp_ = previousDown_ = 0;
     coreVersionLabel_->setText(tr("Core: unknown"));
     const bool blocked = development_->busy() || development_->failed();
+    validationExecutable_ = development_->local() ? development_->path() : coreExecutablePath();
+    validationIdentity_ = {};
     core_.setEndpoint(development_->local() ? development_->endpoint() : QString{}, development_->processId());
-    handleStatus({{"State", blocked ? "unknown" : "disconnected"}});
+    state_ = "unknown";
+    connectionLabel_->setText(blocked ? tr("Core unavailable") : tr("Connecting to core…"));
     updateConnectionButton();
     if (developmentStatus_) {
         developmentStatus_->setText(development_->status()
             + (development_->local() ? "\n" + QDir::toNativeSeparators(development_->path()) : QString{}));
         developmentApply_->setEnabled(!development_->busy());
+        developmentStopOrphan_->setVisible(development_->orphanAvailable());
+        developmentStopOrphan_->setEnabled(!development_->busy());
     }
     const bool system = !blocked && !development_->local();
     for (auto *button : {serviceInstallButton_, serviceStartButton_, serviceStopButton_, serviceUpdateButton_, serviceUninstallButton_, serviceRecoveryButton_})
         button->setEnabled(system);
     serviceAutomaticCheck_->setEnabled(system);
-    if (!system) serviceStatusLabel_->setText(tr("System service controls are suspended"));
+    if (!system) {
+        serviceStatusLabel_->setText(tr("System service controls are suspended"));
+        serviceUpdateButton_->hide();
+        coreUpdateLabel_->hide();
+        betaUpdatesCheck_->hide();
+    }
     if (!blocked) {
+        cleanupBlocked_ = false;
+        retryAt_ = 0;
         core_.request("hello");
+        probeValidationCli();
         if (system) refreshServiceStatus();
     }
 }
@@ -2327,4 +2820,101 @@ void MainWindow::restartApplication(bool development) {
         restartRequested_ = false;
         QMessageBox::warning(this, tr("Restart"), tr("Could not restart Bimeron"));
     }
+}
+
+void MainWindow::clearSSHAuthentication() {
+    sshReplyReady_ = false;
+    sshAnswers_ = {};
+    sshChallenge_.clear();
+    if (sshAuthExpiry_) sshAuthExpiry_->stop();
+    if (sshDialog_) { sshDialog_->reject(); sshDialog_->deleteLater(); sshDialog_ = nullptr; }
+}
+
+void MainWindow::handleSSHAuthentication(const QJsonObject &auth) {
+    if (auth.isEmpty()) { clearSSHAuthentication(); return; }
+    if (state_ != "connecting" && state_ != "reconnecting") return;
+    const QString id = auth.value("id").toString();
+    if (id != sshChallenge_) clearSSHAuthentication();
+    const QString kind = auth.value("kind").toString();
+    const auto prompts = auth.value("prompts").toArray();
+    const auto echo = auth.value("echo").toArray();
+    if (id.isEmpty() || id.size() > 256 || !QStringList{"key_passphrase", "password", "keyboard_interactive"}.contains(kind)
+        || prompts.isEmpty() || prompts.size() > 8 || prompts.size() != echo.size()) { clearSSHAuthentication(); return; }
+    for (qsizetype i = 0; i < prompts.size(); ++i)
+        if (!prompts[i].isString() || prompts[i].toString().toUtf8().size() > 256 || !echo[i].isBool()) { clearSSHAuthentication(); return; }
+    if (id == sshChallenge_ || sshSeen_.contains(id)) return;
+    clearSSHAuthentication();
+    if (sshSeen_.size() >= 256) return; // Bound server-controlled state within one session.
+    sshSeen_.insert(id);
+    sshChallenge_ = id;
+    auto *dialog = new QDialog(this);
+    sshDialog_ = dialog;
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    dialog->setWindowTitle(tr("SSH authentication"));
+    auto *layout = new QVBoxLayout(dialog);
+    auto *form = new QFormLayout;
+    QList<QLineEdit *> inputs;
+    for (qsizetype i = 0; i < prompts.size(); ++i) {
+        auto *input = new QLineEdit(dialog);
+        input->setMaxLength(1024);
+        input->setEchoMode(kind == "keyboard_interactive" && echo[i].toBool() ? QLineEdit::Normal : QLineEdit::Password);
+        const QString prompt = prompts[i].toString();
+        auto *label = new QPlainTextEdit(dialog);
+        label->setReadOnly(true);
+        label->setPlainText(prompt);
+        label->setWordWrapMode(QTextOption::WrapAnywhere);
+        label->setFrameShape(QFrame::NoFrame);
+        label->setFixedWidth(300);
+        label->setFixedHeight(label->fontMetrics().boundingRect(QRect(0, 0, 280, 4096),
+            Qt::TextWrapAnywhere, prompt).height() + 16);
+        input->setAccessibleName(prompt);
+        form->addRow(label, input);
+        inputs.append(input);
+    }
+    if (prompts.size() > 3) {
+        auto *body = new QWidget(dialog);
+        body->setLayout(form);
+        auto *scroll = new QScrollArea(dialog);
+        scroll->setWidgetResizable(true);
+        scroll->setWidget(body);
+        scroll->setMinimumHeight(240);
+        scroll->setMaximumHeight(400);
+        layout->addWidget(scroll);
+    } else {
+        layout->addLayout(form);
+    }
+    auto *answerError = new QLabel(tr("SSH answers exceed the allowed size."), dialog);
+    answerError->setObjectName("sshAnswerError");
+    answerError->setTextFormat(Qt::PlainText);
+    answerError->setWordWrap(true);
+    answerError->hide();
+    layout->addWidget(answerError);
+    auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, dialog);
+    layout->addWidget(buttons);
+    connect(buttons, &QDialogButtonBox::rejected, dialog, &QDialog::reject);
+    connect(buttons, &QDialogButtonBox::accepted, dialog, [this, dialog, inputs, id, answerError] {
+        if (sshDialog_ != dialog || sshChallenge_ != id || stopRequested_
+            || (state_ != "connecting" && state_ != "reconnecting")) return;
+        QJsonArray answers;
+        for (auto *input : inputs) {
+            if (input->text().toUtf8().size() > 1024) { answerError->show(); return; }
+            answers.append(input->text());
+        }
+        const QJsonObject request{{"version", 1}, {"id", QString(32, 'x')}, {"command", "auth_reply"},
+            {"challenge_id", id}, {"answers", answers}};
+        if (QJsonDocument(request).toJson(QJsonDocument::Compact).size() + 1 > 16 * 1024) { answerError->show(); return; }
+        sshAnswers_ = answers;
+        sshReplyReady_ = true;
+        for (auto *input : inputs) input->clear();
+        sshDialog_ = nullptr;
+        dialog->accept();
+    });
+    connect(dialog, &QDialog::rejected, this, [inputs] { for (auto *input : inputs) input->clear(); });
+    if (!sshAuthExpiry_) {
+        sshAuthExpiry_ = new QTimer(this);
+        sshAuthExpiry_->setSingleShot(true);
+        connect(sshAuthExpiry_, &QTimer::timeout, this, &MainWindow::clearSSHAuthentication);
+    }
+    sshAuthExpiry_->start(120000);
+    dialog->show();
 }

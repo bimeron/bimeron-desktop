@@ -306,11 +306,22 @@ DEB is not yet subscribed or published to the APT repository. A typical APT sign
 
 ## Review before publishing
 
-GitHub Actions `Desktop CI` runs on pushes, pull requests and manual dispatch. It configures and compiles the GUI for Windows amd64 and ARM64 (MSVC 2022 and Qt 6.8.3; ARM64 cross-compiles on an x64 runner) and Linux amd64 and arm64 (Ubuntu 24.04 and system Qt 6). CI does not download core, create installation packages or publish them. It checks GUI compilation only. On Windows ARM64, CI sets `BIMERON_DEPLOY_QT=OFF` because the ARM64 deployment tool cannot run on the x64 runner. Local package builds use the default `ON`. Without downloaded core, CMake uses CPack's default license text while configuring CI; package builds require the actual core notices and licenses.
+GitHub Actions `Desktop CI` runs on pushes, pull requests and manual dispatch. It configures and compiles the GUI for Windows amd64 and ARM64 (MSVC 2022 and Qt 6.8.3; ARM64 cross-compiles on an x64 runner) and Linux amd64 and arm64 (Ubuntu 24.04 and system Qt 6). CI does not download core, create installation packages or publish them. It also runs CTest on native Windows x64 and both native Linux runners. Windows ARM64 remains cross-compile-only. On Windows ARM64, CI sets `BIMERON_DEPLOY_QT=OFF` because the ARM64 deployment tool cannot run on the x64 runner. Local package builds use the default `ON`. Without downloaded core, CMake uses CPack's default license text while configuring CI; package builds require the actual core notices and licenses.
 
-`ctest` also runs `profile-vless-test`, a GUI profile round-trip test. It uses Qt's offscreen platform on Linux and the Windows platform plugin on Windows. Set `BIMERON_VLESS_CORE` to a VLESS-capable core CLI path to additionally validate each generated profile against the core. This variable is for local contract testing and does not affect packages.
+`ctest` runs `profile-vless-test`, covering profile preservation, atomic replacement, permissions/DACLs, relative-reference import refusal, and secret redaction as well as existing protocol round trips. It uses Qt's offscreen platform on Linux and the Windows platform plugin on Windows. Set `BIMERON_VLESS_CORE` to a VLESS-capable core CLI path to additionally validate each generated profile against the core. Set `BIMERON_HYSTERIA2_CORE` for Hysteria2 validation and `BIMERON_PRESERVATION_CORE` to the exact reviewed newer CLI for SS2022, plugin, wrapper, and opaque-source preservation fixtures. These variables are for local contract testing and do not affect packages.
 
 `developer-mode-test` checks session activation/restart, local IPC routing and peer-process rejection, canceled requests, and invalid executable handling. It uses isolated settings and the offscreen platform on Linux, never elevates or changes the installed service. Real elevated daemon switching still requires integration checks. The session-only Development tab accepts a local Core executable at runtime without changing the bundled package payload; see [developer mode](developer-mode.md).
+
+The same executable includes `ConnectionManagementTest.h` fixtures for authoritative
+startup state, profile stop/cleanup/start ordering, ambiguous start and stop
+timeouts, instance and session changes, dropped events, cursor recovery, monotonic
+speed resets, asynchronous CLI cancellation/rejection, update restoration and
+explicit quit policy. Transport fixtures cover fragmented/malformed/oversized
+responses, correlation/version failures and the 16 KiB request bound. They use
+private local endpoints and the test executable as a validation CLI, not the
+installed Core or system network. Test extensions require no additional build
+target or package payload. See [connection management](connection-management.md)
+for the runtime and separately authorized live-check boundaries.
 
 After the complete script, `dist` should have exactly four current files:
 
@@ -371,7 +382,10 @@ Do not create DEB directly in the directory on `/mnt/c`. The current configurati
 
 ### During Windows build the old GUI is running
 
-Before linking, `scripts/stop-build-app.ps1` completes only the `bimeron-desktop.exe` instance launched from the build directory being updated. The installed application and core service should not terminate with this script.
+Before linking, the script refuses to terminate the GUI if its adjacent local
+Core is running (or its path cannot be inspected). Return to the system backend
+and quit Development normally before rebuilding; this preserves daemon cleanup.
+Otherwise, `scripts/stop-build-app.ps1` completes only the `bimeron-desktop.exe` instance launched from the build directory being updated. The installed application and core service should not terminate with this script.
 
 ### Only some of the packages remain in `dist`
 
@@ -390,3 +404,11 @@ The complete script cleans up old packages before building begins. If one of the
 - `packaging/windows/options.wxs` - MSI interface and behavior;
 - `packaging/linux/bimeron.desktop` — desktop entry Linux;
 - `.gitignore` - exclusion of generated directories and local secrets.
+
+SSH profile fixtures can additionally use `BIMERON_SSH_CORE` pointing to Core
+`v0.3.0-beta.1` built from `9f527efe0a4959786084675f1ff795edb8a0d910`.
+This optional validation path does not change the bundled Core. The existing
+connection test executable also covers transient SSH challenge UI and private IPC.
+Protocol URI import tests use `BIMERON_PRESERVATION_CORE` targeting Core
+`v0.3.0-beta.1` revision `9f527efe0a4959786084675f1ff795edb8a0d910`.
+The current bundle pin is not evidence of support for these new protocols.

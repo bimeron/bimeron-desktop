@@ -2,6 +2,8 @@
 
 #include <QDialog>
 #include <QJsonObject>
+#include <QMap>
+#include <functional>
 
 class QCheckBox;
 class QComboBox;
@@ -15,8 +17,12 @@ class QTabWidget;
 class ProfileEditorDialog final : public QDialog {
     Q_OBJECT
 public:
-    explicit ProfileEditorDialog(const QString &text, const QJsonObject &capabilities, QWidget *parent = nullptr);
+    explicit ProfileEditorDialog(const QString &text, const QJsonObject &capabilities, QWidget *parent = nullptr,
+                                 std::function<bool(const QString &, QString *)> validateRaw = {});
     QString configText() const;
+
+protected:
+    void reject() override;
 
 private:
     struct Rule { QString target; QString action; bool enabled = true; bool domain = false; };
@@ -25,6 +31,17 @@ private:
     void addRule(const Rule &rule);
     void moveRule(int delta);
     void syncRaw();
+    void assessRepresentation();
+    bool applyRaw();
+    void refreshParameters();
+    QString parameterError() const;
+    QStringList parameterFields() const;
+    QMap<QString, QLineEdit *> parameters_;
+    QComboBox *trojanNetwork_ = nullptr;
+    QCheckBox *shadowTls_ = nullptr;
+    QLineEdit *shadowName_ = nullptr;
+    QLineEdit *shadowPassword_ = nullptr;
+    QWidget *parameterPage_ = nullptr;
 
     QTabWidget *tabs_ = nullptr;
     QLineEdit *name_ = nullptr;
@@ -35,6 +52,10 @@ private:
     QComboBox *method_ = nullptr;
     QLineEdit *password_ = nullptr;
     QLineEdit *username_ = nullptr;
+    QComboBox *ssPlugin_ = nullptr;
+    QLineEdit *ssPluginOpts_ = nullptr;
+    QLineEdit *sshIdentity_ = nullptr;
+    QLineEdit *sshKnownHosts_ = nullptr;
     QLineEdit *prefix_ = nullptr;
     QLineEdit *vlessId_ = nullptr;
     QComboBox *vlessNetwork_ = nullptr;
@@ -66,7 +87,12 @@ private:
     QPlainTextEdit *raw_ = nullptr;
     bool rawDirty_ = false;
     bool hasUnknownSettings_ = false;
-    bool rawOnlyVless_ = false;
+    bool rawOnly_ = false;
     bool vlessMultiModeConfigured_ = false;
     bool keyRevealed_ = false;
+    QString originalText_;
+    QString loadedText_;
+    QString visualBaseline_;
+    std::function<void()> refreshControls_;
+    std::function<bool(const QString &, QString *)> validateRaw_;
 };

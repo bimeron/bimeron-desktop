@@ -88,6 +88,9 @@ DevelopmentCore::DevelopmentCore(QString helper, QObject *parent)
     connect(&timer_, &QTimer::timeout, this, &DevelopmentCore::tick);
     connect(&control_, &CoreClient::replied, this, [this](const QString &command, const QJsonObject &response) {
         if (phase_ == Phase::Verifying) {
+#ifdef Q_OS_WIN
+            orphanAvailable_ = !path_.isEmpty();
+#endif
             finish(false, tr("The local daemon still responds; close it before retrying"));
             return;
         }
@@ -103,7 +106,7 @@ DevelopmentCore::DevelopmentCore(QString helper, QObject *parent)
             finish(true, tr("Local core: %1").arg(response.value("core").toObject().value("version").toString()));
         } else if (phase_ == Phase::Stopping && command == "stop") {
             if (response.contains("error") || response.value("status").toObject().value("State").toString() != "disconnected") {
-                finish(false, tr("The local VPN did not disconnect; retry after checking the daemon"));
+                finish(false, tr("The local connection did not disconnect; retry after checking the daemon"));
                 return;
             }
             stopConfirmed_ = true;
@@ -117,7 +120,7 @@ DevelopmentCore::DevelopmentCore(QString helper, QObject *parent)
     connect(&control_, &CoreClient::unavailable, this, [this](const QString &) {
         if (phase_ == Phase::Verifying) verifyLock();
         else if (phase_ == Phase::Stopping)
-            finish(false, tr("The local daemon did not confirm VPN cleanup; retry before using the system service"));
+            finish(false, tr("The local daemon did not confirm connection cleanup; retry before using the system service"));
     });
 }
 
@@ -326,6 +329,62 @@ void DevelopmentCore::releaseProcess() {
     timer_.stop();
 }
 
+void DevelopmentCore::stopOrphan(bool force) {
+#ifdef Q_OS_WIN
+    if (busy_ || !orphanAvailable_ || endpoint_.isEmpty() || path_.isEmpty()) return;
+    busy_ = true;
+    emit changed();
+    auto *socket = new QLocalSocket(this);
+    const auto fail = [this, socket] {
+        if (socket->property("finished").toBool()) return;
+        socket->setProperty("finished", true);
+        socket->disconnect(this);
+        socket->abort();
+        socket->deleteLater();
+        finish(false, tr("Cannot verify the remaining daemon; no shutdown was sent"));
+    };
+    connect(socket, &QLocalSocket::connected, this, [this, socket, fail, force] {
+        ULONG pid = 0;
+        if (!GetNamedPipeServerProcessId(reinterpret_cast<HANDLE>(socket->socketDescriptor()), &pid)) { fail(); return; }
+        HANDLE handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE | (force ? PROCESS_TERMINATE : 0), FALSE, pid);
+        wchar_t image[32768];
+        DWORD length = 32768;
+        if (!handle || QFileInfo(path_).canonicalFilePath().isEmpty()
+            || !QueryFullProcessImageNameW(handle, 0, image, &length)
+            || QFileInfo(QString::fromWCharArray(image, length)).canonicalFilePath().compare(
+                QFileInfo(path_).canonicalFilePath(), Qt::CaseInsensitive) != 0
+            || processSid(handle).isEmpty() || processSid(handle) != processSid(GetCurrentProcess())) {
+            if (handle) CloseHandle(handle);
+            fail(); return;
+        }
+        if (force) {
+            const bool stopped = TerminateProcess(handle, 1);
+            CloseHandle(handle);
+            if (!stopped) { fail(); return; }
+            socket->setProperty("finished", true);
+            socket->disconnect(this);
+            socket->deleteLater();
+            emit forcedExitReady();
+            return;
+        }
+        if (processHandle_) CloseHandle(reinterpret_cast<HANDLE>(processHandle_));
+        processHandle_ = reinterpret_cast<quintptr>(handle);
+        processId_ = pid;
+        socket->setProperty("finished", true);
+        socket->disconnect(this);
+        socket->deleteLater();
+        orphanAvailable_ = false;
+        requestedPath_.clear();
+        shutdown();
+    });
+    connect(socket, &QLocalSocket::errorOccurred, this, [fail](QLocalSocket::LocalSocketError) { fail(); });
+    socket->connectToServer(endpoint_);
+    QTimer::singleShot(3000, socket, [socket, fail] {
+        if (socket->state() == QLocalSocket::ConnectingState) fail();
+    });
+#endif
+}
+
 void DevelopmentCore::shutdown() {
     if (path_.isEmpty() && !restoreService_) { finish(true, tr("System service")); return; }
     if (!processRunning()) { verifyExit(); return; }
@@ -376,11 +435,11 @@ void DevelopmentCore::verifyLock() {
     if (phase_ != Phase::Verifying) return;
     const auto checked = [this](bool free) {
         if (!free) {
-            finish(false, tr("The VPN session lock is still held; close the local daemon and retry"));
+            finish(false, tr("The session lock is still held; close the local daemon and retry"));
             return;
         }
         if (exitPhase_ == Phase::Stopping && !stopConfirmed_) {
-            finish(false, tr("The local daemon did not confirm VPN cleanup; retry before using the system service"));
+            finish(false, tr("The local daemon did not confirm connection cleanup; retry before using the system service"));
             return;
         }
         const Phase previous = exitPhase_;

@@ -21,10 +21,13 @@ public:
     qint64 processId() const { return processId_; }
     QString status() const { return status_; }
     void select(const QString &path);
+    bool orphanAvailable() const { return orphanAvailable_; }
+    void stopOrphan(bool force = false);
 
 signals:
     void changed();
     void completed(bool success);
+    void forcedExitReady();
 
 private:
     using Result = std::function<void(int, QString)>;
@@ -56,6 +59,7 @@ private:
     enum class Phase { Idle, Starting, Active, Stopping, Verifying, Failed };
     Phase phase_ = Phase::Idle;
     Phase exitPhase_ = Phase::Idle;
+    bool orphanAvailable_ = false;
     bool busy_ = false;
     bool failed_ = false;
     bool restoreService_ = false;

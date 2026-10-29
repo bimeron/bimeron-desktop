@@ -10,6 +10,12 @@ Acceptance criteria: a signed unreviewed manifest, a bad signature, and a change
 
 Since Bimeron Desktop 0.1.2, the installed Windows or Linux core service can update independently of the desktop package. The package's bundled core remains the bootstrap and recovery copy. The running service's `hello.core.version`, not the bundled file, is the installed version. Desktop, core, IPC, and profile-format versions are independent.
 
+`gui_reviewed` records reviewed compatibility with the specified GUI range, not feature parity or visual-editor coverage of every Core protocol. A Core release can ship independently of complete GUI support. A new tag alone establishes neither published signed assets nor runtime compatibility. See the [Core/Desktop integration contract](core-desktop-integration-contract.md) for source, CLI, active-service and bundle distinctions. Historical update/reconnection results below do not establish connectivity of the reviewed navigation baseline, where connection controls and regular polling were disabled.
+
+The restored [connection management](connection-management.md) uses the same signed
+update policy, serializes connection actions with administrative operations and
+verifies hello plus authoritative status before restoring a profile once.
+
 The updater implements IPC protocol `1` and profile format `1`. Published core `v0.2.0-beta.1` has reviewed GUI bounds `[0.2.0, 0.2.1)`, so Desktop `0.2.0` can consider it when beta updates are enabled. Older published core `v0.1.0-beta.3` has bounds `[0.1.0, 0.1.2)` and remains ineligible for GUI `0.1.5`.
 
 The GUI checks the public `bimeron/bimeron-core` GitHub Releases at startup and periodically, and can check on demand from Settings. Checks and downloads are quiet. Stable is the default channel; beta releases are considered only when the user enables beta updates. A missing signing key, no signed compatible release, network failure, or a malformed release never triggers an unsigned fallback. A build configured with an empty key says "Signed updates are not available yet" and does not run the legacy bundled-core `service update` command.
