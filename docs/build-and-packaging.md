@@ -312,6 +312,17 @@ GitHub Actions `Desktop CI` runs on pushes, pull requests and manual dispatch. I
 
 `developer-mode-test` checks session activation/restart, local IPC routing and peer-process rejection, canceled requests, and invalid executable handling. It uses isolated settings and the offscreen platform on Linux, never elevates or changes the installed service. Real elevated daemon switching still requires integration checks. The session-only Development tab accepts a local Core executable at runtime without changing the bundled package payload; see [developer mode](developer-mode.md).
 
+The same executable includes `ConnectionManagementTest.h` fixtures for authoritative
+startup state, profile stop/cleanup/start ordering, ambiguous start and stop
+timeouts, instance and session changes, dropped events, cursor recovery, monotonic
+speed resets, asynchronous CLI cancellation/rejection, update restoration and
+explicit quit policy. Transport fixtures cover fragmented/malformed/oversized
+responses, correlation/version failures and the 16 KiB request bound. They use
+private local endpoints and the test executable as a validation CLI, not the
+installed Core or system network. Test extensions require no additional build
+target or package payload. See [connection management](connection-management.md)
+for the runtime and separately authorized live-check boundaries.
+
 After the complete script, `dist` should have exactly four current files:
 
 ```text
