@@ -1045,58 +1045,31 @@ void MainWindow::editProfile(int row) {
         const QByteArray data = text.toUtf8();
         const QFileInfo profileInfo(profiles_[row].path);
         const QString temporary = profileInfo.dir().filePath(QString(".bimeron-validate-%1.conf").arg(QUuid::createUuid().toString(QUuid::WithoutBraces)));
-        QSaveFile validationFile(temporary);
-        if (!validationFile.open(QIODevice::WriteOnly) || validationFile.write(data) != data.size() || !validationFile.commit()) {
-            if (error) *error = validationFile.errorString();
+        if (!ProfileStore::writeConfig(temporary, data, error)) return false;
+        const bool valid = validateConfig(temporary, error);
+        if (!QFile::remove(temporary)) {
+            if (error) *error = tr("Cannot remove the protected validation draft; the original profile was retained.");
             return false;
         }
-        QFile::setPermissions(temporary, QFileDevice::ReadOwner | QFileDevice::WriteOwner);
-        const bool valid = validateConfig(temporary, error);
-        QFile::remove(temporary);
         return valid;
     };
     ProfileEditorDialog dialog(QString::fromUtf8(originalData), capabilities_, this, validateDraft);
     while (dialog.exec() == QDialog::Accepted) {
+        if (dialog.configText() == QString::fromUtf8(originalData)) break;
         const QByteArray data = dialog.configText().toUtf8();
         QString error;
         if (!validateDraft(dialog.configText(), &error)) {
             QMessageBox::warning(&dialog, tr("Error"), error, QMessageBox::Ok);
             continue;
         }
-        QSaveFile output(profiles_[row].path);
-        if (!output.open(QIODevice::WriteOnly)) {
-            QMessageBox::warning(&dialog, tr("Error"), tr("Failed to open the file for writing: %1").arg(output.errorString()), QMessageBox::Ok);
+        if (!ProfileStore::writeConfig(profiles_[row].path, data, &error)) {
+            QMessageBox::warning(&dialog, tr("Error"), error, QMessageBox::Ok);
             continue;
         }
-        if (output.write(data) != data.size()) {
-            output.cancelWriting();
-            QMessageBox::warning(&dialog, tr("Error"), tr("Failed to write data: %1").arg(output.errorString()), QMessageBox::Ok);
-            continue;
-        }
-        if (!output.commit()) {
-            // Windows can reject an atomic replacement even though the profile itself is writable.
-            QFile direct(profiles_[row].path);
-            if (!direct.open(QIODevice::WriteOnly | QIODevice::Truncate) || direct.write(data) != data.size()) {
-                const QString directError = direct.errorString();
-                direct.close();
-                QFile restore(profiles_[row].path);
-                if (restore.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-                    restore.write(originalData);
-                    restore.close();
-                }
-                QMessageBox::warning(&dialog, tr("Error"), tr("Windows denied both file replacement and direct writing: %1").arg(directError), QMessageBox::Ok);
-                continue;
-            }
-            direct.close();
-        }
-        if (QFileInfo(profiles_[row].path).size() != data.size()) {
-            QMessageBox::warning(&dialog, tr("Error"), tr("The written file size does not match the expected size."), QMessageBox::Ok);
-            continue;
-        }
-        QFile::setPermissions(profiles_[row].path, QFileDevice::ReadOwner | QFileDevice::WriteOwner);
         profiles_[row].name = ProfileStore::displayName(profiles_[row].path);
         if (!store_.save(profiles_, &error)) {
-            QMessageBox::warning(&dialog, tr("Error"), error, QMessageBox::Ok);
+            QMessageBox::warning(&dialog, tr("Error"),
+                tr("The profile was saved, but its list entry could not be updated. Retry Save to update the list."), QMessageBox::Ok);
             continue;
         }
         const QString editedId = profiles_[row].id;
@@ -1265,7 +1238,12 @@ void MainWindow::importProfile() {
         return;
     }
     profiles_.append({ProfileStore::identity(path), ProfileStore::displayName(path), path});
-    store_.save(profiles_, &error);
+    if (!store_.save(profiles_, &error)) {
+        profiles_.removeLast();
+        QFile::remove(path);
+        QMessageBox::warning(this, tr("Import failed"), error);
+        return;
+    }
     refreshProfiles();
 }
 
@@ -1513,7 +1491,7 @@ void MainWindow::handleReply(const QString &command, const QJsonObject &response
             const auto event = item.toObject().value("event").toObject();
             const QString code = event.value("Code").toString();
             const QString message = event.value("Message").toString();
-            appendLog(code.isEmpty() ? message : QString("%1 · %2").arg(code, message));
+            appendLog(safeCoreEvent(code, message));
         }
         core_.request("status");
     }
@@ -1552,7 +1530,7 @@ void MainWindow::handleStatus(const QJsonObject &status) {
     }
     const QHash<QString, QString> labels{{"disconnected", tr("Disconnected")}, {"connecting", tr("Connecting…")}, {"connected", tr("Connected")}, {"reconnecting", tr("Reconnecting…")}, {"stopping", tr("Disconnecting…")}, {"failed", tr("Connection failed")}};
     QString connectionText = state_ == "failed" && !connectionAttempted_
-        ? tr("Disconnected") : labels.value(state_, tr("Unknown state: %1").arg(state_));
+        ? tr("Disconnected") : labels.value(state_, tr("Unknown state"));
     if (state_ == "connected") {
         const auto displayEndpoint = [](QString endpoint) {
             static const QRegularExpression mappedIpv4(QStringLiteral(R"(^\[::ffff:(\d{1,3}(?:\.\d{1,3}){3})\]:(\d+)$)"), QRegularExpression::CaseInsensitiveOption);
@@ -1599,7 +1577,7 @@ void MainWindow::handleStatus(const QJsonObject &status) {
     const QString lastError = status.value("LastError").toString();
     if (lastError != lastCoreError_) {
         lastCoreError_ = lastError;
-        if (!lastError.isEmpty()) appendLog(tr("Core: %1").arg(lastError));
+        if (!lastError.isEmpty()) appendLog(tr("Core: %1").arg(safeCoreCode(lastError)));
     }
     if (state_ == "failed" && previousState != "failed" && lastError == "access_key_unavailable")
         QMessageBox::warning(this, tr("Key unavailable"),
@@ -1646,13 +1624,13 @@ void MainWindow::updateProfileAppearance() {
 void MainWindow::showCoreError(const QJsonObject &response) {
     const QString code = response.value("error").toString();
     const QHash<QString, QString> messages{{"unsupported_protocol", tr("The GUI and core protocol versions are incompatible")}, {"absolute_config_path_required", tr("Core requires an absolute profile path")}, {"invalid_configuration", tr("The profile configuration is invalid")}, {"session_already_running", tr("A session is already running")}, {"session_start_failed", tr("Failed to start the session")}, {"session_stop_failed", tr("Failed to fully clean up network settings")}, {"daemon_shutting_down", tr("Core is shutting down")}};
-    const QString message = messages.value(code, tr("Core error: %1").arg(code));
+    const QString message = messages.value(code, tr("Core error: %1").arg(safeCoreCode(code)));
     appendLog(message);
     QMessageBox::warning(this, tr("Error"), message, QMessageBox::Ok);
 }
 
 void MainWindow::appendLog(const QString &message) {
-    if (log_) log_->append(QString("[%1] %2").arg(QTime::currentTime().toString("HH:mm:ss"), message.toHtmlEscaped()));
+    if (log_) log_->append(QString("[%1] %2").arg(QTime::currentTime().toString("HH:mm:ss"), safeLogMessage(message).toHtmlEscaped()));
 }
 
 bool MainWindow::validateConfig(const QString &path, QString *error) const {
@@ -1852,7 +1830,7 @@ void MainWindow::saveDiagnostics() {
 
     QProcess process;
     process.setProgram(executable);
-    process.setArguments({"doctor", "-output", QDir::toNativeSeparators(path)});
+    process.setArguments({"doctor"});
     process.setProcessChannelMode(QProcess::SeparateChannels);
     process.start();
     if (!process.waitForStarted(5000) || !process.waitForFinished(30000)) {
@@ -1865,6 +1843,24 @@ void MainWindow::saveDiagnostics() {
         QMessageBox::warning(this, tr("Diagnostics"), details.isEmpty() ? tr("Failed to create the report.") : details);
         return;
     }
+    const QByteArray report = safeDiagnosticReport(process.readAllStandardOutput());
+    if (report.isEmpty()) {
+        QMessageBox::warning(this, tr("Diagnostics"), tr("Core returned an invalid diagnostic report; no report was saved."));
+        return;
+    }
+    QFile output(path);
+    if (!output.open(QIODevice::WriteOnly | QIODevice::NewOnly)) {
+        QMessageBox::warning(this, tr("Diagnostics"), tr("Cannot create a new diagnostic report."));
+        return;
+    }
+    if (!output.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner)
+        || output.write(report) != report.size() || !output.flush()) {
+        output.close();
+        output.remove();
+        QMessageBox::warning(this, tr("Diagnostics"), tr("Cannot save the diagnostic report."));
+        return;
+    }
+    output.close();
     appendLog(tr("Diagnostic report saved: %1").arg(QDir::toNativeSeparators(path)));
     QMessageBox::information(this, tr("Diagnostics"), tr("The report has been saved. It contains no keys, IP addresses, or profile paths."));
 }
@@ -2099,7 +2095,7 @@ void MainWindow::refreshServiceStatus() {
     const QString output = QString::fromUtf8(process.readAllStandardOutput()).trimmed();
     const QHash<QString, QString> states{{"1", tr("stopped")}, {"2", tr("starting")}, {"3", tr("stopping")}, {"4", tr("running")}, {"5", tr("resuming")}, {"6", tr("pausing")}, {"7", tr("paused")}};
     const QString code = output.section(':', 1).trimmed();
-    const QString state = states.value(code, output);
+    const QString state = states.value(code, tr("unknown"));
     if (code == "4") {
         serviceStatusLabel_->setText(tr("Service: <span style=\"color:#15803d; font-weight:600\">%1</span>").arg(state));
         serviceStatusLabel_->setStyleSheet(themedStyle("color: #66768a"));

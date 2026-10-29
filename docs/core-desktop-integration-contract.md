@@ -61,16 +61,26 @@ Connection controls, tray profile actions and regular IPC polling are intentiona
 disabled in the [navigation baseline](navigation-spec.md). Existing `startProfile`
 and polling code is not evidence of an available user connection flow.
 
-Source review found these unresolved risks in `ProfileEditorDialog.cpp`:
+Source review found these risks at the Desktop baseline in `ProfileEditorDialog.cpp`:
 
 - An unknown explicit SS `Method` selects the first cipher combo item.
 - An unrecognized explicit `Type` with `Server` selects the SS parameter form.
 - Visual save can remove unknown settings after a warning. Raw-only blocking is
   specific to VLESS and does not protect arbitrary new sections such as ShadowTLS.
 
-`CoreDiagnostic.h` redacts only the older URI/source set plus Hysteria2; it does
-not establish safe handling of the new credential formats. The requirements below
-are future acceptance criteria, not claims that these defects are fixed.
+At that baseline, `CoreDiagnostic.h` redacted only the older URI/source set plus
+Hysteria2; it did not establish safe handling of the new credential formats.
+The requirements below are acceptance criteria, not runtime evidence.
+
+## Current preservation behavior
+
+[Profile preservation and secret handling](profile-preservation.md) defines the
+implemented editor/storage guard and its acceptance tests. Unrepresented profiles
+use protected Raw editing, no-op saves preserve bytes, profile replacement is
+atomic, and untrusted diagnostic text is hidden by default. This does not expand
+Add URI, native IKEv2 import, connection controls, or the reviewed bundle range.
+The format and coverage tables below describe the reviewed baseline; source
+support is still distinct from Desktop forms and runtime evidence.
 
 ## Formats, transport and authentication
 
