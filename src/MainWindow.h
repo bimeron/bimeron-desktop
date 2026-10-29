@@ -8,6 +8,10 @@
 #include <QElapsedTimer>
 #include <QJsonObject>
 #include <QMainWindow>
+#include <QPointer>
+#include <QSet>
+#include <QJsonArray>
+#include <QDialog>
 
 class QLabel;
 class QAction;
@@ -53,6 +57,17 @@ private:
     void moveProfile(int delta);
     void toggleConnection();
     void poll();
+    void clearSSHAuthentication();
+    void handleSSHAuthentication(const QJsonObject &auth);
+    QPointer<QDialog> sshDialog_;
+    QTimer *sshAuthExpiry_ = nullptr;
+    QString sshChallenge_;
+    QSet<QString> sshSeen_;
+    QJsonArray sshAnswers_;
+    bool sshReplyReady_ = false;
+    bool sshAuthSupported_ = true;
+    QString sshUnsupportedInstance_;
+    qint64 nextSSHAuth_ = 0;
     void handleReply(const QString &command, const QJsonObject &response);
     void handleStatus(const QJsonObject &status);
     void updateProfileAppearance();

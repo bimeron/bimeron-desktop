@@ -1,6 +1,9 @@
 #pragma once
 
 #include <QListWidget>
+#include <QDialogButtonBox>
+#include <QScrollArea>
+#include <QPlainTextEdit>
 #include <QPointer>
 #include <QCloseEvent>
 #include <QSystemTrayIcon>
@@ -25,6 +28,24 @@ struct ConnectionManagementTest {
             app.installTranslator(&translator);
         }
         MainWindow window;
+        if (app.arguments().contains("--ssh-preview")) {
+            window.state_ = "connecting";
+            window.handleSSHAuthentication({{"id", "preview"}, {"kind", "keyboard_interactive"},
+                {"prompts", QJsonArray{"Account password", "One-time authentication code"}}, {"echo", QJsonArray{false, false}}});
+            if (app.arguments().contains("--ssh-eight")) {
+                window.clearSSHAuthentication();
+                QJsonArray prompts, echo;
+                for (int i = 0; i < 8; ++i) {
+                    prompts.append(QString("Untrusted server prompt %1: ").arg(i + 1) + QString(220, 'x'));
+                    echo.append(false);
+                }
+                window.handleSSHAuthentication({{"id", "eight"}, {"kind", "keyboard_interactive"},
+                    {"prompts", prompts}, {"echo", echo}});
+            }
+            QCoreApplication::processEvents();
+            require(window.sshDialog_ && window.sshDialog_->grab().save(destination), "SSH preview image");
+            return 0;
+        }
         window.helloReady_ = true;
         window.statusNeeded_ = false;
         QTemporaryDir directory;
@@ -123,8 +144,141 @@ struct ConnectionManagementTest {
         require(reason == CoreClient::Failure::TooLarge && received == previous, "oversized request must never reach Core");
     }
 
+    static void sshAuthentication() {
+        MainWindow window;
+        window.state_ = "connecting";
+        const auto challenge = [](const QString &id, const QString &kind = "keyboard_interactive") {
+            return QJsonObject{{"id", id}, {"kind", kind}, {"prompts", QJsonArray{"<b>OTP</b>", "Password"}},
+                {"echo", QJsonArray{true, false}}};
+        };
+        window.handleSSHAuthentication(challenge("one"));
+        require(window.sshDialog_, "SSH dialog must be nonmodal");
+        auto inputs = window.sshDialog_->findChildren<QLineEdit *>();
+        auto promptViews = window.sshDialog_->findChildren<QPlainTextEdit *>();
+        require(promptViews.size() == 2 && promptViews[0]->isReadOnly()
+            && promptViews[0]->toPlainText() == "<b>OTP</b>", "server prompt remains literal text");
+        require(inputs.size() == 2 && inputs[0]->echoMode() == QLineEdit::Normal
+            && inputs[1]->echoMode() == QLineEdit::Password, "SSH echo behavior");
+        for (auto *label : window.sshDialog_->findChildren<QLabel *>())
+            require(label->textFormat() == Qt::PlainText, "SSH prompts are untrusted plain text");
+        inputs[0]->setText("OTP_SENTINEL");
+        inputs[1]->setText("PASSWORD_SENTINEL");
+        auto *buttons = window.sshDialog_->findChild<QDialogButtonBox *>();
+        buttons->button(QDialogButtonBox::Ok)->click();
+        require(window.sshReplyReady_ && window.sshAnswers_.size() == 2, "SSH queues one reply");
+        require(inputs[0]->text().isEmpty() && inputs[1]->text().isEmpty(), "SSH input cleared on submit");
+        window.clearSSHAuthentication();
+        require(window.sshAnswers_.isEmpty() && !window.sshReplyReady_, "SSH cancellation discards pending reply");
+        window.handleSSHAuthentication(challenge("one"));
+        require(!window.sshDialog_, "SSH one-use challenge cannot reopen");
+        window.handleSSHAuthentication(challenge("two", "password"));
+        require(window.sshDialog_->findChildren<QLineEdit *>()[0]->echoMode() == QLineEdit::Password,
+            "password remains masked despite untrusted echo");
+        window.sshDialog_->reject();
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+        window.handleSSHAuthentication(challenge("two", "password"));
+        require(!window.sshDialog_, "canceled challenge cannot reopen");
+        auto bad = challenge("bad");
+        bad.insert("echo", QJsonArray{false});
+        window.handleSSHAuthentication(bad);
+        require(!window.sshDialog_, "malformed SSH challenge rejected");
+        bad = challenge("oversized");
+        bad.insert("prompts", QJsonArray{QString(257, 'x'), "second"});
+        window.handleSSHAuthentication(bad);
+        require(!window.sshDialog_, "oversized SSH prompt rejected");
+        window.handleSSHAuthentication(challenge("unicode"));
+        auto unicodeInputs = window.sshDialog_->findChildren<QLineEdit *>();
+        unicodeInputs[0]->setText(QString(600, QChar(0x044f)));
+        window.sshDialog_->findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Ok)->click();
+        require(!window.sshReplyReady_ && window.sshDialog_, "SSH answer bound counts UTF-8 bytes");
+        require(!window.sshDialog_->findChild<QLabel *>("sshAnswerError")->isHidden(), "SSH explains oversized answers safely");
+        int heartbeat = 0;
+        QTimer::singleShot(0, &window, [&] { ++heartbeat; });
+        require(waitFor([&] { return heartbeat == 1; }), "SSH prompt leaves UI responsive");
+        window.clearSSHAuthentication();
+        auto many = challenge("many");
+        QJsonArray eightPrompts, eightEchoes;
+        for (int i = 0; i < 8; ++i) { eightPrompts.append("Prompt"); eightEchoes.append(false); }
+        many.insert("prompts", eightPrompts);
+        many.insert("echo", eightEchoes);
+        window.handleSSHAuthentication(many);
+        require(window.sshDialog_ && window.sshAuthExpiry_->interval() == 120000, "eight prompts and two-minute expiry");
+        require(window.sshDialog_->findChild<QScrollArea *>(), "many prompts use a bounded scroll area");
+        for (auto *input : window.sshDialog_->findChildren<QLineEdit *>()) input->setText(QString(1024, QChar(1)));
+        window.sshDialog_->findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Ok)->click();
+        require(!window.sshReplyReady_, "serialized JSON request bound includes escaping");
+        QMetaObject::invokeMethod(window.sshAuthExpiry_, "timeout", Qt::DirectConnection);
+        require(!window.sshDialog_ && window.sshAnswers_.isEmpty(), "expiry closes and clears challenge");
+        window.handleSSHAuthentication(many);
+        require(!window.sshDialog_, "expired challenge cannot reopen");
+        many.insert("id", "nine");
+        eightPrompts.append("Ninth"); eightEchoes.append(false);
+        many.insert("prompts", eightPrompts); many.insert("echo", eightEchoes);
+        window.handleSSHAuthentication(many);
+        require(!window.sshDialog_, "ninth SSH prompt rejected");
+        window.handleSSHAuthentication(challenge("stopped"));
+        window.handleStatus({{"State", "stopping"}});
+        require(!window.sshDialog_ && window.sshAnswers_.isEmpty(), "stop closes SSH prompt");
+        window.state_ = "connecting";
+        QLocalServer server;
+        require(server.listen("bimeron-ssh-" + QUuid::createUuid().toString()), "SSH private endpoint");
+        window.core_.setEndpoint(server.serverName());
+        window.helloReady_ = true;
+        window.statusNeeded_ = false;
+        window.instance_ = "ssh-fixture";
+        window.sessionId_ = "ssh-session";
+        window.nextStatus_ = window.nextEvents_ = window.nextSSHAuth_ = window.pollClock_.elapsed() + 60000;
+        int sent = 0;
+        QString expectedCommand = "auth_reply";
+        QObject::connect(&server, &QLocalServer::newConnection, &server, [&] {
+            auto *socket = server.nextPendingConnection();
+            QObject::connect(socket, &QLocalSocket::readyRead, socket, [&, socket] {
+                if (!socket->canReadLine()) return;
+                const auto request = QJsonDocument::fromJson(socket->readLine()).object();
+                require(request.value("command") == expectedCommand, "SSH uses existing correlated control transport");
+                if (expectedCommand == "auth_reply") {
+                    require(request.value("challenge_id") == "wire", "SSH replies to current ID");
+                    require(request.value("answers").toArray().size() == 2, "SSH one answer per prompt");
+                }
+                ++sent;
+                socket->write(QJsonDocument(QJsonObject{{"version", 1}, {"id", request.value("id")},
+                    {"instance", "ssh-fixture"}, {"status", QJsonObject{{"State", "connecting"},
+                        {"Session", QJsonObject{{"id", "ssh-session"}, {"active", true}}}}}}).toJson(QJsonDocument::Compact) + '\n');
+            });
+        });
+        window.handleSSHAuthentication(challenge("wire"));
+        auto *wireDialog = window.sshDialog_.data();
+        for (auto *input : wireDialog->findChildren<QLineEdit *>()) input->setText("WIRE_SENTINEL");
+        wireDialog->findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Ok)->click();
+        window.poll();
+        require(waitFor([&] { return sent == 1 && !window.core_.busy(); }), "SSH reply completes asynchronously");
+        window.poll();
+        require(sent == 1 && window.sshAnswers_.isEmpty(), "SSH reply is not retried or cached");
+        require(!window.log_->toPlainText().contains("WIRE_SENTINEL"), "SSH answers absent from logs");
+        expectedCommand = "auth_pending";
+        window.nextSSHAuth_ = -2;
+        window.nextStatus_ = window.nextEvents_ = -1;
+        window.poll();
+        require(waitFor([&] { return sent == 2 && !window.core_.busy(); }), "overdue status/events cannot starve auth polling");
+        window.nextStatus_ = window.nextEvents_ = window.nextSSHAuth_ = window.pollClock_.elapsed() + 60000;
+        window.handleSSHAuthentication(challenge("session-change"));
+        window.handleStatus({{"State", "connecting"}, {"Session", QJsonObject{{"id", "different-session"}}}});
+        require(!window.sshDialog_, "session change closes old prompt");
+        window.handleSSHAuthentication(challenge("failure"));
+        window.handleReply("auth_reply", {{"instance", "ssh-fixture"}, {"error", "invalid_auth_challenge"},
+            {"status", QJsonObject{{"State", "connecting"}, {"Session", QJsonObject{{"id", "different-session"}}}}}});
+        require(!window.sshDialog_ && window.statusNeeded_ && !window.sshReplyReady_, "invalid challenge resynchronizes without replay");
+        window.handleReply("auth_pending", {{"instance", "ssh-fixture"}, {"error", "unknown_command"},
+            {"status", QJsonObject{{"State", "connecting"}, {"Session", QJsonObject{{"id", "ssh-session"}}}}}});
+        require(!window.sshAuthSupported_, "old Core disables interactive polling");
+        window.handleSSHAuthentication(challenge("three", "key_passphrase"));
+        window.invalidateConnection();
+        require(!window.sshDialog_ && window.sshAnswers_.isEmpty(), "backend invalidation closes SSH prompt");
+    }
+
     static void run() {
         transport();
+        sshAuthentication();
         for (const QString policy : {QStringLiteral("keep"), QStringLiteral("stop")}) {
             QProcess process;
             process.start(QCoreApplication::applicationFilePath(), {"--visual-check", "--connection-quit", policy});
