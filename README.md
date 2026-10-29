@@ -120,3 +120,8 @@ See [Shadowsocks extensions](docs/shadowsocks-profiles.md) for SS2022 and embedd
 SSH integration targets Core v0.3.0-beta.1; see [SSH profiles](docs/ssh-profiles.md)
 for Desktop behavior, the older bundled Core limitation and verification scope.
 See [Protocol URI import](docs/protocol-uri-import.md) for stage 5 URI coverage, Raw editing and target Core requirements.
+
+Stage 6 adds explicit Trojan, HTTP(S), Naive H2 and MASQUE forms and a separate
+ShadowTLS v3 block for represented compatible explicit profiles. URI sources and
+extended XHTTP remain protected Raw. See [Parameter forms and ShadowTLS](docs/parameter-forms-and-shadowtls.md).
+This does not change the bundled Core or establish runtime interoperability.

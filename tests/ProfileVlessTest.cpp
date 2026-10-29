@@ -75,7 +75,7 @@ static void preservationRegressions(const QString &directory) {
         QString(base).replace("Type = shadowsocks", "Type = trojan"),
         QString(base).replace("Type = shadowsocks\n", ""),
         base + "Plugin = unknown-plugin\nPluginOpts = tls;mux=0;path=/ws\n",
-        base + "[ShadowTLS]\nServerName = example.invalid\nPassword = OUTER_SENTINEL\n",
+        base + "[ShadowTLS]\nServerName = example.invalid\nPassword = OUTER_SENTINEL\nUnknown = true\n",
         base + "[Future]\nOpaque = FUTURE_SENTINEL\n",
         base + "Password = DUPLICATE_SENTINEL\n",
         base + "Key = future://SENTINEL\n",
@@ -398,13 +398,112 @@ static void sshProfiles(const QString &directory) {
     }
 }
 
+static void parameterForms(const QString &directory) {
+    const QJsonObject caps{{"vpn", true}, {"proxy", true}};
+    const QString head = "[Profile]\nVersion = 1\nName = Parameters\n[AccessKey]\n";
+    const QString endpoint = "\nServer = example.invalid\nPort = 443\n";
+    const QString wrapper = "\n[ShadowTLS]\nServerName = outer.invalid\nPassword = OUTER_SENTINEL\n";
+    const QString core = qEnvironmentVariable("BIMERON_PRESERVATION_CORE");
+    int index = 0;
+    const QStringList inputs{
+        "Type = trojan" + endpoint + "Password = INNER_SENTINEL\n",
+        "Type = trojan" + endpoint + "Password = INNER_SENTINEL\nNetwork = ws\nSecurity = tls\nALPN = http/1.1\nWSPath = /literal%20path\nWSHost = inner.invalid\nServerName = inner.invalid\n",
+        "Type = trojan" + endpoint + "Password = INNER_SENTINEL\nNetwork = grpc\nALPN = h2\nGRPCServiceName = proxy\nGRPCAuthority = inner.invalid\nGRPCMultiMode = false\n",
+        "Type = http" + endpoint,
+        "Type = https" + endpoint + "Username = USER_SENTINEL\nPassword = INNER_SENTINEL\n",
+        "Type = naive" + endpoint + "Username = USER_SENTINEL\nPassword = INNER_SENTINEL\nServerName = inner.invalid\n",
+        "Type = masque" + endpoint + "ServerName = inner.invalid\nMASQUEPath = /.well-known/masque/udp/{target_host}/{target_port}/\n",
+        "Type = shadowsocks" + endpoint + "Method = aes-256-gcm\nPassword = INNER_SENTINEL\n" + wrapper,
+        "Type = ssh" + endpoint + "Username = synthetic\n" + wrapper
+    };
+    for (const QString &access : inputs) {
+        const QString input = head + access;
+        ProfileEditorDialog editor(input, caps);
+        require(editor.findChild<QTabWidget *>()->isTabEnabled(0));
+        require(editor.configText() == input);
+        editor.findChild<QLineEdit *>("profileName")->setText("Edited");
+        const QString output = editor.configText();
+        require(output != input && output.contains("Name = Edited"));
+        require(ProfileStore::connectionInfo(output).connectable);
+        ProfileEditorDialog reopened(output, caps);
+        require(reopened.findChild<QTabWidget *>()->isTabEnabled(0));
+        require(reopened.configText() == output);
+        check(output, {"Name = Edited"}, core, directory + "/parameters-" + QString::number(index++) + ".conf");
+        require(editor.findChild<QLineEdit *>("shadowPassword")->echoMode() == QLineEdit::Password);
+        if (access.startsWith("Type = trojan") || access.startsWith("Type = naive"))
+            check(output + wrapper, {"INNER_SENTINEL", "OUTER_SENTINEL"}, core, directory + "/wrapped-" + QString::number(index++) + ".conf");
+    }
+    const QStringList invalid{
+        "Type = http" + endpoint + "Username = unpaired\n",
+        "Type = https" + endpoint + "ServerName = forbidden.invalid\n",
+        "Type = naive" + endpoint + "Username = user\n",
+        "Type = trojan" + endpoint + "Password = INNER_SENTINEL\nNetwork = ws\nSecurity = reality\n",
+        "Type = trojan" + endpoint + "Password = INNER_SENTINEL\nNetwork = grpc\nGRPCMultiMode = invalid\n",
+        "Type = http" + endpoint + wrapper,
+        "Type = masque" + endpoint + wrapper,
+        "Type = shadowsocks" + endpoint + "Method = aes-192-gcm\nPassword = INNER_SENTINEL\n" + wrapper,
+        "Type = shadowsocks" + endpoint + "Method = aes-256-gcm\nPassword = INNER_SENTINEL\nPlugin = v2ray-plugin\n" + wrapper
+    };
+    for (const auto &access : invalid) {
+        ProfileEditorDialog editor(head + access, caps);
+        require(!editor.findChild<QTabWidget *>()->isTabEnabled(0));
+        require(editor.configText() == head + access);
+        if (!core.isEmpty()) {
+            const QString path = directory + "/invalid-parameters-" + QString::number(index++) + ".conf";
+            require(ProfileStore::writeConfig(path, (head + access).toUtf8()));
+            QProcess process;
+            process.start(core, {"validate", path});
+            require(process.waitForFinished(15000) && process.exitCode() != 0);
+            const auto safe = safeCoreDiagnostic(process.readAllStandardError() + process.readAllStandardOutput());
+            require(!safe.contains("SENTINEL"));
+        }
+    }
+    const QString vless = head + "Type = vless" + endpoint
+        + "ID = 123e4567-e89b-12d3-a456-426614174000\nEncryption = none\nNetwork = xhttp\nSecurity = tls\nXHTTPMode = packet-up\n";
+    for (const QString &extra : {QString("ALPN = h3\nFingerprint = chrome\n"), QString("ALPN = h3\n") + wrapper,
+            QString("XHTTPExtra = {\"headers\":{\"Authorization\":\"SENTINEL\"}}\n")}) {
+        ProfileEditorDialog editor(vless + extra, caps);
+        require(!editor.findChild<QTabWidget *>()->isTabEnabled(0));
+        require(editor.configText() == vless + extra);
+    }
+    for (const QString &extra : {QString("ALPN = h3\n"), QString("ALPN = h2\n") + wrapper}) {
+        ProfileEditorDialog editor(vless + extra, caps);
+        require(editor.findChild<QTabWidget *>()->isTabEnabled(0));
+        editor.findChild<QLineEdit *>("profileName")->setText("Edited");
+        check(editor.configText(), extra.contains("[ShadowTLS]") ? QStringList{"ALPN = h2", "[ShadowTLS]", "Password = OUTER_SENTINEL"} : QStringList{"ALPN = h3"}, core, directory + "/vless-parameters-" + QString::number(index++) + ".conf");
+    }
+    const QString relative = head + "Type = masque" + endpoint + "CAFile = relative.pem\n";
+    ProfileEditorDialog ca(relative, caps);
+    require(ca.findChild<QTabWidget *>()->isTabEnabled(0));
+    ca.findChild<QLineEdit *>("profileName")->setText("Edited");
+    require(ca.configText().contains("CAFile = relative.pem"));
+    ProfileEditorDialog conflict(head + inputs.first(), caps);
+    conflict.findChild<QCheckBox *>("shadowTls")->setChecked(true);
+    conflict.findChild<QLineEdit *>("shadowName")->setText("outer.invalid");
+    conflict.findChild<QLineEdit *>("shadowPassword")->setText("OUTER_SENTINEL");
+    require(conflict.configText().contains("[ShadowTLS]"));
+    auto *network = conflict.findChild<QComboBox *>("trojanNetwork");
+    network->setCurrentText("ws");
+    conflict.findChild<QLineEdit *>("parameterWSPath")->setText("/retained");
+    network->setCurrentText("grpc");
+    bool blocked = false;
+    QTimer::singleShot(0, [&] {
+        if (auto *message = qobject_cast<QMessageBox *>(QApplication::activeModalWidget())) {
+            blocked = !message->text().contains("SENTINEL"); message->accept();
+        }
+    });
+    conflict.findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Save)->click();
+    require(blocked && conflict.result() != QDialog::Accepted);
+    require(conflict.configText().contains("WSPath = /retained"));
+}
+
 int main(int argc, char **argv) {
     QApplication app(argc, argv);
     if (app.arguments().size() == 3 && app.arguments().at(1) == "--permission-fixture")
         return ProfileStore::writeConfig(app.arguments().at(2), "synthetic permission fixture") ? 0 : 1;
     QTemporaryDir temporary;
     require(temporary.isValid());
-    if (app.arguments().size() == 4 && app.arguments().at(1) == "--ss-preview") {
+    if (app.arguments().size() == 4 && (app.arguments().at(1) == "--ss-preview" || app.arguments().at(1) == "--parameters-preview")) {
         class Translator final : public QTranslator {
         public:
             QJsonObject strings;
@@ -421,11 +520,27 @@ int main(int argc, char **argv) {
         }
         ProfileEditorDialog editor("[Profile]\nVersion = 1\nName = SS2022\n[AccessKey]\nType = shadowsocks\nServer = example.invalid\nPort = 443\nMethod = 2022-blake3-aes-256-gcm\nPassword = AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\nPlugin = v2ray-plugin\nPluginOpts = tls;host=example.invalid;mux=0\n",
             QJsonObject{{"vpn", true}, {"proxy", true}});
-        editor.show();
-        app.processEvents();
-        require(editor.grab().save(app.arguments().at(2)));
+        if (app.arguments().at(1) == "--parameters-preview") {
+            const QString kind = qEnvironmentVariable("BIMERON_PREVIEW_TYPE", "trojan");
+            QString access = "Type = " + kind + "\nServer = example.invalid\nPort = 443\n";
+            if (kind == "trojan") access += "Password = synthetic\nNetwork = grpc\nGRPCServiceName = proxy\nGRPCMultiMode = false\n";
+            if (kind == "naive" || kind == "https") access += "Username = synthetic\nPassword = synthetic\n";
+            if (kind == "masque") access += "MASQUEPath = /.well-known/masque/udp/{target_host}/{target_port}/\n";
+            if (kind == "trojan" || kind == "naive") access += "[ShadowTLS]\nServerName = outer.invalid\nPassword = synthetic\n";
+            ProfileEditorDialog parameters("[Profile]\nVersion = 1\nName = Parameters\n[AccessKey]\n" + access,
+                QJsonObject{{"vpn", true}, {"proxy", true}});
+            if (qEnvironmentVariable("BIMERON_PREVIEW_PAGE") != "general")
+                parameters.findChild<QTabWidget *>()->setCurrentIndex(parameters.findChild<QTabWidget *>()->count() - 2);
+            parameters.resize(720, 600);
+            parameters.show(); app.processEvents();
+            require(parameters.grab().save(app.arguments().at(2)));
+        } else {
+            editor.show(); app.processEvents();
+            require(editor.grab().save(app.arguments().at(2)));
+        }
         return 0;
     }
+    parameterForms(temporary.path());
     preservationRegressions(temporary.path());
     sshProfiles(temporary.path());
     ProfileStore uriStore(temporary.path() + "/uri-import");

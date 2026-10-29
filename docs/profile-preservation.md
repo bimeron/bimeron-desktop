@@ -70,3 +70,8 @@ Cross-compilation is not an ARM64 runtime pass. No network benchmark, connection
 test, package build, release, or installed-service modification is required here.
 
 Represented explicit SS2022 and embedded plugin fields use the visual editor; unknown plugins and incompatible Prefix combinations remain protected Raw. See [Shadowsocks extensions](shadowsocks-profiles.md).
+
+Stage 6 adds explicit Trojan, HTTP(S), Naive H2 and MASQUE forms and a separate
+ShadowTLS v3 block for represented compatible explicit profiles. URI sources and
+extended XHTTP remain protected Raw. See [Parameter forms and ShadowTLS](parameter-forms-and-shadowtls.md).
+This does not change the bundled Core or establish runtime interoperability.

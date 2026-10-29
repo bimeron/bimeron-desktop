@@ -2,6 +2,7 @@
 
 #include <QDialog>
 #include <QJsonObject>
+#include <QMap>
 #include <functional>
 
 class QCheckBox;
@@ -32,6 +33,15 @@ private:
     void syncRaw();
     void assessRepresentation();
     bool applyRaw();
+    void refreshParameters();
+    QString parameterError() const;
+    QStringList parameterFields() const;
+    QMap<QString, QLineEdit *> parameters_;
+    QComboBox *trojanNetwork_ = nullptr;
+    QCheckBox *shadowTls_ = nullptr;
+    QLineEdit *shadowName_ = nullptr;
+    QLineEdit *shadowPassword_ = nullptr;
+    QWidget *parameterPage_ = nullptr;
 
     QTabWidget *tabs_ = nullptr;
     QLineEdit *name_ = nullptr;
