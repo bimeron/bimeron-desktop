@@ -2,6 +2,8 @@
 
 ## Contract and scope
 
+This document records the original feature contract. The [Core/Desktop integration contract](core-desktop-integration-contract.md) adds the October 29, 2026 source baselines and separates implemented import/editor behavior from release and runtime evidence. The current navigation baseline disables connection controls and regular polling; connection criteria below remain requirements for their restoration. The bundled `v0.2.0-beta.1` predates Hysteria2.
+
 The Core contract is `bimeron-core` branch `feat/hysteria2-chrome-fingerprints`
 at `81f1ff7`,
 `docs/GUI_INTEGRATION.MD` and `docs/CONF.MD` as inspected on October 27, 2026.
