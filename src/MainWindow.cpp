@@ -54,6 +54,7 @@
 #include <QShortcut>
 #include <QStandardPaths>
 #include <QStyledItemDelegate>
+#include <QToolTip>
 #include <QStyleHints>
 #include <QStyle>
 #include <QSystemTrayIcon>
@@ -141,12 +142,15 @@ public:
         }
         QStyleOptionViewItem row = option;
         initStyleOption(&row, index);
-        const QString name = row.text.section('\n', 0, 0);
-        row.text.clear();
+        // initStyleOption converts newlines to Unicode line separators.
+        const QString name = index.data(Qt::DisplayRole).toString().section('\n', 0, 0);
         const QWidget *widget = row.widget;
-        (widget ? widget->style() : QApplication::style())->drawControl(QStyle::CE_ItemViewItem, &row, painter, widget);
-        const QRect textRect = (widget ? widget->style() : QApplication::style())->subElementRect(QStyle::SE_ItemViewItemText, &row, widget);
+        const QStyle *style = widget ? widget->style() : QApplication::style();
+        const QRect textRect = style->subElementRect(QStyle::SE_ItemViewItemText, &row, widget);
+        row.text.clear();
+        style->drawControl(QStyle::CE_ItemViewItem, &row, painter, widget);
         painter->save();
+        painter->setClipRect(row.rect);
         painter->setFont(row.font);
         painter->setPen(row.palette.color(QPalette::Text));
         painter->drawText(textRect.adjusted(0, 2, 0, -textRect.height() / 2), Qt::AlignVCenter, name);
@@ -500,6 +504,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), core_(this) {
         QTimer::singleShot(0, this, &MainWindow::poll);
     }
     connect(development_, &DevelopmentCore::changed, this, &MainWindow::updateDevelopment);
+    connect(development_, &DevelopmentCore::forcedExitReady, this, [] { QApplication::quit(); });
     connect(development_, &DevelopmentCore::completed, this, [this](bool success) {
         if (!developmentExit_) return;
         developmentExit_ = false;
@@ -509,7 +514,21 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), core_(this) {
         } else {
             restartRequested_ = false;
             showWindow();
-            QMessageBox::warning(this, tr("Development"), development_->status());
+            QMessageBox prompt(QMessageBox::Warning, tr("Development"), development_->status(), QMessageBox::NoButton, this);
+            auto *stay = prompt.addButton(tr("Stay"), QMessageBox::RejectRole);
+            auto *close = prompt.addButton(tr("Close GUI only"), QMessageBox::DestructiveRole);
+            QPushButton *force = nullptr;
+            if (development_->orphanAvailable())
+                force = prompt.addButton(tr("Force stop Core and close"), QMessageBox::DestructiveRole);
+            prompt.setDefaultButton(stay);
+            prompt.exec();
+            if (prompt.clickedButton() == close) QApplication::quit();
+            else if (force && prompt.clickedButton() == force) {
+                if (QMessageBox::warning(this, tr("Force stop Core and close"),
+                        tr("Core will be terminated without network cleanup. Routes, DNS and the kill switch may remain. Continue?"),
+                        QMessageBox::Yes | QMessageBox::No, QMessageBox::No) == QMessageBox::Yes)
+                    development_->stopOrphan(true);
+            }
         }
     });
     refreshProfiles();
@@ -744,12 +763,10 @@ QWidget *MainWindow::settingsPage() {
     });
     general->addWidget(stopOnExit);
     auto *notifications = new HiDpiCheckBox(tr("Show system notifications"));
-    notifications->setEnabled(false);
     notifications->setChecked(QSettings().value("app/notifications", true).toBool());
     connect(notifications, &QCheckBox::toggled, this, [](bool checked) { QSettings().setValue("app/notifications", checked); });
     general->addWidget(notifications);
     auto *detailedStats = new HiDpiCheckBox(tr("Show detailed connection statistics"));
-    detailedStats->setEnabled(false);
     detailedStats->setChecked(QSettings().value("app/showDetailedStats", false).toBool());
     connect(detailedStats, &QCheckBox::toggled, this, [this](bool checked) {
         QSettings().setValue("app/showDetailedStats", checked);
@@ -893,6 +910,8 @@ QWidget *MainWindow::settingsPage() {
     QSettings().remove("app/coreBetaUpdates");
     betaUpdatesCheck_ = new HiDpiCheckBox(tr("Include beta core updates"));
     service->addWidget(betaUpdatesCheck_);
+    coreUpdateLabel_->hide();
+    betaUpdatesCheck_->hide();
     service->addWidget(serviceAutomaticCheck_);
     serviceRecoveryButton_ = new QPushButton(tr("Emergency network recovery"));
     serviceRecoveryButton_->setObjectName("dangerButton");
@@ -925,7 +944,6 @@ QWidget *MainWindow::logPage() {
     title->setStyleSheet("font-size: 17px; font-weight: 700");
     layout->addWidget(title);
     auto *keepPrevious = new HiDpiCheckBox(tr("Keep previous entries"));
-    keepPrevious->setEnabled(false);
     keepPrevious->setChecked(QSettings().value("logs/keepPrevious", true).toBool());
     connect(keepPrevious, &QCheckBox::toggled, this, [](bool checked) {
         QSettings().setValue("logs/keepPrevious", checked);
@@ -1116,19 +1134,29 @@ void MainWindow::addProfile() {
     dialog.setWindowFlag(Qt::MSWindowsFixedSizeDialogHint);
     dialog.setMinimumWidth(440);
     auto *layout = new QVBoxLayout(&dialog);
-    auto *hint = new QLabel(tr("Paste a Shadowsocks, SOCKS5, VLESS, Hysteria2, or SSH key"));
+    auto *hint = new QLabel(tr("Enter a supported protocol URI"));
+    auto *hintRow = new QHBoxLayout;
+    auto *uriHelp = new QToolButton(&dialog);
+    uriHelp->setText("?");
+    uriHelp->setAutoRaise(true);
+    uriHelp->setAccessibleName(tr("Supported protocol URIs"));
+    connect(uriHelp, &QToolButton::clicked, &dialog, [uriHelp] {
+        QToolTip::showText(uriHelp->mapToGlobal(QPoint(0, uriHelp->height())),
+            QStringLiteral("ss://, ssconf://, socks5://, vless://,\nhysteria2://, hy2://, vmess://, trojan://, tuic://,\nhttp://, https://, anytls://,\nnaive+https://, naive+quic://, masque://, ssh://"), uriHelp, uriHelp->rect());
+    });
+    hintRow->addWidget(hint);
+    hintRow->addWidget(uriHelp);
+    hintRow->addStretch();
     auto *key = new QLineEdit;
-    key->setPlaceholderText(tr("ss://, ssconf://, socks5://, vless://, hysteria2://, hy2://, or ssh://"));
+    key->setObjectName("profileUri");
+    key->setPlaceholderText(tr("Protocol URI"));
     key->setMinimumHeight(30);
     auto *paste = new QPushButton;
     paste->setText(tr("Paste"));
-    auto *revealKey = new QPushButton(tr("Show"));
-    key->setEchoMode(QLineEdit::Password);
     auto *nameLabel = new QLabel(tr("Profile name"));
     auto *name = new QLineEdit;
+    name->setObjectName("profileName");
     name->setMinimumHeight(30);
-    nameLabel->hide();
-    name->hide();
     auto *sshFiles = new QWidget;
     auto *sshForm = new QFormLayout(sshFiles);
     auto *identity = new QLineEdit;
@@ -1156,30 +1184,24 @@ void MainWindow::addProfile() {
         const QString path = QFileDialog::getOpenFileName(&dialog, tr("SSH known_hosts file"));
         if (!path.isEmpty()) hosts->setText(QFileInfo(path).absoluteFilePath());
     });
-    layout->addWidget(hint);
-    layout->addWidget(key);
-    layout->addWidget(revealKey);
-    layout->addWidget(paste);
-    connect(revealKey, &QPushButton::clicked, &dialog, [key, revealKey] {
-        const bool showing = key->echoMode() == QLineEdit::Normal;
-        key->setEchoMode(showing ? QLineEdit::Password : QLineEdit::Normal);
-        revealKey->setText(showing ? QObject::tr("Show") : QObject::tr("Hide"));
-    });
     layout->addWidget(nameLabel);
     layout->addWidget(name);
+    nameLabel->hide();
+    name->hide();
+    layout->addLayout(hintRow);
+    layout->addWidget(key);
+    layout->addWidget(paste);
     layout->addWidget(sshFiles);
     QDialogButtonBox buttons(QDialogButtonBox::Save | QDialogButtonBox::Cancel);
     buttons.button(QDialogButtonBox::Save)->setText(tr("Save"));
     buttons.button(QDialogButtonBox::Cancel)->setText(tr("Cancel"));
     buttons.button(QDialogButtonBox::Save)->setEnabled(false);
     layout->addWidget(&buttons);
-    const auto fitDialog = [&] {
-        layout->invalidate();
-        layout->activate();
-        dialog.setFixedSize(dialog.sizeHint());
-    };
+    layout->activate();
+    dialog.setFixedWidth(440);
+    dialog.setFixedHeight(dialog.sizeHint().height());
     auto keyName = [](const QString &value) {
-        if (value.startsWith("socks5://")) return QString();
+        if (!QStringList{"SS", "SSConf", "VLESS", "Hysteria2"}.contains(ProfileStore::uriSourceField(value))) return QString();
         const qsizetype hash = value.indexOf('#');
         if (hash < 0 || hash + 1 >= value.size()) return QString();
         return QUrl::fromPercentEncoding(value.mid(hash + 1).toUtf8()).trimmed();
@@ -1187,6 +1209,7 @@ void MainWindow::addProfile() {
     auto isKey = [](const QString &value) {
         const QString trimmed = value.trimmed();
         if (trimmed.contains(QRegularExpression("\\s"))) return false;
+        if (QStringList{"VMess", "Trojan", "TUIC", "HTTP", "AnyTLS", "Naive", "MASQUE"}.contains(ProfileStore::uriSourceField(trimmed))) return true;
         const QUrl url(trimmed);
         if (url.scheme() == "ssconf")
             return url.isValid() && !url.host().isEmpty();
@@ -1239,7 +1262,9 @@ void MainWindow::addProfile() {
         nameLabel->setVisible(keyValid);
         name->setVisible(keyValid);
         sshFiles->setVisible(keyValid && value.startsWith("ssh://"));
-        fitDialog();
+        layout->invalidate();
+        layout->activate();
+        dialog.setFixedHeight(dialog.sizeHint().height());
         const QString suggested = keyName(value);
         if (!nameEdited && !suggested.isEmpty())
             name->setText(suggested);
@@ -1247,10 +1272,15 @@ void MainWindow::addProfile() {
     });
     auto updatePaste = [&] {
         const QString clipboardKey = QApplication::clipboard()->text().trimmed();
-        if (isKey(clipboardKey)) {
+        paste->setEnabled(isKey(clipboardKey));
+        paste->setVisible(paste->isEnabled());
+        if (paste->isEnabled()) {
             const QString suggested = keyName(clipboardKey);
             paste->setText(suggested.isEmpty() ? tr("Paste key") : tr("Paste key #%1").arg(suggested));
         } else paste->setText(tr("Paste"));
+        layout->invalidate();
+        layout->activate();
+        dialog.setFixedHeight(dialog.sizeHint().height());
     };
     connect(QApplication::clipboard(), &QClipboard::dataChanged, &dialog, updatePaste);
     connect(paste, &QPushButton::clicked, &dialog, [&] {
@@ -1922,11 +1952,6 @@ void MainWindow::handleStatus(const QJsonObject &status) {
     if ((state_ != "connecting" && state_ != "reconnecting") || nativeSession_) clearSSHAuthentication();
     const QHash<QString, QString> labels{{"disconnected", tr("Disconnected")}, {"connecting", tr("Connecting…")}, {"connected", tr("Connected")}, {"reconnecting", tr("Reconnecting…")}, {"stopping", tr("Disconnecting…")}, {"failed", tr("Connection failed")}};
     QString connectionText = labels.value(state_, tr("Unknown state"));
-    if (sessionActive_) {
-        QString name = tr("Unknown profile");
-        for (const auto &profile : profiles_) if (profile.id == activeProfileId_) { name = profile.name; break; }
-        connectionText += " · " + name;
-    }
     if (state_ != "connected" || nativeSession_) resetMeasurements();
     if (state_ == "connected") {
         const auto displayEndpoint = [](QString endpoint) {
@@ -2520,6 +2545,8 @@ void MainWindow::refreshServiceStatus() {
             serviceStartButton_->setVisible(start);
             serviceStopButton_->setVisible(stop);
             serviceUpdateButton_->setVisible(update);
+            coreUpdateLabel_->setVisible(update);
+            betaUpdatesCheck_->setVisible(update);
             serviceUninstallButton_->setVisible(uninstall);
         };
         if (exitStatus != QProcess::NormalExit || exitCode != 0) {
@@ -2677,6 +2704,15 @@ QWidget *MainWindow::developmentPage() {
     developmentStatus_->setWordWrap(true);
     developmentStatus_->setTextFormat(Qt::PlainText);
     layout->addWidget(developmentStatus_);
+    developmentStopOrphan_ = new QPushButton(tr("Stop remaining local daemon"));
+    developmentStopOrphan_->hide();
+    layout->addWidget(developmentStopOrphan_);
+    connect(developmentStopOrphan_, &QPushButton::clicked, this, [this] {
+        if (QMessageBox::warning(this, tr("Stop remaining local daemon"),
+                tr("Disconnect and shut down the remaining local Core?"),
+                QMessageBox::Yes | QMessageBox::No, QMessageBox::No) == QMessageBox::Yes)
+            development_->stopOrphan();
+    });
     layout->addStretch();
     connect(developmentApply_, &QPushButton::clicked, this, [this] {
         if (development_->busy()) return;
@@ -2713,12 +2749,19 @@ void MainWindow::updateDevelopment() {
         developmentStatus_->setText(development_->status()
             + (development_->local() ? "\n" + QDir::toNativeSeparators(development_->path()) : QString{}));
         developmentApply_->setEnabled(!development_->busy());
+        developmentStopOrphan_->setVisible(development_->orphanAvailable());
+        developmentStopOrphan_->setEnabled(!development_->busy());
     }
     const bool system = !blocked && !development_->local();
     for (auto *button : {serviceInstallButton_, serviceStartButton_, serviceStopButton_, serviceUpdateButton_, serviceUninstallButton_, serviceRecoveryButton_})
         button->setEnabled(system);
     serviceAutomaticCheck_->setEnabled(system);
-    if (!system) serviceStatusLabel_->setText(tr("System service controls are suspended"));
+    if (!system) {
+        serviceStatusLabel_->setText(tr("System service controls are suspended"));
+        serviceUpdateButton_->hide();
+        coreUpdateLabel_->hide();
+        betaUpdatesCheck_->hide();
+    }
     if (!blocked) {
         cleanupBlocked_ = false;
         retryAt_ = 0;

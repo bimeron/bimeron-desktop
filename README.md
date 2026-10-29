@@ -119,3 +119,4 @@ See [Shadowsocks extensions](docs/shadowsocks-profiles.md) for SS2022 and embedd
 
 SSH integration targets Core v0.3.0-beta.1; see [SSH profiles](docs/ssh-profiles.md)
 for Desktop behavior, the older bundled Core limitation and verification scope.
+See [Protocol URI import](docs/protocol-uri-import.md) for stage 5 URI coverage, Raw editing and target Core requirements.

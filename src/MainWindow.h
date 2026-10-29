@@ -192,6 +192,7 @@ private:
     QComboBox *developmentBackend_ = nullptr;
     QLineEdit *developmentPath_ = nullptr;
     QPushButton *developmentApply_ = nullptr;
+    QPushButton *developmentStopOrphan_ = nullptr;
     int developmentClicks_ = 0;
     bool developerMode_ = false;
     bool developmentExit_ = false;

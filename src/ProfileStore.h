@@ -26,6 +26,7 @@ public:
     QString createConfig(const QString &name, const QString &key, QString *error = nullptr,
                          const QString &identityFile = {}, const QString &knownHostsFile = {}) const;
     static bool sshFilesReadable(const QString &configText, const QString &profilePath, QString *error = nullptr);
+    static QString uriSourceField(const QString &uri);
     static QString identity(const QString &absolutePath);
     static QString displayName(const QString &configPath);
     static ProfileConnectionInfo connectionInfo(const QString &configText);

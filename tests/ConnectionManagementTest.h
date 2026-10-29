@@ -4,6 +4,7 @@
 #include <QDialogButtonBox>
 #include <QScrollArea>
 #include <QPlainTextEdit>
+#include <QClipboard>
 #include <QPointer>
 #include <QCloseEvent>
 #include <QSystemTrayIcon>
@@ -60,6 +61,12 @@ struct ConnectionManagementTest {
         window.handleStatus({{"State", "connected"}, {"Session", QJsonObject{
             {"id", "preview"}, {"profile_id", "preview"}, {"active", true}, {"mode", "proxy"}}}});
         window.show();
+        QCoreApplication::processEvents();
+        auto *unknown = new QListWidgetItem("Unknown example\nUnknown protocol", window.profileList_);
+        unknown->setData(Qt::UserRole + 1, true);
+        unknown->setSizeHint(QSize(0, 50));
+        unknown->setBackground(Qt::white);
+        window.profileList_->setCurrentItem(unknown);
         QCoreApplication::processEvents();
         require(window.grab().save(destination), "connection preview image");
         return 0;
@@ -277,6 +284,44 @@ struct ConnectionManagementTest {
     }
 
     static void run() {
+        {
+            MainWindow window;
+            QTimer::singleShot(0, [&] {
+                auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+                require(dialog, "Add dialog opened");
+                const QSize original = dialog->size();
+                const QList<QLineEdit *> fields{dialog->findChild<QLineEdit *>("profileUri"), dialog->findChild<QLineEdit *>("profileName")};
+                require(fields.size() == 2, "URI and name fields");
+                QPushButton *paste = nullptr;
+                for (auto *button : dialog->findChildren<QPushButton *>()) {
+                    if (button->text() == "Paste") paste = button;
+                }
+                require(paste, "Paste control");
+                require(fields[1]->isHidden() && fields[0]->echoMode() == QLineEdit::Normal, "Name initially hidden and URI visible");
+                const QString previous = QApplication::clipboard()->text();
+                QApplication::clipboard()->setText("unsupported clipboard");
+                QCoreApplication::processEvents();
+                require(!paste->isVisible(), "Unsupported clipboard hides Paste");
+                fields[0]->setText("typed text");
+                QCoreApplication::processEvents();
+                require(dialog->size() == original, "Typing retains geometry");
+                QApplication::clipboard()->setText("https://example.invalid:443");
+                QCoreApplication::processEvents();
+                require(paste->isEnabled() && paste->isVisible(), "Supported clipboard shows Paste");
+                paste->click();
+                QCoreApplication::processEvents();
+                require(dialog->width() == original.width() && dialog->height() > original.height(), "Valid URI reveals name without width change");
+                require(fields[1]->isVisible() && fields[1]->y() < fields[0]->y(), "Name appears above URI");
+                fields[0]->setText("ssh://alice@example.invalid");
+                QCoreApplication::processEvents();
+                require(fields[1]->isVisible() && dialog->width() == original.width(), "SSH retains name and dialog width");
+                require(dialog->findChildren<QLineEdit *>().size() == 4, "SSH identity and known hosts retained");
+                QApplication::clipboard()->setText(previous);
+                dialog->reject();
+            });
+            window.addProfile();
+        }
+
         transport();
         sshAuthentication();
         for (const QString policy : {QStringLiteral("keep"), QStringLiteral("stop")}) {

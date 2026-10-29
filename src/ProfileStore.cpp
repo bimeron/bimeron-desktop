@@ -9,6 +9,7 @@
 #include <QRegularExpression>
 #include <QSaveFile>
 #include <QSet>
+#include <QMap>
 #include <QStandardPaths>
 #include <QUrl>
 #include <QUrlQuery>
@@ -185,11 +186,27 @@ QString ProfileStore::importConfig(const QString &source, QString *error) const 
     return QFileInfo(destination).absoluteFilePath();
 }
 
+QString ProfileStore::uriSourceField(const QString &uri) {
+    const QString scheme = uri.section("://", 0, 0);
+    static const QMap<QString, QString> sources{{"ss", "SS"}, {"ssh", "SSH"}, {"ssconf", "SSConf"},
+        {"socks5", "SOCKS5"}, {"vless", "VLESS"}, {"hysteria2", "Hysteria2"}, {"hy2", "Hysteria2"},
+        {"vmess", "VMess"}, {"trojan", "Trojan"}, {"tuic", "TUIC"}, {"http", "HTTP"},
+        {"https", "HTTP"}, {"anytls", "AnyTLS"}, {"naive+https", "Naive"}, {"naive+quic", "Naive"}, {"masque", "MASQUE"}};
+    if (!uri.contains("://") || uri.contains(QRegularExpression("[\\x00-\\x20\\x7f]"))) return {};
+    if (scheme == "http" || scheme == "https") {
+        const QUrl url(uri);
+        if (!url.isValid() || url.host().isEmpty() || url.port() < 1 || url.port() > 65535
+            || !url.path().isEmpty() || url.hasQuery() || url.hasFragment()
+            || (url.userName().isEmpty() != url.password().isEmpty())) return {};
+    }
+    return sources.value(scheme);
+}
+
 QString ProfileStore::createConfig(const QString &name, const QString &key, QString *error, const QString &identityFile, const QString &knownHostsFile) const {
     const QString trimmed = key.trimmed();
-    const QString field = trimmed.startsWith("ssh://") ? "SSH" : trimmed.startsWith("ssconf://") ? "SSConf" : trimmed.startsWith("ss://") ? "SS" : trimmed.startsWith("socks5://") ? "SOCKS5" : trimmed.startsWith("vless://") ? "VLESS" : trimmed.startsWith("hysteria2://") || trimmed.startsWith("hy2://") ? "Hysteria2" : QString();
+    const QString field = uriSourceField(trimmed);
     if (field.isEmpty()) {
-        if (error) *error = QObject::tr("The key must begin with ss://, ssconf://, socks5://, vless://, hysteria2://, hy2://, or ssh://");
+        if (error) *error = QObject::tr("Unsupported or malformed protocol URI");
         return {};
     }
     QString safeName = name.trimmed().left(128);
@@ -203,8 +220,12 @@ QString ProfileStore::createConfig(const QString &name, const QString &key, QStr
         : "Mode = vpn\nName = Bimeron\nMTU = 1420\nDNS = 1.1.1.1\nIPv6 = disable\nKillSwitch = false";
     const QByteArray data = QString("[Profile]\nVersion = 1\nName = %1\n\n[AccessKey]\n%2\n\n[Interface]\n%3\n\n[Routing]\nDefault = proxy\n")
         .arg(safeName, access, interfaceSettings).toUtf8();
+    if (data.size() > 64 * 1024) {
+        if (error) *error = QObject::tr("Profile exceeds 64 KiB.");
+        return {};
+    }
+    if (!importReferencesSafe(data, error)) return {};
     const QString destination = QDir(root_).filePath(QUuid::createUuid().toString(QUuid::WithoutBraces) + ".conf");
-    if (field == "SSH" && !importReferencesSafe(data, error)) return {};
     if (!writeConfig(destination, data, error)) return {};
     return QFileInfo(destination).absoluteFilePath();
 }
@@ -249,7 +270,7 @@ ProfileConnectionInfo ProfileStore::connectionInfo(const QString &configText) {
             info.interfaceMode = field.toLower();
         if (section != "AccessKey") continue;
         if (key.compare("Type", Qt::CaseInsensitive) == 0) type = field.toLower();
-        else if (QStringList{"SS", "SSConf", "SOCKS5", "VLESS", "Hysteria2", "SSH", "Key", "File"}.contains(key, Qt::CaseInsensitive)) {
+        else if (QStringList{"SS", "SSConf", "SOCKS5", "VLESS", "Hysteria2", "VMess", "Trojan", "TUIC", "HTTP", "AnyTLS", "Naive", "MASQUE", "SSH", "Key", "File"}.contains(key, Qt::CaseInsensitive)) {
             source = key;
             value = field;
         }
@@ -266,6 +287,13 @@ ProfileConnectionInfo ProfileStore::connectionInfo(const QString &configText) {
         else if (scheme == "vless") info.protocol = QStringLiteral("VLESS");
         else if (scheme == "hysteria2" || scheme == "hy2") info.protocol = QStringLiteral("Hysteria2");
         else if (scheme == "ssh") info.protocol = QStringLiteral("SSH");
+        const QString newSource = uriSourceField(value);
+        if (QStringList{"VMess", "Trojan", "TUIC", "HTTP", "AnyTLS", "Naive", "MASQUE"}.contains(newSource)
+            && (source.compare("Key", Qt::CaseInsensitive) == 0 || source.compare(newSource, Qt::CaseInsensitive) == 0)) {
+            info.protocol = newSource;
+            info.connectable = true; // The selected CLI validates before start.
+            return info;
+        }
         const QUrl uri(value);
         const bool hysteria2 = scheme == "hysteria2" || scheme == "hy2";
         info.connectable = !info.protocol.isEmpty() && uri.isValid()

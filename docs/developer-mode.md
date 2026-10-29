@@ -111,3 +111,15 @@ sudo unshare --mount --net --pid --fork --mount-proc bash -c '
     --integration-core "$PWD/.tools/core/linux-amd64/bimeron"
 '
 ```
+
+On Windows, a responding leftover daemon exposes Stop remaining local daemon.
+After confirmation, verify its named-pipe peer PID, executable path and current-user
+SID before adopting a query/synchronize handle for graceful stop/shutdown. Never
+terminate the process. Reuse endpoint disappearance and session-lock checks before
+restoring service availability. A verification failure sends no command.
+
+On failed local cleanup, explicit Quit offers Stay or Close GUI only (leaving
+the daemon running). For a verified leftover Windows daemon, a separately
+confirmed Force stop Core and close action is available. Verify pipe peer PID,
+path and SID on the same process handle used for termination. Forced exit does
+not claim network cleanup or restore/start the service automatically.
