@@ -2,6 +2,13 @@
 
 Status: implemented; validation results and remaining release checks are recorded below.
 
+Restored [connection management](connection-management.md) uses the selected
+Development endpoint and validation CLI. Backend transitions cancel pending
+connection/validation intentions, suspend regular polling, and require fresh
+hello/status before controls become available. Process ownership, cleanup, VPN-lock
+checks and service restoration remain owned by DevelopmentCore. IPC failure never
+falls back to another backend or installs/starts a service automatically.
+
 ## User-visible behavior
 
 - Count five left clicks on the Desktop version label in About, not the Core version label. Count within the current application process, without a timing requirement; leaving About does not reset the count. Double-click events must not add extra synthetic clicks.

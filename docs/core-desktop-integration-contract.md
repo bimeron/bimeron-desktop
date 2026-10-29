@@ -4,7 +4,7 @@
 
 This specification defines the integration boundary and acceptance criteria for
 future Desktop changes. It does not implement those changes or restore connection
-controls. It is not a roadmap or a release approval.
+controls by itself. It is not a roadmap or a release approval.
 
 The source review on October 29, 2026 used these exact baselines:
 
@@ -57,9 +57,11 @@ list recognizes the protocol, the visual editor preserves it, or a service can
 connect it. New URI schemes are not accepted by Add profile merely because Core
 supports them.
 
-Connection controls, tray profile actions and regular IPC polling are intentionally
-disabled in the [navigation baseline](navigation-spec.md). Existing `startProfile`
-and polling code is not evidence of an available user connection flow.
+Connection controls, tray profile actions and regular IPC polling were intentionally
+disabled at the reviewed navigation baseline. They are now restored according to
+[connection management](connection-management.md), using authoritative IPC state
+and isolated regression tests. This does not establish real network interoperability
+for the protocol matrix or change the reviewed bundle range.
 
 Source review found these risks at the Desktop baseline in `ProfileEditorDialog.cpp`:
 
@@ -119,8 +121,8 @@ limitations.
 
 ### Desktop import and editor coverage
 
-All connection entries remain unavailable in the navigation baseline. The table
-below concerns import and editing only. "Conditional" means `.conf` copy/import
+Connection entries were unavailable in the reviewed navigation baseline. The table
+below concerns import and editing only, not restored runtime support. "Conditional" means `.conf` copy/import
 requires a selected CLI accepting the profile; it does not imply safe visual save.
 
 | Protocol/configuration | Add URI | Import `.conf` | Visual editing at baseline |

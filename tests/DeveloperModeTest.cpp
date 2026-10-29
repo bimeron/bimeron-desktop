@@ -31,7 +31,11 @@
 #endif
 
 static void require(bool condition, const char *message) {
-    if (!condition) qFatal("%s", message);
+    if (!condition) {
+        fprintf(stderr, "FAILED: %s\n", message);
+        fflush(stderr);
+        qFatal("%s", message);
+    }
 }
 
 static bool waitFor(const std::function<bool()> &condition, int timeout = 3000) {
@@ -43,6 +47,8 @@ static bool waitFor(const std::function<bool()> &condition, int timeout = 3000) 
     }
     return condition();
 }
+
+#include "ConnectionManagementTest.h"
 
 static void testRouting() {
     QLocalServer first;
@@ -89,6 +95,13 @@ static void testRouting() {
 }
 
 int main(int argc, char **argv) {
+    if (argc == 3 && std::strcmp(argv[1], "validate") == 0) {
+        QFile file(QString::fromLocal8Bit(argv[2]));
+        if (!file.open(QIODevice::ReadOnly)) return 1;
+        const QByteArray text = file.readAll();
+        if (text.contains("fixture-delay")) QThread::msleep(200);
+        return text.contains("fixture-reject") ? 1 : 0;
+    }
     if (argc == 2 && std::strcmp(argv[1], "version") == 0) {
         printf("integration-fixture\n");
         return 0;
@@ -117,6 +130,12 @@ int main(int argc, char **argv) {
     QCoreApplication::setApplicationName("DeveloperMode-" + QUuid::createUuid().toString());
     QSettings::setDefaultFormat(QSettings::IniFormat);
     QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, temporary.path());
+    const int quitFixture = app.arguments().indexOf("--connection-quit");
+    if (quitFixture >= 0)
+        return ConnectionManagementTest::quitFixture(app, app.arguments().value(quitFixture + 1) == "stop");
+    const int preview = app.arguments().indexOf("--connection-preview");
+    if (preview >= 0)
+        return ConnectionManagementTest::preview(app, app.arguments().value(preview + 1), app.arguments().value(preview + 2));
     const int integration = app.arguments().indexOf("--integration-core");
     if (integration >= 0) {
         require(integration + 1 < app.arguments().size(), "integration core path");
@@ -226,6 +245,7 @@ int main(int argc, char **argv) {
         return 0;
     }
     testRouting();
+    ConnectionManagementTest::run();
     DevelopmentCore backend(temporary.filePath("missing-helper"));
     bool completed = false;
     QObject::connect(&backend, &DevelopmentCore::completed, &backend, [&](bool success) {
@@ -241,12 +261,13 @@ int main(int argc, char **argv) {
     require(client, "window IPC client");
     const QString isolatedEndpoint = "bimeron-redaction-" + QUuid::createUuid().toString();
     client->setEndpoint(isolatedEndpoint);
+    client->replied("hello", QJsonObject{{"instance", "redaction"}, {"status", QJsonObject{{"State", "disconnected"}}}});
     const QJsonObject secretEvent{{"Code", "future://SENTINEL"}, {"Message", "Password = SENTINEL"}};
     const QJsonObject freeTextEvent{{"Message", "SENTINEL"}};
-    client->replied("events", QJsonObject{{"events", QJsonArray{
+    client->replied("events", QJsonObject{{"instance", "redaction"}, {"status", QJsonObject{{"State", "disconnected"}}}, {"events", QJsonArray{
         QJsonObject{{"event", secretEvent}}, QJsonObject{{"event", freeTextEvent}}}}});
     client->setEndpoint(isolatedEndpoint);
-    client->replied("status", QJsonObject{{"status", QJsonObject{{"State", "failed"}, {"LastError", "{\"answers\":[\"SENTINEL\"]}"}}}});
+    client->replied("status", QJsonObject{{"instance", "redaction"}, {"status", QJsonObject{{"State", "failed"}, {"LastError", "{\"answers\":[\"SENTINEL\"]}"}}}});
     client->setEndpoint(isolatedEndpoint);
     bool safeDialog = false;
     QTimer::singleShot(0, [&] {
@@ -255,7 +276,7 @@ int main(int argc, char **argv) {
         safeDialog = !box->text().contains("SENTINEL");
         box->accept();
     });
-    client->replied("status", QJsonObject{{"error", "SENTINEL"}});
+    client->replied("start", QJsonObject{{"instance", "redaction"}, {"status", QJsonObject{{"State", "failed"}}}, {"error", "SENTINEL"}});
     require(safeDialog, "unknown IPC code must not leak into the dialog");
     const auto *log = window.findChild<QTextEdit *>();
     require(log && !log->toPlainText().contains("SENTINEL"), "IPC secrets must not reach the log or its export text");

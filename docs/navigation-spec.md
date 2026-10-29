@@ -8,9 +8,10 @@ Log with 3, and About with 4. Command/Control+N opens Add key only on Profiles.
 Selecting a profile highlights it. Shift+Up and Shift+Down move the selected
 profile one row, preserve its selection, and do nothing at either boundary.
 Delete requests confirmation naming that profile. The row pencil edits that
-profile. Add key and Import .conf open their respective dialogs. VPN connection
-is unavailable in this navigation phase: Connect stays disabled, status reads
-Disconnected, and traffic remains zero.
+profile. Add key and Import .conf open their respective dialogs. Connection
+controls follow [connection management](connection-management.md): selection alone
+does not connect; Connect, double-click, Return/Enter and tray activation share
+the same start/stop/switch path. Status and traffic come from the active Core.
 
 Add key keeps its dialog open after a validation or write error; Show/Hide
 controls key visibility and Paste reads the clipboard. The editor has Basic,
@@ -21,5 +22,7 @@ invalid text keeps Raw config active and displays Error with OK. Enter saves;
 Escape cancels and asks whether to discard edits if the draft changed.
 
 Theme and language remain available in Settings. Pending preferences remain
-disabled. Save log and Clear are disabled while the log is empty. Tray profile
-entries are informational; Open Bimeron and Quit remain available.
+disabled except the restored auto-connect and explicit stop-Core-on-exit options.
+Save log and Clear are disabled while the log is empty. Tray profile entries
+follow the same availability gates as the connection button; Open Bimeron and
+Quit remain available. Closing to tray does not disconnect.

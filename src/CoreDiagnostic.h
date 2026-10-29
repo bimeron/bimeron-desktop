@@ -29,7 +29,8 @@ inline QString safeCoreCode(const QString &code) {
         "unsupported_protocol", "absolute_config_path_required", "invalid_configuration",
         "session_already_running", "session_start_failed", "session_stop_failed",
         "daemon_shutting_down", "access_key_unavailable", "invalid_auth_challenge",
-        "invalid_auth_response", "unknown_command", "ikev2_requires_foreground_user_session", "state"
+        "invalid_auth_response", "unknown_command", "ikev2_requires_foreground_user_session", "state",
+        "invalid_cursor", "cleanup_failed_run_recover"
     };
     return known.contains(code) ? code : QStringLiteral("redacted_error");
 }
