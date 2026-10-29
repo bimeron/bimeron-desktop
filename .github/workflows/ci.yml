@@ -37,6 +37,8 @@ jobs:
         run: cmake -S . -B build/ci -G Ninja -DCMAKE_BUILD_TYPE=Release
       - name: Build
         run: cmake --build build/ci --parallel 2
+      - name: Test
+        run: ctest --test-dir build/ci --output-on-failure --timeout 60
 
   windows:
     name: Windows ${{ matrix.arch }}
@@ -90,3 +92,6 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Build
         run: cmake --build build/ci --config Release --parallel 2
+      - name: Test
+        if: matrix.arch == 'x64'
+        run: ctest --test-dir build/ci -C Release --output-on-failure --timeout 60

@@ -13,9 +13,131 @@
 #include <QUrl>
 #include <QUrlQuery>
 #include <QUuid>
+#ifdef Q_OS_WIN
+#include <qt_windows.h>
+#include <aclapi.h>
+#include <io.h>
+#endif
 
-ProfileStore::ProfileStore() {
-    root_ = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/profiles";
+namespace {
+bool protectFile(QFileDevice &file) {
+#ifdef Q_OS_WIN
+    HANDLE token = nullptr;
+    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) return false;
+    DWORD size = 0;
+    GetTokenInformation(token, TokenUser, nullptr, 0, &size);
+    QByteArray user(int(size), '\0');
+    const bool haveUser = GetTokenInformation(token, TokenUser, user.data(), size, &size);
+    CloseHandle(token);
+    BYTE system[SECURITY_MAX_SID_SIZE];
+    DWORD systemSize = sizeof(system);
+    if (!haveUser || !CreateWellKnownSid(WinLocalSystemSid, nullptr, system, &systemSize)) return false;
+    EXPLICIT_ACCESSW entries[2]{};
+    for (auto &entry : entries) {
+        entry.grfAccessMode = SET_ACCESS;
+        entry.Trustee.TrusteeForm = TRUSTEE_IS_SID;
+    }
+    entries[0].grfAccessPermissions = FILE_ALL_ACCESS;
+    entries[0].Trustee.ptstrName = reinterpret_cast<LPWSTR>(reinterpret_cast<TOKEN_USER *>(user.data())->User.Sid);
+    entries[1].grfAccessPermissions = FILE_GENERIC_READ;
+    entries[1].Trustee.ptstrName = reinterpret_cast<LPWSTR>(system);
+    PACL acl = nullptr;
+    if (SetEntriesInAclW(2, entries, nullptr, &acl) != ERROR_SUCCESS) return false;
+    const auto handle = reinterpret_cast<HANDLE>(_get_osfhandle(int(file.handle())));
+    // QFile's data handle does not request WRITE_DAC. Reopen the same file object
+    // (not a path susceptible to replacement) for the security operation.
+    HANDLE security = ReOpenFile(handle, WRITE_DAC | READ_CONTROL, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, 0);
+    const DWORD status = security == INVALID_HANDLE_VALUE ? GetLastError() : SetSecurityInfo(security, SE_FILE_OBJECT,
+        DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+        nullptr, nullptr, acl, nullptr);
+    const bool ok = status == ERROR_SUCCESS;
+    if (security != INVALID_HANDLE_VALUE) CloseHandle(security);
+    LocalFree(acl);
+    return ok;
+#else
+    return file.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner);
+#endif
+}
+
+bool absoluteReference(const QString &value, bool ssh = false) {
+    return value.isEmpty() || (!value.startsWith('"') && (QFileInfo(value).isAbsolute()
+        || (ssh && (value == "~" || value.startsWith("~/") || value.startsWith("~\\")))));
+}
+
+bool safeUriReferences(const QString &value) {
+    if (value.startsWith('"')) return false; // Core quoting is not URI percent encoding.
+    const QUrl uri(value);
+    if (uri.scheme() != "ssh" && uri.scheme() != "masque") return true;
+    if (!uri.isValid()) return false;
+    for (const auto &option : QUrlQuery(uri).queryItems(QUrl::FullyDecoded)) {
+        if ((option.first == "identity" || option.first == "known_hosts")
+            && !absoluteReference(option.second, true)) return false;
+        if (option.first == "ca" && !absoluteReference(option.second)) return false;
+    }
+    return true;
+}
+}
+
+bool ProfileStore::writeConfig(const QString &path, const QByteArray &data, QString *error) {
+    QSaveFile output(path);
+    output.setDirectWriteFallback(false);
+    if (!output.open(QIODevice::WriteOnly)) {
+        if (error) *error = QObject::tr("Cannot open the profile for atomic replacement.");
+        return false;
+    }
+    if (!protectFile(output)) {
+        if (error) *error = QObject::tr("Cannot protect the profile file; no data was written.");
+        return false;
+    }
+    if (output.write(data) != data.size() || !output.commit()) {
+        if (error) *error = QObject::tr("Cannot atomically replace the profile; the previous file was retained.");
+        return false;
+    }
+    return true;
+}
+
+bool ProfileStore::importReferencesSafe(const QByteArray &data, QString *error) {
+    QString section;
+    QString text = QString::fromUtf8(data);
+    if (text.startsWith(QChar(0xfeff))) text.remove(0, 1);
+    for (const QString &line : text.split('\n')) {
+        const QString trimmed = line.trimmed();
+        if (trimmed.startsWith('#') || trimmed.startsWith(';')) continue;
+        if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
+            section = trimmed.mid(1, trimmed.size() - 2).trimmed();
+            continue;
+        }
+        if (section != "AccessKey") continue;
+        const auto equal = trimmed.indexOf('=');
+        if (equal < 0) continue;
+        const QString key = trimmed.left(equal).trimmed(), value = trimmed.mid(equal + 1).trimmed();
+        bool safe = true;
+        if (key == "IdentityFile" || key == "KnownHostsFile") safe = absoluteReference(value, true);
+        else if (key == "CAFile") safe = absoluteReference(value);
+        else if (key == "File") {
+            safe = absoluteReference(value);
+            if (safe) {
+                QFile file(value);
+                safe = file.open(QIODevice::ReadOnly);
+                if (safe) {
+                    const QByteArray contents = file.read(64 * 1024 + 1);
+                    QString uri = QString::fromUtf8(contents);
+                    if (uri.startsWith(QChar(0xfeff))) uri.remove(0, 1);
+                    safe = contents.size() <= 64 * 1024 && safeUriReferences(uri.trimmed());
+                }
+            }
+        } else if (QStringList{"SS", "SSConf", "SOCKS5", "VLESS", "Hysteria2", "VMess", "Trojan", "AnyTLS", "TUIC", "SSH", "HTTP", "Naive", "MASQUE", "Key"}.contains(key))
+            safe = safeUriReferences(value);
+        if (!safe) {
+            if (error) *error = QObject::tr("Import would relocate a relative or ambiguous file reference. Use explicit absolute paths in the source profile first; no dependency files were copied.");
+            return false;
+        }
+    }
+    return true;
+}
+
+ProfileStore::ProfileStore(const QString &root) {
+    root_ = root.isEmpty() ? QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/profiles" : root;
     QDir().mkpath(root_);
     index_ = QFileInfo(root_).dir().filePath("profiles.json");
 }
@@ -42,13 +164,7 @@ bool ProfileStore::save(const QList<Profile> &profiles, QString *error) const {
     QJsonArray array;
     for (const auto &profile : profiles)
         array.append(QJsonObject{{"name", profile.name}, {"path", profile.path}});
-    QSaveFile file(index_);
-    if (!file.open(QIODevice::WriteOnly) || file.write(QJsonDocument(array).toJson()) < 0 || !file.commit()) {
-        if (error) *error = file.errorString();
-        return false;
-    }
-    QFile::setPermissions(index_, QFileDevice::ReadOwner | QFileDevice::WriteOwner);
-    return true;
+    return writeConfig(index_, QJsonDocument(array).toJson(), error);
 }
 
 QString ProfileStore::importConfig(const QString &source, QString *error) const {
@@ -62,13 +178,10 @@ QString ProfileStore::importConfig(const QString &source, QString *error) const 
         if (error) *error = QObject::tr("The file does not appear to be a supported Bimeron configuration");
         return {};
     }
+    if (QFileInfo(source).absolutePath() != QDir(root_).absolutePath()
+        && !importReferencesSafe(data, error)) return {};
     const QString destination = QDir(root_).filePath(QUuid::createUuid().toString(QUuid::WithoutBraces) + ".conf");
-    QSaveFile output(destination);
-    if (!output.open(QIODevice::WriteOnly) || output.write(data) != data.size() || !output.commit()) {
-        if (error) *error = output.errorString();
-        return {};
-    }
-    QFile::setPermissions(destination, QFileDevice::ReadOwner | QFileDevice::WriteOwner);
+    if (!writeConfig(destination, data, error)) return {};
     return QFileInfo(destination).absoluteFilePath();
 }
 
@@ -84,12 +197,7 @@ QString ProfileStore::createConfig(const QString &name, const QString &key, QStr
     const QByteArray data = QString("[Profile]\nVersion = 1\nName = %1\n\n[AccessKey]\n%2 = %3\n\n[Interface]\nMode = vpn\nName = Bimeron\nMTU = 1420\nDNS = 1.1.1.1\nIPv6 = disable\nKillSwitch = false\n\n[Routing]\nDefault = proxy\n")
                                 .arg(safeName, field, trimmed).toUtf8();
     const QString destination = QDir(root_).filePath(QUuid::createUuid().toString(QUuid::WithoutBraces) + ".conf");
-    QSaveFile output(destination);
-    if (!output.open(QIODevice::WriteOnly) || output.write(data) != data.size() || !output.commit()) {
-        if (error) *error = output.errorString();
-        return {};
-    }
-    QFile::setPermissions(destination, QFileDevice::ReadOwner | QFileDevice::WriteOwner);
+    if (!writeConfig(destination, data, error)) return {};
     return QFileInfo(destination).absoluteFilePath();
 }
 

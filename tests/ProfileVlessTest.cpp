@@ -15,12 +15,19 @@
 #include <QTabWidget>
 #include <QSpinBox>
 #include <QTemporaryDir>
+#include <QDir>
+#include <QJsonDocument>
+#ifdef Q_OS_WIN
+#include <qt_windows.h>
+#include <aclapi.h>
+#endif
 #include <QTimer>
 
 #include <cstdlib>
 
 namespace {
-void require(bool condition) { if (!condition) std::abort(); }
+void requireAt(bool condition, int line) { if (!condition) qFatal("Profile regression failed at line %d", line); }
+#define require(condition) requireAt(bool(condition), __LINE__)
 
 void check(const QString &profile, const QStringList &fields, const QString &core, const QString &path) {
     ProfileEditorDialog editor(profile, QJsonObject{{"vpn", true}, {"proxy", true}, {"ip_split", true}, {"domain_split", true}});
@@ -35,6 +42,11 @@ void check(const QString &profile, const QStringList &fields, const QString &cor
     process.start(core, {"validate", path});
     require(process.waitForStarted(5000) && process.waitForFinished(20000));
     require(process.exitStatus() == QProcess::NormalExit && process.exitCode() == 0);
+    QFile reopened(path);
+    require(reopened.open(QIODevice::ReadOnly));
+    ProfileEditorDialog reopenedEditor(QString::fromUtf8(reopened.readAll()),
+        QJsonObject{{"vpn", true}, {"proxy", true}, {"ip_split", true}, {"domain_split", true}});
+    require(reopenedEditor.configText() == output);
 }
 
 void rejectWithCore(const QString &uri, const QString &core, const QString &path, const QString &expected = {}) {
@@ -53,15 +65,224 @@ void rejectWithCore(const QString &uri, const QString &core, const QString &path
 }
 }
 
+static void preservationRegressions(const QString &directory) {
+    const QJsonObject caps{{"vpn", true}, {"proxy", true}, {"ip_split", true}, {"domain_split", true}};
+    const QString base = "[Profile]\nVersion = 1\nName = Preserve\n[AccessKey]\nType = shadowsocks\nServer = example.invalid\nPort = 443\nMethod = aes-256-gcm\nPassword = SENTINEL\n";
+    QStringList inputs{
+        QString(base).replace("aes-256-gcm", "unknown-cipher"),
+        QString(base).replace("Type = shadowsocks", "Type = trojan"),
+        QString(base).replace("Type = shadowsocks\n", ""),
+        base + "Plugin = v2ray-plugin\nPluginOpts = tls;mux=0;path=/ws\n",
+        base + "[ShadowTLS]\nServerName = example.invalid\nPassword = OUTER_SENTINEL\n",
+        base + "[Future]\nOpaque = FUTURE_SENTINEL\n",
+        base + "Password = DUPLICATE_SENTINEL\n",
+        base + "Key = future://SENTINEL\n",
+        QString(base).replace("Password = SENTINEL", "Password = \" padded=secret;# \""),
+        base + "[Interface]\nMTU = 2000\n",
+        base + "[Routing]\nDefault = future\n",
+        base + "[Rule]\nDomain = example.invalid\nAction = future\n",
+        "[Profile]\nVersion = 1\nName = Native\n[IKEv2]\nWindowsProfile = Native\nServerName = example.invalid\n"
+    };
+    for (const QString &method : {"2022-blake3-aes-128-gcm", "2022-blake3-aes-256-gcm", "2022-blake3-chacha20-poly1305"})
+        inputs.append(QString(base).replace("aes-256-gcm", method).replace("SENTINEL", "aGVsbG8=:d29ybGQ="));
+    for (const QString &source : {"VMess", "Trojan", "AnyTLS", "TUIC", "SSH", "HTTP", "Naive", "MASQUE"})
+        inputs.append("[Profile]\nName = Future\n[AccessKey]\n" + source + " = future://SENTINEL\n");
+    for (const auto &input : inputs) {
+        ProfileEditorDialog editor(input, caps);
+        auto *tabs = editor.findChild<QTabWidget *>();
+        auto *raw = editor.findChild<QPlainTextEdit *>("rawConfig");
+        require(!tabs->isTabEnabled(0));
+        require(tabs->currentIndex() == tabs->count() - 1);
+        require(editor.configText() == input);
+        require(raw->isHidden());
+        editor.findChild<QLineEdit *>("profileName")->setText("programmatic visual overwrite");
+        require(editor.configText() == input);
+        raw->appendPlainText("# intentional Raw edit");
+        require(editor.configText().contains(input.trimmed()));
+    }
+    const QString uri = "[Profile]\nName = URI\n[AccessKey]\nKey = vless://123e4567-e89b-12d3-a456-426614174000@example.invalid:443?type=xhttp&security=tls&extra=%7B%22headers%22:%7B%22Authorization%22:%22SENTINEL%22%7D%7D\n";
+    for (QString input : {base, uri}) {
+        input.replace("\n", "\r\n");
+        input.prepend(QChar(0xfeff));
+        ProfileEditorDialog editor(input, caps);
+        auto *tabs = editor.findChild<QTabWidget *>();
+        require(tabs->isTabEnabled(0));
+        tabs->setCurrentIndex(tabs->count() - 1);
+        tabs->setCurrentIndex(0);
+        require(editor.configText() == input);
+        editor.findChild<QLineEdit *>("profileName")->setText("Changed");
+        require(editor.configText().contains("Name = Changed"));
+        require(editor.configText().contains(input.contains("Key =") ? "Key = vless://" : "Password = SENTINEL"));
+    }
+    ProfileEditorDialog recovery(inputs.first(), caps, nullptr, [](const QString &, QString *) { return true; });
+    recovery.findChild<QPlainTextEdit *>("rawConfig")->setPlainText(base);
+    recovery.findChild<QPushButton *>("useVisual")->click();
+    require(recovery.findChild<QTabWidget *>()->isTabEnabled(0));
+    require(recovery.configText() == base);
+    ProfileEditorDialog rejected(inputs.first(), caps, nullptr, [](const QString &, QString *error) {
+        *error = "future://SENTINEL";
+        return false;
+    });
+    auto *rejectedRaw = rejected.findChild<QPlainTextEdit *>("rawConfig");
+    rejectedRaw->appendPlainText("# retain invalid draft");
+    const QString rejectedDraft = rejected.configText();
+    bool safeError = false;
+    QTimer::singleShot(0, [&] {
+        auto *box = qobject_cast<QMessageBox *>(QApplication::activeModalWidget());
+        require(box);
+        safeError = !box->text().contains("SENTINEL");
+        box->accept();
+    });
+    rejected.findChild<QPushButton *>("useVisual")->click();
+    require(safeError && rejected.configText() == rejectedDraft);
+    require(!rejected.findChild<QTabWidget *>()->isTabEnabled(0));
+    const QString unavailable = base + "[Interface]\nMode = vpn\nIPv6 = disable\nKillSwitch = true\n";
+    ProfileEditorDialog unavailableEditor(unavailable, QJsonObject{{"proxy", true}});
+    require(unavailableEditor.configText() == unavailable);
+    require(!unavailableEditor.findChild<QTabWidget *>()->isTabEnabled(0));
+
+    const QString path = directory + "/atomic.conf";
+    QString error;
+    require(ProfileStore::writeConfig(path, base.toUtf8(), &error));
+    QFile original(path);
+    require(original.open(QIODevice::ReadOnly));
+    require(original.readAll() == base.toUtf8());
+    original.close();
+#ifdef Q_OS_WIN
+    PACL acl = nullptr;
+    PSECURITY_DESCRIPTOR descriptor = nullptr;
+    const std::wstring native = QDir::toNativeSeparators(path).toStdWString();
+    require(GetNamedSecurityInfoW(const_cast<wchar_t *>(native.c_str()), SE_FILE_OBJECT,
+        OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
+        nullptr, nullptr, &acl, nullptr, &descriptor) == ERROR_SUCCESS);
+    SECURITY_DESCRIPTOR_CONTROL control{}; DWORD revision = 0;
+    require(GetSecurityDescriptorControl(descriptor, &control, &revision));
+    require(control & SE_DACL_PROTECTED);
+    require(acl && acl->AceCount == 2);
+    require(ImpersonateAnonymousToken(GetCurrentThread()));
+    HANDLE anonymous = nullptr;
+    const bool opened = OpenThreadToken(GetCurrentThread(), TOKEN_QUERY, TRUE, &anonymous);
+    RevertToSelf();
+    require(opened);
+    GENERIC_MAPPING mapping{FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_GENERIC_EXECUTE, FILE_ALL_ACCESS};
+    PRIVILEGE_SET privileges{}; DWORD privilegeSize = sizeof(privileges), granted = 0;
+    BOOL allowed = FALSE;
+    require(AccessCheck(descriptor, anonymous, FILE_READ_DATA, &mapping, &privileges,
+        &privilegeSize, &granted, &allowed));
+    require(!allowed);
+    CloseHandle(anonymous);
+    LocalFree(descriptor);
+    HANDLE lock = CreateFileW(native.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, 0, nullptr);
+    require(lock != INVALID_HANDLE_VALUE);
+    require(!ProfileStore::writeConfig(path, "replacement", &error));
+    CloseHandle(lock);
+#else
+    require((QFile::permissions(path) & (QFileDevice::ReadGroup | QFileDevice::WriteGroup | QFileDevice::ReadOther | QFileDevice::WriteOther)) == 0);
+    require(!ProfileStore::writeConfig(directory + "/missing/atomic.conf", "replacement", &error));
+    const QString locked = directory + "/locked";
+    require(QDir().mkdir(locked));
+    require(ProfileStore::writeConfig(locked + "/profile.conf", base.toUtf8(), &error));
+    require(QFile::setPermissions(locked, QFileDevice::ReadOwner | QFileDevice::ExeOwner));
+    if (!QFileInfo(locked).isWritable())
+        require(!ProfileStore::writeConfig(locked + "/profile.conf", "replacement", &error));
+    require(QFile::setPermissions(locked, QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner));
+    QFile retained(locked + "/profile.conf");
+    require(retained.open(QIODevice::ReadOnly) && retained.readAll() == base.toUtf8());
+#endif
+    require(original.open(QIODevice::ReadOnly));
+    require(original.readAll() == base.toUtf8());
+    original.close();
+    ProfileStore store(directory + "/imported");
+    const QByteArray imported = QByteArray::fromHex("efbbbf") + QByteArray(base.toUtf8()).replace("\n", "\r\n");
+    require(ProfileStore::writeConfig(path, imported, &error));
+    const QString copy = store.importConfig(path, &error);
+    require(!copy.isEmpty());
+    QFile copied(copy); require(copied.open(QIODevice::ReadOnly)); require(copied.readAll() == imported);
+    for (const QString &field : {"File = key.txt", "IdentityFile = identity", "KnownHostsFile = hosts", "CAFile = ca.pem", "SSH = ssh://alice@example.invalid?identity=relative", "Key = ssh://alice@example.invalid?known_hosts=relative", "MASQUE = masque://example.invalid?ca=relative"}) {
+        require(!ProfileStore::importReferencesSafe(("[AccessKey]\n" + field + "\n").toUtf8(), &error));
+    }
+    const QString relativeSource = directory + "/relative.conf";
+    require(ProfileStore::writeConfig(relativeSource, "[Profile]\nName = Relative\n[AccessKey]\nFile = key.txt\n", &error));
+    const auto before = QDir(directory + "/imported").entryList(QDir::Files | QDir::Hidden);
+    require(store.importConfig(relativeSource, &error).isEmpty());
+    require(QDir(directory + "/imported").entryList(QDir::Files | QDir::Hidden) == before);
+    const QString absoluteFile = directory + "/key-uri.txt";
+    require(ProfileStore::writeConfig(absoluteFile, "ssh://alice@example.invalid?identity=relative", &error));
+    require(!ProfileStore::importReferencesSafe(("[AccessKey]\nFile = " + absoluteFile + "\n").toUtf8(), &error));
+    const QString embeddedBom = "ssh://alice@example.invalid?identity=" + QString(QChar(0xfeff)) + "/relative-to-profile";
+    require(ProfileStore::writeConfig(absoluteFile, embeddedBom.toUtf8(), &error));
+    require(!ProfileStore::importReferencesSafe(("[AccessKey]\nFile = " + absoluteFile + "\n").toUtf8(), &error));
+    require(ProfileStore::importReferencesSafe(base.toUtf8(), &error));
+    for (const QByteArray &secret : {QByteArray("SENTINEL"), QByteArray("aGVsbG8=:d29ybGQ="), QByteArray("eyJpZCI6IlNFTlRJTkVMIn0=")}) {
+        for (const QByteArray &prefix : {QByteArray("ss://"), QByteArray("ssconf://"), QByteArray("socks5://"),
+                QByteArray("vless://"), QByteArray("vmess://"), QByteArray("trojan://"), QByteArray("anytls://"),
+                QByteArray("tuic://"), QByteArray("ssh://"), QByteArray("http://"), QByteArray("https://"),
+                QByteArray("hysteria2://"), QByteArray("hy2://"), QByteArray("masque://"),
+                QByteArray("future://"), QByteArray("naive+https://"), QByteArray("naive+quic://"),
+                QByteArray("Password = "), QByteArray("{\"answers\":[\""), QByteArray("XHTTPExtra = {\"Authorization\":\"")}) {
+            require(!safeCoreDiagnostic(prefix + secret).contains(QString::fromUtf8(secret)));
+            require(!safeCoreDiagnostic(QByteArray(999, 'x') + prefix + secret).contains(QString::fromUtf8(secret)));
+        }
+    }
+    require(safeCoreCode("invalid_auth_response") == "invalid_auth_response");
+    require(safeCoreEvent("state", "connected") == "state: connected");
+    require(!safeCoreEvent("state", "SENTINEL").contains("SENTINEL"));
+    require(safeCoreCode("SENTINEL") == "redacted_error");
+    require(!safeLogMessage("future://SENTINEL").contains("SENTINEL"));
+    require(!safeLogMessage("Password = SENTINEL").contains("SENTINEL"));
+    const auto report = safeDiagnosticReport(R"({"schema":1,"platform":"windows","status":{"state":"connected","last_error":"SENTINEL"},"auth":{"answers":["SENTINEL"]},"events":[{"code":"SENTINEL","error":"SENTINEL"}],"unknown":"SENTINEL"})");
+    require(!report.isEmpty() && !report.contains("SENTINEL"));
+    require(safeDiagnosticReport("invalid SENTINEL").isEmpty());
+    require(safeDiagnosticReport("{\"schema\":2}").isEmpty());
+    require(safeDiagnosticReport(QByteArray(256 * 1024 + 1, ' ')).isEmpty());
+    const QString large = base + "[Future]\nOpaque = " + QString(64 * 1024, 'x');
+    ProfileEditorDialog largeEditor(large, caps);
+    require(largeEditor.configText() == large);
+
+    const QString contractCore = qEnvironmentVariable("BIMERON_PRESERVATION_CORE");
+    if (!contractCore.isEmpty()) {
+        const QString key16 = "AAAAAAAAAAAAAAAAAAAAAA==", key32 = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+        QStringList fixtures{
+            QString(base).replace("aes-256-gcm", "2022-blake3-aes-128-gcm").replace("SENTINEL", key16 + ":" + key16),
+            QString(base).replace("aes-256-gcm", "2022-blake3-aes-256-gcm").replace("SENTINEL", key32 + ":" + key32),
+            QString(base).replace("aes-256-gcm", "2022-blake3-chacha20-poly1305").replace("SENTINEL", key32),
+            base + "Plugin = v2ray-plugin\nPluginOpts = mode=websocket;tls;host=example.invalid;path=/ws;mux=0\n",
+            base + "Plugin = obfs-local\nPluginOpts = obfs=http;obfs-host=example.invalid;obfs-uri=/;http-method=GET\n",
+            base + "[ShadowTLS]\nServerName = example.invalid\nPassword = OUTER_SENTINEL\n"
+        };
+        const QByteArray vmess = R"({"v":"2","add":"example.invalid","port":"443","id":"123e4567-e89b-12d3-a456-426614174000","aid":"0","scy":"auto","net":"tcp","tls":"tls","sni":"example.invalid"})";
+        const QStringList sources{
+            "VMess = vmess://" + QString::fromLatin1(vmess.toBase64()),
+            "Trojan = trojan://SENTINEL@example.invalid:443",
+            "AnyTLS = anytls://SENTINEL@example.invalid:443",
+            "TUIC = tuic://123e4567-e89b-12d3-a456-426614174000:SENTINEL@example.invalid:443?udp_relay_mode=quic",
+            "SSH = ssh://alice@example.invalid:22",
+            "HTTP = http://alice:SENTINEL@example.invalid:8080",
+            "HTTP = https://alice:SENTINEL@example.invalid:443",
+            "Naive = naive+https://alice:SENTINEL@example.invalid:443",
+            "Naive = naive+quic://alice:SENTINEL@example.invalid:443",
+            "MASQUE = masque://alice:SENTINEL@example.invalid:443"
+        };
+        for (const auto &source : sources)
+            fixtures.append("[Profile]\nVersion = 1\nName = Preserve\n[AccessKey]\n" + source + "\n");
+        int index = 0;
+        for (const auto &fixture : fixtures)
+            check(fixture, {fixture}, contractCore, directory + "/contract-" + QString::number(index++) + ".conf");
+    }
+}
+
 int main(int argc, char **argv) {
     QApplication app(argc, argv);
+    if (app.arguments().size() == 3 && app.arguments().at(1) == "--permission-fixture")
+        return ProfileStore::writeConfig(app.arguments().at(2), "synthetic permission fixture") ? 0 : 1;
     QTemporaryDir temporary;
     require(temporary.isValid());
+    preservationRegressions(temporary.path());
     const QString core = qEnvironmentVariable("BIMERON_VLESS_CORE");
     const QString uuid = "123e4567-e89b-12d3-a456-426614174000";
     const QString link = "vless://" + uuid + "@[2001:db8::1]:443?encryption=none&type=grpc&security=tls&serviceName=proxy#Example";
     qputenv("XDG_DATA_HOME", temporary.path().toUtf8());
-    ProfileStore store;
+    ProfileStore store(temporary.filePath("profiles"));
     QString error;
     const QString saved = store.createConfig("Example", link, &error);
     require(!saved.isEmpty());
@@ -143,7 +364,7 @@ int main(int argc, char **argv) {
     require(wsEditor.findChild<QLineEdit *>("vlessPath")->text() == "/chat");
     require(wsEditor.findChild<QSpinBox *>("vlessEarlyData")->value() == 2048);
     ProfileEditorDialog invalidEditor("[Profile]\nName = Invalid\n[AccessKey]\nKey = unknown://example.com\n", QJsonObject{{"vpn", true}});
-    require(invalidEditor.findChild<QComboBox *>("keySource")->isEnabled());
+    require(!invalidEditor.findChild<QTabWidget *>()->isTabEnabled(0));
     const QString extendedLink = "vless://" + uuid + "@server.example:443?encryption=none&type=xhttp&security=tls"
         "&mode=stream-up&alpn=h3&extra=%7B%22headers%22%3A%7B%22User-Agent%22%3A%22Example%22%7D%7D";
     check("[Profile]\nVersion = 1\n[AccessKey]\nVLESS = " + extendedLink + "\n",
@@ -179,15 +400,12 @@ int main(int argc, char **argv) {
         "XHTTPExtra = {\"headers\":{\"User-Agent\":\"Example\"}}\n" + tail;
     ProfileEditorDialog editor(extended, QJsonObject{{"vpn", true}, {"proxy", true}, {"ip_split", true}, {"domain_split", true}});
     QTabWidget *tabs = editor.findChild<QTabWidget *>();
-    QPlainTextEdit *raw = editor.findChild<QPlainTextEdit *>();
+    QPlainTextEdit *raw = editor.findChild<QPlainTextEdit *>("rawConfig");
     require(tabs && raw);
     tabs->setCurrentIndex(tabs->count() - 1);
     require(raw->toPlainText() == extended && editor.configText() == extended);
-    QTimer::singleShot(0, [] {
-        if (auto *box = qobject_cast<QMessageBox *>(QApplication::activeModalWidget())) box->accept();
-    });
     editor.findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Save)->click();
-    require(editor.result() != QDialog::Accepted && editor.configText() == extended);
+    require(editor.result() == QDialog::Accepted && editor.configText() == extended);
     raw->appendPlainText("# retained");
     require(editor.configText().contains("XHTTPExtra =") && editor.configText().contains("# retained"));
     check(extended, {"XHTTPExtra ="}, core, temporary.filePath("extended.conf"));

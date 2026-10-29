@@ -30,6 +30,8 @@ private:
     void addRule(const Rule &rule);
     void moveRule(int delta);
     void syncRaw();
+    void assessRepresentation();
+    bool applyRaw();
 
     QTabWidget *tabs_ = nullptr;
     QLineEdit *name_ = nullptr;
@@ -71,9 +73,12 @@ private:
     QPlainTextEdit *raw_ = nullptr;
     bool rawDirty_ = false;
     bool hasUnknownSettings_ = false;
-    bool rawOnlyVless_ = false;
+    bool rawOnly_ = false;
     bool vlessMultiModeConfigured_ = false;
     bool keyRevealed_ = false;
     QString originalText_;
+    QString loadedText_;
+    QString visualBaseline_;
+    std::function<void()> refreshControls_;
     std::function<bool(const QString &, QString *)> validateRaw_;
 };

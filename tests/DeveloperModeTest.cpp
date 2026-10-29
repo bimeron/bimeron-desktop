@@ -8,6 +8,9 @@
 #include <QFileInfo>
 #include <QJsonDocument>
 #include <QLabel>
+#include <QTextEdit>
+#include <QMessageBox>
+#include <QJsonArray>
 #include <QLineEdit>
 #include <QLocalServer>
 #include <QLocale>
@@ -234,6 +237,29 @@ int main(int argc, char **argv) {
     const QString receipt = temporary.filePath("restart");
     qputenv("BIMERON_TEST_RESTART_RECEIPT", receipt.toUtf8());
     MainWindow window;
+    auto *client = window.findChild<CoreClient *>();
+    require(client, "window IPC client");
+    const QString isolatedEndpoint = "bimeron-redaction-" + QUuid::createUuid().toString();
+    client->setEndpoint(isolatedEndpoint);
+    const QJsonObject secretEvent{{"Code", "future://SENTINEL"}, {"Message", "Password = SENTINEL"}};
+    const QJsonObject freeTextEvent{{"Message", "SENTINEL"}};
+    client->replied("events", QJsonObject{{"events", QJsonArray{
+        QJsonObject{{"event", secretEvent}}, QJsonObject{{"event", freeTextEvent}}}}});
+    client->setEndpoint(isolatedEndpoint);
+    client->replied("status", QJsonObject{{"status", QJsonObject{{"State", "failed"}, {"LastError", "{\"answers\":[\"SENTINEL\"]}"}}}});
+    client->setEndpoint(isolatedEndpoint);
+    bool safeDialog = false;
+    QTimer::singleShot(0, [&] {
+        auto *box = qobject_cast<QMessageBox *>(QApplication::activeModalWidget());
+        require(box, "Core error dialog");
+        safeDialog = !box->text().contains("SENTINEL");
+        box->accept();
+    });
+    client->replied("status", QJsonObject{{"error", "SENTINEL"}});
+    require(safeDialog, "unknown IPC code must not leak into the dialog");
+    const auto *log = window.findChild<QTextEdit *>();
+    require(log && !log->toPlainText().contains("SENTINEL"), "IPC secrets must not reach the log or its export text");
+    client->setEndpoint(isolatedEndpoint);
 #ifdef Q_OS_WIN
     window.setProperty("developmentRestartWithoutElevation", true);
 #endif

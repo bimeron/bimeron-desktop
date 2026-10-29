@@ -2,6 +2,9 @@
 #include "HiDpiCheckBox.h"
 #include "HiDpiComboBox.h"
 #include "ProfileStore.h"
+#include "CoreDiagnostic.h"
+#include <memory>
+#include <vector>
 
 #include <QCheckBox>
 #include <QComboBox>
@@ -63,7 +66,7 @@ protected:
 QString valueFor(const QString &text, const QString &section, const QString &key) {
     QString current;
     for (const QString &line : text.split('\n')) {
-        const QString trimmed = line.trimmed();
+        const QString trimmed = QString(line).remove(QChar(0xfeff)).trimmed();
         if (trimmed.startsWith('[') && trimmed.endsWith(']')) current = trimmed.mid(1, trimmed.size() - 2);
         else if (current == section) {
             const auto match = QRegularExpression(QString("^%1\\s*=\\s*(.*)$").arg(QRegularExpression::escape(key))).match(trimmed);
@@ -155,6 +158,7 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
     auto *general = new QWidget;
     auto *generalForm = new QFormLayout(general);
     name_ = new QLineEdit;
+    name_->setObjectName("profileName");
     keySource_ = new HiDpiComboBox(this);
     keySource_->setObjectName("keySource");
     keySource_->addItem(tr("ss:// key"), "SS");
@@ -187,10 +191,12 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
     port_->setRange(0, 65535);
     port_->setSpecialValueText(QStringLiteral("—"));
     method_ = new HiDpiComboBox;
+    method_->setObjectName("method");
     method_->addItems({"chacha20-ietf-poly1305", "aes-128-gcm", "aes-192-gcm", "aes-256-gcm"});
     password_ = new QLineEdit;
     password_->setEchoMode(QLineEdit::Password);
     username_ = new QLineEdit;
+    username_->setEchoMode(QLineEdit::Password);
     prefix_ = new QLineEdit;
     mode_ = new HiDpiComboBox;
     if (capabilities.value("vpn").toBool()) mode_->addItem(tr("System VPN"), "vpn");
@@ -220,6 +226,7 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
     vlessExtra->setFixedHeight(72);
     vlessId_ = new QLineEdit;
     vlessId_->setObjectName("vlessId");
+    vlessId_->setEchoMode(QLineEdit::Password);
     vlessNetwork_ = new HiDpiComboBox;
     vlessNetwork_->setObjectName("vlessNetwork");
     for (const char *network : {"tcp", "ws", "grpc", "xhttp"}) vlessNetwork_->addItem(network);
@@ -233,6 +240,8 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
     vlessFingerprint_->addItems({"", "chrome", "firefox", "safari", "ios", "android", "edge"});
     vlessPublicKey_ = new QLineEdit;
     vlessShortId_ = new QLineEdit;
+    vlessPublicKey_->setEchoMode(QLineEdit::Password);
+    vlessShortId_->setEchoMode(QLineEdit::Password);
     vlessSpiderX_ = new QLineEdit;
     vlessAlpn_ = new QLineEdit;
     vlessPath_ = new QLineEdit;
@@ -352,9 +361,27 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
     auto *rawPage = new QWidget;
     auto *rawLayout = new QVBoxLayout(rawPage);
     raw_ = new QPlainTextEdit;
+    raw_->setObjectName("rawConfig");
     raw_->setLineWrapMode(QPlainTextEdit::NoWrap);
     raw_->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
     new ConfigHighlighter(raw_->document());
+    auto *rawNotice = new QLabel(tr("Raw config contains credentials. Settings unavailable in the visual editor must be edited here."));
+    rawNotice->setWordWrap(true);
+    auto *showRaw = new QPushButton(tr("Show/Edit raw config"));
+    showRaw->setObjectName("showRaw");
+    raw_->hide();
+    rawLayout->addWidget(rawNotice);
+    rawLayout->addWidget(showRaw);
+    auto *useVisual = new QPushButton(tr("Validate and use visual editor"));
+    useVisual->setObjectName("useVisual");
+    rawLayout->addWidget(useVisual);
+    connect(useVisual, &QPushButton::clicked, this, [this] {
+        if (applyRaw()) tabs_->setCurrentIndex(0);
+    });
+    connect(showRaw, &QPushButton::clicked, this, [this, showRaw] {
+        raw_->setVisible(!raw_->isVisible());
+        showRaw->setText(raw_->isVisible() ? tr("Hide raw config") : tr("Show/Edit raw config"));
+    });
     rawLayout->addWidget(raw_);
     tabs_->addTab(rawPage, tr("Raw config"));
     for (int index = 0; index < tabs_->count(); ++index) {
@@ -374,15 +401,10 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
     buttons->button(QDialogButtonBox::Save)->setDefault(true);
     buttons->button(QDialogButtonBox::Cancel)->setText(tr("Cancel"));
     connect(buttons, &QDialogButtonBox::accepted, this, [this] {
-        if (rawOnlyVless_ && !rawDirty_) {
-            QMessageBox::information(this, tr("Advanced settings"),
-                tr("This VLESS profile has settings unavailable in the visual editor. Edit Raw config to save it without losing them."));
+        if (rawOnly_ && tabs_->currentIndex() != tabs_->count() - 1) {
             tabs_->setCurrentIndex(tabs_->count() - 1);
             return;
         }
-        if (hasUnknownSettings_ && !rawDirty_ && QMessageBox::warning(this, tr("Advanced settings"),
-            tr("The profile contains settings unavailable in the visual editor. Saving the visual form will remove them. Continue?"),
-            QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes) return;
         accept();
     });
     connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
@@ -451,7 +473,7 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
             vlessAuthority_->setText(field("authority"));
             vlessMultiMode_->setChecked(field("mode") == "multi");
             choice(vlessXhttpMode_, field("mode"));
-            vlessExtra->setPlainText(field("extra"));
+            vlessExtra->setPlainText(field("extra").isEmpty() ? QString() : tr("[hidden]"));
         }
         tabs_->widget(1)->setEnabled(explicitVless);
         const QString network = vlessNetwork_->currentText();
@@ -539,11 +561,11 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
         keyRevealed_ = !keyRevealed_;
         updateKeyControls();
     });
-    updateKeyControls();
-    updateSourceLock();
-    const auto updateModeControls = [this, killSwitchSupported] {
+    refreshControls_ = [updateKeyControls, updateSourceLock] { updateKeyControls(); updateSourceLock(); };
+    refreshControls_();
+    const auto updateModeControls = [this, killSwitchSupported](bool interactive) {
         bool vpnMode = mode_->currentData().toString() == "vpn";
-        if (!vpnMode && (ipv6_->currentData().toString() == "disable" || killSwitch_->isChecked())) {
+        if (interactive && !vpnMode && (ipv6_->currentData().toString() == "disable" || killSwitch_->isChecked())) {
             QStringList changes;
             if (ipv6_->currentData().toString() == "disable") changes << tr("enable IPv6");
             if (killSwitch_->isChecked()) changes << tr("disable the kill switch");
@@ -562,37 +584,42 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
         ipv6_->setEnabled(vpnMode);
         killSwitch_->setEnabled(vpnMode && killSwitchSupported);
     };
-    connect(mode_, &QComboBox::currentIndexChanged, this, updateModeControls);
-    updateModeControls();
+    connect(mode_, &QComboBox::currentIndexChanged, this, [updateModeControls] { updateModeControls(true); });
+    refreshControls_ = [updateKeyControls, updateSourceLock, updateModeControls] {
+        updateKeyControls();
+        updateSourceLock();
+        updateModeControls(false);
+    };
+    updateModeControls(false);
     connect(raw_, &QPlainTextEdit::textChanged, this, [this] { rawDirty_ = true; });
+    assessRepresentation();
     connect(tabs_, &QTabWidget::currentChanged, this, [this](int index) {
         const int rawIndex = tabs_->count() - 1;
         if (index == rawIndex) {
             if (!rawDirty_) syncRaw();
         } else if (rawDirty_) {
-            const QString text = raw_->toPlainText();
-            QString error;
-            const bool structureValid = text.contains(QRegularExpression(QStringLiteral("(?m)^\\s*\\[Profile\\]\\s*$")))
-                && text.contains(QRegularExpression(QStringLiteral("(?m)^\\s*\\[AccessKey\\]\\s*$")))
-                && !valueFor(text, "Profile", "Name").isEmpty();
-            if (!structureValid || (validateRaw_ && !validateRaw_(text, &error))) {
+            if (!applyRaw()) {
                 const QSignalBlocker blocker(tabs_);
                 tabs_->setCurrentIndex(rawIndex);
-                QMessageBox::warning(this, tr("Error"), error.isEmpty() ? tr("Invalid configuration") : error, QMessageBox::Ok);
-                return;
             }
-            loadText(text);
-            rawDirty_ = false;
         }
     });
-    originalText_ = configText();
 }
 
 void ProfileEditorDialog::loadText(const QString &text) {
+    // Loading must not invoke user-edit handlers or mutate another control.
+    std::vector<std::unique_ptr<QSignalBlocker>> blockers;
+    for (auto *widget : findChildren<QWidget *>()) {
+        if (qobject_cast<QLineEdit *>(widget) || qobject_cast<QComboBox *>(widget)
+            || qobject_cast<QSpinBox *>(widget) || qobject_cast<QCheckBox *>(widget)
+            || widget == raw_)
+            blockers.push_back(std::make_unique<QSignalBlocker>(widget));
+    }
+    loadedText_ = text;
     rules_->setRowCount(0);
     ignoreLocalNetwork_->setChecked(false);
     hasUnknownSettings_ = false;
-    rawOnlyVless_ = false;
+    rawOnly_ = false;
     name_->setText(valueFor(text, "Profile", "Name"));
     QString source = "SS", value = valueFor(text, "AccessKey", "SS");
     if (value.isEmpty()) { source = "SSConf"; value = valueFor(text, "AccessKey", "SSConf"); }
@@ -603,12 +630,16 @@ void ProfileEditorDialog::loadText(const QString &text) {
     if (value.isEmpty()) { source = "File"; value = valueFor(text, "AccessKey", "File"); }
     if (value.isEmpty() && !valueFor(text, "AccessKey", "Server").isEmpty()) {
         const QString type = valueFor(text, "AccessKey", "Type");
-        source = type == "socks5" ? "ExplicitSOCKS5" : type == "vless" ? "ExplicitVLESS" : "Explicit";
+        source = type == "socks5" ? "ExplicitSOCKS5" : type == "vless" ? "ExplicitVLESS"
+            : (type == "shadowsocks" || type == "ss") ? "Explicit" : QString();
+        if (source.isEmpty()) rawOnly_ = true;
     }
     keySource_->setCurrentIndex(keySource_->findData(source)); key_->setText(value);
     server_->setText(valueFor(text, "AccessKey", "Server"));
     port_->setValue(valueFor(text, "AccessKey", "Port").toInt());
-    method_->setCurrentIndex(qMax(0, method_->findText(valueFor(text, "AccessKey", "Method"))));
+    const int methodIndex = method_->findText(valueFor(text, "AccessKey", "Method"));
+    method_->setCurrentIndex(methodIndex);
+    if (source == "Explicit" && methodIndex < 0) rawOnly_ = true;
     password_->setText(valueFor(text, "AccessKey", "Password"));
     username_->setText(valueFor(text, "AccessKey", "Username"));
     prefix_->setText(valueFor(text, "AccessKey", "Prefix"));
@@ -619,7 +650,7 @@ void ProfileEditorDialog::loadText(const QString &text) {
         const int index = combo->findText(value);
         if (index < 0) {
             hasUnknownSettings_ = true;
-            if (source == "ExplicitVLESS") rawOnlyVless_ = true;
+            if (source == "ExplicitVLESS") rawOnly_ = true;
             return;
         }
         combo->setCurrentIndex(index);
@@ -644,7 +675,7 @@ void ProfileEditorDialog::loadText(const QString &text) {
     vlessMultiModeConfigured_ = !multiMode.isEmpty();
     vlessMultiMode_->setChecked(multiMode == "true");
     if (source == "ExplicitVLESS" && valueFor(text, "AccessKey", "Encryption") != "none")
-        rawOnlyVless_ = true;
+        rawOnly_ = true;
     const QString configuredMode = valueFor(text, "Interface", "Mode");
     const int modeIndex = mode_->findData(configuredMode);
     if (!configuredMode.isEmpty() && modeIndex < 0) hasUnknownSettings_ = true;
@@ -685,7 +716,7 @@ void ProfileEditorDialog::loadText(const QString &text) {
         {"Routing", {"Default"}}, {"Rule", {"CIDR", "Domain", "Action"}}};
     QString currentSection;
     for (const QString &sourceLine : text.split('\n')) {
-        const QString line = sourceLine.trimmed();
+        const QString line = QString(sourceLine).remove(QChar(0xfeff)).trimmed();
         if (line.isEmpty() || line.startsWith('#') || line.startsWith(';')) continue;
         if (line.startsWith('[') && line.endsWith(']')) {
             currentSection = line.mid(1, line.size() - 2).trimmed();
@@ -694,7 +725,7 @@ void ProfileEditorDialog::loadText(const QString &text) {
             const QString key = line.left(line.indexOf('=')).trimmed();
             if (!known.value(currentSection).contains(key)) {
                 hasUnknownSettings_ = true;
-                if (source == "ExplicitVLESS" && currentSection == "AccessKey") rawOnlyVless_ = true;
+                if (source == "ExplicitVLESS" && currentSection == "AccessKey") rawOnly_ = true;
             }
         }
     }
@@ -817,12 +848,116 @@ QString ProfileEditorDialog::buildText() const {
     return text;
 }
 
-void ProfileEditorDialog::syncRaw() {
-    if (rawOnlyVless_) return;
-    raw_->blockSignals(true); raw_->setPlainText(buildText()); raw_->blockSignals(false);
+void ProfileEditorDialog::assessRepresentation() {
+    const QSignalBlocker tabBlocker(tabs_);
+    if (refreshControls_) refreshControls_();
+    visualBaseline_ = buildText();
+    // This is a conservative serializer guard, not a second Core validator.
+    // Compare configured tokens with the actual serializer, including ordered rules.
+    const auto tokens = [](const QString &text, bool *valid) {
+        QMap<QString, QString> result;
+        QSet<QString> sections;
+        QString section;
+        int rule = 0;
+        for (QString line : text.split('\n')) {
+            line = line.trimmed();
+            if (line.startsWith(QChar(0xfeff))) line.remove(0, 1);
+            if (line.isEmpty() || line.startsWith(';')) continue;
+            if (line.startsWith('#')) {
+                line = line.mid(1).trimmed();
+                if (line != "[Rule]" && !section.startsWith("DisabledRule")) continue;
+                if (line == "[Rule]") {
+                    section = "DisabledRule" + QString::number(++rule);
+                    result.insert(section + "/", {});
+                    continue;
+                }
+            }
+            if (line.startsWith('[') && line.endsWith(']')) {
+                section = line.mid(1, line.size() - 2);
+                if (section == "Rule") section += QString::number(++rule);
+                else if (sections.contains(section)) *valid = false;
+                sections.insert(section);
+                result.insert(section + "/", {});
+                continue;
+            }
+            const auto equal = line.indexOf('=');
+            if (section.isEmpty() || equal < 1) { *valid = false; continue; }
+            const QString key = section + "/" + line.left(equal).trimmed();
+            const QString value = line.mid(equal + 1).trimmed();
+            if (result.contains(key) || value.startsWith('"')) *valid = false;
+            result.insert(key, value);
+        }
+        return result;
+    };
+    bool valid = true;
+    const QString source = keySource_->currentData().toString();
+    if (source == "Key" && !QStringList{"ss", "ssconf", "socks5", "vless", "hysteria2", "hy2"}
+            .contains(QUrl(key_->text()).scheme())) valid = false;
+    const auto original = tokens(loadedText_, &valid);
+    const auto generated = tokens(visualBaseline_, &valid);
+    for (auto it = original.begin(); it != original.end(); ++it)
+        if (!generated.contains(it.key()) || generated.value(it.key()) != it.value()) valid = false;
+    // Omitted settings may only acquire the documented Core default, never the
+    // first available GUI/capability choice. Unknown defaults require Raw.
+    const QMap<QString, QString> defaults{
+        {"Profile/Version", "1"}, {"Profile/Name", ""}, {"AccessKey/Prefix", ""},
+        {"Interface/Mode", "vpn"}, {"Interface/Name", "Bimeron"}, {"Interface/MTU", "1420"},
+        {"Interface/DNS", "1.1.1.1"}, {"Interface/IPv6", "enable"},
+        {"Interface/KillSwitch", "false"}, {"Interface/Listen", "127.0.0.1:1080"},
+        {"Routing/Default", "proxy"}
+    };
+    for (auto it = generated.begin(); it != generated.end(); ++it) {
+        if (original.contains(it.key())) continue;
+        if (QStringList{"Profile/", "AccessKey/", "Interface/", "Routing/"}.contains(it.key())) continue;
+        if (!defaults.contains(it.key()) || defaults.value(it.key()) != it.value()) valid = false;
+    }
+    rawOnly_ = rawOnly_ || hasUnknownSettings_ || !valid;
+    const int rawIndex = tabs_->count() - 1;
+    for (int i = 0; i < rawIndex; ++i) tabs_->setTabEnabled(i, !rawOnly_);
+    tabs_->widget(1)->setEnabled(!rawOnly_ && keySource_->currentData().toString() == "ExplicitVLESS");
+    if (rawOnly_) {
+        const QSignalBlocker blocker(tabs_);
+        tabs_->setCurrentIndex(rawIndex);
+    }
 }
 
-QString ProfileEditorDialog::configText() const { return rawDirty_ || rawOnlyVless_ ? raw_->toPlainText() : buildText(); }
+bool ProfileEditorDialog::applyRaw() {
+    const QString text = configText();
+    QString error;
+    if (!validateRaw_ || !validateRaw_(text, &error)) {
+        QMessageBox::warning(this, tr("Error"), error.isEmpty()
+            ? tr("The selected Core CLI must validate this configuration before visual editing.")
+            : safeCoreDiagnostic(error.toUtf8()));
+        return false;
+    }
+    loadText(text);
+    assessRepresentation();
+    if (rawOnly_) {
+        QMessageBox::information(this, tr("Advanced settings"),
+            tr("This configuration cannot be represented without loss. Continue editing Raw config."));
+        return false;
+    }
+    return true;
+}
+
+void ProfileEditorDialog::syncRaw() {
+    const QString text = configText();
+    const QSignalBlocker blocker(raw_);
+    raw_->setPlainText(text);
+}
+
+QString ProfileEditorDialog::configText() const {
+    if (rawDirty_) {
+        // QPlainTextEdit normalizes line endings; untouched Raw retains the source.
+        QString normalized = loadedText_;
+        normalized.replace("\r\n", "\n");
+        normalized.replace('\r', '\n');
+        if (raw_->toPlainText() == normalized) return loadedText_;
+        return raw_->toPlainText();
+    }
+    if (rawOnly_ || buildText() == visualBaseline_) return loadedText_;
+    return buildText();
+}
 
 void ProfileEditorDialog::reject() {
     if (configText() != originalText_) {
