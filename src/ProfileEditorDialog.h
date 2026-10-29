@@ -42,6 +42,8 @@ private:
     QComboBox *method_ = nullptr;
     QLineEdit *password_ = nullptr;
     QLineEdit *username_ = nullptr;
+    QComboBox *ssPlugin_ = nullptr;
+    QLineEdit *ssPluginOpts_ = nullptr;
     QLineEdit *prefix_ = nullptr;
     QLineEdit *vlessId_ = nullptr;
     QComboBox *vlessNetwork_ = nullptr;

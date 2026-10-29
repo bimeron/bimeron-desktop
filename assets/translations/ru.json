@@ -387,5 +387,9 @@
   "Unknown profile": "Неизвестный профиль",
   "Validation CLI: %1\nRuntime Core: %2": "CLI проверки: %1\nРаботающий Core: %2",
   "modified": "с изменениями",
-  "unmodified": "без изменений"
+  "unmodified": "без изменений",
+  "Plugin": "Плагин",
+  "Plugin options": "Параметры плагина",
+  "SS2022 does not support Prefix. Clear Prefix before saving.": "SS2022 не поддерживает Prefix. Очистите Prefix перед сохранением.",
+  "SIP003 options are preserved literally. tls=false enables WSS; obfs-local TLS is camouflage, not verified TLS. Plugins carry TCP only.": "Параметры SIP003 сохраняются буквально. tls=false включает WSS; obfs-local TLS — маскировка без проверки сертификата. Плагины передают только TCP."
 }

@@ -381,3 +381,5 @@ review for secrets, unsupported claims and accidental release instructions.
 No build, package, benchmark or profiling run is required for documentation-only
 changes. Full release testing remains governed by
 [build-and-packaging.md](build-and-packaging.md); this document authorizes no release.
+
+Desktop explicit SS extension editing is specified in [Shadowsocks profiles](shadowsocks-profiles.md). Runtime support still requires a compatible Core.

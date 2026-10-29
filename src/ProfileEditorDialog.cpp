@@ -192,11 +192,18 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
     port_->setSpecialValueText(QStringLiteral("—"));
     method_ = new HiDpiComboBox;
     method_->setObjectName("method");
-    method_->addItems({"chacha20-ietf-poly1305", "aes-128-gcm", "aes-192-gcm", "aes-256-gcm"});
+    method_->addItems({"chacha20-ietf-poly1305", "aes-128-gcm", "aes-192-gcm", "aes-256-gcm", "2022-blake3-aes-128-gcm", "2022-blake3-aes-256-gcm", "2022-blake3-chacha20-poly1305"});
     password_ = new QLineEdit;
     password_->setEchoMode(QLineEdit::Password);
     username_ = new QLineEdit;
     username_->setEchoMode(QLineEdit::Password);
+    ssPlugin_ = new HiDpiComboBox;
+    ssPlugin_->setObjectName("ssPlugin");
+    ssPlugin_->addItems({"", "v2ray-plugin", "obfs-local"});
+    ssPluginOpts_ = new QLineEdit;
+    ssPluginOpts_->setObjectName("ssPluginOpts");
+    ssPluginOpts_->setEchoMode(QLineEdit::Password);
+    ssPluginOpts_->setToolTip(tr("SIP003 options are preserved literally. tls=false enables WSS; obfs-local TLS is camouflage, not verified TLS. Plugins carry TCP only."));
     prefix_ = new QLineEdit;
     mode_ = new HiDpiComboBox;
     if (capabilities.value("vpn").toBool()) mode_->addItem(tr("System VPN"), "vpn");
@@ -211,6 +218,8 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
     generalForm->addRow(tr("Username"), username_);
     generalForm->addRow(tr("Password"), password_);
     generalForm->addRow(tr("Prefix"), prefix_);
+    generalForm->addRow(tr("Plugin"), ssPlugin_);
+    generalForm->addRow(tr("Plugin options"), ssPluginOpts_);
     generalForm->addRow(tr("Mode"), mode_);
     generalForm->addRow(tr("SOCKS5 address"), listen_);
     auto *keyLabel = qobject_cast<QLabel *>(generalForm->labelForField(keyRow));
@@ -405,6 +414,12 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
             tabs_->setCurrentIndex(tabs_->count() - 1);
             return;
         }
+        if (tabs_->currentIndex() != tabs_->count() - 1
+            && keySource_->currentData().toString() == "Explicit"
+            && method_->currentText().startsWith("2022-") && !prefix_->text().isEmpty()) {
+            QMessageBox::warning(this, tr("Error"), tr("SS2022 does not support Prefix. Clear Prefix before saving."));
+            return;
+        }
         accept();
     });
     connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
@@ -532,6 +547,8 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
         generalForm->setRowVisible(username_, explicitSocks5);
         generalForm->setRowVisible(password_, showParameters && !explicitVless);
         generalForm->setRowVisible(prefix_, ss || explicitKey);
+        generalForm->setRowVisible(ssPlugin_, explicitKey);
+        generalForm->setRowVisible(ssPluginOpts_, explicitKey);
         for (auto *widget : {static_cast<QWidget *>(server_), static_cast<QWidget *>(port_), static_cast<QWidget *>(method_), static_cast<QWidget *>(username_), static_cast<QWidget *>(password_), static_cast<QWidget *>(prefix_)})
             widget->setEnabled(explicitKey || explicitSocks5 || explicitVless);
         if (ss) applySs(key_->text());
@@ -643,6 +660,10 @@ void ProfileEditorDialog::loadText(const QString &text) {
     password_->setText(valueFor(text, "AccessKey", "Password"));
     username_->setText(valueFor(text, "AccessKey", "Username"));
     prefix_->setText(valueFor(text, "AccessKey", "Prefix"));
+    ssPlugin_->setCurrentIndex(ssPlugin_->findText(valueFor(text, "AccessKey", "Plugin")));
+    ssPluginOpts_->setText(valueFor(text, "AccessKey", "PluginOpts"));
+    if (source == "Explicit" && (ssPlugin_->currentIndex() < 0
+        || (method_->currentText().startsWith("2022-") && !prefix_->text().isEmpty()))) rawOnly_ = true;
     vlessId_->setText(valueFor(text, "AccessKey", "ID"));
     const auto setChoice = [this, &text, &source](QComboBox *combo, const QString &field) {
         const QString value = valueFor(text, "AccessKey", field);
@@ -711,7 +732,7 @@ void ProfileEditorDialog::loadText(const QString &text) {
     finishRule(rule);
     const QHash<QString, QSet<QString>> known{
         {"Profile", {"Version", "Name"}},
-        {"AccessKey", {"SS", "SSConf", "SOCKS5", "VLESS", "Hysteria2", "Key", "File", "Type", "Server", "Port", "Method", "Username", "Password", "Prefix", "ID", "Encryption", "Flow", "Network", "Security", "ServerName", "PublicKey", "ShortID", "Fingerprint", "SpiderX", "ALPN", "WSPath", "WSHost", "WSEarlyData", "GRPCServiceName", "GRPCAuthority", "GRPCMultiMode", "XHTTPPath", "XHTTPHost", "XHTTPMode"}},
+        {"AccessKey", {"SS", "SSConf", "SOCKS5", "VLESS", "Hysteria2", "Key", "File", "Type", "Server", "Port", "Method", "Username", "Password", "Prefix", "Plugin", "PluginOpts", "ID", "Encryption", "Flow", "Network", "Security", "ServerName", "PublicKey", "ShortID", "Fingerprint", "SpiderX", "ALPN", "WSPath", "WSHost", "WSEarlyData", "GRPCServiceName", "GRPCAuthority", "GRPCMultiMode", "XHTTPPath", "XHTTPHost", "XHTTPMode"}},
         {"Interface", {"Mode", "Name", "MTU", "DNS", "IPv6", "KillSwitch", "Listen"}},
         {"Routing", {"Default"}}, {"Rule", {"CIDR", "Domain", "Action"}}};
     QString currentSection;
@@ -790,7 +811,9 @@ QString ProfileEditorDialog::buildText() const {
             + "\nPort = " + QString::number(port_->value())
             + "\nMethod = " + method_->currentText()
             + "\nPassword = " + password_->text()
-            + "\nPrefix = " + prefix_->text();
+            + (method_->currentText().startsWith("2022-") && prefix_->text().isEmpty() ? QString() : "\nPrefix = " + prefix_->text())
+            + (ssPlugin_->currentText().isEmpty() ? QString() : "\nPlugin = " + ssPlugin_->currentText())
+            + (ssPluginOpts_->text().isEmpty() ? QString() : "\nPluginOpts = " + ssPluginOpts_->text());
     else if (keySource_->currentData().toString() == "ExplicitVLESS") {
         const QString network = vlessNetwork_->currentText();
         const bool reality = vlessSecurity_->currentText() == "reality";

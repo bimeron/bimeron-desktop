@@ -22,6 +22,7 @@
 #include <aclapi.h>
 #endif
 #include <QTimer>
+#include <QTranslator>
 
 #include <cstdlib>
 
@@ -41,6 +42,7 @@ void check(const QString &profile, const QStringList &fields, const QString &cor
     QProcess process;
     process.start(core, {"validate", path});
     require(process.waitForStarted(5000) && process.waitForFinished(20000));
+    if (process.exitCode() != 0) qWarning("Core rejected fixture: %s", qPrintable(QFileInfo(path).fileName()));
     require(process.exitStatus() == QProcess::NormalExit && process.exitCode() == 0);
     QFile reopened(path);
     require(reopened.open(QIODevice::ReadOnly));
@@ -72,19 +74,58 @@ static void preservationRegressions(const QString &directory) {
         QString(base).replace("aes-256-gcm", "unknown-cipher"),
         QString(base).replace("Type = shadowsocks", "Type = trojan"),
         QString(base).replace("Type = shadowsocks\n", ""),
-        base + "Plugin = v2ray-plugin\nPluginOpts = tls;mux=0;path=/ws\n",
+        base + "Plugin = unknown-plugin\nPluginOpts = tls;mux=0;path=/ws\n",
         base + "[ShadowTLS]\nServerName = example.invalid\nPassword = OUTER_SENTINEL\n",
         base + "[Future]\nOpaque = FUTURE_SENTINEL\n",
         base + "Password = DUPLICATE_SENTINEL\n",
         base + "Key = future://SENTINEL\n",
+        "[Profile]\nVersion = 1\nName = Mixed\n[AccessKey]\nSS = ss://aes-256-gcm:secret@example.invalid:443\nPlugin = v2ray-plugin\n",
+        base + "Plugin = v2ray-plugin\nPluginOpts = \"quoted-options\"\n",
         QString(base).replace("Password = SENTINEL", "Password = \" padded=secret;# \""),
         base + "[Interface]\nMTU = 2000\n",
         base + "[Routing]\nDefault = future\n",
         base + "[Rule]\nDomain = example.invalid\nAction = future\n",
         "[Profile]\nVersion = 1\nName = Native\n[IKEv2]\nWindowsProfile = Native\nServerName = example.invalid\n"
     };
-    for (const QString &method : {"2022-blake3-aes-128-gcm", "2022-blake3-aes-256-gcm", "2022-blake3-chacha20-poly1305"})
-        inputs.append(QString(base).replace("aes-256-gcm", method).replace("SENTINEL", "aGVsbG8=:d29ybGQ="));
+    for (const QString &method : {"2022-blake3-aes-128-gcm", "2022-blake3-aes-256-gcm", "2022-blake3-chacha20-poly1305"}) {
+        const QString input = QString(base).replace("aes-256-gcm", method);
+        ProfileEditorDialog editor(input, caps);
+        require(editor.findChild<QTabWidget *>()->isTabEnabled(0));
+        require(editor.configText() == input);
+        editor.findChild<QLineEdit *>("profileName")->setText("Edited");
+        require(editor.configText().contains("Method = " + method));
+        require(!editor.configText().contains("Prefix ="));
+        inputs.append(input + "Prefix = incompatible\n");
+    }
+    for (const QString &plugin : {"v2ray-plugin", "obfs-local"}) {
+        const QString input = base + "Plugin = " + plugin + "\nPluginOpts = "
+            + (plugin == "v2ray-plugin" ? "tls=false;mux=0;path=/a\\;b" : "obfs=tls") + "\n";
+        ProfileEditorDialog editor(input, caps);
+        require(editor.findChild<QTabWidget *>()->isTabEnabled(0));
+        require(editor.configText() == input);
+        editor.findChild<QLineEdit *>("profileName")->setText("Edited");
+        require(editor.configText().contains("PluginOpts = " + editor.findChild<QLineEdit *>("ssPluginOpts")->text()));
+        auto *options = editor.findChild<QLineEdit *>("ssPluginOpts");
+        require(options->echoMode() == QLineEdit::Password);
+        options->setText(plugin == "v2ray-plugin" ? "mux=8;path=/new" : "obfs=http;http-method=POST");
+        const QString edited = editor.configText();
+        ProfileEditorDialog reopened(edited, caps);
+        require(reopened.configText() == edited);
+        require(reopened.findChild<QLineEdit *>("ssPluginOpts")->text() == options->text());
+    }
+    // Changing a legacy profile to SS2022 must retain Prefix until explicitly cleared.
+    ProfileEditorDialog conflict(base + "Prefix = retained\n", caps);
+    conflict.findChild<QComboBox *>("method")->setCurrentText("2022-blake3-aes-128-gcm");
+    bool explained = false;
+    QTimer::singleShot(0, [&] {
+        auto *box = qobject_cast<QMessageBox *>(QApplication::activeModalWidget());
+        require(box);
+        explained = box->text().contains("Prefix") && !box->text().contains("SENTINEL");
+        box->accept();
+    });
+    conflict.findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Save)->click();
+    require(explained && conflict.result() != QDialog::Accepted);
+    require(conflict.configText().contains("Prefix = retained"));
     for (const QString &source : {"VMess", "Trojan", "AnyTLS", "TUIC", "SSH", "HTTP", "Naive", "MASQUE"})
         inputs.append("[Profile]\nName = Future\n[AccessKey]\n" + source + " = future://SENTINEL\n");
     for (const auto &input : inputs) {
@@ -250,6 +291,34 @@ static void preservationRegressions(const QString &directory) {
             base + "Plugin = obfs-local\nPluginOpts = obfs=http;obfs-host=example.invalid;obfs-uri=/;http-method=GET\n",
             base + "[ShadowTLS]\nServerName = example.invalid\nPassword = OUTER_SENTINEL\n"
         };
+        fixtures.append(base + "Plugin = v2ray-plugin\n");
+        fixtures.append(base + "Plugin = v2ray-plugin\nPluginOpts = tls=false;mux=4294967295;path=/a\\;b\n");
+        fixtures.append(base + "Plugin = obfs-local\nPluginOpts = obfs=tls\n");
+        const QString ssUri = "ss://2022-blake3-aes-128-gcm:" + key16 + ":" + key16
+            + "@[2001:db8::1]:443/?plugin=v2ray-plugin%3Btls%3Bmux%3D0#Encoded%20name";
+        for (const QString &source : {"SS", "Key"})
+            fixtures.append("[Profile]\nVersion = 1\nName = URI\n[AccessKey]\n" + source + " = " + ssUri + "\n");
+        QStringList invalid{
+            QString(base).replace("aes-256-gcm", "2022-blake3-aes-128-gcm"),
+            QString(base).replace("aes-256-gcm", "2022-blake3-chacha20-poly1305").replace("SENTINEL", key32 + ":" + key32),
+            fixtures.first() + "Prefix = forbidden\n",
+            base + "Plugin = /tmp/plugin\n",
+            base + "Plugin = v2ray-plugin\nPluginOpts = tls;tls\n",
+            base + "Plugin = v2ray-plugin\nPluginOpts = mux=4294967296\n",
+            base + "Plugin = v2ray-plugin\nPluginOpts = unknown=value\n",
+            base + "Plugin = obfs-local\n",
+            base + "Plugin = obfs-local\nPluginOpts = obfs=tls;http-method=GET\n",
+            base + "Plugin = v2ray-plugin\n[ShadowTLS]\nServerName = example.invalid\nPassword = OUTER_SENTINEL\n"
+        };
+        for (const auto &input : invalid) {
+            const QString path = directory + "/invalid-ss.conf";
+            require(ProfileStore::writeConfig(path, input.toUtf8()));
+            QProcess process;
+            process.start(contractCore, {"validate", path});
+            require(process.waitForStarted(5000) && process.waitForFinished(20000));
+            require(process.exitStatus() == QProcess::NormalExit && process.exitCode() != 0);
+            require(!safeCoreDiagnostic(process.readAllStandardError() + process.readAllStandardOutput()).contains("SENTINEL"));
+        }
         const QByteArray vmess = R"({"v":"2","add":"example.invalid","port":"443","id":"123e4567-e89b-12d3-a456-426614174000","aid":"0","scy":"auto","net":"tcp","tls":"tls","sni":"example.invalid"})";
         const QStringList sources{
             "VMess = vmess://" + QString::fromLatin1(vmess.toBase64()),
@@ -277,6 +346,28 @@ int main(int argc, char **argv) {
         return ProfileStore::writeConfig(app.arguments().at(2), "synthetic permission fixture") ? 0 : 1;
     QTemporaryDir temporary;
     require(temporary.isValid());
+    if (app.arguments().size() == 4 && app.arguments().at(1) == "--ss-preview") {
+        class Translator final : public QTranslator {
+        public:
+            QJsonObject strings;
+            QString translate(const char *, const char *source, const char *, int) const override {
+                return strings.value(QString::fromUtf8(source)).toString();
+            }
+            bool isEmpty() const override { return strings.isEmpty(); }
+        } translator;
+        if (app.arguments().at(3) == "ru") {
+            QFile file(QFileInfo(QString::fromUtf8(__FILE__)).dir().filePath("../assets/translations/ru.json"));
+            require(file.open(QIODevice::ReadOnly));
+            translator.strings = QJsonDocument::fromJson(file.readAll()).object();
+            app.installTranslator(&translator);
+        }
+        ProfileEditorDialog editor("[Profile]\nVersion = 1\nName = SS2022\n[AccessKey]\nType = shadowsocks\nServer = example.invalid\nPort = 443\nMethod = 2022-blake3-aes-256-gcm\nPassword = AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\nPlugin = v2ray-plugin\nPluginOpts = tls;host=example.invalid;mux=0\n",
+            QJsonObject{{"vpn", true}, {"proxy", true}});
+        editor.show();
+        app.processEvents();
+        require(editor.grab().save(app.arguments().at(2)));
+        return 0;
+    }
     preservationRegressions(temporary.path());
     const QString core = qEnvironmentVariable("BIMERON_VLESS_CORE");
     const QString uuid = "123e4567-e89b-12d3-a456-426614174000";
