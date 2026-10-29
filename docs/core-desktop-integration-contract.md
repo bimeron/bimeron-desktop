@@ -394,3 +394,8 @@ The older coverage table remains a baseline record. Bundled `v0.2.0-beta.1`
 does not support SSH. Bundle pins, release hashes, signed manifests and compatibility
 gates are one shared pre-release dependency across stages, not part of stage 7.
 See [Protocol URI import](protocol-uri-import.md) for stage 5 URI coverage, Raw editing and target Core requirements.
+
+Stage 6 adds explicit Trojan, HTTP(S), Naive H2 and MASQUE forms and a separate
+ShadowTLS v3 block for represented compatible explicit profiles. URI sources and
+extended XHTTP remain protected Raw. See [Parameter forms and ShadowTLS](parameter-forms-and-shadowtls.md).
+This does not change the bundled Core or establish runtime interoperability.

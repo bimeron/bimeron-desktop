@@ -339,6 +339,9 @@ ProfileConnectionInfo ProfileStore::connectionInfo(const QString &configText) {
     } else if (type == "vless") {
         info.protocol = QStringLiteral("VLESS");
         info.connectable = true;
+    } else if (QStringList{"trojan", "http", "https", "naive", "masque"}.contains(type)) {
+        info.protocol = type == "trojan" ? "Trojan" : type == "naive" ? "Naive" : type == "masque" ? "MASQUE" : "HTTP";
+        info.connectable = info.interfaceMode == "proxy" || info.interfaceMode == "vpn";
     } else if (type == "ssh") {
         info.protocol = QStringLiteral("SSH");
         info.connectable = info.interfaceMode == "proxy" || info.interfaceMode == "vpn";
