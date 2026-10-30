@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Offline sequencing fixture, never included by production CPack.
+     The only callback unconditionally fails. No policy writer is implemented. -->
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Product Id="*" Name="Bimeron foreground feasibility fixture" Language="1033"
+           Version="0.0.1" Manufacturer="Bimeron" UpgradeCode="A8945D41-FEAD-441D-AC52-FB832E9E6BE9">
+    <Package InstallerVersion="500" Compressed="yes" InstallScope="perMachine" Platform="@WIX_ARCH@" />
+    <MajorUpgrade Schedule="afterInstallInitialize" DowngradeErrorMessage="Fixture only" />
+    <MediaTemplate EmbedCab="yes" />
+    <Binary Id="ForegroundPrototypeBinary" SourceFile="@FOREGROUND_DLL@" />
+    <CustomAction Id="ForegroundPrototypeGate" BinaryKey="ForegroundPrototypeBinary"
+                  DllEntry="ForegroundPrototype" Execute="immediate" Return="check" />
+    <InstallExecuteSequence>
+      <Custom Action="ForegroundPrototypeGate" Before="InstallInitialize">1</Custom>
+    </InstallExecuteSequence>
+    <Directory Id="TARGETDIR" Name="SourceDir" />
+    <Feature Id="EmptyFixture" Title="Fixture" Level="1" />
+  </Product>
+</Wix>

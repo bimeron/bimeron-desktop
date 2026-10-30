@@ -412,3 +412,67 @@ connection test executable also covers transient SSH challenge UI and private IP
 Protocol URI import tests use `BIMERON_PRESERVATION_CORE` targeting Core
 `v0.3.0-beta.1` revision `9f527efe0a4959786084675f1ff795edb8a0d910`.
 The current bundle pin is not evidence of support for these new protocols.
+
+## Foreground installer feasibility prototype (not enabled)
+
+Specification and acceptance for this isolated prototype: follow stage 8
+`e4e6d05` and Core `66d84d8f4dcfc6ada625eb11894b19feea51b7ba`'s complete
+`docs/IKEV2_FOREGROUND_CONTROL.MD` and internal `windowsnet` transaction guard.
+Before production registration, demonstrate a dedicated OS thread retaining the
+connect mutex through destructive actions, final policy publication, and settled
+commit/rollback, with DLL lifetime pinned. Offline acceptance covers competing
+threads/processes, abandoned ownership, strict owner/DACL and marker decisions,
+flushed create-new journal refusal and preserved rollback metadata. Test journals
+and Local objects are isolated surrogates, never installed policy or Global locks.
+Generated WiX must embed an architecture-matched Binary, schedule admission before
+RemoveExistingProducts/InstallFiles and settlement after all mutations, and fail
+closed without approved final Core/GUI inputs. Sequence inspection alone cannot
+prove execution order across nested transactions or callback process lifetimes.
+
+The prototype must not register in production CMake/CPack. Its MSI entry point
+always refuses: secure cross-process callback routing, MSI server lifetime through
+rollback/commit and nested major-upgrade uninstall are unresolved prerequisites.
+No installed helper, policy writer, reboot replacement, process termination or
+network operation is authorized. A successful offline test is not MSI acceptance.
+
+Offline result (2026-10-30): the standalone project at
+`packaging/windows/foreground-prototype` builds with MSVC for x64 and ARM64.
+Native x64 CTest exercises descriptor fixtures, actual user-owned object refusal,
+absent/present/wrong-type markers, different callback threads and child-process
+exclusion, nested-worker refusal, completed commit/rollback, incomplete settlement,
+teardown, process crash, journal preservation and abandonment refusal. The generated
+WiX fixture and five invalid variants are checked for both architectures; cached
+WiX 3 candle accepts both generated sources. This is syntax/sequence inspection,
+not a linked or executed MSI transaction. ARM64 runtime is untested. The default
+VS Insiders instance lacked ARM64 configuration; explicit installed Build Tools
+selection compiled it successfully. Linux targets are unaffected: no production
+CMake, install rules, packet updater or package flow changed. No full GUI/package
+matrix, performance benchmark, network operation or release was run for this
+standalone Windows-only experiment.
+
+Blocker established by the experiment: a second independent worker/process cannot
+acquire the mutex while the transaction worker owns it; creating another static
+handle does not route a callback to that owner. In particular the nested-worker
+uninstall fixture refuses admission. DLL pinning prevents unload but cannot keep
+an MSI server process alive; deliberate child-process death leaves a flushed
+journal and abandoned mutex and subsequent admission refuses even after abandonment
+is consumed. There is no authenticated cross-process transport or demonstrated
+MSI host lifetime. Production integration therefore remains blocked.
+
+The worker accepts only test fixture handles and writes opaque rollback metadata
+into a private temporary journal with CREATE_NEW, write-through and FlushFileBuffers.
+It does not claim protected journal durability across power loss, validate protected
+Program Files ancestors/reparse points/effective ACLs, retain real image handles,
+parse/publish schema 1 policy, generate an installation ID, compute the final GUI
+hash, or restore installed bytes. These security requirements cannot be replaced
+by the temporary fixture. Settlement is an explicit simulated completion signal,
+not evidence that MSI completed rollback. Module pinning lasts until process exit.
+Do not wire this DLL into production: its sole MSI export always returns failure.
+
+Integration instructions and remaining acceptance are in
+`packaging/windows/foreground-prototype/foreground-README.md`. Final artifacts and
+approved architecture-specific Core digests are still absent; future GUI approval
+must bind final installed GUI bytes, preserve the random public 16-byte installation
+ID and previous exact policy/rollback metadata through repair/upgrade. Keep existing
+signed packet installation/update behavior. Do not enable native packaging by
+default until the live transaction and trust prerequisites above are satisfied.
