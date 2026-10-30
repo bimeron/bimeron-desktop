@@ -12,6 +12,14 @@
 #endif
 namespace {
 using Buffer=std::vector<unsigned char>;
+struct Diagnostic { unsigned stage=0, detail=0; DWORD status=0; };
+bool refused(Diagnostic& d,unsigned stage,unsigned detail=0,DWORD status=0) {
+    if(!d.stage) d={stage,detail,status};
+    return false;
+}
+bool labFreshEligibility(const std::wstring& remove,int state,bool zeroResources) {
+    return state==INSTALLSTATE_UNKNOWN && zeroResources && (remove.empty() || remove==L"ALL");
+}
 struct Msi { MSIHANDLE h=0; ~Msi(){if(h) MsiCloseHandle(h);} };
 struct Token { HANDLE h=nullptr; ~Token(){if(h) CloseHandle(h);} };
 void number(Buffer& b,unsigned n) { for(unsigned k=0;k<4;++k) b.push_back(static_cast<unsigned char>(n>>(8*k))); }
@@ -52,7 +60,7 @@ bool rows(MSIHANDLE db,const wchar_t* table,const wchar_t* columns,unsigned coun
     return out.size()<=65536;
 }
 // Same fixed canonical projection as the offline actual-database checker.
-bool databaseHandle(MSIHANDLE db,Buffer& out) {
+bool databaseHandle(MSIHANDLE db,Buffer& out,Diagnostic* diagnostic=nullptr,const Buffer* expected=nullptr) {
     if(!db) return false;
     struct Table { const wchar_t* name; const wchar_t* columns; unsigned count; };
     const Table tables[]={
@@ -68,7 +76,18 @@ bool databaseHandle(MSIHANDLE db,Buffer& out) {
         {L"Feature",L"`Feature`,`Feature_Parent`,`Title`,`Description`,`Display`,`Level`,`Directory_`,`Attributes`",8},
         {L"Property",L"`Property`,`Value`",2},
         {L"_Streams",L"`Name`",1},{L"_Storages",L"`Name`",1}};
-    for(const auto& t:tables) if(!rows(db,t.name,t.columns,t.count,out)) return false;
+    unsigned category=0;
+    for(const auto& t:tables) {
+        ++category;
+        if(!rows(db,t.name,t.columns,t.count,out)) {
+            if(diagnostic) refused(*diagnostic,40,category);
+            return false;
+        }
+        if(expected && (out.size()>expected->size() || !std::equal(out.begin(),out.end(),expected->begin()))) {
+            if(diagnostic) refused(*diagnostic,41,category);
+            return false;
+        }
+    }
     Msi summary;
     if(MsiGetSummaryInformationW(db,nullptr,0,&summary.h)!=ERROR_SUCCESS) return false;
     for(unsigned id:{7u,9u,15u}) {
@@ -78,14 +97,38 @@ bool databaseHandle(MSIHANDLE db,Buffer& out) {
     }
     return true;
 }
-bool database(MSIHANDLE install,Buffer& out) { Msi db; db.h=MsiGetActiveDatabase(install); return databaseHandle(db.h,out); }
+bool database(MSIHANDLE install,Buffer& out,Diagnostic* d=nullptr,const Buffer* expected=nullptr) {
+    Msi db; db.h=MsiGetActiveDatabase(install); return databaseHandle(db.h,out,d,expected);
+}
 bool emptyProperty(MSIHANDLE h,const wchar_t* name) {
     wchar_t b[2]{}; DWORD n=2; return MsiGetPropertyW(h,name,b,&n)==ERROR_SUCCESS && n==0;
 }
-bool fresh(MSIHANDLE h) {
-    for(const auto name:{L"Installed",L"TRANSFORMS",L"PATCH",L"REINSTALL",L"REMOVE",L"ADDLOCAL",L"ADDSOURCE",L"ADVERTISE",L"MSINEWINSTANCE"})
-        if(!emptyProperty(h,name)) return false;
-    return MsiGetMode(h,MSIRUNMODE_ROLLBACKENABLED)!=FALSE;
+bool zeroResources(MSIHANDLE db) {
+    for(const auto table:{L"Component",L"FeatureComponents",L"File"}) {
+        std::wstring sql=L"SELECT * FROM `"; sql+=table; sql+=L"`";
+        Msi view,row;
+        if(MsiDatabaseOpenViewW(db,sql.c_str(),&view.h)!=ERROR_SUCCESS ||
+           MsiViewExecute(view.h,0)!=ERROR_SUCCESS || MsiViewFetch(view.h,&row.h)!=ERROR_NO_MORE_ITEMS) return false;
+    }
+    return true;
+}
+bool fresh(MSIHANDLE h,const Buffer& b,Diagnostic& d) {
+    unsigned predicate=0;
+    for(const auto name:{L"Installed",L"TRANSFORMS",L"PATCH",L"REINSTALL",L"ADDLOCAL",L"ADDSOURCE",L"ADVERTISE",L"MSINEWINSTANCE"}) {
+        if(!emptyProperty(h,name)) return refused(d,10,++predicate);
+        ++predicate;
+    }
+    wchar_t remove[16]{}; DWORD size=16;
+    UINT status=MsiGetPropertyW(h,L"REMOVE",remove,&size);
+    if(status!=ERROR_SUCCESS) return refused(d,11,0,status);
+    GUID product{}; std::memcpy(&product,b.data()+48,16); wchar_t code[40]{};
+    if(!StringFromGUID2(product,code,40)) return refused(d,12);
+    const int state=MsiQueryProductStateW(code);
+    // The caller has already verified the exact zero-resource database. This
+    // permits observed lab behavior, never attests REMOVE provenance.
+    if(!labFreshEligibility(std::wstring(remove,size),state,true)) return refused(d,13);
+    if(MsiGetMode(h,MSIRUNMODE_ROLLBACKENABLED)==FALSE) return refused(d,14);
+    return true;
 }
 DWORD openEffectiveToken(HANDLE& token) {
     if(OpenThreadToken(GetCurrentThread(),TOKEN_QUERY,TRUE,&token)) return 1;
@@ -119,9 +162,6 @@ bool validManifest(const Buffer& b,labfile::Id& i,labfile::Id& g) {
     return BCryptHash(BCRYPT_SHA256_ALG_HANDLE,nullptr,0,const_cast<PUCHAR>(b.data()+176),static_cast<ULONG>(b.size()-176),digest,32)>=0 &&
         std::equal(digest,digest+32,b.begin()+144);
 }
-bool manifest(labfile::Directory& dir,Buffer& b,labfile::Id& i,labfile::Id& g) {
-    return dir.pinAck() && dir.readAckManifest(b) && validManifest(b,i,g);
-}
 bool headerDatabase(MSIHANDLE db,const Buffer& b) {
     if(!db) return false;
     Msi view;
@@ -142,27 +182,40 @@ bool headerDatabase(MSIHANDLE db,const Buffer& b) {
     return actual==expectedBinary;
 }
 bool headerMatches(MSIHANDLE install,const Buffer& b) { Msi db; db.h=MsiGetActiveDatabase(install); return headerDatabase(db.h,b); }
-bool logical(MSIHANDLE h,const Buffer& b) {
+bool logical(MSIHANDLE h,const Buffer& b,Diagnostic& d) {
     unsigned char digest[32]{};
-    if(BCryptHash(BCRYPT_SHA256_ALG_HANDLE,nullptr,0,const_cast<PUCHAR>(b.data()+176),static_cast<ULONG>(b.size()-176),digest,32)<0 || !std::equal(digest,digest+32,b.begin()+144)) return false;
-    Buffer actual; return fresh(h) && headerMatches(h,b) && database(h,actual) && actual.size()==b.size()-176 &&
-        std::equal(actual.begin(),actual.end(),b.begin()+176);
+    if(BCryptHash(BCRYPT_SHA256_ALG_HANDLE,nullptr,0,const_cast<PUCHAR>(b.data()+176),static_cast<ULONG>(b.size()-176),digest,32)<0 || !std::equal(digest,digest+32,b.begin()+144)) return refused(d,3);
+    if(!headerMatches(h,b)) return refused(d,30);
+    Msi db; db.h=MsiGetActiveDatabase(h);
+    if(!db.h || !zeroResources(db.h)) return refused(d,31);
+    Buffer actual,expected(b.begin()+176,b.end());
+    if(!database(h,actual,&d,&expected)) return refused(d,40);
+    if(actual!=expected) return refused(d,41,19);
+    return fresh(h,b,d);
 }
-UINT action(MSIHANDLE h,unsigned point) {
-    if(point==3) return LAB_FAILPOINT==1 ? ERROR_INSTALL_FAILURE : ERROR_SUCCESS;
+UINT action(MSIHANDLE h,unsigned point,Diagnostic& d) {
+    if(point==3) {
+        if(LAB_FAILPOINT==1) { refused(d,70,1); return ERROR_INSTALL_FAILURE; }
+        return ERROR_SUCCESS;
+    }
     if(point==1) return ERROR_SUCCESS; // Rollback never changes pending state.
     labfile::Directory dir; Buffer b; labfile::Id i{},g{};
-    if(!manifest(dir,b,i,g)) return ERROR_INSTALL_FAILURE;
-    if(point==0) return logical(h,b) ? ERROR_SUCCESS : ERROR_INSTALL_FAILURE;
-    if(point==2) return dir.create(i,g) ? ERROR_SUCCESS : ERROR_INSTALL_FAILURE;
-    if(LAB_FAILPOINT==2 || !effectiveToken() || !logical(h,b)) return ERROR_INSTALL_FAILURE;
-    return dir.acknowledgeOnce(i,g) ? ERROR_SUCCESS : ERROR_INSTALL_FAILURE;
+    if(!dir.pinAck()) { refused(d,1); return ERROR_INSTALL_FAILURE; }
+    if(!dir.readAckManifest(b)) { refused(d,2); return ERROR_INSTALL_FAILURE; }
+    if(!validManifest(b,i,g)) { refused(d,3); return ERROR_INSTALL_FAILURE; }
+    if(point==0) return logical(h,b,d) ? ERROR_SUCCESS : ERROR_INSTALL_FAILURE;
+    if(point==2) { if(dir.create(i,g)) return ERROR_SUCCESS; refused(d,60); return ERROR_INSTALL_FAILURE; }
+    if(LAB_FAILPOINT==2) { refused(d,70); return ERROR_INSTALL_FAILURE; }
+    if(!effectiveToken()) { refused(d,50); return ERROR_INSTALL_FAILURE; }
+    if(!logical(h,b,d)) return ERROR_INSTALL_FAILURE;
+    if(dir.acknowledgeOnce(i,g)) return ERROR_SUCCESS;
+    refused(d,61); return ERROR_INSTALL_FAILURE;
 }
 UINT safe(MSIHANDLE h,unsigned point) noexcept {
-    UINT result=ERROR_INSTALL_FAILURE;
-    try { result=action(h,point); } catch(...) {}
-    Msi record; record.h=MsiCreateRecord(0); wchar_t message[160]{};
-    swprintf_s(message,L"BIMERON_PROTECTED_ACK_V1 callback=%u result=%u initiatingClientUnknown=1 accessOnly=1",point,result);
+    UINT result=ERROR_INSTALL_FAILURE; Diagnostic d;
+    try { result=action(h,point,d); } catch(...) { refused(d,90); }
+    Msi record; record.h=MsiCreateRecord(0); wchar_t message[256]{};
+    swprintf_s(message,L"BIMERON_PROTECTED_ACK_V1 callback=%u result=%u stage=%u detail=%u api=%lu removeOriginUnknown=1 initiatingClientUnknown=1 accessOnly=1",point,result,d.stage,d.detail,d.status);
     if(!record.h || MsiRecordSetStringW(record.h,0,message)!=ERROR_SUCCESS ||
         MsiProcessMessage(h,INSTALLMESSAGE_INFO,record.h)!=0) return ERROR_INSTALL_FAILURE;
     return result;

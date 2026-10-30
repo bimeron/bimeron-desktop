@@ -763,3 +763,15 @@ that value, a confirmed blocker if manifest validation reached it; the generic
 callback result does not establish the first failed internal gate. Bounded stage
 diagnostics and a separate, explicitly scoped zero-resource lab predicate are
 required before another candidate run. No production admission rule is relaxed.
+
+ACK diagnostic follow-up: the zero-resource lab permits only empty REMOVE or exact
+ALL after canonical database/Binary/header and zero-row resource checks, and an
+OS MsiQueryProductState query must report UNKNOWN. Other freshness and rollback
+gates remain. REMOVE provenance and initiating identity remain Unknown. The
+bounded trace now reports stage/detail/api numeric fields; api=0 means no API
+status was captured, not proof that an earlier operation succeeded. Stages 1/2/3
+identify path/manifest gates, 10-14 freshness/rollback, 30/31 header/resources,
+40/41 projection query/mismatch (detail indexes the fixed table order), 50 token,
+60/61 create/ack, 70 compiled failure and 90 exception. No property values are
+logged. Build new immutable artifacts after this source change; old bytes and
+failed VM state remain evidence, not release candidates.

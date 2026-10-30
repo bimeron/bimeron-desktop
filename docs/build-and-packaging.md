@@ -701,3 +701,11 @@ actual token precedence/error refusal and owned temporary record I/O passed.
 No host MSI action or guest execution occurred. Review and runtime limitations,
 source/artifact evidence and the permission-not-granted bundle are in the foreground
 README and ignored build/protected-ack-review state.
+
+ACK freshness/diagnostic source follow-up adds an OS product-state query and fixed
+numeric stage reporting. The lab-only REMOVE=ALL allowance requires an exact
+canonical zero-resource database and UNKNOWN product state; it grants no caller
+provenance or production authority. The standalone import checker must explicitly
+allow the new MSI API entry after inspecting the linked image. Fresh source builds,
+read-only checks, manifests and review are required; never overwrite frozen inputs.
+Supported production packaging and original fail-closed exports remain unchanged.

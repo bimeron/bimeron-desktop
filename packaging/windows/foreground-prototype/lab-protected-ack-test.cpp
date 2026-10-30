@@ -6,6 +6,15 @@ static void require(bool ok,int line) { if(!ok) { std::printf("FAIL %d error=%lu
 #define CHECK(b) require((b),__LINE__)
 int wmain(int argc,wchar_t** argv) {
     CHECK(argc==3);
+    CHECK(labFreshEligibility(L"",INSTALLSTATE_UNKNOWN,true));
+    CHECK(labFreshEligibility(L"ALL",INSTALLSTATE_UNKNOWN,true));
+    for(const auto value:{L"all",L"All",L"ALL ",L"Other",L"ALL,Other"})
+        CHECK(!labFreshEligibility(value,INSTALLSTATE_UNKNOWN,true));
+    CHECK(!labFreshEligibility(L"ALL",INSTALLSTATE_DEFAULT,true));
+    CHECK(!labFreshEligibility(L"ALL",INSTALLSTATE_UNKNOWN,false));
+    Diagnostic first;
+    CHECK(!refused(first,31,2,87)); CHECK(!refused(first,40,3,5));
+    CHECK(first.stage==31 && first.detail==2 && first.status==87);
     std::ifstream input(argv[1],std::ios::binary);
     Buffer manifestBytes((std::istreambuf_iterator<char>(input)),std::istreambuf_iterator<char>());
     labfile::Id installation{},generation{};
@@ -20,9 +29,13 @@ int wmain(int argc,wchar_t** argv) {
         CHECK(!validManifest(bad,installation,generation));
     }
     Msi databaseFile; CHECK(MsiOpenDatabaseW(argv[2],nullptr,&databaseFile.h)==ERROR_SUCCESS);
+    CHECK(zeroResources(databaseFile.h));
     Buffer projection; CHECK(databaseHandle(databaseFile.h,projection));
     CHECK(projection.size()==manifestBytes.size()-176 && std::equal(projection.begin(),projection.end(),manifestBytes.begin()+176));
     CHECK(headerDatabase(databaseFile.h,manifestBytes));
+    auto changed=projection; changed[0]^=1; Buffer differing; Diagnostic category;
+    CHECK(!databaseHandle(databaseFile.h,differing,&category,&changed));
+    CHECK(category.stage==41 && category.detail==1);
     for(size_t n:{size_t(48),size_t(64),size_t(112)}) {
         auto bad=manifestBytes; bad[n]^=1; CHECK(!headerDatabase(databaseFile.h,bad));
     }
