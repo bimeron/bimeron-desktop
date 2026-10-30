@@ -946,3 +946,24 @@ Initiating client and REMOVE provenance remain Unknown. No Clean publication,
 interactive UAC proof, real-resource rollback, crash/power-loss durability, ARM64
 runtime, production admission or enrollment authority is established. Failure
 variants and live identity/settlement proofs remain separate gates.
+
+### Protected ACK failure-variant acceptance (2026-10-30)
+
+Run the frozen a6d93adc x64 CommitFail once, then PostFinalizeFail once only after
+unambiguous acceptance of the first case. Archive each previous fixed ACK root
+intact without overwrite; verify retained bytes and security metadata. Preserve the
+separate protected-file lab record. Reprovision only the fixed ACK lab directories,
+verify exact frozen MSI/manifest hashes and fresh ProductState -1 before launch.
+Each run has its own private input/log path and a 300-second observation limit.
+No retry, uninstall, repair, cleanup or process termination is permitted.
+
+CommitFail requires exit 1603, callbacks 0/2/3/1, callback 3 stage 70/detail 1,
+other callback diagnostics zero, failed Finalize and rollback, no callback 4,
+and canonical matching Pending counter 0. PostFinalizeFail requires exit 1603,
+callbacks 0/2/3/4, callback 4 stage 70/detail 0, other diagnostics zero,
+successful Finalize before callback 4, no rollback, matching Pending counter 0.
+Manifest bytes and prior records must remain unchanged. Any earlier refusal,
+wrong order/state, missing evidence or timeout stops subsequent execution.
+PostFinalizeFail occurs before token/projection/ACK and cannot prove those gates.
+The frozen inventory supplies exact hashes and identities. This remains access-only
+lab evidence, with no Clean, real-resource rollback, client authority or ARM64 claim.
