@@ -15,7 +15,7 @@ The project produces four system packages:
 
 The version is specified once in `project(BimeronDesktop VERSION ...)` of the `CMakeLists.txt` file. Before release, change it there, rebuild all four packages and make sure that the version appears in their names and metadata. Windows uses `amd64` in project-owned names while Visual Studio and WiX still use their required `x64` architecture identifier.
 
-The desktop source version is `0.2.0` for the VLESS GUI changes. Normal packaging pins published Core `v0.2.0-beta.1` from commit `6e0c171505be8e349d5f42570f7ceb3e50ac6697` and its four Windows/Linux release ZIP hashes. Its production-key-signed manifest has `gui_reviewed: true`, GUI `[0.2.0, 0.2.1)`, IPC 1, and profile format 1. Before approving a Desktop release, build and inspect all four packages against those published archives, then test the normal GitHub release source. A package upgrade does not itself replace the installed service.
+The desktop source version is `0.2.0`. Release preparation excludes the deferred Desktop IKEv2 branch and pins the four frozen Core `v0.3.0-beta.2` candidate ZIPs from commit `66d84d8f4dcfc6ada625eb11894b19feea51b7ba`. This candidate is not yet tagged or published. Verified local ZIPs can populate `.tools/core` for offline packaging; clean-checkout downloads remain unavailable until Core publication. Its intended signed-update contract is GUI `[0.2.0, 0.2.1)`, IPC 1, profile format 1 and the existing production key. The production signature and exact GUI verification have passed for all four archives; publication is still pending. See [release acceptance](release-0.2.0.md). A package upgrade does not itself replace the installed service.
 
 The Windows amd64 `0.2.0` VM package, its Core payload, signed GUI-driven update, installed-service rollback, IPC `hello`, and automatic VM profile reconnection results are recorded in [the VM check](vm-core-0.2.0-beta.1-check.md). The positive signed GUI path was repeated with the final Core assets through a local release-list override in the test build. Tampering and direct-helper rollback with those final bytes passed; the other installed package targets remain untested. The normal installed GUI discovered and installed the published Core through GitHub Releases in the Windows amd64 VM; see the VM check.
 
@@ -50,7 +50,7 @@ All directories are generated locally and excluded from Git:
 
 ## Core release inputs
 
-Both packaging scripts use the pinned Bimeron Core release in `cmake/core-release.cmake`. Published `v0.2.0-beta.1` includes the required `-source` helper. Its four Windows/Linux ZIP hashes match the published manifest and `SHA256SUMS`; pin the actual published hashes and keep the helper guard enabled. `scripts/fetch-core.cmake` verifies the pinned archives on Windows and Linux. A sibling core checkout is not required. The release tag and hashes must be updated together when upgrading core.
+Both packaging scripts use the pinned Bimeron Core version in `cmake/core-release.cmake`. The current `v0.3.0-beta.2` candidate includes the required `-source` helper; its four frozen ZIP hashes are pinned together. They must match the signed manifest and actual published assets before release approval. `scripts/fetch-core.cmake` verifies the pinned archives on Windows and Linux, including cached candidate ZIPs. A sibling core checkout is not required. The version and hashes must be updated together when upgrading core.
 
 Acceptance criteria: a clean checkout can build the two DEBs on native Linux without PowerShell or WSL; Windows with WSL can build all four packages; Windows without WSL can build two MSI packages with `-WindowsOnly`; an archive that fails the pinned hash check cannot be packaged. Each installed core binary must match the verified published archive for its architecture.
 
@@ -78,7 +78,7 @@ The fetch script checks cached archive hashes on every run, downloads missing or
 
 `BIMERON_CORE_UPDATE_PUBLIC_KEY` is a CMake cache string containing the standard-base64 32-byte Ed25519 public key for `bimeron/bimeron-core` update manifests. Its default is the published `v0.1.0-beta.3` key (`bk6SfABmDG88uhUupYT+ia6dtSrpHbnGaBCfYvihJF0=`, key ID `7370a2d8cf890e5e`); the private key is never included. Existing build directories can cache an old empty override, so verify this cache value when rebuilding them. An empty override disables signed updates. Key rotation requires a GUI release that trusts the successor before core switches signing keys; the current implementation accepts one key and must be extended for overlapping keys before rotation.
 
-The normal package scripts pin published core `v0.2.0-beta.1` from commit `6e0c171505be8e349d5f42570f7ceb3e50ac6697`. This helper supports `-source`. An older installed service can be replaced by the new bundled helper. The GUI refuses direct updates when its bundled helper lacks `-source` or its package path is writable by ordinary users. Earlier local packages bundled `v0.1.0-beta.3` from commit `ff489b8ee0a0f4394f381d5273d6a3d92dab48c1`; their service-update compatibility excludes GUI `0.1.5`.
+The release candidate package scripts pin Core `v0.3.0-beta.2` from commit `66d84d8f4dcfc6ada625eb11894b19feea51b7ba`, with `-source` support. An older installed service can be replaced by the new bundled helper. The GUI refuses direct updates when its bundled helper lacks `-source` or its package path is writable by ordinary users. Historical `0.2.0` packages used published Core `v0.2.0-beta.1` at `6e0c171505be8e349d5f42570f7ceb3e50ac6697`; earlier local packages bundled `v0.1.0-beta.3` at `ff489b8ee0a0f4394f381d5273d6a3d92dab48c1`, whose service-update compatibility excludes GUI `0.1.5`.
 
 The `ff489b8` prepared files were published without rebuilding. The downloaded GitHub assets matched the prepared bytes, the signed manifest, and `SHA256SUMS`. The GUI verified the exact manifest signature and extracted all four desktop archives. At that time, `cmake/core-release.cmake` pinned the four hashes of those published ZIPs. A normal package build must reset `BIMERON_CORE_ROOT` to `.tools/core` so a cached local override cannot package an older candidate. The four GUI `0.1.1` packages built after this correction contain core `ff489b8`; MSI and DEB payload hashes match the published binaries.
 
@@ -159,7 +159,7 @@ The script performs the following process:
 1. checks WSL unless `-WindowsOnly` was requested, then fetches and verifies the required core archives;
 2. creates `dist` and removes old Bimeron `.msi`, `.exe` and `.deb` packages;
 3. downloads portable WiX if necessary;
-4. configures, builds, stages and packages Windows amd64 and ARM64 with `BIMERON_REQUIRE_CORE=ON`;
+4. configures, builds and stages Windows amd64 and ARM64 with `BIMERON_REQUIRE_CORE=ON`, rejects any staged EXE/DLL with a mismatched PE architecture, then packages;
 5. unless `-WindowsOnly` was requested, runs `scripts/package-linux.sh` in WSL for the two DEBs;
 6. removes temporary `dist/_CPack_Packages` and displays the finished packages.
 
@@ -226,7 +226,7 @@ The `stage/windows-amd64` or `stage/windows-arm64` tree is the source of the MSI
 - `bimeron-core.exe` of the same architecture;
 - `wintun.dll` of the same architecture;
 - necessary DLLs and Qt plugins;
-- architecture-matched MSVC redistributable DLLs, including `VCRUNTIME140_1.dll`, copied from the installed Visual Studio toolchain;
+- architecture-matched MSVC redistributable DLLs, copied from the installed Visual Studio toolchain (`VCRUNTIME140_1.dll` is x64-only; the ARM64 redist directory's unused x64 compatibility copy is excluded);
 - `translations/qt_ru.qm` for localized Qt buttons and dialogs;
 - `WINTUN-LICENSE.txt`;
 - `CORE-LICENSE.txt`;
@@ -306,7 +306,7 @@ DEB is not yet subscribed or published to the APT repository. A typical APT sign
 
 ## Review before publishing
 
-GitHub Actions `Desktop CI` runs on pushes, pull requests and manual dispatch. It configures and compiles the GUI for Windows amd64 and ARM64 (MSVC 2022 and Qt 6.8.3; ARM64 cross-compiles on an x64 runner) and Linux amd64 and arm64 (Ubuntu 24.04 and system Qt 6). CI does not download core, create installation packages or publish them. It also runs CTest on native Windows x64 and both native Linux runners. Windows ARM64 remains cross-compile-only. On Windows ARM64, CI sets `BIMERON_DEPLOY_QT=OFF` because the ARM64 deployment tool cannot run on the x64 runner. Local package builds use the default `ON`. Without downloaded core, CMake uses CPack's default license text while configuring CI; package builds require the actual core notices and licenses.
+GitHub Actions `Desktop CI` runs on pushes, pull requests and manual dispatch. It configures and compiles the GUI for Windows amd64 and ARM64 (MSVC 2022 and Qt 6.8.3; ARM64 cross-compiles on an x64 runner) and Linux amd64 and arm64 (Ubuntu 24.04 and system Qt 6). CI does not download core, create installation packages or publish them. It also runs CTest on native Windows x64 and both native Linux runners. Windows ARM64 remains cross-compile-only. On Windows ARM64, CI sets `BIMERON_DEPLOY_QT=OFF` because the ARM64 deployment tool cannot run on the x64 runner. Local package builds use the default `ON`. Deployment passes the selected target Qt installation through `--qtpaths`, so an x64 host tool deploys ARM64 Qt for an ARM64 build. `--no-compiler-runtime` leaves MSVC runtime installation to CMake's architecture-specific redistributable rule. After correcting an earlier deployment architecture, remove stale DLLs from that configuration's generated output and clear its staging tree before rebuilding; inspecting only the GUI executable is insufficient. Without downloaded core, CMake uses CPack's default license text while configuring CI; package builds require the actual core notices and licenses.
 
 `ctest` runs `profile-vless-test`, covering profile preservation, atomic replacement, permissions/DACLs, relative-reference import refusal, and secret redaction as well as existing protocol round trips. It uses Qt's offscreen platform on Linux and the Windows platform plugin on Windows. Set `BIMERON_VLESS_CORE` to a VLESS-capable core CLI path to additionally validate each generated profile against the core. Set `BIMERON_HYSTERIA2_CORE` for Hysteria2 validation and `BIMERON_PRESERVATION_CORE` to the exact reviewed newer CLI for SS2022, plugin, wrapper, and opaque-source preservation fixtures. These variables are for local contract testing and do not affect packages.
 
