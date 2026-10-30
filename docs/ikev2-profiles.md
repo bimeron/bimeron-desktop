@@ -421,3 +421,16 @@ attempt actual SetFileInformationByHandle case sensitivity, then demonstrate
 actual differently cased opens and identity results if enabled. Permission or
 support refusal is reported as native unavailable, never replaced by model claims.
 No elevated host setup, ACL repair or guest harness is part of this correction.
+
+Offscreen font-discovery follow-up (2026-10-30): the parent rerendered the four
+bound-Unknown previews from the author checkout at `6b236c0`, using child-only
+QT_QPA_FONTDIR=C:/Windows/Fonts with Qt 6.8.3 offscreen and explicit plugin paths.
+All four preview processes exited 0. Visual inspection of EN/RU at scale 1 and 1.5
+showed readable ASCII/Cyrillic, complete wrapped Unknown explanations and visible
+button labels without observed clipping in these frames. Generated files remain
+ignored as native-fontdir-{en,ru}-{1,1.5}.png in that checkout's build directory.
+No fonts were installed and no product/global configuration changed. This resolves
+the missing-glyph artifact for those offscreen previews, not native Windows font
+selection, tray/close behavior or visual acceptance of every GUI state. The later
+queued-callback fix changes guards rather than layout; these images do not claim
+a fresh binary build of that later revision.
