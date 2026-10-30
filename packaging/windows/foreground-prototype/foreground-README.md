@@ -331,3 +331,16 @@ for the missing table. Rebuild all three variants in fresh x64 and ARM64 directo
 with cached WiX and unsuppressed ICE; run x64 tests and ARM64 host checks. Record
 fresh identities, hashes and provenance. ICE success alone is not runtime proof;
 independent review and a parent-led VM repeat remain necessary.
+
+## Component-table correction offline evidence
+
+Source commit e583169a6d677736077f93e1465334b05511f9c7 produced fresh
+independent x64 and ARM64 lab builds. All three variants linked with cached WiX
+and normal unsuppressed ICE. x64 CTest passed 4/4; ARM64 host checks passed 3/3.
+Read-only inspection checked the actual six-column schema and empty table, Binary,
+PE, identities and the existing allowlist; 51 negative mutations passed per
+architecture. The old frozen 071b609 x64 MSI was rejected specifically for its
+missing Component table. Prior ICE success was not runtime validation. No install
+or VM repeat was performed; causality and callbacks remain unproved. No benchmark
+or profiling applies to this disconnected offline fixture. Production enrollment
+remains fail closed. Independent review precedes any parent-led VM repeat.
