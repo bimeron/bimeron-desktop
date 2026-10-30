@@ -844,3 +844,11 @@ build/ack-checkpoint-runner-retention-review freezes exact committed source and
 unchanged MSI/DLL/manifest with updated tests/effects for a fresh parent independent
 review before VM work. Earlier bundles remain preserved. No supported packaging
 flow, product matrix, MSI build/action, VM, benchmark/profile or release change.
+
+Checkpoint fixed-system-image correction acceptance: only the internally selected
+GetSystemDirectoryW-validated System32 msiexec pin may have >=1 links. Lab leaves
+remain single-link. Explicit trusted OS owner/DACL checks replace the OS bypass;
+safe inherited OS DACLs are allowed, protected lab DACLs remain mandatory. See the
+foreground README for the MEDIUM specification, separated model/native checks,
+immutable review freeze and parent review gate. No MSI rebuild or supported flow
+change; no VM, launch, termination or product matrix belongs to this correction.

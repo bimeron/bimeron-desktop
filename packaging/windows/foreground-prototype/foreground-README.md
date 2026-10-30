@@ -1558,3 +1558,34 @@ Diff review found the P1 release-on-unknown-death path corrected and no unrelate
 ACK/context/MSI/CMake changes. Windows ARM64/Linux builds and benchmarks/profiling
 are inapplicable to this disconnected native-x64-only runner with no product build
 change. Native path/ACL/launch/death behavior and late server work remain unproved.
+
+### Accepted fixed system image pin correction (MEDIUM)
+
+The parent source-33dd88a9 attempt failed in the operation constructor before MSI
+launch: native System32 msiexec had two links. No Pending/checkpoint/log or
+termination occurred. A last-error value after a successful API is not failure.
+Replace the OS descriptor bypass with explicit TraversalOnly, LabProtected and
+TrustedOS roles, and an internal fixed SystemImage role constructed only through
+GetSystemDirectoryW validated C:\Windows\System32\msiexec.exe. SystemImage alone
+accepts link counts >=1; all lab leaves still require exactly one. No caller path,
+PATH lookup, exact-two exception, image copy, ACL repair or signature assumption.
+
+Validate held-handle owner and non-null present DACL at Windows, System32 and
+image against exact SYSTEM, Administrators or TrustedInstaller. TrustedOS permits
+safe inherited DACLs without SE_DACL_PROTECTED; LabProtected still requires it.
+Reject unknown/callback ACEs and effective untrusted mutation/control/delete-child
+rights; ignore known inherit-only ACEs for the current object. Preserve root
+traversal, disk/type/reparse/case/identity checks, retained read sharing without
+write/delete, fixed path binding, all frozen hashes/records/freshness and the
+commitment deadline and P1 retention behavior.
+
+Acceptance: PS 5.1/7 exact-source native-free 150 worker regressions plus link,
+metadata, role and descriptor models. Separately label owned hardlink identity and
+sharing checks (not trusted OS positives), and read-only exact native system-path,
+ancestor descriptor/metadata/identity and retained-open compatibility checks.
+Never construct CheckpointOperation or launch/terminate/MSI/VM in native checks.
+Report native API errors without relaxing sharing. Freeze a NEW ignored bundle
+from one immutable commit with exact source archive/hashes, unchanged MSI/DLL/MF,
+logs, native evidence, effects and proposed command. Preserve older bundles.
+Parent fresh independent review precedes any second new-bytes VM attempt; no retry
+is automatic. No product matrix, Core, production, benchmark or release changes.
