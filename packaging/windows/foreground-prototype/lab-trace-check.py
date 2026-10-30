@@ -59,8 +59,28 @@ def rows(db, table, columns):
 ACTIONS = {'ObservationPreflight':1, 'ObservationRollback':3329,
            'ObservationDeferredBegin':3073, 'ObservationCommit':3585,
            'ObservationPostFinalize':1}
-def pe_check(path, arch):
-    b = path.read_bytes(); pe = struct.unpack_from('<I', b, 60)[0]
+# Reviewed x64/ARM64 direct imports from MSVC 19.51 static CRT and this fixture.
+# MSI SDK ordinal imports verified against native system msi.dll exports:
+# 8 MsiCloseHandle; 17 MsiCreateRecord; 103 MsiProcessMessage; 125 MsiRecordSetStringW.
+CONTEXT_API_IMPORTS = {
+    'ADVAPI32.DLL': set("OpenProcessToken OpenThreadToken GetLengthSid GetSidSubAuthority GetSidSubAuthorityCount GetTokenInformation IsValidSid IsWellKnownSid GetSidLengthRequired IsTokenRestricted ConvertSidToStringSidW".split()),
+    'MSI.DLL': {'#8', '#17', '#103', '#125'},
+    'BCRYPT.DLL': {'BCryptHash'},
+    'SECUR32.DLL': {'LsaGetLogonSessionData', 'LsaFreeReturnBuffer'},
+    'KERNEL32.DLL': set("WriteConsoleW CreateFileW GetConsoleMode GetConsoleOutputCP WriteFile FlushFileBuffers HeapReAlloc CloseHandle GetLastError GetProcessTimes GetCurrentProcess GetCurrentProcessId GetCurrentThread GetCurrentThreadId ProcessIdToSessionId GetSystemTime LocalFree HeapSize QueryPerformanceCounter GetSystemTimeAsFileTime InitializeSListHead SetUnhandledExceptionFilter GetStartupInfoW GetModuleHandleW RtlPcToFileHeader RaiseException RtlLookupFunctionEntry RtlUnwindEx InterlockedFlushSList SetLastError FlsAlloc FlsGetValue FlsSetValue FlsFree EncodePointer EnterCriticalSection LeaveCriticalSection InitializeCriticalSectionEx DeleteCriticalSection ExitProcess TerminateProcess FreeLibrary GetModuleHandleExW GetProcAddress GetModuleFileNameW IsProcessorFeaturePresent RtlCaptureContext RtlVirtualUnwind IsDebuggerPresent UnhandledExceptionFilter HeapFree HeapAlloc GetStdHandle GetFileType FindClose FindFirstFileExW FindNextFileW IsValidCodePage GetACP GetOEMCP GetCPInfo GetCommandLineA GetCommandLineW MultiByteToWideChar WideCharToMultiByte GetEnvironmentStringsW FreeEnvironmentStringsW VirtualProtect LoadLibraryExW LCMapStringW GetProcessHeap SetFilePointerEx GetStringTypeW SetStdHandle VerSetConditionMask VerifyVersionInfoW".split()),
+}
+
+def validate_context_imports(imports):
+    assert set(imports) == set(CONTEXT_API_IMPORTS), imports
+    for dll, entries in imports.items():
+        assert entries and len(entries) == len(set(entries)), (dll, entries)
+        assert set(entries) <= CONTEXT_API_IMPORTS[dll], (dll, set(entries) - CONTEXT_API_IMPORTS[dll])
+    assert set(imports['SECUR32.DLL']) == CONTEXT_API_IMPORTS['SECUR32.DLL']
+    assert set(imports['MSI.DLL']) == CONTEXT_API_IMPORTS['MSI.DLL']
+
+def pe_check(path, arch, profile='historical', image=None, report=True):
+    assert profile in {'historical', 'context'}
+    b = path.read_bytes() if image is None else image; pe = struct.unpack_from('<I', b, 60)[0]
     assert b[pe:pe+4] == b'PE\0\0'
     assert struct.unpack_from('<H', b, pe+4)[0] == {'x64':0x8664, 'arm64':0xaa64}[arch]
     optional = pe+24; assert struct.unpack_from('<H', b, optional)[0] == 0x20b
@@ -84,15 +104,44 @@ def pe_check(path, arch):
         name = offset(struct.unpack_from('<I', b, offset(names)+n*4)[0])
         exports.append(b[name:b.index(0, name)].decode())
     assert set(exports) == set(ACTIONS)
+    if profile == 'context':
+        assert len(exports) == len(ACTIONS) == struct.unpack_from('<I', b, export+20)[0]
+        functions = offset(struct.unpack_from('<I', b, export+28)[0])
+        export_size = struct.unpack_from('<I', b, optional+116)[0]
+        for n in range(len(ACTIONS)):
+            target = struct.unpack_from('<I', b, functions+n*4)[0]
+            assert target and not export_rva <= target < export_rva+export_size, 'forwarded export'
+
     # Reject all delay imports, not merely unfamiliar ones.
     assert struct.unpack_from('<II', b, optional+112+13*8) == (0, 0)
-    imports = []; rva, size = struct.unpack_from('<II', b, optional+112+8)
+    imports = []; apis = {}; rva, size = struct.unpack_from('<II', b, optional+112+8)
     o = offset(rva)
     while any(b[o:o+20]):
         name = offset(struct.unpack_from('<I', b, o+12)[0])
-        imports.append(b[name:b.index(0, name)].decode().upper()); o += 20
-    assert set(imports) <= {'KERNEL32.DLL', 'ADVAPI32.DLL', 'MSI.DLL', 'BCRYPT.DLL'}
-    print('fixed system imports; no delay imports:', imports)
+        dll = b[name:b.index(0, name)].decode().upper()
+        imports.append(dll)
+        thunk = struct.unpack_from('<I', b, o)[0] or struct.unpack_from('<I', b, o+16)[0]
+        entries = []; at = offset(thunk)
+        while True:
+            value = struct.unpack_from('<Q', b, at)[0]
+            if not value: break
+            if value & (1 << 63):
+                assert value & ~((1 << 63) | 0xffff) == 0
+                entries.append('#'+str(value & 0xffff))
+            else:
+                entry = offset(value)+2
+                entries.append(b[entry:b.index(0, entry)].decode())
+            at += 8
+        assert dll not in apis
+        apis[dll] = sorted(entries); o += 20
+    if profile == 'context':
+        validate_context_imports(apis)
+    else:
+        # Preserve the historical default DLL profile; secur32 remains refused.
+        assert set(imports) <= {'KERNEL32.DLL', 'ADVAPI32.DLL', 'MSI.DLL', 'BCRYPT.DLL'}
+    if report:
+        path.with_suffix('.imports.json').write_text(json.dumps(apis, indent=2)+'\n')
+        print('fixed system imports; no delay imports; profile='+profile+':', json.dumps(apis, sort_keys=True))
     return hashlib.sha256(b).hexdigest()
 
 
@@ -163,12 +212,48 @@ def validate(t, digest, variant, arch, identities):
 
 if __name__ == '__main__':
     folder, arch = Path(sys.argv[1]).resolve(), sys.argv[2]
+    profile = sys.argv[3] if len(sys.argv) == 4 else 'historical'
+    assert len(sys.argv) in {3, 4} and profile in {'historical', 'context'}
     cache = (folder.parent/'CMakeCache.txt').read_text()
     cache_values = dict(line.split('=',1) for line in cache.splitlines() if ':INTERNAL=' in line)
+    # API policy negatives do not alter historical or other fixture allowlists.
+    if profile == 'context':
+        allowed = {dll: sorted(entries) for dll, entries in CONTEXT_API_IMPORTS.items()}
+        validate_context_imports(allowed)
+        for dll in allowed:
+            for entry in ['UnreviewedApi', '#65535']:
+                bad = copy.deepcopy(allowed); bad[dll].append(entry)
+                try: validate_context_imports(bad)
+                except AssertionError: pass
+                else: raise AssertionError('unknown API/ordinal accepted')
+        bad = copy.deepcopy(allowed); bad['OTHER.DLL'] = ['Unknown']
+        try: validate_context_imports(bad)
+        except AssertionError: pass
+        else: raise AssertionError('unknown DLL accepted')
+        bad = copy.deepcopy(allowed); bad['SECUR32.DLL'].pop()
+        try: validate_context_imports(bad)
+        except AssertionError: pass
+        else: raise AssertionError('missing LSA import accepted')
     seen = set(); evidence = {}
     for variant in ['Success','CommitFail','PostFinalizeFail']:
         path = folder/f'lab-trace-{variant}.msi'; dll = folder/f'lab-trace-{variant}.dll'
-        digest = pe_check(dll, arch)
+        digest = pe_check(dll, arch, profile)
+        if profile == 'context':
+            original = dll.read_bytes()
+            pe = struct.unpack_from('<I', original, 60)[0]; optional = pe+24
+            negatives = []
+            bad = bytearray(original); struct.pack_into('<II', bad, optional+112+13*8, 1, 32); negatives.append(bad)
+            bad = original.replace(b'LsaFreeReturnBuffer', b'XsaFreeReturnBuffer'); assert bad != original; negatives.append(bad)
+            ordinal = struct.pack('<Q', (1 << 63) | 103)
+            bad = original.replace(ordinal, struct.pack('<Q', (1 << 63) | 65535)); assert bad != original; negatives.append(bad)
+            for bad in negatives:
+                try: pe_check(dll, arch, 'context', image=bad, report=False)
+                except (AssertionError, ValueError, struct.error): pass
+                else: raise AssertionError('negative PE accepted')
+            try: pe_check(dll, arch, 'historical', report=False)
+            except AssertionError: pass
+            else: raise AssertionError('historical profile accepted context DLL')
+            print('PASS context DLL rejected by historical profile; PE delay/API/ordinal negatives')
         db = W.UINT(); check(msi.MsiOpenDatabaseW(str(path), None, C.byref(db)))
         try:
             table_names = rows(db, '_Tables', ['Name'])

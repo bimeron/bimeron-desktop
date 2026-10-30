@@ -1667,3 +1667,74 @@ later Success VM cases are Session0/InteractiveHighest/Limited; incomplete or ea
 failure is valid unavailable evidence, never authority. No host MSI actions,
 protected opens/writes, network, override, VM, push/watch/merge or release.
 Linux/product matrix, benchmarks and profiling are inapplicable to this isolated lab.
+
+### Context trace implementation and record contract
+
+Enable both FOREGROUND_LAB_TRACE=ON and FOREGROUND_LAB_TRACE_CONTEXT=ON in fresh
+build/trace-context-x64 or build/trace-context-arm64, using the installed VS 18
+BuildTools instance and explicit cached WIX_TOOL_DIR shown above. Build Release
+--target foreground-lab-trace foreground-test lab-context-record-test.
+Run x64 CTest -R 'foreground-worker|foreground-sequence|foreground-context-record|foreground-lab-static'
+and ARM64 host CTest -R 'foreground-sequence|foreground-lab-static'; never run ARM64
+executables on x64. Build the context-OFF regression in separate
+build/trace-historical-x64 and build/trace-historical-arm64 directories with only
+FOREGROUND_LAB_TRACE=ON, and check their historical profile. No default product
+build or install rules are involved.
+
+lab-trace-check.py <Release-directory> <x64|arm64> context selects the new API
+policy. Omitting the profile (or explicit historical) preserves the old DLL policy
+and refuses SECUR32. Actual .imports.json reports enumerate every direct symbol;
+only the two named LSA functions are accepted from SECUR32. MSI SDK ordinals
+8/17/103/125 were mapped through native system msi.dll exports to CloseHandle,
+CreateRecord, ProcessMessage and RecordSetStringW, respectively (Msi prefixes).
+ADVAPI symbols are token/SID read-only observation; BCRYPT supplies the historical
+SID hash. KERNEL32 includes reviewed static-CRT I/O, environment, dynamic-loader,
+exception and termination imports; their presence does not mean the callback
+uses them for these purposes. Source contains no new file/network/termination or
+loader operation. ARM64 CRT additionally imports VerSetConditionMask and
+VerifyVersionInfoW. Import checks bound direct dependencies, not dynamic behavior.
+
+The added record begins BIMERON_LAB_CONTEXT_V1 and uses a fixed 2048-wchar buffer.
+All values are unsigned 32-bit numbers except impersonation (-1 for primary or
+unknown, otherwise 0..3) and three exactly 16-lowercase-hex LUID strings. Callback
+IDs are 0 Preflight, 1 Rollback, 2 DeferredBegin, 3 Commit, 4 PostFinalize. Source
+is 0 unknown, 1 thread, 2 process; type is 0 unknown, 1 primary, 2 impersonation;
+elevationType is 0 unknown or native 1..3. Refusal is 0 None, 1 TokenOpen,
+2 TokenQuery, 3 Authority, 4 Principal, 5 LsaQuery, 6 LsaData, 7 LogonType,
+8 DescriptorAccess (never selected by descriptor-free trace). Unknown enums
+produce incomplete evidence with refusal TokenQuery. LSA status is its unsigned
+32-bit NTSTATUS representation. TokenId/authenticationId/lsaAuthenticationId
+use high then low halves. Flags are 0/1. SID strings remain internal; only equality,
+SYSTEM and service flags leave the observer.
+
+complete requires known field enums, successful process/token/LSA queries and
+valid LSA data; it does not imply policy eligibility. Mismatch, SYSTEM, service,
+Session 0 and non-2/10 logons refuse eligibility. eligible additionally requires
+the shared full-authority evaluator and no recorded refusal. Neither is an
+installer authorization result. Capture exceptions emit complete=0/eligible=0
+and numeric ERROR_NOT_ENOUGH_MEMORY. Logging errors attempt one complete=0 fallback
+with ERROR_WRITE_FAULT without recapture. Missing, duplicate, unparseable or any
+incomplete context record makes that callback's context evidence unavailable;
+a failed logging fallback can itself be absent. A logged record cannot attest
+message delivery or the eventual MSI return. Original V1 messages are unchanged
+and independently observed; token observations may differ between those two reads.
+
+Shared callback-context code contains only selection/capture and LSA policy. The
+foreground descriptor wrapper retains the same selected token for AccessCheck;
+worker/journal and old exported interfaces stay in foreground. The historical
+foreground MSI checker remains unchanged and predates baseline SECUR32 linkage;
+its foreground-msi-readonly target is not part of these focused regressions.
+No old allowlist is broadened to accept the newly linked foreground DLL.
+
+Exact proposed later effects, for parent review only: copy the externally pinned
+new x64 Success MSI to a fresh parent-approved guest input location; create distinct
+private verbose logs for one Session 0, one InteractiveToken Highest and one
+InteractiveToken Limited invocation, sequentially with terminal-state checks.
+The parent may register/remove only exact demand-only tasks after confirmed
+completion; no runner change is supplied here. Windows Installer performs its own
+engine extraction/loading, logs/cache and possible registration writes despite
+zero installed resources. Callbacks only read effective tokens/LSA and emit MSI
+messages; no ACK, Pending, checkpoint, protected-object opens/writes, network,
+cleanup, override, retries or authority publication. Limited/early-failure or
+incomplete records are valid unavailable evidence. No VM-ready claim or guest
+permission is conveyed; review precedes all parent execution.

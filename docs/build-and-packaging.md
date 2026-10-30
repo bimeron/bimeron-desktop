@@ -874,3 +874,12 @@ secur32; historical trace builds remain context-OFF. Use the explicit checker
 context profile; default invocation keeps the historical profile. Normal WiX ICE
 remains unsuppressed. No production install/CPack flow changes. See the foreground
 README acceptance for immutable evidence, review and parent-only VM limits.
+
+Implementation uses shared callback-context.cpp only for token/LSA capture and
+policy; foreground retains its descriptor wrapper. Explicit context checker API
+sets and .imports.json reports cover actual direct symbols, while default
+historical profile still refuses secur32. The fixed numeric context record is
+bounded to 2048 wchar including termination; its complete/eligible values are
+observations only. Build only explicit targets and use the focused test filters
+in the foreground README. Context-OFF regressions use separate ignored
+build/trace-historical-x64 and arm64 directories. No production flow changes.

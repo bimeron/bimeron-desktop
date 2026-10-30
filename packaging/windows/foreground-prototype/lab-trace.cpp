@@ -6,6 +6,9 @@
 #include <bcrypt.h>
 #include <cstdio>
 #include <vector>
+#ifdef FOREGROUND_LAB_TRACE_CONTEXT
+#include "lab-context-record.h"
+#endif
 
 #ifndef LAB_FAILPOINT
 #define LAB_FAILPOINT 0
@@ -114,7 +117,33 @@ UINT observe(MSIHANDLE install, const wchar_t* callback, int point) {
     if (!logged) incomplete(install, callback, intended, ERROR_WRITE_FAULT);
     return intended;
 }
-UINT safeObserve(MSIHANDLE h, const wchar_t* name, int point) noexcept {
+#ifdef FOREGROUND_LAB_TRACE_CONTEXT
+bool logContext(MSIHANDLE h, const wchar_t* text) noexcept {
+    MSIHANDLE record = MsiCreateRecord(0);
+    if (!record) return false;
+    const bool set = MsiRecordSetStringW(record, 0, text) == ERROR_SUCCESS;
+    const bool logged = set && MsiProcessMessage(h, INSTALLMESSAGE_INFO, record) == 0;
+    MsiCloseHandle(record);
+    return logged;
+}
+void observeContext(MSIHANDLE h, unsigned callback) noexcept {
+    DWORD session = 0, status = 0;
+    if (!ProcessIdToSessionId(GetCurrentProcessId(), &session)) status = GetLastError();
+    wchar_t text[foreground::ContextRecordCapacity]{};
+    if (!foreground::captureContextRecord(text, _countof(text), callback, session, status) || !logContext(h, text)) {
+        foreground::CallbackInteractiveContextObservation incomplete;
+        incomplete.status = ERROR_WRITE_FAULT;
+        if (foreground::formatContextRecord(text, _countof(text), callback, session, status, incomplete))
+            logContext(h, text);
+    }
+}
+#endif
+UINT safeObserve(MSIHANDLE h, const wchar_t* name, int point, unsigned callback) noexcept {
+#ifdef FOREGROUND_LAB_TRACE_CONTEXT
+    observeContext(h, callback);
+#else
+    (void)callback;
+#endif
     try { return observe(h, name, point); }
     catch (...) {
         const UINT intended = LAB_FAILPOINT == point && point ? ERROR_INSTALL_FAILURE : ERROR_SUCCESS;
@@ -125,9 +154,9 @@ UINT safeObserve(MSIHANDLE h, const wchar_t* name, int point) noexcept {
 }
 #define WIDE_(s) L##s
 #define WIDEN(s) WIDE_(s)
-#define LAB_CALLBACK(name, point) extern "C" __declspec(dllexport) UINT __stdcall name(MSIHANDLE h) { return safeObserve(h, WIDEN(#name), point); }
-LAB_CALLBACK(ObservationPreflight, 0)
-LAB_CALLBACK(ObservationRollback, 0)
-LAB_CALLBACK(ObservationDeferredBegin, 0)
-LAB_CALLBACK(ObservationCommit, 1)
-LAB_CALLBACK(ObservationPostFinalize, 2)
+#define LAB_CALLBACK(name, point, callback) extern "C" __declspec(dllexport) UINT __stdcall name(MSIHANDLE h) { return safeObserve(h, WIDEN(#name), point, callback); }
+LAB_CALLBACK(ObservationPreflight, 0, 0)
+LAB_CALLBACK(ObservationRollback, 0, 1)
+LAB_CALLBACK(ObservationDeferredBegin, 0, 2)
+LAB_CALLBACK(ObservationCommit, 1, 3)
+LAB_CALLBACK(ObservationPostFinalize, 2, 4)
