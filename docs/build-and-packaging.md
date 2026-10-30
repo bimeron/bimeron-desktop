@@ -571,3 +571,11 @@ negatives and compiled MSI API allowlist passed offline. It is outside productio
 CMake/CPack and does not change the supported package flow. No host MSI actions,
 VM execution, release or architecture matrix were performed. Independent review
 and parent-operated disposable x64 VM execution remain pending.
+
+The accepted follow-up specification in the probe README adds a separately
+selected normal machine-dependent handle, with the same fixed inputs and bounded
+CostInitialize call path. The normal handle itself does not guarantee immutability.
+The saved restricted-mode guest run returned 0 for all four cases; a full `/qn`
+run of the original source MSI failed with 2728 at CostInitialize. This is a
+discrimination experiment, not a claimed fix. Independent review precedes the
+parent's guest run of the new mode.

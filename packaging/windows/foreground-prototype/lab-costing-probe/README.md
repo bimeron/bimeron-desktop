@@ -103,3 +103,28 @@ Linux targets are unaffected by this disconnected x64 Windows experiment; the
 release build/package matrix and VM execution were not run. Remaining risks:
 independent review and guest results pending; results cannot establish native
 installation safety, callback behavior, outer transaction settlement or enrollment.
+
+## Accepted machine-state experiment specification
+
+Add exactly `--guest-cost-initialize-machine-state` to select a normal
+`MsiOpenPackageExW` handle with literal option `0`. Preserve `--verify-only`
+ and the existing flag-1 `--guest-cost-initialize` mode. The normal handle is
+machine-dependent and is not an immutability guarantee; the bounded call path
+is the safeguard. The four frozen inputs have no embedded UI. Initialize COM on
+the calling thread, validate all four pinned hashes before any MSI open, retain
+non-write/non-delete-shared read handles through cleanup, call only literal
+`CostInitialize`, and close every successfully opened MSI handle. The only MSI
+imports are `MsiOpenPackageExW`, `MsiDoActionW`, and `MsiCloseHandle`; no install,
+sequence, transaction, default or null action, callback, property setter,
+user-selected input, or embedded UI is allowed. Output identifies the fixed
+mode and options and retains bounded numeric statuses and hashes.
+
+Acceptance: an offline x64 build in a new directory uses the exact four frozen
+MSIs without regenerating them; the checker verifies both option branches,
+argument and hash rejection, and compiled MSI imports without host MSI actions.
+Independent review precedes any parent-operated disposable VM run. The saved
+restricted-mode guest evidence at `build/vm-lab-evidence-20261030/costing-probe-66bb4b28.txt`
+reports all four actions returned 0. A full `/qn` run of the same original source
+MSI failed with 2728 at CostInitialize; neither result establishes a fix.
+Microsoft documents [normal and restricted open options](https://learn.microsoft.com/en-us/windows/win32/api/msi/nf-msi-msiopenpackageexw)
+and [CostInitialize outside an installation transaction](https://learn.microsoft.com/en-us/windows/win32/api/msiquery/nf-msiquery-msidoactionw).
