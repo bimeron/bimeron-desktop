@@ -1047,3 +1047,28 @@ Actual launched-msiexec capture and callback comparison await parent VM proof;
 Equal/Different/Unknown are observations, SID/session/token stay separate, and
 initiating-client authority remains Unknown. No crash variant, host MSI/guest-mode
 harness, VM, termination, release, product matrix or benchmark was run.
+
+### Accepted fixed trace-client lab root specification
+
+On base 1ac5d353e567f59e4c0e5739ca1bf1d7861454a7, move only the manual
+trace runner's fixed root to native Program Files\BimeronTraceClientLab.
+Resolve Program Files through SHGetKnownFolderPath, with no environment or
+arbitrary-path fallback. Require a 64-bit process and IsWow64Process2 evidence
+of process machine UNKNOWN (native) and native machine AMD64; 32-bit, emulated,
+ARM64, unknown or unavailable queries refuse before path admission or dispatch.
+Retain every ancestor/reparse refusal, exact runner leaf, three-variant manifest,
+input filename/encoding, hash pin, retained launch handle/FILETIME and deadline.
+
+Parent provisions and verifies the Program Files anchor and fixed lab ACLs before
+one separately reviewed Elevated Session 0 Success observation. The runner does
+not repair or validate ACL policy. Do not change Public ancestor ACLs. This fixed
+trace lab is separate from protected ACK and standalone Pending records; neither
+is read, modified or reused. No ACK, CMake, native production or MSI byte changes.
+
+Acceptance: PS 5.1 and 7 offline harnesses cover native root derivation, old Public
+root/arbitrary/traversal refusal and unsupported architecture decisions, retaining
+all prior identity/deadline/pin checks without executable/MSI/VM dispatch. Freeze
+new ignored build/trace-client-protected-root-review with revised runner/tests,
+original a761106 manifest and all three original MSI bytes, carried-forward actual
+table/Binary/import evidence, test logs and hash inventory. No rebuild, VM, push,
+watch, benchmark, profiling or release/product matrix is applicable here.
