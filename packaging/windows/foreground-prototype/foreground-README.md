@@ -1019,3 +1019,31 @@ must be honored; report conflicts with a fresh private guest directory rather th
 bypassing it. Parent Preflight/PostFinalize comparisons are discriminators only,
 never caller authority or termination permission. Product CI/matrix, performance
 and profiling are inapplicable to this disconnected runner-only correction.
+
+### Early identity capture offline evidence
+
+Specification commit 10ad4fe precedes implementation on exact base
+6ccbe07807698c4b1ede66f64c3d20852e8a195e. PS 5.1.19041.6456 and 7.6.9 offline
+harnesses pass, including 40 negative checks, early capture before blocked wait,
+query failure continuing to wait, null launch, late launch and timeout pin retention.
+The only native process query reads the current harness handle; no executable,
+MSI or guest harness dispatch occurs. Static diff/security review found no new
+process discovery, callback-host opening, termination or arbitrary command path.
+The existing five-minute budget, foreground worker and pin ownership remain.
+No supported build/package flow changed; canonical build documentation is unchanged.
+
+New ignored review bundle: build/trace-client-identity-review-6ccbe07. Its inputs
+retain hash-verified original a761106 x64 trace MSI/DLL bytes, actual table reports,
+three-variant lab-manifest.json and revised runner/tests. Only one Success run is
+proposed; no ACK bytes are reused or relabeled. Frozen runner SHA-256:
+885f8999f66d32f6e991cb34f7de3842eda8b089611c57902799fc94cde6ed5f.
+
+Concrete preparation gap: Assert-LabPath and PSCommandPath require the exact
+C:\Users\Public\Documents\BimeronInstallerLab root and runner leaf. A fresh private
+guest directory is incompatible with that contract. The bundle is not runtime
+ready and supplies no bypass or permission. Parent must resolve this policy before
+execution. All three MSI inputs remain mandatory even for one Success invocation.
+Actual launched-msiexec capture and callback comparison await parent VM proof;
+Equal/Different/Unknown are observations, SID/session/token stay separate, and
+initiating-client authority remains Unknown. No crash variant, host MSI/guest-mode
+harness, VM, termination, release, product matrix or benchmark was run.

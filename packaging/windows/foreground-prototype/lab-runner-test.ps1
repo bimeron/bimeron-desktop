@@ -5,10 +5,23 @@ $path=Join-Path $PSScriptRoot 'Run-Lab.ps1'
 $tokens=$null;$errors=$null
 $ast=[Management.Automation.Language.Parser]::ParseFile($path,[ref]$tokens,[ref]$errors)
 if ($errors.Count) { throw 'Runner syntax failure.' }
-foreach ($name in @('Get-LabTokenClass','Initialize-LabHelpers','Convert-LabJsonObject','Read-LabJson','Test-LabTraceComplete','Assert-JsonKeys','Assert-LabPath','Assert-Fields','Assert-Hash','Read-LabManifest','Read-LabTrace','Get-LabOutcome')) {
+foreach ($name in @('Compare-LabProcessIdentity','Get-LabTokenClass','Initialize-LabHelpers','Convert-LabJsonObject','Read-LabJson','Test-LabTraceComplete','Assert-JsonKeys','Assert-LabPath','Assert-Fields','Assert-Hash','Read-LabManifest','Read-LabTrace','Get-LabOutcome')) {
  $fn=$ast.Find({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name},$true)
  . ([scriptblock]::Create($fn.Extent.Text))
 }
+$helperAdd=$ast.FindAll({param($n) $n -is [Management.Automation.Language.CommandAst] -and $n.GetCommandName() -eq 'Add-Type'},$true) | Where-Object {$_.CommandElements[2].Value.Contains('public sealed class BimeronLabJson')}
+$fakeSource=@"
+public static class LabFakeLauncher {
+ public static BimeronLabLaunch Worker(IDisposable[] pins,bool fail){return new BimeronLabLaunch(Returned(fail?0:100),pins,fail?(Func<Process,BimeronLabIdentity>)QueryFailure:Query,Wait);}
+ public static int WaitCalls; public static bool Captured, WaitEntered; public static readonly ManualResetEvent Release=new ManualResetEvent(false);
+ public static Func<Process> Returned(int delay){return delegate{Thread.Sleep(delay);return new Process();};}
+ public static BimeronLabIdentity Query(Process p){Captured=true;return new BimeronLabIdentity(1,"01dd000000000001");}
+ public static BimeronLabIdentity QueryFailure(Process p){throw new InvalidOperationException();}
+ public static void Wait(Process p){Interlocked.Increment(ref WaitCalls);if(!Captured)throw new Exception("Wait before capture");WaitEntered=true;Release.WaitOne();throw new InvalidOperationException();}
+ public static Func<Process> Delayed(int delay){return delegate{Thread.Sleep(delay);return null;};}
+}
+"@
+Add-Type -TypeDefinition ($helperAdd.CommandElements[2].Value + "`n" + $fakeSource)
 $count=0
 function Reject([scriptblock]$Action) { $rejected=$false;try{& $Action | Out-Null}catch{$rejected=$true};if(-not $rejected){throw 'Expected refusal.'};$script:count++ }
 Reject { Assert-JsonKeys '{"schema":1,"schema":1}' }
@@ -91,12 +104,7 @@ foreach ($add in $ast.FindAll({param($n) $n -is [Management.Automation.Language.
  if ($source.Contains('public static class BimeronLabNative')) { Add-Type -TypeDefinition $source }
 }
 # Fake launcher blocks before returning: no executable, UAC or installer is used.
-Add-Type -TypeDefinition @"
-using System;using System.Diagnostics;using System.Threading;
-public static class LabFakeLauncher {
- public static Func<Process> Delayed(int delay){return delegate{Thread.Sleep(delay);return null;};}
-}
-"@
+
 $temp=[IO.Path]::GetTempFileName()
 try {
  $pin=[IO.File]::Open($temp,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::Read)
@@ -109,4 +117,23 @@ try {
  if (-not $worker.Observe(3000) -or -not $worker.Failed -or $pin.CanRead) {throw 'Worker completion/pin ownership failure.'}
  $exclusive=[IO.File]::Open($temp,[IO.FileMode]::Open,[IO.FileAccess]::Write,[IO.FileShare]::None);$exclusive.Dispose()
 } finally { [IO.File]::Delete($temp) }
-Write-Output "PASS: PowerShell $($PSVersionTable.PSVersion); AST, exact interop, canonical trace, bounded JSON, deadline/pins and $count negative checks. No runner dispatch, executable launch, token query, MSI or VM operations."
+# Exact native adapter queries only this already-running harness process handle.
+$own=[Diagnostics.Process]::GetCurrentProcess()
+try { $nativeIdentity=[BimeronLabLaunch]::Capture($own);if ($nativeIdentity.Pid -ne $PID -or $nativeIdentity.Created -cnotmatch '^[0-9a-f]{16}$') {throw 'Native handle identity failure.'} } finally {$own.Dispose()}
+$identity=[BimeronLabIdentity]::new(1,'01dd000000000001')
+if ((Compare-LabProcessIdentity $trace $identity) -cne 'Equal' -or (Compare-LabProcessIdentity $trace ([BimeronLabIdentity]::new(2,$identity.Created))) -cne 'Different' -or (Compare-LabProcessIdentity $trace ([BimeronLabIdentity]::new(1,'01dd000000000002'))) -cne 'Different' -or (Compare-LabProcessIdentity $fallback $identity) -cne 'Unknown' -or (Compare-LabProcessIdentity $trace $null) -cne 'Unknown') {throw 'Pair comparison failure.'}
+$temp=[IO.Path]::GetTempFileName()
+try {
+ $pin=[IO.File]::OpenRead($temp)
+ $worker=[LabFakeLauncher]::Worker([IDisposable[]]@($pin),$false)
+ $worker.Start()
+ if ($worker.Observe(10) -or $null -ne $worker.Identity -or -not $pin.CanRead) {throw 'Late launch retention failure.'}
+ $deadline=[Diagnostics.Stopwatch]::StartNew()
+ while (-not [LabFakeLauncher]::WaitEntered -and $deadline.ElapsedMilliseconds -lt 3000) {Start-Sleep -Milliseconds 10}
+ if (-not [LabFakeLauncher]::WaitEntered -or $null -eq $worker.Identity -or $worker.Observe(10) -or -not $pin.CanRead) {throw 'Early capture/wait timeout retention failure.'}
+} finally { [LabFakeLauncher]::Release.Set() | Out-Null; if (-not $worker.Observe(3000)) {throw 'Fake wait did not finish.'};[IO.File]::Delete($temp) }
+$waitCalls=[LabFakeLauncher]::WaitCalls
+$failedQuery=[LabFakeLauncher]::Worker([IDisposable[]]@(),$true)
+$failedQuery.Start()
+if (-not $failedQuery.Observe(3000) -or -not $failedQuery.IdentityFailed -or $null -ne $failedQuery.Identity -or [LabFakeLauncher]::WaitCalls -ne ($waitCalls+1)) {throw 'Query failure guessed identity.'}
+Write-Output "PASS: PowerShell $($PSVersionTable.PSVersion); AST, exact interop, canonical trace, bounded JSON, deadline/pins and $count negative checks. No runner dispatch, executable launch, token query, MSI or VM operations; current harness handle queried read-only."

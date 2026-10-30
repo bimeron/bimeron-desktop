@@ -58,17 +58,32 @@ public sealed class BimeronLabJson {
  int start=pos;if(c=='-')pos++;if(pos>=text.Length||text[pos]<'0'||text[pos]>'9')throw Bad();if(text[pos]=='0')pos++;else while(pos<text.Length&&text[pos]>='0'&&text[pos]<='9')pos++;long number;if(!long.TryParse(text.Substring(start,pos-start),NumberStyles.AllowLeadingSign,CultureInfo.InvariantCulture,out number))throw Bad();return number;}
  public static object Parse(string s){if(s==null||s.Length>16384)throw new FormatException("JSON too large.");var p=new BimeronLabJson(s);object v=p.Value(0);p.White();if(p.pos!=s.Length)throw p.Bad();return v;}
 }
+public sealed class BimeronLabIdentity {
+ public readonly uint Pid; public readonly string Created;
+ public BimeronLabIdentity(uint pid,string created){Pid=pid;Created=created;}
+}
 public sealed class BimeronLabLaunch {
+ [DllImport("kernel32.dll", SetLastError=true)] static extern uint GetProcessId(IntPtr handle);
+ [DllImport("kernel32.dll", SetLastError=true)] static extern bool GetProcessTimes(IntPtr handle,out long created,out long exit,out long kernel,out long user);
+ public static BimeronLabIdentity Capture(Process process){
+  IntPtr handle=process.Handle; // Process retains this actual launch handle through wait.
+  uint pid=GetProcessId(handle);long created,exit,kernel,user;
+  if(pid==0 || !GetProcessTimes(handle,out created,out exit,out kernel,out user) || created==0)throw new InvalidOperationException();
+  return new BimeronLabIdentity(pid,unchecked((ulong)created).ToString("x16",CultureInfo.InvariantCulture));
+ }
+ readonly Func<Process,BimeronLabIdentity> capture; readonly Action<Process> wait;
+ public volatile BimeronLabIdentity Identity; public volatile bool IdentityFailed;
  [DllImport("kernel32.dll")] static extern void GetNativeSystemInfo(IntPtr info);
  public static bool NativeAmd64(){IntPtr info=Marshal.AllocHGlobal(64);try{GetNativeSystemInfo(info);return Marshal.ReadInt16(info)==9;}finally{Marshal.FreeHGlobal(info);}}
  readonly IDisposable[] pins; readonly Func<Process> launch;
  readonly ManualResetEvent done=new ManualResetEvent(false);
  public Process Process; public int? ExitCode; public bool Failed;
- public BimeronLabLaunch(Func<Process> action, IDisposable[] ownedPins){launch=action;pins=ownedPins;}
+ public BimeronLabLaunch(Func<Process> action, IDisposable[] ownedPins):this(action,ownedPins,Capture,delegate(Process p){p.WaitForExit();}){}
+ public BimeronLabLaunch(Func<Process> action, IDisposable[] ownedPins,Func<Process,BimeronLabIdentity> query,Action<Process> awaitExit){launch=action;pins=ownedPins;capture=query;wait=awaitExit;}
  public static BimeronLabLaunch ForProcess(ProcessStartInfo info, IDisposable[] pins){return new BimeronLabLaunch(delegate {return System.Diagnostics.Process.Start(info);},pins);}
  // Keep the CLR host alive for late launch and pins; observer never joins this thread.
  public void Start(){var t=new Thread(Run);t.IsBackground=false;t.Start();}
- void Run(){try{Process=launch();if(Process==null)throw new InvalidOperationException();Process.WaitForExit();ExitCode=Process.ExitCode;}catch{Failed=true;}finally{foreach(var p in pins){try{p.Dispose();}catch{}}done.Set();}}
+ void Run(){try{Process=launch();if(Process==null)throw new InvalidOperationException();try{Identity=capture(Process);if(Identity==null)IdentityFailed=true;}catch{IdentityFailed=true;}wait(Process);ExitCode=Process.ExitCode;}catch{Failed=true;}finally{foreach(var p in pins){try{p.Dispose();}catch{}}done.Set();}}
  public bool Observe(int milliseconds){return done.WaitOne(milliseconds);}
 }
 "@
@@ -144,6 +159,11 @@ function Read-LabTrace([string]$Line) {
 function Test-LabTraceComplete($Traces, [string]$VariantName) {
  if ($VariantName -cne 'Success' -or (@($Traces | ForEach-Object {$_.callback}) -join ',') -cne 'ObservationPreflight,ObservationDeferredBegin,ObservationCommit,ObservationPostFinalize') { return $false }
  return @($Traces | Where-Object {$_.evidence -cne 'observed' -or $_.status -ne 0 -or $_.intendedReturn -ne 0}).Count -eq 0
+}
+function Compare-LabProcessIdentity($Trace, $Identity) {
+ if ($null -eq $Identity -or $Trace.evidence -cne 'observed') { return 'Unknown' }
+ if ($Trace.pid -eq $Identity.Pid -and $Trace.processCreated -ceq $Identity.Created) { return 'Equal' }
+ return 'Different'
 }
 function Get-LabTokenClass($Token) {
  if ($Token.elevated -and $Token.integrity -ge 12288 -and $Token.enabledAdmin -and -not $Token.restricted) { return 'Elevated' }
@@ -251,10 +271,11 @@ public static class BimeronLabNative {
  $clock = [Diagnostics.Stopwatch]::StartNew()
  $worker.Start(); $pinsTransferred=$true
  $timedOut = -not $worker.Observe([Math]::Max(0,300000-[int]$clock.ElapsedMilliseconds))
- $exitCode = $null; $process=$null
- if (-not $timedOut) { $exitCode=$worker.ExitCode; $process=$worker.Process }
+ $identity = $worker.Identity # Atomic immutable snapshot, including on timeout.
+ $exitCode = $null
+ if (-not $timedOut) { $exitCode=$worker.ExitCode }
  $after = if ($timedOut) { $null } else { [BimeronLabNative]::MsiQueryProductState($variant.productCode) }
- $traces = @(); $complete = -not $timedOut -and -not $worker.Failed
+ $traces = @(); $complete = -not $timedOut -and -not $worker.Failed -and $null -ne $identity
  if (-not $timedOut) {
   if ((Get-Item -LiteralPath (Assert-LabPath $log)).Length -gt 16777216) { $complete=$false } else {
    foreach ($line in [IO.File]::ReadLines($log)) {
@@ -265,7 +286,7 @@ public static class BimeronLabNative {
  # Failure callback order is not a settlement proof. Before VM review, only
  # the full observed success sequence can be structurally complete.
  if (-not (Test-LabTraceComplete $traces $variantName)) { $complete=$false }
- Write-LabJson $summaryPath @{case=$Case;manifestHash=$ExpectedManifestSha256;runnerHash=$ExpectedRunnerSha256;msiHash=$variant.sha256;dllHash=$variant.dllSha256;startingToken=$actualClass;callbackOrder=@($traces | ForEach-Object {$_.callback});tokenClasses=@($traces | ForEach-Object {$(if ($_.evidence -ceq 'observed') {"$($_.tokenSource)/$($_.tokenType)/$($_.elevated)"} else {'Unknown'})});exitCode=$exitCode;timedOut=$timedOut;registrationBefore=$before;registrationAfter=$after;outcome=(Get-LabOutcome $exitCode $timedOut $complete);traceComplete=$complete;authenticatedInitiator='Unknown';resourceRollback='Unknown';durableBarrier='Unknown';nativeCompatibility='Unknown';injectedFailure='Observed result only; never a security pass';possibleLateOperation=$timedOut;launchFailed=$(if($timedOut){$null}else{$worker.Failed});childPid=$(if($null -eq $process){$null}else{$process.Id});childCreatedUtc=$(try {$process.StartTime.ToUniversalTime().ToString('o')} catch {'Unknown'})}
+ Write-LabJson $summaryPath @{case=$Case;manifestHash=$ExpectedManifestSha256;runnerHash=$ExpectedRunnerSha256;msiHash=$variant.sha256;dllHash=$variant.dllSha256;startingToken=$actualClass;callbackOrder=@($traces | ForEach-Object {$_.callback});tokenClasses=@($traces | ForEach-Object {$(if ($_.evidence -ceq 'observed') {"$($_.tokenSource)/$($_.tokenType)/$($_.elevated)"} else {'Unknown'})});exitCode=$exitCode;timedOut=$timedOut;registrationBefore=$before;registrationAfter=$after;outcome=(Get-LabOutcome $exitCode $timedOut $complete);traceComplete=$complete;authenticatedInitiator='Unknown';resourceRollback='Unknown';durableBarrier='Unknown';nativeCompatibility='Unknown';injectedFailure='Observed result only; never a security pass';possibleLateOperation=$timedOut;launchFailed=$(if($timedOut){$null}else{$worker.Failed});childPid=$(if($null -eq $identity){$null}else{$identity.Pid});childProcessCreated=$(if($null -eq $identity){'Unknown'}else{$identity.Created});childIdentityEvidence=$(if($null -eq $identity){'incomplete'}else{'observed'});callbackProcessComparison=@($traces | ForEach-Object {Compare-LabProcessIdentity $_ $identity})}
  if ($timedOut) { Write-Output 'UnknownPending: PossibleLateOperation. Launch/UAC may still complete and start the installer. Worker retains pins until completion and can keep this host alive indefinitely. Host death loses pins. Stop orchestration; no other case or uninstall. No cancellation was performed.' }
  Write-Output 'LAB observation saved locally. No product or security approval. On timeout stop and resolve manually; do not run another case or cleanup.'
 } finally { if (-not $pinsTransferred) { foreach ($pin in $pins) { $pin.Dispose() } } }
