@@ -476,3 +476,27 @@ must bind final installed GUI bytes, preserve the random public 16-byte installa
 ID and previous exact policy/rollback metadata through repair/upgrade. Keep existing
 signed packet installation/update behavior. Do not enable native packaging by
 default until the live transaction and trust prerequisites above are satisfied.
+
+## Offline native IKEv2 build integration
+
+The GUI source list includes `NativeIKEv2Transport` and `NativeIKEv2Session`,
+including unsupported Linux stubs. Compiling these sources does not instantiate
+or approve a native controller, enable IKEv2, or supply a default approval digest.
+Windows targets compiling them link `ole32` alongside `advapi32` and `shell32`.
+
+The existing `developer-mode-test` target includes both native fixture headers
+and runs their transport and session fixtures before the connection-management
+suite. Only this test target defines `NATIVE_IKEV2_TRANSPORT_TESTING`, for both
+transport and fixture compilation; the session seam remains a private friend.
+No additional executable or package payload is introduced; existing install
+exclusions still apply. Run offline fixtures with Qt 6.8.3 and
+`QT_QPA_PLATFORM=offscreen` explicitly, without native-platform fallback. Its
+clipboard is process-local and provides no native clipboard acceptance evidence.
+Clear optional `BIMERON_*CORE` validation variables for offline-only runs.
+
+`BIMERON_IKEV2_CORE` is an optional exact reviewed Core CLI validation input for
+native profile fixtures when those fixtures are integrated. It does not select
+or change the bundled Core. This build registration alone does not establish
+integrated profile-test coverage. Protected executable/peer authentication,
+same-user elevation, architecture-specific final executable approvals, MSI
+transaction safety and live native networking remain separate acceptance gates.
