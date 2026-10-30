@@ -996,3 +996,26 @@ No retries, uninstall, repair, deletion or cleanup occurred. These zero-resource
 observations establish callback/failure ordering and retained Pending only, not
 resource restoration, crash/power-loss durability, initiating-client authority,
 Clean settlement, production exclusion or ARM64 runtime acceptance.
+
+### Accepted early launched-client identity capture
+
+Immediately after Process.Start returns, the existing pin-owning worker retains
+its actual process handle and queries GetProcessId and raw creation FILETIME from
+that handle before WaitForExit. Publish one immutable tuple; query failure leaves
+explicit incomplete identity with no PID lookup or guessed fallback. Still wait
+for the owned process and retain pins through late launch/completion. The single
+five-minute launch-plus-wait observation deadline and PossibleLateOperation remain.
+Compare each canonical callback PID/creation pair with that tuple as Equal,
+Different or Unknown observations only. SID/session/token remain separate;
+authenticatedInitiator stays Unknown. No discovery, ancestry, callback-host open,
+termination, arbitrary command/path, ACK edit or crash variant is authorized.
+
+Acceptance: PS 5.1 and 7 offline tests demonstrate capture before wait, launch and
+query failure, late launch, timeout retention, and pair comparison including
+incomplete records. No executable/MSI/guest dispatch in the harness. Freeze the
+revised runner and original source-a761106 trace bytes in a new ignored review
+bundle for one parent Success run. The fixed root/three-variant manifest contract
+must be honored; report conflicts with a fresh private guest directory rather than
+bypassing it. Parent Preflight/PostFinalize comparisons are discriminators only,
+never caller authority or termination permission. Product CI/matrix, performance
+and profiling are inapplicable to this disconnected runner-only correction.
