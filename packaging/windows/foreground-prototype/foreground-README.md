@@ -1522,3 +1522,19 @@ initial bundle as explicitly labeled preparation diagnostics. No old bundle is
 modified or relabeled. Intervening context-observer commits were made by another
 writer despite the stated no-other-writer assumption; these checkpoint commits
 change only the authorized runner/test/README/canonical document files.
+
+### Checkpoint ownership retention fix acceptance (P1)
+
+The existing accepted retention contract requires confirmed owned-client death
+before releasing a launched operation's actual handle and input pins. Repair the
+final-wait failure path without changing the commitment gate or deadline contract.
+Acceptance: a throwing wait or returned wait with unconfirmed/failed death query
+must retain the worker, actual handle and pins in an explicit static pending owner,
+report Outcome Unresolved, Completed false and possibleLateOperation true, and
+remain sticky across observer timeout and GC. No retry, polling or recovery API
+is required: this diagnostic retention lasts until host exit. Observe signals that
+the worker has returned, not resource release. A confirmed same-handle death may
+release once; launch failure before any process exists may release. Late launch
+and in-flight operations retain ownership. Offline exact-worker mocks must cover
+these branches on PS 5.1 and 7 without native execution. This is an existing
+contract bug fix, not a new termination or packaging contract.
