@@ -13,6 +13,8 @@ bool decode(const unsigned char*, size_t, Record&);
 bool advance(Record&, const Id&, const Id&);
 bool safeMetadata(const BY_HANDLE_FILE_INFORMATION&, bool directory);
 bool sameIdentity(const BY_HANDLE_FILE_INFORMATION&, const BY_HANDLE_FILE_INFORMATION&);
+bool safeCaseFlags(bool queried, DWORD flags);
+bool safeDirectoryCase(HANDLE);
 bool safeDescriptor(PSECURITY_DESCRIPTOR);
 bool contained(const std::wstring&, const std::wstring&);
 bool isAnchor(const std::wstring&, const std::wstring&);
@@ -29,6 +31,7 @@ private:
     std::vector<HANDLE> pins;
     std::wstring path;
     size_t authority = 0;
+    HANDLE anchorPin = INVALID_HANDLE_VALUE;
     bool operate(const Id&, const Id&, bool);
 };
 #ifdef LAB_PROTECTED_FILE_TESTING

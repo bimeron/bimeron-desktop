@@ -592,3 +592,36 @@ acknowledge operations, negative fixtures and retained failure residue. Normal t
 must never invoke that mode. Parent authorization for those guest file effects,
 provisioning and execution remains necessary; no guest operation occurred here.
 MSI exports continue to fail unconditionally and no production integration is added.
+
+
+### Anchor identity/case correction evidence
+
+Acceptance was extended before implementation in the distinct pending-file
+subsection of docs/ikev2-profiles.md. A single fixed-drive volume mapping derives
+both paths. A separately held, protected native known-folder handle must match
+the traversal anchor's volume serial/file ID at admission and before operations.
+Text comparisons locate the boundary but cannot authorize a different object.
+Every directory pin, including the root, must successfully return zero
+FileCaseSensitiveInfo flags; enabled/unknown flags and every query error refuse.
+No unsupported-query fallback exists, including on older Windows/filesystems.
+All previous root pins, authority index, DACL, mutation and reparse checks remain.
+
+MSVC 19.51 / SDK 10.0.26100 x64 and ARM64 Release /W4 /WX compilation passed
+for the non-injected primitive and injected harness. x64 focused CTest passed
+2/2 for protected-file and the unchanged protected-access fail-closed exports.
+Models cover same path text with differing anchor IDs, case flags and query
+failure. The owned build-directory native fixture successfully enabled case
+sensitivity with SetFileInformationByHandle, verified the queried flag, and
+proved actual normal Win32 OPEN_EXISTING of an absent differently cased name
+failed; CREATE_NEW then opened that name as a distinct file ID. The directory
+was rejected by the actual case-query guard. This is native namespace/guard
+evidence, not protected-path admission evidence. Only those owned temporary
+fixtures were removed; protected pending-file behavior is unchanged.
+
+The harness remains outside Program Files: protected positive, protected stale
+record and actual protected substitution/reparse attacks were unavailable.
+ARM64 is compile-only. Review found no removed security checks or production,
+GUI, MSI/export changes. No elevation, ACL repair, registry/network mutation,
+VM, guest harness, package/release build, benchmark or profiling occurred.
+Linux and full product/package checks are inapplicable to this disconnected
+Windows-only correction. Guest acceptance and production integration remain open.

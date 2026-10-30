@@ -399,3 +399,25 @@ Path-pinning refinement: resolve the module's local drive root once to its volum
 GUID using GetVolumeNameForVolumeMountPointW, then use only that canonical volume
 path for every pin and leaf open. This prevents later DOS drive-letter remapping
 from redirecting the fixed leaf. Caller-supplied device/UNC paths remain absent.
+
+
+#### Anchor identity and case namespace correction acceptance
+
+Resolve the shared local fixed-drive root once, then derive both volume-GUID
+paths from that mapping. Open and retain the actual native known-folder anchor
+with read sharing only, non-reparse metadata and protected ownership/DACL checks.
+Text containment only locates a candidate: the traversal anchor must have the
+same volume serial and file ID as that held known-folder object. Recheck this
+identity and both handles' security before each operation. Preserve all existing
+root pins, authority-index, mutation, descriptor and reparse checks.
+
+Every pinned directory, including the volume root and known-folder handle, must
+successfully report FileCaseSensitiveInfo with zero flags. Enabled or unknown
+flags and all query errors refuse admission; there is no unsupported-filesystem
+or older-Windows fallback. This intentionally sacrifices availability where the
+query is unsupported. Tests must reject same-prefix/different-anchor identities
+and enabled/unknown/error case flags. An owned temporary-directory fixture must
+attempt actual SetFileInformationByHandle case sensitivity, then demonstrate
+actual differently cased opens and identity results if enabled. Permission or
+support refusal is reported as native unavailable, never replaced by model claims.
+No elevated host setup, ACL repair or guest harness is part of this correction.

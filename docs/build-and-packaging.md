@@ -635,3 +635,15 @@ from that boundary. x64/ARM64 /W4 /WX compilation and x64 offline CTest passed;
 protected native positive was unavailable on the host. No guest bundle or guest
 execution is authorized by this result. See the prototype README for the minimal
 separate guest-mode plan. Supported packaging and MSI exports are unchanged.
+
+
+Pending-file anchor correction appendix: the standalone primitive now retains a
+separate native known-folder handle, compares its volume/file identity with the
+traversal anchor, and rejects every case-sensitive or unqueryable directory pin.
+There is no unsupported-query fallback. The single volume-GUID mapping, existing
+DACL/mutation/reparse/root pins and unconditional MSI export failures remain.
+MSVC x64/ARM64 /W4 /WX builds passed; x64 protected-file/access CTest passed 2/2.
+An owned temporary native case-sensitive directory demonstrated actual differently
+cased open behavior and rejection; protected Program Files positive remained
+unavailable. See the prototype README for model/native evidence boundaries.
+No build option, supported packaging flow, guest harness or release changed.

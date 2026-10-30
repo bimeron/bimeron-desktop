@@ -10,6 +10,39 @@ static bool acl(const wchar_t* text) {
     require(ConvertStringSecurityDescriptorToSecurityDescriptorW(text,SDDL_REVISION_1,&sd,nullptr)!=FALSE);
     bool safe=safeDescriptor(sd); LocalFree(sd); return safe;
 }
+static void nativeCaseFixture(const std::wstring& parent) {
+    const std::wstring dir=parent+L"\\lab-owned-case-"+std::to_wstring(GetCurrentProcessId());
+    require(CreateDirectoryW(dir.c_str(),nullptr)!=FALSE);
+    HANDLE d=CreateFileW(dir.c_str(),FILE_READ_ATTRIBUTES|FILE_WRITE_ATTRIBUTES,FILE_SHARE_READ,nullptr,
+        OPEN_EXISTING,FILE_FLAG_BACKUP_SEMANTICS|FILE_FLAG_OPEN_REPARSE_POINT,nullptr);
+    require(d!=INVALID_HANDLE_VALUE);
+    FILE_CASE_SENSITIVE_INFO flags{FILE_CS_FLAG_CASE_SENSITIVE_DIR};
+    if(!SetFileInformationByHandle(d,FileCaseSensitiveInfo,&flags,sizeof(flags))) {
+        const DWORD error=GetLastError();
+        CloseHandle(d); require(RemoveDirectoryW(dir.c_str())!=FALSE);
+        std::printf("NATIVE case namespace: unavailable, SetFileInformationByHandle error %lu; no case-sensitive opens exercised\n",error);
+        return;
+    }
+    require(!safeDirectoryCase(d));
+    FILE_CASE_SENSITIVE_INFO observed{};
+    require(GetFileInformationByHandleEx(d,FileCaseSensitiveInfo,&observed,sizeof(observed))!=FALSE);
+    require(observed.Flags==FILE_CS_FLAG_CASE_SENSITIVE_DIR);
+    const std::wstring lower=dir+L"\\anchor", upper=dir+L"\\ANCHOR";
+    HANDLE a=CreateFileW(lower.c_str(),GENERIC_READ|GENERIC_WRITE,FILE_SHARE_READ,nullptr,CREATE_NEW,
+        FILE_ATTRIBUTE_NORMAL,nullptr); require(a!=INVALID_HANDLE_VALUE);
+    HANDLE absent=CreateFileW(upper.c_str(),GENERIC_READ,FILE_SHARE_READ,nullptr,OPEN_EXISTING,
+        FILE_ATTRIBUTE_NORMAL,nullptr);
+    require(absent==INVALID_HANDLE_VALUE && GetLastError()==ERROR_FILE_NOT_FOUND);
+    HANDLE b=CreateFileW(upper.c_str(),GENERIC_READ|GENERIC_WRITE,FILE_SHARE_READ,nullptr,CREATE_NEW,
+        FILE_ATTRIBUTE_NORMAL,nullptr); require(b!=INVALID_HANDLE_VALUE);
+    BY_HANDLE_FILE_INFORMATION ai{},bi{};
+    require(GetFileInformationByHandle(a,&ai) && GetFileInformationByHandle(b,&bi));
+    require(!sameIdentity(ai,bi));
+    CloseHandle(a); CloseHandle(b);
+    require(DeleteFileW(lower.c_str()) && DeleteFileW(upper.c_str()));
+    CloseHandle(d); require(RemoveDirectoryW(dir.c_str())!=FALSE);
+    std::puts("NATIVE case namespace: enabled; differently cased OPEN_EXISTING refused, CREATE_NEW opened distinct file IDs; directory rejected");
+}
 int main() {
     Record r; r.installation[0]=1; r.generation[15]=2; Bytes b; require(encode(r,b));
     Bytes expected{}; expected[0]=0x42; expected[1]=0x4c; expected[2]=0x50; expected[3]=0x46;
@@ -38,6 +71,11 @@ int main() {
     require(!acl(L"O:BAD:P(A;;FA;;;S-1-5-80-1)"));
     const std::wstring root=L"\\\\?\\Volume{01234567-0123-0123-0123-0123456789ab}\\Program Files";
     require(contained(root,root+L"\\Lab\\test.exe"));
+    require(safeCaseFlags(true,0));
+    require(!safeDirectoryCase(INVALID_HANDLE_VALUE));
+    require(!safeCaseFlags(false,0) && !safeCaseFlags(true,FILE_CS_FLAG_CASE_SENSITIVE_DIR) && !safeCaseFlags(true,2));
+    BY_HANDLE_FILE_INFORMATION knownAnchor{}, differentAnchor{}; differentAnchor.nFileIndexLow=42;
+    require(isAnchor(root,root) && !sameIdentity(knownAnchor,differentAnchor));
     require(isAnchor(root,root) && !isAnchor(root.substr(0,root.find(L"Program Files")-1),root) && !isAnchor(root+L"\\Lab",root));
     for(const auto& child : {root,root+L"x\\test.exe",root+L"\\..\\test.exe",root+L"\\.\\test.exe",root+L"\\\\test.exe",root+L"\\test.exe:stream",std::wstring(L"relative\\test.exe")}) require(!contained(root,child));
     require(!acl(L"O:BUD:P(A;;FA;;;BA)"));
@@ -59,6 +97,7 @@ int main() {
     // The fixed owned build fixture is CREATE_NEW and cannot overwrite host state.
     wchar_t image[32768]; DWORD n=GetModuleFileNameW(nullptr,image,32768); require(n && n<32768);
     std::wstring fixture(image,n); fixture.resize(fixture.find_last_of(L'\\'));
+    nativeCaseFixture(fixture);
     fixture+=L"\\lab-owned-io-"+std::to_wstring(GetCurrentProcessId())+L".tmp";
     HANDLE h=CreateFileW(fixture.c_str(),GENERIC_READ|GENERIC_WRITE,0,nullptr,CREATE_NEW,FILE_ATTRIBUTE_NORMAL,nullptr);
     require(h!=INVALID_HANDLE_VALUE);

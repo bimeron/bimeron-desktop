@@ -59,15 +59,21 @@ bool safeMetadata(const BY_HANDLE_FILE_INFORMATION& info, bool directory) {
 bool sameIdentity(const BY_HANDLE_FILE_INFORMATION& a, const BY_HANDLE_FILE_INFORMATION& b) {
     return a.dwVolumeSerialNumber==b.dwVolumeSerialNumber && a.nFileIndexHigh==b.nFileIndexHigh && a.nFileIndexLow==b.nFileIndexLow;
 }
+bool safeCaseFlags(bool queried, DWORD flags) { return queried && flags==0; }
+bool safeDirectoryCase(HANDLE h) {
+    FILE_CASE_SENSITIVE_INFO info{};
+    bool queried=GetFileInformationByHandleEx(h,FileCaseSensitiveInfo,&info,sizeof(info))!=FALSE;
+    return safeCaseFlags(queried,info.Flags);
+}
 static bool secure(HANDLE h, bool directory, BY_HANDLE_FILE_INFORMATION& info, bool authority=true) {
     if (GetFileType(h)!=FILE_TYPE_DISK || !GetFileInformationByHandle(h,&info) ||
-        !safeMetadata(info,directory)) return false;
+        !safeMetadata(info,directory) || (directory && !safeDirectoryCase(h))) return false;
     if (!authority) return true;
     PSECURITY_DESCRIPTOR sd=nullptr;
     DWORD e=GetSecurityInfo(h,SE_FILE_OBJECT,OWNER_SECURITY_INFORMATION|DACL_SECURITY_INFORMATION,nullptr,nullptr,nullptr,nullptr,&sd);
     bool ok=e==ERROR_SUCCESS && safeDescriptor(sd); if(sd) LocalFree(sd); return ok;
 }
-Directory::~Directory() { for(HANDLE h:pins) CloseHandle(h); }
+Directory::~Directory() { for(HANDLE h:pins) CloseHandle(h); if(anchorPin!=INVALID_HANDLE_VALUE) CloseHandle(anchorPin); }
 // Accept only canonical volume paths with ordinary, nonempty components.
 static bool validPath(const std::wstring& p) {
     if (p.size()<50 || p.compare(0,11,L"\\\\?\\Volume{")!=0) return false;
@@ -88,22 +94,30 @@ bool contained(const std::wstring& root,const std::wstring& child) {
 bool isAnchor(const std::wstring& component,const std::wstring& anchor) {
     return CompareStringOrdinal(component.c_str(),-1,anchor.c_str(),-1,TRUE)==CSTR_EQUAL;
 }
-static bool volumePath(const std::wstring& source,std::wstring& result) {
-    if(source.size()<4 || source[1]!=L':' || source[2]!=L'\\' || GetDriveTypeW(source.substr(0,3).c_str())!=DRIVE_FIXED) return false;
+static bool volumePaths(const std::wstring& known,const std::wstring& image,std::wstring& anchor,std::wstring& module) {
+    if(known.size()<4 || known[1]!=L':' || known[2]!=L'\\' || image.size()<4 ||
+        CompareStringOrdinal(known.c_str(),3,image.c_str(),3,TRUE)!=CSTR_EQUAL ||
+        GetDriveTypeW(known.substr(0,3).c_str())!=DRIVE_FIXED) return false;
     wchar_t volume[MAX_PATH];
-    if(!GetVolumeNameForVolumeMountPointW(source.substr(0,3).c_str(),volume,MAX_PATH)) return false;
-    result=std::wstring(volume)+source.substr(3); return validPath(result);
+    if(!GetVolumeNameForVolumeMountPointW(known.substr(0,3).c_str(),volume,MAX_PATH)) return false;
+    anchor=std::wstring(volume)+known.substr(3);
+    module=std::wstring(volume)+image.substr(3);
+    return validPath(anchor) && validPath(module);
 }
 bool Directory::pin() {
-    if (!pins.empty() || !path.empty()) return false;
+    if (!pins.empty() || !path.empty() || anchorPin!=INVALID_HANDLE_VALUE) return false;
     wchar_t image[32768]; DWORD length=GetModuleFileNameW(nullptr,image,32768);
     if (!length || length>=32768) return false;
     PWSTR known=nullptr;
     if(FAILED(SHGetKnownFolderPath(FOLDERID_ProgramFiles,0,nullptr,&known))) return false;
     std::wstring anchor, module;
-    bool valid=volumePath(known,anchor) && volumePath(std::wstring(image,length),module);
+    bool valid=volumePaths(known,std::wstring(image,length),anchor,module);
     CoTaskMemFree(known);
     if(!valid || !contained(anchor,module)) return false;
+    anchorPin=CreateFileW(anchor.c_str(),FILE_READ_ATTRIBUTES|READ_CONTROL,FILE_SHARE_READ,nullptr,OPEN_EXISTING,
+        FILE_FLAG_BACKUP_SEMANTICS|FILE_FLAG_OPEN_REPARSE_POINT,nullptr);
+    BY_HANDLE_FILE_INFORMATION knownInfo{};
+    if(anchorPin==INVALID_HANDLE_VALUE || !secure(anchorPin,true,knownInfo)) return false;
     std::wstring candidate=module.substr(0,module.find_last_of(L'\\'))+L"\\LABProtectedFiles";
     if(!contained(anchor,candidate)) return false;
     size_t end=candidate.find(L"}\\")+2;
@@ -113,9 +127,10 @@ bool Directory::pin() {
             FILE_FLAG_BACKUP_SEMANTICS|FILE_FLAG_OPEN_REPARSE_POINT,nullptr);
         if(h==INVALID_HANDLE_VALUE) return false;
         pins.push_back(h);
-        if(isAnchor(component,anchor)) authority=pins.size()-1;
+        const bool atAnchor=isAnchor(component,anchor);
+        if(atAnchor) authority=pins.size()-1;
         BY_HANDLE_FILE_INFORMATION info{};
-        if(!secure(h,true,info,authority!=0)) return false;
+        if(!secure(h,true,info,authority!=0) || (atAnchor && !sameIdentity(info,knownInfo))) return false;
         if(end==candidate.size()) break;
         end=candidate.find(L'\\',end+1); if(end==std::wstring::npos) end=candidate.size();
     }
@@ -140,6 +155,10 @@ static bool writeRecord(HANDLE h,const Record& r, unsigned failure) {
 bool Directory::operate(const Id& installation,const Id& generation,bool createNew) {
     Record r{installation,generation,0}; Bytes check;
     if(path.empty() || !encode(r,check)) return false;
+    BY_HANDLE_FILE_INFORMATION knownInfo{}, traversalInfo{};
+    if(anchorPin==INVALID_HANDLE_VALUE || authority==0 || authority>=pins.size() ||
+        !secure(anchorPin,true,knownInfo) || !secure(pins[authority],true,traversalInfo) ||
+        !sameIdentity(knownInfo,traversalInfo)) return false;
     for(size_t n=0;n<pins.size();++n) { BY_HANDLE_FILE_INFORMATION i{}; if(!secure(pins[n],true,i,n>=authority)) return false; }
     PSECURITY_DESCRIPTOR descriptor=nullptr;
     if(createNew && !ConvertStringSecurityDescriptorToSecurityDescriptorW(
