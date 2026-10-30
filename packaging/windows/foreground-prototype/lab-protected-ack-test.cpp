@@ -30,6 +30,7 @@ static void resourceQueryNegatives() {
         execute(db.h,L"DELETE FROM `FeatureComponents`");
         execute(db.h,L"INSERT INTO `File` (`File`) VALUES ('Unexpected')");
         CHECK(!zeroResources(db.h));
+        CHECK(MsiDatabaseCommit(db.h)==ERROR_SUCCESS);
     }
     CHECK(DeleteFileW(path.c_str())!=FALSE);
     std::puts("NATIVE owned MSI database: missing table and nonempty Component/FeatureComponents/File refused; no installer action");
