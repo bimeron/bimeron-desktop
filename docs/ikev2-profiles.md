@@ -9,10 +9,56 @@ Core baseline: `v0.3.0-beta.1`, revision
 commit. At planning time its release-by-tag API returned 404. The actual Desktop
 bundle remains `v0.2.0-beta.1`; it does not establish native IKEv2 support.
 
-Full GUI implementation is blocked on the Core foreground API prerequisite
-below and review of a new, explicitly agreed immutable Core SHA. The baseline
-CLI runSession owns an Engine and prints text events; it does not expose the
-required foreground control API. Do not parse those logs or use daemon start.
+The accepted Core implementation source is
+`66d84d8f4dcfc6ada625eb11894b19feea51b7ba`, whose tree matches independently
+reviewed PR #71 head `83683e4b5c1a673f0d29d667c09b116f5805027b`.
+Both hosted CI runs passed. This satisfies the source/API prerequisite for offline
+Desktop implementation, not protected-install or release acceptance. Those require
+approved architecture-specific final Core executable digests, Desktop caller live
+evidence and demonstrated MSI transaction safety. Do not parse logs or use daemon
+start. Historical tags and executable identities remain unchanged; the recorded
+`14a3da9a87e07dfe78600c702a3b2f3e7c48e7dbd76baae1c4778c1826067795`
+digest identifies only the earlier `6a9bf825ecc0391e2440638b67ffe61b45a1e9c7`
+live-tested executable.
+
+## Approved installation and owner contract
+
+Each approved Windows GUI build embeds the exact reviewed Core revision and
+architecture-specific executable digest from verified final artifacts. Authenticate
+the protected Core image before initial hello, then independently verify the OS
+pipe peer PID, creation time, elevated token, same SID/interactive session, image
+hash and file identity. Retain verified handles and use identification-only SQOS.
+Claimed build metadata is not executable authentication.
+
+The installer creates protected `bimeron-foreground.json` beside Core, with only
+`schema:1`, a unique 32-lowercase-hex public `installation` ID and the 64-lowercase-hex
+`gui_sha256` of the actual final installed GUI. Preserve the ID across repair and
+upgrade. Runtime policy writing and writable development installations are unsupported.
+
+Session activation is a second authenticated hello with instance and exact
+`accept_revision`, never a start command. Preactivation stop permanently cancels
+activation. Handle `activation_cancelled`, `owner_closing`, `cleanup_pending` and
+`session_not_terminal`. Accepted close irreversibly closes admission even when its
+response is lost. Cleanup confirmation, stop, terminal state, owner closure and
+process exit are separate observations. Provisioning uses a separate owner with
+immutable launch parameters and confirmation of its exact `profile.state_token`
+as `plan_token`; omit session. Resolve ambiguous confirmation through status.
+
+Missing pipes never prove absence. Unknown ownership, retained/modified protection,
+incomplete cleanup or incompatible participating managed hosts block native launch.
+Never automatically stop, upgrade, restore or recover another backend. Existing
+signed packet-service updates remain available; a mismatching foreground executable
+is disabled until an approved Desktop/Core pair is installed.
+
+The MSI implementation must hold the reviewed Core installer exclusion primitive
+on one owning thread across all destructive actions, major-upgrade removal, policy
+publication, commit and completed rollback. A preflight check is insufficient.
+Validate named-object security; refuse abandoned mutexes, active/unknown markers,
+unsafe paths and incomplete durable journals. Preserve prior policy and identity
+for rollback. Do not schedule unguarded reboot replacement or kill owners.
+An embedded native MSI action may implement this, but its actual callback/process
+lifetime, journal and nested-uninstall behavior must be demonstrated in a prototype
+before claiming installable native support. No such evidence exists yet.
 
 ## Core prerequisite and security acceptance
 
