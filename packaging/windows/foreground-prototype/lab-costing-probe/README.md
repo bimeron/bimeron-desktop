@@ -194,3 +194,17 @@ specified full lab success with registered product state. No uninstall or retry
 followed. The combined change does not identify which empty-table/stream addition
 is necessary. Interactive UAC, initiating-client authentication and production
 transaction safety remain unproved. Raw logs remain in ignored private lab evidence.
+
+### One-shot Component-stream discriminator
+
+Permit one parent-operated full-server `/i /qn /norestart` run of
+`component-stream.msi`, SHA-256
+`99a09d53f05af7c82c8eede7c64a3200731eeee87bdde9bc86dc0aedc1290561`,
+in the authorized disposable VM. Require the pinned hash and the same lab
+ProductCode state -1 immediately before launch. Use fresh unique private log and
+result files; record exit/action/callback/rollback/product-state observations.
+Stop after this case without automatic retry, uninstall or another variant.
+Expected completion supports the stream alone being sufficient for this fixture;
+product state -1 remains consistent with the zero-resource experiment and is not
+full product installation acceptance. Later failure establishes only the earlier
+phases that actually passed. Session-0 evidence does not establish interactive UAC.
