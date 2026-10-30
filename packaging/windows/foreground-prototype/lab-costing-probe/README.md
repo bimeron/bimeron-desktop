@@ -161,3 +161,22 @@ Acceptance: offline checks reject invalid arguments and each invalid hash before
 The x64 executable at `build/lab-costing-logged/Release/lab-costing-probe.exe` has SHA-256 `de8170d4d44e8e1c4b383dbcc828ee242d8c1bed30e51696e26777f7c9943223`. The four frozen MSIs and offline report were copied to this new directory without regeneration; older executables and MSIs were retained. The checker passed source-boundary, exact four MSI-import, invalid-argument, all four corrupt-hash checks for every mode, swapped-input and verify-only checks. No host MSI action or logging was executed. The fixed directory and each reserved file must pass the stated ownership and ACL checks; the directory and ProgramData handles are held without delete sharing. The reservation is closed before the engine opens the path, leaving a non-atomic gap for privileged principals. Logs may contain sensitive properties and must remain private.
 
 Independent parent review and a separately operated disposable-guest run remain pending. The earlier flag-0 and flag-1 guest probes returned action 0 for all four cases; the full msiexec server run reported CostInitialize 2728. Logging is a discriminator, not a fix. This standalone x64 experiment does not alter production packaging; ARM64, Linux, performance benchmarks, profiling and release packaging are inapplicable.
+
+## One-shot full-server discriminator
+
+Permit exactly one parent-operated full-server installation of frozen `both.msi`,
+SHA-256 `0eda7262ab1fe7e365e1db8cbd374a1aa00d5fb4442816172f1da316226cb2df`,
+in the authorized disposable x64 VM. Recheck the guest hash and require ProductCode
+`{BF4DEC35-F5C3-4809-976C-112E597FCF6A}` to be unregistered immediately before launch.
+Use `/i /qn /norestart` with a fresh private verbose log, no transforms or property
+overrides. This permits lab registration and eligible observation callbacks, beyond
+isolated costing. Preserve the input, log, process result, callback evidence and
+registration state. Stop after this case: no automatic uninstall, retry, reboot or
+other variant. A timeout leaves completion unknown; never kill Installer as recovery.
+
+Passing server CostInitialize without 2728 is the discriminator. Full lab success
+additionally requires exit 0, successful InstallFinalize, expected registration and
+Preflight -> DeferredBegin -> Commit -> PostFinalize success observations, without
+executed rollback. Any later failure is recorded separately. Combined success does
+not identify which structural addition matters and grants no production/native
+installation or enrollment approval.
