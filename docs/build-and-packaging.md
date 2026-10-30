@@ -656,12 +656,17 @@ rule and does not enter packages. With existing Visual Studio x64 and ARM64 C++
 toolchains and an existing `dumpbin.exe`, run from the repository root:
 
 ```powershell
-./packaging/windows/foreground-prototype/lab-protected-file-guest-check.ps1 -Dumpbin '<absolute path to dumpbin.exe>'
+./packaging/windows/foreground-prototype/lab-protected-file-guest-check.ps1 -Dumpbin '<absolute path to dumpbin.exe>' -FrozenBundlePath '<existing frozen guest-bundle directory>'
 ```
 
-The script builds both architectures offline, checks imports and host-side
-argument/path refusal, and writes a provisional hash and effects manifest under
-`build/guest-bundle`. It does not provision or run the guest experiment. See
+The script performs static-only frozen x64 hash and explicit DLL/API allowlist
+inspection, including negative parser fixtures; it never executes the harness or
+builds either architecture. It preserves the old provisional bundle and writes a
+final x64-only permission manifest under new `build/guest-bundle-final-x64-reviewed`.
+ARM64 remains unbuilt for this bundle and completeArchitectureMatrix is false;
+this does not block x64 permission preparation or claim full release validation.
+Independent final review and explicit approval of the concrete bundle precede
+guest provisioning/execution. Preparation-only edits need no executable rebuild. It does not provision or run the guest experiment. See
 [the guest acceptance criteria](../packaging/windows/foreground-prototype/lab-protected-file-guest-README.md).
 Rebuild and rehash after primitive changes; native success requires separate
 permission and a disposable Windows VM.
