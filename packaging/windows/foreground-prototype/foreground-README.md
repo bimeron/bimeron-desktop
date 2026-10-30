@@ -1738,3 +1738,67 @@ messages; no ACK, Pending, checkpoint, protected-object opens/writes, network,
 cleanup, override, retries or authority publication. Limited/early-failure or
 incomplete records are valid unavailable evidence. No VM-ready claim or guest
 permission is conveyed; review precedes all parent execution.
+
+### Context trace offline evidence (2026-10-30)
+
+Specification commit 10cd3ac9e70aa9dc80bf758be990c32251844788 is recorded before
+implementation.
+Immutable implementation source is
+751426da89c586ae66ab79b7b7f37fc2ed03e48d, based exactly on
+db810bc747cc85d440b73c3cac6cbb9a0ee219b4 in isolated t3/e5d3f004.
+The initial checkout was clean and T3-attached, distinct from main and the parent;
+only that child branch was reset to the accepted base before edits.
+
+Both context architectures compiled all three DLL/MSI variants and foreground/
+record-test targets with MSVC 19.51.36248, SDK 10.0.26100, /W4 /WX and static CRT.
+All six context MSIs linked with cached WiX and normal verbose unsuppressed ICE,
+without WiX warning/error diagnostics. Actual read-only MSI tables, embedded Binary,
+PE machine, exact five exports, direct DLL/API imports, no delay imports, exact
+SYSTEM32 flag, zero resources, action types/sequence and 18 globally unique context
+GUIDs passed. Each architecture retained 60 negative database models, plus context
+API/ordinal/DLL/LSA-set policy negatives and actual PE API/ordinal/delay mutations.
+The historical default rejects the new context DLLs.
+
+x64 focused CTest passed 4/4: unchanged worker/context/LSA/AccessCheck/failing-export
+regressions, generated source sequence, new record tests, actual lab statics.
+ARM64 compiled the same targets and passed 2/2 host source/static tests; no ARM64
+code executed. Native x64 selected process/impersonation/identification TokenIds
+matched; restricted tokens refused and anonymous query was unavailable (1347)
+without process fallback. SYSTEM/nonzero-session refusal, nonsplit positives,
+exact logon 2/10, mismatched/malformed LSA and full-field errors remain model
+coverage. No protected-object positive is claimed. New tests cover exact capacity,
+bounds, unknown enums, incomplete fields, single capture, exception and all three
+MSI logging failure stages with unchanged compiled return behavior.
+
+Context-OFF x64/ARM64 builds independently produced six historical-regression pairs
+with normal unsuppressed ICE. x64 focused CTest passed 3/3, ARM64 host checks 2/2;
+both also passed no-profile checker invocation. Default options were verified OFF;
+context ON without trace ON refused configuration. Mechanical source review proved
+V1 observation bodies, WiX, shared types/evaluator/LSA parser and query bodies
+unchanged by extraction. Descriptor AccessCheck remains in foreground with the
+retained selected handle; worker/journal, original Unknown and failing exports
+retain their behavior. Review found no new production linkage, protected I/O,
+properties, account/SID-string logging, override or authority claim.
+
+Initial new test identifiers collided with Windows small/TokenSource names; renamed
+before final passing builds. The strict ARM64 import check first refused two CRT
+version-query symbols; actual dumpbin review justified only those exact additions.
+Initial archive line-ending conversion was detected before freeze; regeneration
+with git -c core.autocrlf=false archive made extracted source exactly match Git
+blobs. These resolved preparation failures and original logs are retained.
+
+New ignored immutable bundle: build/trace-context-review-751426d. Source ZIP SHA-256
+fdc6d0155650cc9d0ab8e2356216e8f41a5937512d31671fe8db93c3083f654a;
+SHA256SUMS.txt SHA-256
+aaf63e5f095d6ecd7f63f28c9556273d3c2676a20155c77d2240d497ecdb2ad1.
+artifact-index.json binds all context and historical MSI/DLL hashes and actual
+GUIDs; source-sha256.json hashes immutable archive bytes. Source and archive were
+frozen before this evidence append, with extracted sources verified against that
+Git commit. The bundle contains actual tables/imports, caches, build/ICE/test logs,
+configuration refusals and exact effects.txt. It is offline review material only,
+NOT VM-READY. No old frozen input or allowlist was changed. No host MSI actions,
+VM, protected I/O, network, push/watch/merge or release occurred. Parent independent
+review precedes any Success Session0/InteractiveHighest/Limited observation.
+Linux/product/package matrix and benchmark/profiling are inapplicable to this
+isolated Windows lab. ARM64 runtime, actual callback context/delivery, preload trust,
+protected access and production authority remain unavailable.

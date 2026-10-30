@@ -883,3 +883,17 @@ bounded to 2048 wchar including termination; its complete/eligible values are
 observations only. Build only explicit targets and use the focused test filters
 in the foreground README. Context-OFF regressions use separate ignored
 build/trace-historical-x64 and arm64 directories. No production flow changes.
+
+Callback context trace offline result: immutable source
+751426da89c586ae66ab79b7b7f37fc2ed03e48d built six fresh x64/ARM64 context pairs
+with cached WiX and unsuppressed ICE; actual tables/Binary/PE/API checks passed.
+x64 focused CTest passed 4/4, ARM64 host statics 2/2 (compile-only runtime).
+Context-OFF regression pairs passed historical checks on both architectures,
+including default-profile invocation. Default-OFF/dependency refusal, fixed record
+bounds/errors/logging return preservation and selected-token/LSA regressions pass.
+The foreground README records resolved preparation errors and exact evidence.
+Ignored build/trace-context-review-751426d freezes immutable source/archive,
+artifact hashes/18 context GUIDs, tables/imports/logs/effects before evidence append.
+This is offline review material, NOT VM-READY; parent review/execution remains.
+No supported package flow changed. Linux/product matrix and performance checks
+are inapplicable; no host MSI actions, protected writes, VM or release occurred.

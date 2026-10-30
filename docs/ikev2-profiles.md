@@ -720,3 +720,15 @@ New immutable evidence and independent review precede parent-only VM observation
 option 1 remains procedural same-user invocation, with no original-client
 attestation or silent continuity proof. Incomplete/early-failure results are valid
 unavailable evidence. Production enrollment remains disabled.
+
+Callback context trace offline evidence is recorded in the foreground README.
+Specification 10cd3ac precedes immutable source 751426da89c586ae66ab79b7b7f37fc2ed03e48d.
+All six context DLL/MSI pairs compiled/linked with unsuppressed ICE and passed
+actual read-only table/Binary/PE/API checks; x64 focused CTest passed 4/4, ARM64
+host statics 2/2 without ARM64 execution. Context-OFF historical regressions pass.
+Ignored build/trace-context-review-751426d freezes source from Git before evidence
+append, with consistent archive/source hashes, artifacts/18 GUIDs and logs/effects.
+This is NOT VM-READY; independent review precedes parent-only Success observations.
+No MSI actions/protected opens/writes/network/VM or production change occurred.
+Incomplete/early failure remains unavailable evidence. Option 1 remains procedural
+same-user invocation, without original-client attestation or continuity proof.
