@@ -1802,3 +1802,33 @@ review precedes any Success Session0/InteractiveHighest/Limited observation.
 Linux/product/package matrix and benchmark/profiling are inapplicable to this
 isolated Windows lab. ARM64 runtime, actual callback context/delivery, preload trust,
 protected access and production authority remain unavailable.
+
+### Context-trace parent execution procedure
+
+Use only frozen source 751426d x64 Success MSI SHA-256
+1ab76fde413c54e25e695ad0f4493cd0d86111459b98678a58f9c0f8f11e436b
+(ProductCode {2055AE98-AEBD-4FF4-B7E8-2F5219A600CE}). Parent verifies the
+integrated implementation is byte-equivalent and input hash in the guest.
+Provision fresh protected C:\ProgramData\BimeronTraceContext751426d inputs,
+with SYSTEM/Administrators mutation rights and the OS-observed desktop SID read
+access. Give that SID write access only to separate per-case log directories.
+Preserve all ACK, checkpoint, Core reader and original trace states.
+
+Observe Session0 first via PowerShell Direct, then Highest and Limited using
+separate demand-only InteractiveToken tasks selected by revalidated desktop SID
+and positive session. Each action is the exact native System32 msiexec path with
+/i fixed MSI /qn /norestart /L*V! and its fresh absolute private log. No properties,
+transforms, patches, wrappers, triggers or credentials. ProductState must be -1
+immediately before each launch. Bound parent observation to 300 seconds, disable
+Scheduler hard termination/execution limit, and never kill on timeout. Remove only
+the exact completed task, after capturing terminal log/result and zero instances.
+
+Require complete original V1 and separate context records in the expected four
+successful callbacks, no rollback and successful Finalize for completed cases.
+Inspect current-principal/token/LSA eligibility without interpreting it as client
+authentication. Limited may fail before callbacks; that is unavailable callback
+evidence, not a substituted standalone positive. Unexpected refusal, incomplete
+records or timeout stops subsequent cases. No retry, failure variant, uninstall,
+cleanup or production/native operation is part of this procedure. Task launches
+are not evidence of human UAC consent. Existing exclusions and all authority gates
+remain unchanged; source review and focused tests are not a release matrix.
