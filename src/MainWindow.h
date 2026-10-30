@@ -53,6 +53,7 @@ private:
     ProfileConnectionInfo profileInfo(int row) const;
     bool activeProxyMode() const;
     bool packetProfile(int row) const;
+    void bindNativeController(NativeIKEv2Session *controller);
     void showNativeSnapshot(const NativeIKEv2Session::Snapshot &snapshot);
     QString nativeUnavailableReason() const;
     void addProfile();
@@ -114,6 +115,7 @@ private:
     QLabel *connectionLabel_ = nullptr;
     QLabel *nativeStatusLabel_ = nullptr;
     bool nativeOwnerBlocked_ = false;
+    QPointer<NativeIKEv2Session> nativeController_;
     QLabel *trafficLabel_ = nullptr;
     QLabel *sessionStatsLabel_ = nullptr;
     QLabel *coreVersionLabel_ = nullptr;

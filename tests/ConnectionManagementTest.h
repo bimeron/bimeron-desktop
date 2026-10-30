@@ -9,6 +9,8 @@
 #include <QCloseEvent>
 #include <QSystemTrayIcon>
 #include <QTranslator>
+#include <QMenu>
+#include "NativeIKEv2SessionTest.h"
 
 // Compile the application translator itself; never invoke its renamed entry point.
 #define main bimeronApplicationEntryForTranslationTest
@@ -67,6 +69,13 @@ struct ConnectionManagementTest {
             window.handleStatus({{"State", "disconnected"}});
             window.updateProfileAppearance();
             window.updateConnectionButton();
+            NativeIKEv2SessionTest::Fixture nativePreview;
+            if (app.arguments().contains("--native-bound-preview")) {
+                nativePreview.discover();
+                nativePreview.observe(nativePreview.sessionReply("connected", true));
+                window.bindNativeController(&nativePreview.controller);
+                nativePreview.controller.cancelExchange();
+            }
             window.show();
             QCoreApplication::processEvents();
             require(window.grab().save(destination), "native unavailable preview image");
@@ -723,41 +732,69 @@ struct ConnectionManagementTest {
         window.poll();
         require(waitFor([&] { return requests > suspendedBefore && synchronized(); }), "regular polling resumes after update");
 
-        NativeIKEv2Session::Snapshot nativeSnapshot;
-        nativeSnapshot.authoritative = true;
-        nativeSnapshot.requested = true;
-        nativeSnapshot.wfp = "retained";
-        nativeSnapshot.dns = "modified";
-        window.showNativeSnapshot(nativeSnapshot);
-        require(window.nativeStatusLabel_->text().contains("Retained") && window.nativeStatusLabel_->text().contains("Modified")
-                && window.nativeStatusLabel_->text().contains("Yes"), "native requested and protection states remain distinct");
-        JsonTranslator applicationTranslator;
-        require(applicationTranslator.load(QFileInfo(QString::fromUtf8(__FILE__)).dir().filePath("../assets/translations/ru.json")),
-                "load actual application Russian translator");
-        QCoreApplication::installTranslator(&applicationTranslator);
-        for (const bool requested : {true, false}) {
-            nativeSnapshot.requested = requested;
-            window.showNativeSnapshot(nativeSnapshot);
-            require(window.nativeStatusLabel_->text().contains(QString::fromUtf8(requested ? "защита нативного IKEv2: Да." : "защита нативного IKEv2: Нет.")),
-                    "application translator renders requested true and false in Russian");
-        }
-        QCoreApplication::removeTranslator(&applicationTranslator);
-        nativeSnapshot.authoritative = false;
-        window.showNativeSnapshot(nativeSnapshot);
-        require(window.nativeStatusLabel_->text().contains("Unknown") && window.nativeOwnerBlocked_,
-                "unavailable IPC is unknown, never absence");
-        require(!window.runServiceCommand({"service", "update"}, "fixture") && !window.coreUpdatePrerequisite(),
-                "native unknown ownership blocks service mutation");
-        window.requestShutdown();
-        require(!window.quitRequested_, "unknown native cleanup cancels exit");
-        const int nativeRequests = requests;
-        window.poll();
-        require(requests == nativeRequests && starts == 4, "native display seam creates no polling or packet commands");
-
         window.connectionFailure("hello", CoreClient::Failure::AccessDenied, "Access to Core was denied");
         require(window.connectionLabel_->text() == "Access to Core was denied", "access denial must be distinct");
         window.connectionFailure("hello", CoreClient::Failure::Incompatible, "incompatible");
         require(window.connectionLabel_->text().contains("incompatible"), "incompatible IPC must be distinct");
+        require(!window.nativeController_, "ordinary packet window never constructs a native controller");
+        auto nativeFixture = std::make_unique<NativeIKEv2SessionTest::Fixture>();
+        nativeFixture->discover();
+        nativeFixture->observe(nativeFixture->sessionReply("connected", true));
+        window.bindNativeController(&nativeFixture->controller);
+        require(window.nativeOwnerBlocked_ && !window.nativeSession_
+                && window.nativeStatusLabel_->text().contains("Active"),
+                "initial real controller snapshot binds independently of daemon flag");
+        nativeFixture->observe(nativeFixture->sessionReply("stopping", true));
+        require(window.nativeStatusLabel_->text().contains("Inactive"), "changed signal propagates stopping snapshot");
+        auto retained = nativeFixture->sessionReply("stopping", true);
+        auto ns = retained["status"].toObject();
+        auto protection = ns["native"].toObject();
+        protection["wfp"] = "retained"; protection["dns"] = "modified";
+        ns["native"] = protection; retained["status"] = ns;
+        nativeFixture->observe(retained);
+        require(window.nativeStatusLabel_->text().contains("Retained")
+                && window.nativeStatusLabel_->text().contains("Modified"), "retained signal reaches native UI");
+        JsonTranslator applicationTranslator;
+        require(applicationTranslator.load(QFileInfo(QString::fromUtf8(__FILE__)).dir().filePath("../assets/translations/ru.json")),
+                "load actual Russian translator");
+        QCoreApplication::installTranslator(&applicationTranslator);
+        nativeFixture->observe(retained);
+        require(!window.nativeStatusLabel_->text().contains("WFP: Retained"), "controller signal uses Russian translation");
+        QCoreApplication::removeTranslator(&applicationTranslator);
+        nativeFixture->observe(retained);
+        const QString retainedText = window.nativeStatusLabel_->text();
+        window.handleStatus({{"State", "disconnected"}});
+        window.refreshProfiles();
+        window.trayMenu_ = new QMenu(&window);
+        window.rebuildTrayMenu();
+        require(window.nativeStatusLabel_->text() == retainedText
+                && window.connectionLabel_->text() == retainedText
+                && window.trayStatusAction_->text().contains(retainedText),
+                "packet replies profile refresh and tray rebuild preserve native uncertainty");
+        const auto nativeCalls = nativeFixture->calls.size();
+        QCloseEvent close;
+        window.closeEvent(&close);
+        window.trayMenu_->actions().last()->trigger();
+        require(!window.quitRequested_ && nativeFixture->calls.size() == nativeCalls,
+                "close and tray quit never stop or close native owner");
+        nativeFixture.reset();
+        require(!window.nativeController_ && window.nativeOwnerBlocked_
+                && window.nativeStatusLabel_->text().contains("Unknown"),
+                "controller destruction leaves guarded sticky unknown");
+        require(!window.runServiceCommand({"service", "update"}, "fixture") && !window.coreUpdatePrerequisite(),
+                "native unknown ownership blocks service mutation");
+        const int nativeRequests = requests;
+        QSettings().setValue("app/autoConnect", true);
+        QSettings().setValue("app/autoConnectProfile", window.profiles_.first().id);
+        window.autoConnectAttempted_ = false;
+        window.completeSynchronization();
+        window.restartApplication();
+        require(!window.quitRequested_ && !window.canActivateProfile(0), "settings and restart cannot bypass native block");
+        window.poll();
+        window.toggleConnection();
+        require(requests == nativeRequests && starts == 4 && !window.connectButton_->isEnabled(),
+                "native ownership blocks polling and packet activation");
+
         window.core_.cancel();
         QSettings().clear();
     }

@@ -302,3 +302,28 @@ executables on Windows x64/Linux amd64, and four GUI compilations where availabl
 Report ARM64 runtime and EN/RU 100/150 percent presentation evidence honestly;
 compilation or fixture generation alone is not visual or native activation proof.
 No timer changes, benchmark, packaging, enrollment, network mutation or release.
+
+Offline UI binding evidence (2026-10-30): based on parent `e5f00d3`, acceptance
+was committed before implementation. Windows x64 Qt 6.8.3 and Linux amd64 Qt 6.4.2
+passed all three existing CTest executables with the offscreen platform and optional
+Core validation variables cleared. Windows required the explicit Qt plugins path;
+an initial missing-plugin process was terminated and the configuration corrected.
+All four GUI/test builds compiled; both ARM64 targets are compile-only (no ARM64
+runtime or qemu-aarch64 available). No packaging flow or controller/transport
+implementation changed. No timers changed, so benchmarks/profiling were inapplicable.
+
+The real-controller fixture verifies initial snapshot, changed propagation through
+connected/stopping/retained-modified, Russian translation, packet-status and profile
+refresh containment, tray rebuilding/Quit, settings/autostart/restart guards, service
+and update refusal, and controller destruction retaining Unknown. Existing packet
+and SSH tests pass. Production has no controller construction or binding caller,
+no native hello/discovery/launch/provisioning, and no approval setting. The sticky
+block deliberately has no UI recovery or native stop/close orchestration in this batch.
+Diff review found no packaging, pin, credential, or network-mutation changes.
+
+EN/RU 100/150 percent bound-Unknown presentation PNG fixtures were generated and
+inspected in ignored build state. Windows offscreen rendered missing-glyph boxes,
+so these images do not establish readable text, clipping or visual acceptance.
+Native-platform presentation and real tray/close behavior remain manual acceptance
+gates. This is partial offline GUI integration, not native activation, protected
+installation, enrollment, live networking or release acceptance.

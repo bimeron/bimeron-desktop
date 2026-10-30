@@ -51,6 +51,7 @@ struct NativeIKEv2SessionTest {
             r.insert("status",status); return r;
         }
         void deliver(QJsonObject r) { controller.received(calls.back().command,r); }
+        void observe(QJsonObject r) { controller.poll(); deliver(r); }
         void discover() { check(controller.discover(),"discover accepted"); deliver(reply()); }
         void launch() { controller.setLaunchGates({true,true,true,true}); check(controller.connectProfile(QDir::rootPath()+"fixture.conf",QString(64,'c')),"launch accepted"); controller.launched(); }
     };

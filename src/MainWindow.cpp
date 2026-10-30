@@ -1400,9 +1400,23 @@ QString MainWindow::nativeUnavailableReason() const {
     return tr("Native IKEv2 connect, preview, apply and remove are unavailable. Final Core artifact approval, protected installation and MSI safety evidence, and Windows enrollment are pending. Native capabilities and owner/protection absence have not been verified. Statistics are unavailable. Automatic connection and reconnection are disabled.");
 }
 
+void MainWindow::bindNativeController(NativeIKEv2Session *controller) {
+    // No production caller until protected installation approval is available.
+    if (!controller || nativeOwnerBlocked_) return;
+    nativeController_ = controller;
+    const QPointer<NativeIKEv2Session> guarded(controller);
+    connect(controller, &NativeIKEv2Session::changed, this, [this, guarded] {
+        if (guarded) showNativeSnapshot(guarded->snapshot());
+    });
+    connect(controller, &QObject::destroyed, this, [this] {
+        nativeController_.clear();
+        showNativeSnapshot({}); // Disappearance never establishes cleanup.
+    });
+    showNativeSnapshot(controller->snapshot());
+}
+
 void MainWindow::showNativeSnapshot(const NativeIKEv2Session::Snapshot &snapshot) {
-    // Display-only offline seam. A snapshot never grants launch approval or absence.
-    // Production does not construct a controller without reviewed final artifacts.
+    // A snapshot never grants launch approval or absence.
     nativeOwnerBlocked_ = true;
     const auto protection = [this](const QString &value) {
         if (value == "active") return tr("Active");
@@ -1416,6 +1430,12 @@ void MainWindow::showNativeSnapshot(const NativeIKEv2Session::Snapshot &snapshot
              protection(snapshot.authoritative ? snapshot.wfp : QString{}),
              protection(snapshot.authoritative ? snapshot.dns : QString{})));
     nativeStatusLabel_->show();
+    connectionLabel_->setText(nativeStatusLabel_->text());
+    if (tray_) {
+        tray_->setIcon(trayIcon(false));
+        tray_->setToolTip(tr("Bimeron — %1").arg(nativeStatusLabel_->text()));
+    }
+    if (trayStatusAction_) trayStatusAction_->setText(tr("Status: %1").arg(nativeStatusLabel_->text()));
     resetMeasurements();
     updateConnectionButton();
 }
@@ -1524,6 +1544,7 @@ void MainWindow::invalidateConnection() {
 }
 
 void MainWindow::connectionFailure(const QString &, CoreClient::Failure reason, const QString &message) {
+    if (nativeOwnerBlocked_) return;
     invalidateConnection();
     autoConnectAttempted_ = true;
     reconnectProfileAfterUpdate_.clear();
@@ -1733,6 +1754,7 @@ void MainWindow::poll() {
 }
 
 void MainWindow::handleReply(const QString &command, const QJsonObject &response) {
+    if (nativeOwnerBlocked_) return;
     const bool wasReady = helloReady_ && !statusNeeded_ && operation_.isEmpty();
     const QString previousSession = sessionId_;
     const QString newInstance = response.value("instance").toString();
@@ -1949,6 +1971,7 @@ void MainWindow::completeSynchronization() {
 }
 
 void MainWindow::handleStatus(const QJsonObject &status) {
+    if (nativeOwnerBlocked_) return;
     const QString previousState = state_;
     const QString previousProfileId = activeProfileId_;
     lastProxyMode_ = activeProxyMode();
@@ -2223,7 +2246,7 @@ void MainWindow::initTray() {
 void MainWindow::rebuildTrayMenu() {
     trayMenu_->clear();
     const QHash<QString, QString> labels{{"disconnected", tr("Disconnected")}, {"connecting", tr("Connecting…")}, {"connected", tr("Connected")}, {"reconnecting", tr("Reconnecting…")}, {"stopping", tr("Disconnecting…")}, {"failed", tr("Connection failed")}};
-    trayStatusAction_ = trayMenu_->addAction(tr("Status: %1").arg(helloReady_
+    trayStatusAction_ = trayMenu_->addAction(tr("Status: %1").arg(nativeOwnerBlocked_ ? nativeStatusLabel_->text() : helloReady_
         ? labels.value(state_, tr("Unknown state")) : connectionLabel_->text()));
     trayStatusAction_->setEnabled(false);
     trayTrafficAction_ = trayMenu_->addAction(trayTraffic_);
