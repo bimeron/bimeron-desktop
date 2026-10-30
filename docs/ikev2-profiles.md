@@ -163,3 +163,21 @@ and Windows ARM64 native interoperability are not established.
 Published assets, four hashes, bundle pins, signed compatibility metadata and
 the full MSI/DEB release matrix are one separate shared pre-release dependency.
 This specification does not change packaging or authorize release.
+
+## Offline implementation evidence
+
+Windows x64 Release tests used VS 18 2026 BuildTools and Qt 6.8.3 with the
+explicit offscreen platform (no native-platform fallback). Baseline
+`7f44c7309fc4cf9e91554f6bed8f167cefcda35d` and stage 8 profile revision
+`a8024a2a73ccc848488ad3b2c2f796db4581b304` both passed
+`developer-mode-test --visual-check` and `profile-vless-test` once without retries.
+The clipboard assertion and subsequent packet/developer transport, transient SSH,
+Quit and connection lifecycle fixtures completed. Qt offscreen uses a process-local
+clipboard; this does not validate native Windows clipboard behavior or rendered UI.
+
+Optional Core validation variables were cleared for these runs. Native-profile
+CLI checks require `BIMERON_IKEV2_CORE` to point to the exact reviewed Core build;
+those checks remain outstanding. The newly added foreground transport was not
+registered in the tested targets and is not covered by these results. Protected
+handshake, elevated launch, MSI transactions and live native networking remain
+separate acceptance gates. No final executable approval or release is implied.
