@@ -434,3 +434,51 @@ the missing-glyph artifact for those offscreen previews, not native Windows font
 selection, tray/close behavior or visual acceptance of every GUI state. The later
 queued-callback fix changes guards rather than layout; these images do not claim
 a fresh binary build of that later revision.
+
+### Protected ACK access-only MSI specification and acceptance
+
+This isolated batch supersedes the earlier token-only fixture gate only for a
+new access experiment, never production enrollment. Implement a default-OFF
+FOREGROUND_LAB_PROTECTED_ACK standalone option and explicit excluded-from-ALL
+target; no install rule, production CPack, host MSI action or guest execution.
+Existing fail-closed exports, pending-file harness pin() and frozen artifacts
+remain unchanged. The only new path is native Program Files\BimeronProtectedAckLab\LABProtectedFiles,
+resolved with the existing volume/anchor/case/DACL/pinned-handle checks. No
+caller supplies a path. The guest directory and state must be new and separately
+authorized; the existing pending protected-file guest experiment is untouched.
+
+Build Success, CommitFail and PostFinalizeFail DLL/MSI pairs for x64 and ARM64,
+with fresh product, upgrade and package GUIDs, empty Component and
+FeatureComponents EnsureTables and zero installed resources. Five synchronous
+checked Binary callbacks run at 1499 (Preflight), 1501 (Rollback registration),
+1502 (Deferred), 1503 (Commit) and 6601 (PostFinalize), around Initialize 1500
+and Finalize 6600. CommitFail returns 1603 in Commit; PostFinalizeFail returns
+1603 before any acknowledgment. Commit and Rollback never acknowledge.
+
+An externally prepared immutable protected run.manifest is generated after MSI
+linking. It binds nonzero 16-byte installation/generation IDs, architecture,
+compiled variant, product/package IDs, exact MSI and Binary SHA-256 and the
+canonical actual database table/sequence expectations. Parent verification pins
+the original MSI bytes externally; callbacks cannot attest their original MSI
+source hash. Preflight validates protected storage/manifest and effective active
+database logical content/Binary, rejects transforms, patches and unsupported
+maintenance. Deferred independently rereads protected manifest and CREATE_NEW
+writes/flushed pending counter zero using its IDs. PostFinalize independently
+rereads manifest, checks effective thread token (process fallback exclusively on
+ERROR_NO_TOKEN), protected write access and effective database, then requires
+matching IDs and exact counter zero, increments once and flushes counter one.
+Any existing record blocks creation; counter one refuses replay without writing.
+All failures retain residue: no Clean, delete, repair, retry or settlement claim.
+No ID/path property, client PID/ancestor/SID/session authority, production mutex,
+host reader or verified boolean is introduced. Diagnostics remain bounded and
+state initiatingClientUnknown. Trusted-engine extraction of Preflight code is an
+unresolved boundary; production approval remains denied.
+
+Acceptance: /W4 /WX x64/ARM64 compilation, six cached-WiX builds with unsuppressed
+ICE, read-only actual table/Binary/PE/flags/identity/import checks, x64 actual token
+precedence and owned ignored temporary replay checks. Label stale-ID/ACL/write/
+flush models separately from protected native positives. Freeze source SHA,
+twelve artifact hashes, eighteen GUIDs and exact manifest outputs/logs in ignored
+build state. A READY GUEST REVIEW BUNDLE contains one Success MSI and matching
+canonical protected manifest with enumerated effects; it grants no permission.
+ARM64 runtime, Linux, performance and the production matrix are inapplicable.
