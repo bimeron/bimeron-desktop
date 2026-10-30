@@ -915,3 +915,34 @@ source archive/hashes, build/configure/test logs and SHA256SUMS.txt. Its
  guest-x64-success directory is a READY DIAGNOSTIC REVIEW BUNDLE only: independent
 review and a separately authorized parent VM run remain required. Prior bundles
 are preserved. The artifact index carries exact source commit and hashes.
+
+### Native x64 protected ACK Success observation (2026-10-30)
+
+The parent ran the independently reviewed Success bytes from source `a6d93adc`
+exactly once in the authorized disposable Windows 10 STD VM, through the existing
+Session 0 administrative PowerShell Direct context. MSI SHA-256 was
+`e4e08ee585dc4e269330382744c3fa22a8148c2103c44283d5197679eb0b5cf0`;
+Binary SHA-256 `f30cc4bdbf381b8c2621a8211d38752548ccaed3cf6324872d0793b95a62a109`;
+protected manifest SHA-256
+`2569f0970d834c701015e3df6858120a39fd826a8ed9239fc30f06fd05b9ecd2`.
+Guest input hashes were checked before launch. The previous ACK diagnostic directory
+was archived intact; the separate BimeronProtectedFileLab Pending record was unchanged.
+
+Exit was 0; callback order was Preflight (0), Deferred (2), Commit (3),
+PostFinalize (4), each result/stage/detail/API 0. No rollback callback or
+active-tables.txt was observed. ProductState remained -1, as expected for this
+zero-resource fixture. The retained 48-byte BLPF record has Pending state,
+installation `0eaecf426f4356279c75a5c4d1634673`, generation
+`37f925c468305e66979de9382c65865e`, and counter 1; its SHA-256 is
+`5934cb0459e36ac4ad72a4b1b5b0675d1f6cbf6285fa0c5d5991dd2795d24000`.
+The record remains at the fixed protected ACK lab path. No retry, failure variant,
+uninstall, repair or cleanup was run. Private logs/result/copied record are retained
+under ignored build/vm-lab-evidence-20261030/ack-projection-a6d93adc-*.
+
+This establishes observed protected-file access and acknowledgment through the
+reviewed callbacks in this context. Successful per-step validation/flush is inferred
+from frozen control flow and successful returns, not an independent OS I/O trace.
+Initiating client and REMOVE provenance remain Unknown. No Clean publication,
+interactive UAC proof, real-resource rollback, crash/power-loss durability, ARM64
+runtime, production admission or enrollment authority is established. Failure
+variants and live identity/settlement proofs remain separate gates.
