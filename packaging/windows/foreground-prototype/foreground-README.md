@@ -1924,3 +1924,41 @@ unchanged MSI/DLL/manifest, tests/native evidence/effects/command. Preserve old
 bundles. Parent fresh independent review precedes future VM work; parent must
 archive prepared client root intact under fresh suffix c260f52f without overwrite
 before staging. No Core/product/MSI rebuild, benchmark, full matrix or release.
+
+DOS alias implementation evidence: specification 31a238c precedes code. PS 5.1 and
+7.6.9 each pass 159 worker/format assertions (all original 150 retained), 34
+unchanged policy assertions and 21 alias/mapping assertions, plus AST wiring and
+exact interop compilation. New worker cases cover early signal/query/close on the
+same fake handle, thrown and native-style failed exit queries, confirmed release
+once and no exit query for unresolved/prelaunch failure. Numeric exit error is
+nullable; unexpected managed query exceptions report Failed with null error.
+
+The GUID reservation retains desired access zero. The DOS log alias requests only
+READ_CONTROL (metadata/security, no data read), with read/write sharing and no
+delete sharing. Both undergo same-object identity comparison; the alias applies
+strict lab metadata/security checks. Anchor/MSI aliases use existing strict pins.
+No ordinary read pin is added to the log. Final mapping/known-folder checks follow
+all retained-pin revalidation immediately before native launch dispatch.
+
+Separate PS 5.1/7 native selection passed actual Program Files DOS/GUID identity
+and fixed mapping, original system path/descriptor/open checks and owned temporary
+log reservation/READ_CONTROL-alias/data-writer compatibility. Owned fixtures do not
+prove protected guest positives. No operation constructor, process launch,
+termination, MSI API/action or host protected write ran. Model failure injection
+and AST wiring are not native service-consumption evidence. No atomic consumption
+attestation, privileged-remap protection, actual MSI logger/guest behavior, server
+quiescence, initiating-client authority or Clean claim is established.
+
+Fresh ignored build/ack-checkpoint-dos-alias-review freezes exact committed source
+and Git/archive hashes, tests on extracted bytes, native logs, unchanged frozen
+MSI/DLL/manifest and historical evidence, effects and proposed guest command. Old
+bundles remain intact. Parent fresh independent review is required before future
+VM work. Parent must archive the existing prepared client root intact to a fresh
+BimeronCheckpointClientLab-prelaunch-c260f52f suffix (extend uniquely if occupied),
+verify hashes/descriptors, and never overwrite it before staging new reviewed bytes.
+No guest changes were performed here. Diff review found no gate/P1/termination
+policy relaxation, fallback/PID reopen, retry, server kill or unrelated edits.
+Focused PS checks and diff --check are CI-equivalent. Product matrix (Windows x64,
+ARM64 and both Linux targets), benchmarks and profiling are inapplicable: this is a
+disconnected native-x64-only lab runner and no product/build/package input changed.
+No Core/product/MSI rebuild, full matrix, push/watch or release occurred.

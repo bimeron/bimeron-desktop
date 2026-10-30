@@ -12,7 +12,7 @@ $add=$fn.Body.Find({param($n) $n -is [Management.Automation.Language.CommandAst]
 $source=$add.CommandElements[2].Value
 $fake = @'
 public sealed class CheckpointMock : IDisposable {
- public long Time,CallAt;public int Calls,Queries,Closes,Disposals,Waits;public IntPtr Killed;
+ public long Time,CallAt;public int Calls,Queries,Closes,Disposals,Waits,ExitQueries;public bool ExitThrows,ExitFails;public string Order="";public IntPtr Killed;
  public IDisposable Held;public bool IsAlive=true,IdentityBad,IdentityError,ApiError,ApiThrows,Signaled=true,Disposed,WaitThrows,DeathThrows,LaunchThrows;
  public readonly ManualResetEvent LaunchEntered=new ManualResetEvent(false),LaunchPermit=new ManualResetEvent(true),ReadyEntered=new ManualResetEvent(false),ReadyPermit=new ManualResetEvent(true),KillEntered=new ManualResetEvent(false),KillPermit=new ManualResetEvent(true),WaitEntered=new ManualResetEvent(false),WaitPermit=new ManualResetEvent(true);
  public Action BeforeReady,FinalQuery;
@@ -22,11 +22,12 @@ public sealed class CheckpointMock : IDisposable {
  public bool Alive(IntPtr h){Check(h);return IsAlive;}
  public bool Ready(IntPtr h){Check(h);ReadyEntered.Set();ReadyPermit.WaitOne();if(BeforeReady!=null)BeforeReady();return true;}
  public bool Kill(IntPtr h){Check(h);Killed=h;KillEntered.Set();KillPermit.WaitOne();Calls++;CallAt=Time;if(ApiThrows)throw new Exception("API");return !ApiError;}
- public bool Death(IntPtr h){Check(h);if(DeathThrows)throw new Exception("Death query");return Signaled;}
+ public bool Death(IntPtr h){Check(h);Order+="signal;";if(DeathThrows)throw new Exception("Death query");return Signaled;}
  public void Wait(IntPtr h){Check(h);Waits++;WaitEntered.Set();WaitPermit.WaitOne();if(WaitThrows)throw new Exception("Wait");}
- public void Close(IntPtr h){Check(h);Closes++;if(Disposed)throw new Exception("Pins released before handle");}
+ public CheckpointExit Exit(IntPtr h){Check(h);ExitQueries++;Order+="exit;";if(ExitThrows)throw new Exception("Exit query");return ExitFails?new CheckpointExit(null,"Failed",5):new CheckpointExit(2,"Succeeded",null);}
+ public void Close(IntPtr h){Check(h);Order+="close;";Closes++;if(Disposed)throw new Exception("Pins released before handle");}
  public void Dispose(){Disposals++;if(Held!=null)Held.Dispose();Disposed=true;}
- public CheckpointWorker Worker(){return new CheckpointWorker(delegate{return Time;},300000,Launch,Query,Alive,Ready,Kill,Death,Wait,Close,new IDisposable[]{this});}
+ public CheckpointWorker Worker(){return new CheckpointWorker(delegate{return Time;},300000,Launch,Query,Alive,Ready,Kill,Death,Wait,Close,new IDisposable[]{this},Exit);}
 }
 public static class CheckpointTests {
  static int checks;
@@ -61,6 +62,18 @@ public static class CheckpointTests {
   CheckpointNative.ValidateDescriptor(new RawSecurityDescriptor("O:SYG:SYD:(A;CIIO;FA;;;BU)(A;;FR;;;BU)"),os);Assert(true,"Inherit-only does not apply to current object");
   return "PASS MODEL: "+(checks-before)+" role/link/metadata/descriptor assertions; no native calls.";
  }
+ public static string Aliases(){int before=checks;
+  var original=new CheckpointNative.Info();original.Volume=7;original.IndexHigh=8;original.IndexLow=9;
+  CheckpointNative.SameInfo(original,original);Assert(true,"Matching alias identity");
+  foreach(string role in new string[]{"anchor","MSI","log"}){var other=original;other.IndexLow++;Reject(delegate{CheckpointNative.SameInfo(original,other);});other=original;other.Volume++;Reject(delegate{CheckpointNative.SameInfo(original,other);});}
+  CheckpointNative.FixedDrive(3);Assert(true,"Fixed drive positive");foreach(uint type in new uint[]{0,1,2,4,5,6})Reject(delegate{CheckpointNative.FixedDrive(type);});
+  int launches=0;Action<Func<string>,Func<string,string>> validate=delegate(Func<string> known,Func<string,string> volume){CheckpointNative.Mapping("C:\\Program Files","GUID",known,volume);launches++;};
+  validate(delegate{return "C:\\Program Files";},delegate(string p){return "GUID";});Assert(launches==1,"Mapping positive");
+  Reject(delegate{validate(delegate{return "D:\\Program Files";},delegate(string p){return "GUID";});});
+  Reject(delegate{validate(delegate{return "C:\\Program Files";},delegate(string p){return "CHANGED";});});
+  foreach(string failure in new string[]{"fixed drive","volume query","known folder query"})Reject(delegate{validate(delegate{if(failure=="known folder query")throw new IOException(failure);return "C:\\Program Files";},delegate(string p){throw new IOException(failure);});});
+  Assert(launches==1,"Mapping/query refusal launched");return "PASS ALIAS MODEL: "+(checks-before)+" identity/mapping assertions; no native calls.";
+ }
  public static string Run(byte[] manifest){
   Assert(Marshal.SizeOf(typeof(CheckpointNative.Info))==52 && Marshal.OffsetOf(typeof(CheckpointNative.Info),"Volume").ToInt32()==28,"Native file-information layout");
   CheckpointFormat.Manifest(manifest);
@@ -94,7 +107,7 @@ public static class CheckpointTests {
    m=new CheckpointMock();m.Signaled=false;m.WaitThrows=failure=="wait" || failure=="identityWait";m.DeathThrows=failure=="deathQuery";m.IdentityError=failure.StartsWith("identity");if(failure=="finalQuery")m.FinalQuery=delegate{throw new Exception("Final identity query");};
    w=m.Worker();w.Start();Assert(w.Observe(3000),"Unresolved worker blocked");
    Assert(w.Snapshot.Outcome=="Unresolved" && !w.Snapshot.Completed && w.Snapshot.PossibleLateOperation && w.Snapshot.ClientDeath=="Unconfirmed","Unresolved observation");
-   Assert(m.Calls==(m.IdentityError || failure=="finalQuery"?0:1) && m.Closes==0 && m.Disposals==0 && m.Waits==1,"Unresolved ownership/retry");
+   Assert(m.Calls==(m.IdentityError || failure=="finalQuery"?0:1) && m.Closes==0 && m.Disposals==0 && m.Waits==1 && m.ExitQueries==0,"Unresolved ownership/retry");
    var unresolved=w.Snapshot;Assert(Object.ReferenceEquals(w.Timeout(),unresolved),"Timeout erased unresolved state");
    var weak=new WeakReference(w);w=null;GC.Collect();GC.WaitForPendingFinalizers();GC.Collect();
    Assert(weak.IsAlive && !m.Disposed,"Pending owner lost to GC");
@@ -102,8 +115,14 @@ public static class CheckpointTests {
    Assert(owners.Contains((CheckpointWorker)weak.Target),"Worker not explicitly rooted");
    Assert((IntPtr)typeof(CheckpointWorker).GetField("pendingHandle",System.Reflection.BindingFlags.Instance|System.Reflection.BindingFlags.NonPublic).GetValue(weak.Target)==new IntPtr(1234),"Actual handle not retained");
   }
-  m=new CheckpointMock();m.LaunchThrows=true;w=m.Worker();w.Start();Finish(w,m);Assert(m.Calls==0 && m.Waits==0,"Preprocess launch failure performed operation");
+  m=new CheckpointMock();m.LaunchThrows=true;w=m.Worker();w.Start();Finish(w,m);Assert(m.Calls==0 && m.Waits==0 && m.ExitQueries==0 && w.Snapshot.Exit.Status=="NotQueried","Preprocess launch failure performed operation");
   m=new CheckpointMock();m.WaitThrows=true;w=m.Worker();w.Start();Finish(w,m);Assert(w.Snapshot.ClientDeath=="Signaled","Confirmed death lost after wait error");
+  m=new CheckpointMock();m.IsAlive=false;w=m.Worker();w.Start();Finish(w,m);
+  Assert(m.ExitQueries==1 && m.Order.EndsWith("signal;exit;close;") && w.Snapshot.Exit.Code==2 && w.Snapshot.Exit.Status=="Succeeded","Early exit same-handle signal/query/close ordering");
+  m=new CheckpointMock();m.ExitThrows=true;w=m.Worker();w.Start();Finish(w,m);
+  Assert(m.ExitQueries==1 && m.Closes==1 && m.Disposals==1 && w.Snapshot.Exit.Code==null && w.Snapshot.Exit.Status=="Failed" && w.Snapshot.ClientDeath=="Signaled","Exit query failure changed confirmed release");
+  m=new CheckpointMock();m.ExitFails=true;w=m.Worker();w.Start();Finish(w,m);
+  Assert(m.ExitQueries==1 && w.Snapshot.Completed && w.Snapshot.Exit.Code==null && w.Snapshot.Exit.Error==5 && w.Snapshot.Exit.Status=="Failed","Native-style exit error diagnostic/release");
   // A real owned temporary file proves the worker retains the supplied pin across cancellation.
   string temp=Path.GetTempFileName();
   try {
@@ -123,6 +142,11 @@ public static class CheckpointNativeReadOnlyTests {
  static void Api(bool value,string name){if(!value)throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error(),name);}
  public static string Run(){
   var report=new StringBuilder("NATIVE READ-ONLY SYSTEM: no operation constructor, launch, termination or MSI calls.\n");
+  string known=CheckpointNative.ProgramFiles(),anchor=CheckpointNative.VolumePath(known);
+  CheckpointNative.Mapping(known,anchor,CheckpointNative.ProgramFiles,CheckpointNative.VolumePath);
+  using(var dos=CheckpointNative.CreateFileW(known,0x20080,1,IntPtr.Zero,3,0x02200000,IntPtr.Zero))using(var guid=CheckpointNative.CreateFileW(anchor,0x20080,1,IntPtr.Zero,3,0x02200000,IntPtr.Zero)){
+   Api(!dos.IsInvalid && !guid.IsInvalid,"Known folder DOS/GUID opens");CheckpointNative.Info a,b;Api(CheckpointNative.GetFileInformationByHandle(dos,out a),"Known DOS metadata");Api(CheckpointNative.GetFileInformationByHandle(guid,out b),"Known GUID metadata");CheckpointNative.SameInfo(a,b);report.AppendLine("Known folder fixed mapping "+known+" -> "+anchor+" volume="+a.Volume+" id="+a.IndexHigh+":"+a.IndexLow);
+  }
   string exe=CheckpointNative.SystemExe();string volume=CheckpointNative.VolumePath(exe);
   var held=new List<CheckpointPin>();
   try{
@@ -156,6 +180,10 @@ public static class CheckpointNativeReadOnlyTests {
     }
    }
    }
+   string logger=Path.Combine(temp,"logger.log");
+   using(var reserve=CheckpointNative.CreateFileW(logger,0,3,IntPtr.Zero,1,0x00200000,IntPtr.Zero))using(var alias=CheckpointNative.CreateFileW(logger,0x20000,3,IntPtr.Zero,3,0x02200000,IntPtr.Zero))using(var writer=CheckpointNative.CreateFileW(logger,0x40000000,3,IntPtr.Zero,3,0x02200000,IntPtr.Zero)){
+    Api(!reserve.IsInvalid && !alias.IsInvalid && !writer.IsInvalid,"Metadata reservation/alias logger write compatibility");CheckpointNative.Info a,b;Api(CheckpointNative.GetFileInformationByHandle(reserve,out a),"Reservation metadata");Api(CheckpointNative.GetFileInformationByHandle(alias,out b),"Log alias metadata");CheckpointNative.SameInfo(a,b);
+   }File.Delete(logger);report.AppendLine("NATIVE OWNED LOG: metadata reservation + READ_CONTROL-only alias allow logger data-write open with read/write sharing; same identity.");
    report.AppendLine("NATIVE OWNED FIXTURE: links=2 shared identity; LabProtected rejected; write/delete alias opens refused with ERROR_SHARING_VIOLATION. Owned user fixture is NOT a TrustedOS positive.");
   }finally{if(File.Exists(link))File.Delete(link);if(File.Exists(file))File.Delete(file);Directory.Delete(temp);}
   return report.ToString();
@@ -168,11 +196,13 @@ $manifestPath=Join-Path $repo 'build/ack-checkpoint-review-reconciled/x64/lab-pr
 if(-not $NativeReadOnly){
  [CheckpointTests]::Run([IO.File]::ReadAllBytes($manifestPath))
  [CheckpointTests]::Models()
+ [CheckpointTests]::Aliases()
 }
 $names=@($ast.ParamBlock.Parameters | ForEach-Object {$_.Name.VariablePath.UserPath}) -join ','
 if($names -cne 'LabOnlyAllow,ExpectedRunnerSha256,ExpectedManifestSha256,ExpectedMsiSha256'){throw 'Input surface expanded'}
 foreach($forbidden in @('OpenProcess(','Process.Kill','taskkill','Get-Process','Start-Process','QueueUserWorkItem','System.Threading.Timer')){if($source.Contains($forbidden)){throw "Forbidden operation: $forbidden"}}
 if(([regex]::Matches($source,'CheckpointNative.TerminateProcess\(h,1603\)')).Count -ne 1){throw 'Termination dispatch changed'}
+foreach($required in @('log?0x20000u:','log?3u:1u','CreateFileW(log,0,3,IntPtr.Zero,1','CheckpointNative.SameInfo(reserved,alias)','!dosAnchor.Same(anchorPin) || !dosMsi.Same(msi)','Revalidate();CheckpointNative.Mapping(known,anchor,CheckpointNative.ProgramFiles,CheckpointNative.VolumePath);','CheckpointNative.Launch(exe,dosRoot+')){if(-not $source.Contains($required)){throw "Missing alias/launch safety wiring: $required"}}
 Write-Output "PASS PS $($PSVersionTable.PSVersion): AST closed contract and exact native interop compiled; native checks require separate -NativeReadOnly selection."
 
 if($NativeReadOnly){[CheckpointNativeReadOnlyTests]::Run()}

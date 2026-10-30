@@ -906,3 +906,15 @@ cause. Same-handle exit-code diagnostics follow confirmed signal before close;
 query failure cannot weaken P1 retention/release rules. New exact-source offline
 and separate read-only native evidence precede a fresh immutable review bundle
 and parent independent review. No guest, MSI rebuild or supported flow changes.
+
+Checkpoint DOS alias offline result: PS 5.1/7 each pass 159 worker/format, 34 policy
+and 21 alias/mapping assertions with exact interop/AST checks. Separate native
+reads verify known-folder DOS/GUID identity/mapping and system opens; owned log
+fixtures verify metadata-only sharing without protected writes. New ignored
+build/ack-checkpoint-dos-alias-review freezes exact committed Git-blob/archive
+bytes and unchanged MSI/DLL/manifest, extracted-source tests, native logs and
+review effects/command. Parent fresh independent review and intact fresh-suffix
+c260f52f prepared-root archive precede any future VM staging. Validation-time
+identity is not service-consumption proof; actual guest logger/path behavior and
+MSI root cause remain unproved. No supported package flow, product matrix,
+benchmark/profile, Core/MSI rebuild, guest operation or release changed.

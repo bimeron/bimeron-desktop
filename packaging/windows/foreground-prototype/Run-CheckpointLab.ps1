@@ -28,12 +28,17 @@ public sealed class CheckpointIdentity {
  public CheckpointIdentity(uint p,long c){Pid=p;Created=c;}
  public bool Same(CheckpointIdentity other){return other!=null && Pid!=0 && Created!=0 && Pid==other.Pid && Created==other.Created;}
 }
+public sealed class CheckpointExit {
+ public readonly uint? Code;public readonly string Status;public readonly int? Error;
+ public CheckpointExit(uint? code,string status,int? error){Code=code;Status=status;Error=error;}
+}
 public sealed class CheckpointSnapshot {
  public readonly string Decision, Outcome, ApiResult, ClientDeath, Latency, ServerQuiescence;
  public readonly bool PossibleLateOperation, Completed;
  public readonly CheckpointIdentity Identity;
- public CheckpointSnapshot(string decision,string outcome,string api,string death,bool late,bool completed,CheckpointIdentity identity){
-  Decision=decision;Outcome=outcome;ApiResult=api;ClientDeath=death;PossibleLateOperation=late;Completed=completed;Identity=identity;
+ public readonly CheckpointExit Exit;
+ public CheckpointSnapshot(string decision,string outcome,string api,string death,bool late,bool completed,CheckpointIdentity identity,CheckpointExit exit=null){
+  Exit=exit??new CheckpointExit(null,"NotQueried",null);Decision=decision;Outcome=outcome;ApiResult=api;ClientDeath=death;PossibleLateOperation=late;Completed=completed;Identity=identity;
   Latency="Unknown";ServerQuiescence="Unknown";
  }
 }
@@ -44,12 +49,12 @@ public sealed class CheckpointWorker {
  readonly object gate=new object(); readonly ManualResetEvent done=new ManualResetEvent(false);
  readonly Func<long> now; readonly long deadline; readonly Func<IntPtr> launch;
  readonly Func<IntPtr,CheckpointIdentity> query; readonly Func<IntPtr,bool> alive,ready,terminate,death;
- readonly Action<IntPtr> wait,close; readonly IDisposable[] pins;
+ readonly Func<IntPtr,CheckpointExit> exitCode;readonly Action<IntPtr> wait,close; readonly IDisposable[] pins;
  string state="Eligible"; CheckpointSnapshot snapshot;
  public CheckpointWorker(Func<long> clock,long expires,Func<IntPtr> start,Func<IntPtr,CheckpointIdentity> identity,
   Func<IntPtr,bool> isAlive,Func<IntPtr,bool> validate,Func<IntPtr,bool> kill,Func<IntPtr,bool> confirm,
-  Action<IntPtr> awaitEnd,Action<IntPtr> release,IDisposable[] retained){
-  now=clock;deadline=expires;launch=start;query=identity;alive=isAlive;ready=validate;terminate=kill;death=confirm;wait=awaitEnd;close=release;pins=retained;
+  Action<IntPtr> awaitEnd,Action<IntPtr> release,IDisposable[] retained,Func<IntPtr,CheckpointExit> getExit){
+  now=clock;deadline=expires;launch=start;query=identity;alive=isAlive;ready=validate;terminate=kill;death=confirm;wait=awaitEnd;close=release;pins=retained;exitCode=getExit;
   snapshot=new CheckpointSnapshot(state,"AwaitingLaunch","NotCalled","Unknown",true,false,null);
  }
  public void Start(){var thread=new Thread(Run);thread.IsBackground=false;thread.Start();}
@@ -95,9 +100,12 @@ public sealed class CheckpointWorker {
   finally {
    // Cancellation never kills a late client. Retain process and input pins until it ends.
    if(handle!=IntPtr.Zero){try{wait(handle);if(death(handle)){dead="Signaled";if(outcome=="ClientDeathUnconfirmed")outcome="OwnedClientDeathObserved";}}catch{outcome="WaitFailed";}}
+   CheckpointExit finalExit=null;
    bool resolved=handle==IntPtr.Zero || dead=="Signaled";
    if(resolved){
-    if(handle!=IntPtr.Zero){try{close(handle);}catch{}}
+    CheckpointExit result=null;
+    if(handle!=IntPtr.Zero){try{result=exitCode(handle);}catch{result=new CheckpointExit(null,"Failed",null);}try{close(handle);}catch{}}
+    finalExit=result;
     foreach(var pin in pins){try{pin.Dispose();}catch{}}
    }else{
     // Root the worker AND its actual handle/pins after this thread returns.
@@ -107,7 +115,7 @@ public sealed class CheckpointWorker {
    }
    lock(gate){
     if(state=="Eligible")state="Cancelled";
-    snapshot=new CheckpointSnapshot(state,outcome,api,dead,true,resolved,identity);
+    snapshot=new CheckpointSnapshot(state,outcome,api,dead,true,resolved,identity,finalExit);
    }
    done.Set();
   }
@@ -144,6 +152,7 @@ public static class CheckpointNative {
  [StructLayout(LayoutKind.Sequential)] struct ProcessInfo {public IntPtr process,thread;public uint pid,tid;}
  [DllImport("kernel32.dll",CharSet=CharSet.Unicode,SetLastError=true)] static extern bool CreateProcessW(string app,StringBuilder command,IntPtr pa,IntPtr ta,bool inherit,uint flags,IntPtr environment,string directory,ref Startup startup,out ProcessInfo info);
  [DllImport("kernel32.dll",SetLastError=true)] public static extern bool CloseHandle(IntPtr handle);
+ [DllImport("kernel32.dll",SetLastError=true)] static extern bool GetExitCodeProcess(IntPtr handle,out uint code);
  [DllImport("kernel32.dll",SetLastError=true)] public static extern uint GetProcessId(IntPtr handle);
  [DllImport("kernel32.dll",SetLastError=true)] static extern bool GetProcessTimes(IntPtr handle,out long created,out long exit,out long kernel,out long user);
  [DllImport("kernel32.dll",SetLastError=true)] public static extern bool TerminateProcess(IntPtr handle,uint code);
@@ -168,7 +177,11 @@ public static class CheckpointNative {
   try{if(SHGetKnownFolderPath(ref id,0,IntPtr.Zero,out value)!=0 || value==IntPtr.Zero)throw new IOException("Known folder unavailable");string path=Marshal.PtrToStringUni(value);if(String.IsNullOrEmpty(path) || Path.GetFullPath(path)!=path || path.Length<4 || path[1]!=':' || path[2]!='\\')throw new IOException("Known folder invalid");return path;}finally{if(value!=IntPtr.Zero)Marshal.FreeCoTaskMem(value);}
  }
  public static string SystemExe(){var path=new StringBuilder(32768);uint n=GetSystemDirectoryW(path,32768);if(n==0 || n>=32768 || !String.Equals(path.ToString(),"C:\\Windows\\System32",StringComparison.OrdinalIgnoreCase))throw new IOException("Native system path refused");return "C:\\Windows\\System32\\msiexec.exe";}
- public static string VolumePath(string path){string root=path.Substring(0,3);var volume=new StringBuilder(128);if(GetDriveTypeW(root)!=3 || !GetVolumeNameForVolumeMountPointW(root,volume,128))throw new IOException("Fixed volume required");return volume+path.Substring(3);}
+ public static void FixedDrive(uint type){if(type!=3)throw new IOException("Fixed volume required");}
+ public static string VolumePath(string path){string root=path.Substring(0,3);var volume=new StringBuilder(128);FixedDrive(GetDriveTypeW(root));if(!GetVolumeNameForVolumeMountPointW(root,volume,128))throw new IOException("Fixed volume query failed");return volume+path.Substring(3);}
+ public static CheckpointExit ExitCode(IntPtr handle){uint code;if(GetExitCodeProcess(handle,out code))return new CheckpointExit(code,"Succeeded",null);return new CheckpointExit(null,"Failed",Marshal.GetLastWin32Error());}
+ public static void SameInfo(Info a,Info b){if(a.Volume!=b.Volume || a.IndexHigh!=b.IndexHigh || a.IndexLow!=b.IndexLow)throw new IOException("Alias identity mismatch");}
+ public static void Mapping(string known,string anchor,Func<string> currentKnown,Func<string,string> currentVolume){if(currentKnown()!=known || currentVolume(known)!=anchor)throw new IOException("Known folder/volume mapping changed");}
  public static CheckpointIdentity Identity(IntPtr handle){uint pid=GetProcessId(handle);long created,exit,kernel,user;if(pid==0 || !GetProcessTimes(handle,out created,out exit,out kernel,out user) || created==0)throw new IOException("Process identity unavailable");return new CheckpointIdentity(pid,created);}
  public static bool Alive(IntPtr handle){uint result=WaitForSingleObject(handle,0);if(result==258)return true;if(result==0)return false;throw new IOException("Process wait query failed");}
  public static void Wait(IntPtr handle){if(WaitForSingleObject(handle,0xffffffff)!=0)throw new IOException("Process completion unknown");}
@@ -196,10 +209,11 @@ public sealed class CheckpointPin : IDisposable {
  public readonly SafeFileHandle Handle;public readonly string BoundPath;readonly CheckpointNative.Info identity;readonly bool directory;readonly CheckpointPinRole role;
  public CheckpointPin(string path,bool dir,CheckpointPinRole selected):this(path,dir,selected,false){}
  public static CheckpointPin SystemImage(){return new CheckpointPin(CheckpointNative.VolumePath(CheckpointNative.SystemExe()),false,CheckpointPinRole.InternalSystemImagePin,true);}
- private CheckpointPin(string path,bool dir,CheckpointPinRole selected,bool fixedSystemImage){
+ public static CheckpointPin LogAlias(string path){return new CheckpointPin(path,false,CheckpointPinRole.LabProtected,false,true);}
+ private CheckpointPin(string path,bool dir,CheckpointPinRole selected,bool fixedSystemImage,bool log=false){
   if(selected<CheckpointPinRole.TraversalOnly || selected>CheckpointPinRole.InternalSystemImagePin || (selected==CheckpointPinRole.InternalSystemImagePin && !fixedSystemImage))throw new IOException("Internal fixed image role required");
   directory=dir;role=selected;BoundPath=path;
-  Handle=CheckpointNative.CreateFileW(path,(dir?0x80u:0x80000000u)|0x20000u,1,IntPtr.Zero,3,0x02200000,IntPtr.Zero);
+  Handle=CheckpointNative.CreateFileW(path,log?0x20000u:((dir?0x80u:0x80000000u)|0x20000u),log?3u:1u,IntPtr.Zero,3,0x02200000,IntPtr.Zero);
   if(Handle.IsInvalid){int error=Marshal.GetLastWin32Error();Handle.Dispose();throw new System.ComponentModel.Win32Exception(error);}
   try{identity=Check();}catch{Handle.Dispose();throw;}
  }
@@ -223,7 +237,7 @@ public sealed class CheckpointPin : IDisposable {
 }
 public sealed class CheckpointOperation : IDisposable {
  readonly List<IDisposable> pins=new List<IDisposable>();readonly List<CheckpointPin> checks=new List<CheckpointPin>();
- readonly string root,state,exe; CheckpointPin manifest,msi,checkpoint,pending;bool disposed;
+ readonly string root,state,exe,known,anchor,dosRoot; CheckpointPin manifest,msi,checkpoint,pending,anchorPin;bool disposed;
  public readonly string RunnerPath,LogPath;
  CheckpointPin Keep(CheckpointPin pin){pins.Add(pin);checks.Add(pin);return pin;}
  CheckpointPin Add(string path,bool directory,CheckpointPinRole role){var pin=new CheckpointPin(path,directory,role);pins.Add(pin);checks.Add(pin);return pin;}
@@ -232,11 +246,11 @@ public sealed class CheckpointOperation : IDisposable {
   if(!authority)throw new IOException("Anchor missing");
  }
  public CheckpointOperation(string runner,string expectedRunner,string expectedManifest,string expectedMsi){try{
-  string known=CheckpointNative.ProgramFiles();RunnerPath=known+"\\BimeronCheckpointClientLab\\Run-CheckpointLab.ps1";
+  known=CheckpointNative.ProgramFiles();RunnerPath=known+"\\BimeronCheckpointClientLab\\Run-CheckpointLab.ps1";
   if(runner!=RunnerPath || expectedManifest.ToLowerInvariant()!=CheckpointFormat.ManifestHash || expectedMsi.ToLowerInvariant()!=CheckpointFormat.MsiHash)throw new IOException("Fixed input pins refused");
-  string anchor=CheckpointNative.VolumePath(known);root=anchor+"\\BimeronCheckpointClientLab";state=anchor+"\\BimeronProtectedAckLab\\LABProtectedFiles";
-  LogPath=root+"\\checkpoint-"+Guid.NewGuid().ToString("N")+".log";
-  var independent=Add(anchor,true,CheckpointPinRole.LabProtected);Chain(root,anchor);Chain(state,anchor);
+  anchor=CheckpointNative.VolumePath(known);dosRoot=known+"\\BimeronCheckpointClientLab";root=anchor+"\\BimeronCheckpointClientLab";state=anchor+"\\BimeronProtectedAckLab\\LABProtectedFiles";
+  LogPath=dosRoot+"\\checkpoint-"+Guid.NewGuid().ToString("N")+".log";
+  var independent=Add(anchor,true,CheckpointPinRole.LabProtected);anchorPin=independent;Chain(root,anchor);Chain(state,anchor);
   // The independently opened known folder must be the traversal anchor object.
   bool matched=false;foreach(var pin in checks)if(!Object.ReferenceEquals(pin,independent) && pin.Same(independent))matched=true;if(!matched)throw new IOException("Known folder mismatch");
   var self=Add(root+"\\Run-CheckpointLab.ps1",false,CheckpointPinRole.LabProtected);if(CheckpointFormat.Hash(self.Read(1048576))!=expectedRunner.ToLowerInvariant())throw new IOException("Runner digest refused");
@@ -250,12 +264,21 @@ public sealed class CheckpointOperation : IDisposable {
   int error=Marshal.GetLastWin32Error();if(!h.IsInvalid || error!=2)throw new IOException("Fresh absence not established");}}
  void Revalidate(){foreach(var pin in checks)pin.Revalidate();CheckpointFormat.Manifest(manifest.Read(65536));}
  void Fresh(){Revalidate();Absent(state+"\\pending.bin");Absent(state+"\\checkpoint.bin");if(CheckpointNative.MsiQueryProductStateW(CheckpointFormat.Product)!=-1)throw new IOException("Fresh product state required");}
- public IntPtr Launch(){Fresh();string log=LogPath;
-  // Reserve only this unique output; retain the log pin through late completion.
-  // Metadata-only reservation imposes no read/write sharing demand on the MSI logger.
+ public IntPtr Launch(){Fresh();
+  string log=root+LogPath.Substring(dosRoot.Length);
+  // Reserve the GUID name without data read/write demand; logger sharing remains compatible.
   var logPin=CheckpointNative.CreateFileW(log,0,3,IntPtr.Zero,1,0x00200000,IntPtr.Zero);
   if(logPin.IsInvalid){logPin.Dispose();throw new IOException("Fresh log reservation failed");}pins.Add(logPin);
-  return CheckpointNative.Launch(exe,root+"\\lab-protected-ack-Checkpoint.msi",log);
+  var dosAnchor=Add(known,true,CheckpointPinRole.LabProtected);
+  var dosMsi=Add(dosRoot+"\\lab-protected-ack-Checkpoint.msi",false,CheckpointPinRole.LabProtected);
+  var dosLog=Keep(CheckpointPin.LogAlias(LogPath));
+  if(!dosAnchor.Same(anchorPin) || !dosMsi.Same(msi))throw new IOException("DOS anchor/MSI mismatch");
+  CheckpointNative.Info reserved,alias;
+  if(!CheckpointNative.GetFileInformationByHandle(logPin,out reserved) || !CheckpointNative.GetFileInformationByHandle(dosLog.Handle,out alias))throw new IOException("Log identity query failed");
+  CheckpointNative.SameInfo(reserved,alias);
+  // Validation-time identity only; trusted OS/admin remapping is outside this boundary.
+  Revalidate();CheckpointNative.Mapping(known,anchor,CheckpointNative.ProgramFiles,CheckpointNative.VolumePath);
+  return CheckpointNative.Launch(exe,dosRoot+"\\lab-protected-ack-Checkpoint.msi",LogPath);
  }
  public bool Ready(IntPtr ignored){
   Revalidate();
@@ -266,7 +289,7 @@ public sealed class CheckpointOperation : IDisposable {
  public CheckpointWorker Worker(){var clock=Stopwatch.StartNew();long deadline=300000;
   return new CheckpointWorker(delegate{return clock.ElapsedMilliseconds;},deadline,Launch,CheckpointNative.Identity,CheckpointNative.Alive,Ready,
    delegate(IntPtr h){return CheckpointNative.TerminateProcess(h,1603);},delegate(IntPtr h){return CheckpointNative.WaitForSingleObject(h,0)==0;},CheckpointNative.Wait,
-   delegate(IntPtr h){CheckpointNative.CloseHandle(h);},new IDisposable[]{this});
+   delegate(IntPtr h){CheckpointNative.CloseHandle(h);},new IDisposable[]{this},CheckpointNative.ExitCode);
  }
  public void Dispose(){if(disposed)return;disposed=true;for(int i=pins.Count-1;i>=0;i--)pins[i].Dispose();}
 }
@@ -285,6 +308,6 @@ try {
  $worker.Start(); $transferred = $true
  $finished = $worker.Observe($worker.Remaining)
  $snapshot = if ($finished) { $worker.Snapshot } else { $worker.Timeout() }
- [ordered]@{labOnly=$true;logPath=$operation.LogPath;decision=$snapshot.Decision;outcome=$snapshot.Outcome;completed=$snapshot.Completed;terminationApi=$snapshot.ApiResult;clientDeath=$snapshot.ClientDeath;possibleLateOperation=$snapshot.PossibleLateOperation;latency=$snapshot.Latency;serverQuiescence=$snapshot.ServerQuiescence;initiatingClient='Unknown';clean='Unknown';childPid=$(if($null -eq $snapshot.Identity){$null}else{$snapshot.Identity.Pid});childCreatedRawFileTime=$(if($null -eq $snapshot.Identity){$null}else{$snapshot.Identity.Created.ToString('x16')});runnerHash=$ExpectedRunnerSha256;manifestHash=$ExpectedManifestSha256;msiHash=$ExpectedMsiSha256} | ConvertTo-Json -Compress
+ [ordered]@{labOnly=$true;logPath=$operation.LogPath;decision=$snapshot.Decision;outcome=$snapshot.Outcome;completed=$snapshot.Completed;terminationApi=$snapshot.ApiResult;clientDeath=$snapshot.ClientDeath;clientExitCode=$snapshot.Exit.Code;exitCodeQuery=$snapshot.Exit.Status;exitCodeError=$snapshot.Exit.Error;possibleLateOperation=$snapshot.PossibleLateOperation;latency=$snapshot.Latency;serverQuiescence=$snapshot.ServerQuiescence;initiatingClient='Unknown';clean='Unknown';childPid=$(if($null -eq $snapshot.Identity){$null}else{$snapshot.Identity.Pid});childCreatedRawFileTime=$(if($null -eq $snapshot.Identity){$null}else{$snapshot.Identity.Created.ToString('x16')});runnerHash=$ExpectedRunnerSha256;manifestHash=$ExpectedManifestSha256;msiHash=$ExpectedMsiSha256} | ConvertTo-Json -Compress
  Write-Output 'Preserve VM and all state. Stop orchestration: client death is not MSI server quiescence. No retry, uninstall or cleanup. Worker retains pins through late completion or unresolved death; unresolved ownership is sticky until host exit, which loses pins.'
 } finally { if (-not $transferred) { $operation.Dispose() } }
