@@ -89,7 +89,7 @@ Ubuntu 24.04.4; Ubuntu 25.04 was not tested.
 Windows amd64 and Linux amd64 CTest passed 3/3. Candidate-backed protocol/profile
 validation passed on each (1/1). Windows tests passed again after deployment
 changes. Windows ARM64 compiled and packaged; Linux arm64 cross-compiled and
-packaged. Native Linux arm64 hosted checks and ARM64 runtime remain pending.
+packaged. Native Linux arm64 hosted checks subsequently passed; Windows ARM64 runtime remains untested.
 English/Russian offscreen previews at 100%/150% were inspected; native tray and
 installed UI checks are not established by those previews.
 
@@ -108,12 +108,7 @@ review remains in `build/package-audit/`; its rejection must not be interpreted
 as the corrected candidate's result. New benchmarks are inapplicable to this
 packaging-only correction.
 
-Not ready for publication: production Core manifest signature and exact signed
-GUI verification, native hosted Linux arm64 checks, installed upgrade/smoke
-checks, final artifact review and publication approval remain open. The VM
-currently has an unpublished Desktop 0.2.0 and a running independent Core service;
-ordinary upgrade testing must preserve those service/profile settings and all
-parked lab directories. No installer action was performed during inventory.
+At this historical checkpoint, signing, hosted Linux arm64 checks, VM checks and final review were pending. Their later results are recorded below; publication remains unauthorized.
 
 ## Signed Core verification (2026-10-30)
 
@@ -134,3 +129,38 @@ passed hosted Windows x64/ARM64 and native Linux amd64/arm64 CI (push and PR run
 Windows ARM64 remains compile-only. Installation/upgrade smoke checks, final
 review and separate publication approval remain open. No tag or release was
 published.
+
+## Installed Windows amd64 observation (2026-10-30)
+
+The frozen MSI SHA-256 `6f11d7b2...9e987fd` upgraded the VM's earlier unpublished
+0.2.0 package to ProductCode `{9FE64B75-ABAA-4272-8AB9-59A892457511}` with exit 0.
+This was a same-version major upgrade, not a 0.1.5-to-0.2.0 test. Installed GUI
+and bundled Core hashes exactly match the reviewed stage. The independently
+installed Core service retained its original executable hash, path and PID 3060,
+and remained Running. All 37 baselined parked lab files remained byte-identical.
+
+A fresh installed GUI process (PID 6880) in the existing interactive session
+opened a responsive 736x639 native window. Its loaded Qt/Windows-platform modules
+came from the protected install directory. The retained screenshot was inspected:
+Russian text, profile rows and controls are readable without observed clipping.
+The existing `--visual-check` mode was used: it suppresses Core polling and
+validation, so this proves installed loader/UI startup, not live connection or
+service-update behavior. The runner closed only its fresh visual-only process;
+the original GUI and Core service were preserved. Three actual profile files
+were unchanged across this visual check. The temporary scheduler task completed
+with result 0 and was removed. An earlier task dispatch had not run the script
+under Windows' default execution policy; the final task used process-only policy.
+
+Evidence: ignored `build/release-vm-check/` contains MSI log, results, baseline
+hashes and screenshot. The initial settings baseline used the wrong organization
+directory; zero files in that baseline must not be counted as settings-preservation
+proof. Full settings/profile preservation across the MSI upgrade is therefore not
+established. No fresh live VPN, signed installed-service update/rollback, Windows
+ARM64 runtime, DEB installation/upgrade or full installer-option UI exercise was
+performed in this batch. Earlier beta.1 live results remain historical only.
+
+Independent corrected-package review at `ba08aff` found no blocking finding:
+all actual MSI/DEB payloads match stage/Core inputs, architectures and licenses;
+no missing non-system Windows dependency was found. Package bytes remain the
+hashes listed above. Final publication requires separate explicit approval,
+including the provisional Core beta.2 tag/assets; no publication has occurred.
