@@ -1861,3 +1861,24 @@ not prove or disprove its separate privileged-access role. No protected-object
 open/write, preload provenance, ACK, Pending or production action was exercised.
 Inputs/logs and existing lab state were retained; no failure variant, retry,
 uninstall or cleanup ran. ARM64 runtime and RemoteInteractive remain untested.
+
+### Checkpoint new-runner early-exit observation (2026-10-30)
+
+After independent c260f52 system-image-policy review, the parent archived the old
+prepared client directory intact to BimeronCheckpointClientLab-prelaunch-33dd88a9,
+verifying file hashes and descriptors, then provisioned reviewed runner SHA-256
+e4466dbd1fbf538311a2b3eda5f84bd84bc5695cd771d5163cd04f22e0be9ba1.
+The unchanged MSI/manifest were pinned. One invocation reported Cancelled,
+EarlyClientExit, Completed true, same-handle Signaled death and TerminationApi
+NotCalled, child PID 5052/creation 01dd68661a44354c. No termination occurred.
+Pending/checkpoint were absent, and standalone Pending hash was unchanged.
+
+The retained unique log records MSI error 1314 for the volume-GUID package
+directory, followed by server/client MainEngineThread return 2, before any callback.
+This establishes an early package/path failure in this experiment, not a successful
+interruption, checkpoint or Pending-retention proof. The runner did not capture a
+separate native process exit code; engine-log return 2 is the available evidence.
+All prepared inputs, archives and log remain retained. No retry, uninstall or cleanup
+ran. Private result/log are under build/vm-lab-evidence-20261030/checkpoint-c260f52f-*
+and checkpoint-9701525611d543f48da06123a987d391.log. New path-policy diagnosis and
+review are required before another invocation; no sharing/security check was bypassed.
