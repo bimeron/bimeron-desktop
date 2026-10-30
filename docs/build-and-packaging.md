@@ -415,6 +415,10 @@ The current bundle pin is not evidence of support for these new protocols.
 
 ## Foreground installer feasibility prototype (not enabled)
 
+Status: the [trusted invocation procedure revision](ikev2-profiles.md#trusted-invocation-procedure-selected-specification-review-pending)
+is selected for independent specification review, not production acceptance.
+This docs-only revision changes no supported build, packaging or installer flow.
+
 Specification and acceptance for this isolated prototype: follow stage 8
 `e4e6d05` and Core `66d84d8f4dcfc6ada625eb11894b19feea51b7ba`'s complete
 `docs/IKEV2_FOREGROUND_CONTROL.MD` and internal `windowsnet` transaction guard.

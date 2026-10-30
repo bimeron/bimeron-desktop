@@ -1,5 +1,39 @@
 # Bounded elevated-client and settlement prototype
 
+## Selected trust revision and next disconnected fixture
+
+The [trusted invocation procedure](../../../docs/ikev2-profiles.md#trusted-invocation-procedure-selected-specification-review-pending)
+is selected for specification revision and independent review only. Production
+remains disabled. Callbacks independently check their own effective authority;
+they cannot attest that the original client followed the already-fully-elevated,
+same-user interactive invocation procedure. Reliance on that procedure is a
+deliberate residual risk, acceptable only after independent review. The original
+`verifyInitiatingClient` stays Unknown. No code or fixture result is relabeled.
+
+Acceptance for the next disconnected fixture, as separate implementation work:
+
+- Exercise THREAD-first queries, PROCESS fallback only on ERROR_NO_TOKEN, other
+  query errors, filtered thread over privileged process, elevation/high integrity,
+  enabled Administrators, restriction and impersonation levels, and actual
+  protected access. No RevertToSelf or elevation-type-only permit.
+- Exercise SID/session/logon mismatch, missing or unauthenticated interactive
+  binding and production Session 0 refusal. Identify exactly which callbacks need
+  binding and how OS token/LSA context reaches each through an authenticated
+  mechanism before claiming runtime support. SYSTEM deferred access is separate.
+- Reject substituted preload/package/Binary, effective database/sequence/condition
+  changes, unapproved mutation properties, transforms/MSP, unsupported cache or
+  old nested packages and external payloads. DLL self-check and receipt/property/
+  CustomActionData tuples cannot prove preload or initiating-client authority.
+- Prove that callback success alone never grants authority or publishes Clean.
+  Clean still requires fresh token/required user binding, exact generation, final
+  inventory and quiescence checks; caller-received success is not the criterion.
+
+All runtime/readers, enrolled updater/rollback compatibility, continuous mutex,
+terminal settlement and native-proof gates remain. Core's 64-byte record and
+Desktop's 48-byte Pending fixture are distinct formats, not interchangeable proof.
+The dated acceptance/evidence sections below are historical records of their own
+fixtures, including Session 0 access-only labs; they do not approve this revision.
+
 ## Acceptance for the separate foreground trace lab
 
 This section specifies a proposed disposable-VM experiment; it does not authorize
@@ -59,7 +93,7 @@ VM access, native clipboard, installation or release action belongs to this task
 
 ## Acceptance recorded before implementation
 
-Offline only, based on Desktop 2183b74 and Core 66d84d8f / 4366a5c9.
+Historical contract, before the selected trust revision above. Offline only, based on Desktop 2183b74 and Core 66d84d8f / 4366a5c9.
 Native enrollment remains unavailable. Own only this directory and the canonical
 build document appendix. No host registry, installation, elevation or networking.
 
@@ -169,8 +203,9 @@ The new source-sequence checker also rejects the actual 2183b74 WiX source at
 its old afterInstallInitialize schedule (build-local baseline-regression.log).
 No production code, updater, transport, spec or production WiX was changed.
 
-Remaining gates: independently established initiating MSI client SID/session/logon
-and effective elevated callback token; protected native-view key/ancestor access
+Historical remaining gates (the selected procedure above revises the original
+initiating-client proof premise): required runtime interactive binding and
+effective elevated callback token; protected native-view key/ancestor access
 and durable flush; exact trusted runtime package and approved final signed Core
 artifacts; real rollback/commit/nested-uninstall ordering, outer completion,
 missing callbacks, filtered contexts, host death/reboot/sharing failures; enforced
@@ -1133,8 +1168,9 @@ explicit foreground-lab-protected-ack-checkpoint, x64 only, excluded from ALL,
 installation and production. Its fresh Checkpoint identities and compiled variant 3
 reuse the ACK source, exact WiX sequence, protected run.manifest/pins and 48-byte
 Pending format. The three existing ACK variants and trace contracts are unchanged.
-Identity contract decisions remain pending; original same-user interactive initiating
-client requirements and continuous exclusion are not weakened or established.
+The trusted invocation procedure is selected with independent specification review
+pending; this checkpoint establishes neither its runtime binding nor continuous
+exclusion. Production remains disabled.
 
 After Deferred create(i,g) returns success (including Pending write/flush), write
 and flush fixed checkpoint.bin through narrowly named Directory::writeAckCheckpoint.

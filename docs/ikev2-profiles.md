@@ -43,21 +43,60 @@ remains disabled until safe terminal settlement, migration/participating-host
 exclusion and preserved update/rollback are demonstrated. No setup wrapper,
 installed general-purpose helper or automatic administrative recovery is added.
 
-The user additionally accepted an already-elevated, same-user interactive MSI
-client for native enrollment and every modification of an enrolled installation.
-Without independently established effective-token/session evidence, refuse before
-mutation and request elevated installation. Per-machine server elevation alone
-does not satisfy this condition. Ordinary nonenrolled packet installation and its
-existing update/rollback retain their behavior. This authorizes only an offline
-prototype, not enrollment or a protected installation experiment.
+### Trusted invocation procedure (selected specification; review pending)
+
+The user selected option 1: permission to revise this specification and obtain
+independent review, not permission to enable native enrollment. For enrollment
+and every modification of an enrolled installation, the intended same-user
+interactive user must start the approved native MSI already fully elevated, using
+an exact independently approved package and protected preload selection. This is
+a trusted invocation procedure, not cryptographic or process attestation by MSI
+callbacks. Administrators, SYSTEM and the exact TrustedInstaller SID specified
+below are trusted; a malicious privileged administrator is outside this boundary.
+
+Residual risk: callbacks cannot prove that this procedure was followed or that
+the original initiating process was already fully elevated. Option 1 deliberately
+accepts reliance on correct procedure only after independent review. The selected
+revision is review-pending, not production acceptance. The original
+`verifyInitiatingClient` remains Unknown; do not rename it Verified. Any future
+implementation is separate work. Ordinary nonenrolled packet installation and
+signed update/rollback remain unchanged, with no new Clean or admission gate.
+
+Each callback must independently inspect its effective THREAD token first, using
+the PROCESS token only for ERROR_NO_TOKEN. All other query errors and filtered
+thread tokens refuse; never use RevertToSelf to obtain process authority. Require
+full administrator authority: elevation, high integrity, enabled Administrators,
+unrestricted token, adequate impersonation level where applicable, and actual
+protected-object access. Elevation type alone is insufficient, including for
+nonsplit administrators. SYSTEM deferred work can prove privileged access, not
+the identity of an interactive user.
+
+The procedural same-user interactive reference is an OS-observed elevated token
+and its LSA interactive logon context. SID, session and logon identifiers must be
+OS observations, never MSI properties, environment, ancestry or assumed equality
+between callback host and client. Production Session 0 invocation is unsupported;
+existing Session 0 labs are historical access/order evidence only. Before runtime
+implementation, the reviewed design must identify which callbacks require the
+interactive binding and how each obtains and authenticates that binding. A
+receipt, property or CustomActionData tuple is not an authenticated channel;
+missing or unproved binding refuses before mutation. The procedure does not
+supply this missing callback mechanism or prove the original process identity.
+
+Independent approval before preload must bind the exact package, Binary DLL and
+protected selection/loading path. DLL self-checks cannot retroactively establish
+preload provenance. Preserve exact effective database/Binary, sequence, conditions,
+mutation-property allowlist, transforms/MSP refusal, cached maintenance and old
+nested-package identities, and external payload pins. Unsupported routes refuse
+before mutation. No callback success grants authority by itself. The next
+disconnected fixture must meet the [focused acceptance criteria](../packaging/windows/foreground-prototype/foreground-README.md#selected-trust-revision-and-next-disconnected-fixture).
 
 The prototype must constrain its own approved package: old-product removal after
 InstallExecute and before InstallFinalize, all destructive/rollback/commit work
 inside that transaction, and no later resource mutation. Post-Finalize settlement
 is a separate protected journal acknowledgment, not rollback-covered resource
 work or proof that the caller received a successful MSI return. Effective token,
-same-user/session, approved effective package, exact generation, final inventory
-and quiescence must be reverified before durable clean publication. Unsupported
+required interactive user binding, approved effective package, exact generation,
+final inventory and quiescence must be reverified before durable clean publication. Unsupported
 transforms, patches, maintenance baselines or mutation-driving properties refuse.
 Filtered callback tokens, missing callbacks, failed verification/flush, interrupted
 or reboot-incomplete outcomes retain pending for explicit administrative recovery.
@@ -208,6 +247,10 @@ the full MSI/DEB release matrix are one separate shared pre-release dependency.
 This specification does not change packaging or authorize release.
 
 ## Offline implementation evidence
+
+The following dated results and earlier fixture acceptance records are historical
+evidence with their original scope. They do not implement or approve the selected
+[trusted invocation procedure](#trusted-invocation-procedure-selected-specification-review-pending).
 
 Windows x64 Release tests used VS 18 2026 BuildTools and Qt 6.8.3 with the
 explicit offscreen platform (no native-platform fallback). Baseline
@@ -510,8 +553,9 @@ explicit foreground-lab-protected-ack-checkpoint, x64 only, excluded from ALL,
 installation and production. Its fresh Checkpoint identities and compiled variant 3
 reuse the ACK source, exact WiX sequence, protected run.manifest/pins and 48-byte
 Pending format. The three existing ACK variants and trace contracts are unchanged.
-Identity contract decisions remain pending; original same-user interactive initiating
-client requirements and continuous exclusion are not weakened or established.
+The trusted invocation procedure is selected with independent specification review
+pending; this checkpoint establishes neither its runtime binding nor continuous
+exclusion. Production remains disabled.
 
 After Deferred create(i,g) returns success (including Pending write/flush), write
 and flush fixed checkpoint.bin through narrowly named Directory::writeAckCheckpoint.
