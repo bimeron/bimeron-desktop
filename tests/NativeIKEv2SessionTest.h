@@ -29,14 +29,112 @@ struct NativeIKEv2SessionTest {
                 {"owner",QJsonObject{{"created","18446744073709551615"},{"image_index","18446744073709551614"},{"pid",42}}},
                 {"core",QJsonObject{{"revision",approval().revision},{"modified",false}}},
                 {"capabilities",QJsonObject{{"ikev2",QJsonObject{{"supported",true}}}}},
-                {"status",QJsonObject{{"State",state},{"native",QJsonObject{{"requested",true},{"wfp","inactive"},{"dns","inactive"},
-                    {"ras_cleanup","succeeded"},{"dns_cleanup","succeeded"},{"wfp_cleanup","succeeded"},{"recovery_required",false}}}}}};
+                {"status",QJsonObject{{"State",state},{"Attempt",0},{"Since","2026-10-30T00:00:00Z"},{"LastError",""}}}};
+        }
+        // Exact Status/SessionInfo/NativeStatus shapes from Core 66d84d8f:
+        // engine.go New/Start/Status/Stop, session_info.go, ikev2_windows.go and
+        // native_observed.go Close. Before Start both optional objects are absent.
+        QJsonObject sessionReply(QString state, bool requested = false) {
+            auto r = reply(state); auto status = r.value("status").toObject();
+            status.insert("Attempt",1);
+            status.insert("Session",QJsonObject{{"backend","ikev2"},{"stats_unavailable",true},
+                {"id",QString(32,'f')},{"active",state == "connected" || state == "connecting" || state == "stopping"},
+                {"mode","vpn"},{"ipv6","system"},{"kill_switch_requested",requested}});
+            status.insert("native",QJsonObject{{"profile_readiness","validated"},{"credential_readiness","usable"},
+                {"certificate_readiness","windows_authenticated"},{"requested",requested},
+                {"wfp",requested && state == "connected" ? "active" : "inactive"},
+                {"dns",requested && state == "connected" ? "active" : "inactive"},
+                {"ras_cleanup",state == "connected" ? "not_started" : "succeeded"},
+                {"dns_cleanup",requested && state != "connected" ? "succeeded" : "not_started"},
+                {"wfp_cleanup",requested && state != "connected" ? "succeeded" : "not_started"},
+                {"recovery_required",false}});
+            r.insert("status",status); return r;
         }
         void deliver(QJsonObject r) { controller.received(calls.back().command,r); }
         void discover() { check(controller.discover(),"discover accepted"); deliver(reply()); }
         void launch() { controller.setLaunchGates({true,true,true,true}); check(controller.connectProfile(QDir::rootPath()+"fixture.conf",QString(64,'c')),"launch accepted"); controller.launched(); }
     };
     static void run() {
+        // Reviewed acceptance criteria: delayed read-only discovery retains bounded
+        // intent; cancellation and ambiguous activation can never send it again.
+        {
+            Fixture f; f.launch(); f.controller.failed("hello",T::Failure::Unavailable);
+            f.controller.poll(); f.deliver(f.reply());
+            check(f.calls.size()==3 && f.calls.back().fields.value("accept_revision")==approval().revision,
+                "delayed pipe discovery activates exactly once");
+            f.controller.failed("hello",T::Failure::Timeout); f.controller.poll();
+            check(f.calls.back().command=="status","sent activation timeout reconciles status");
+            f.deliver(f.sessionReply("connected")); f.controller.poll(); f.deliver(f.sessionReply("connected"));
+            int activations=0; for (const auto &c:f.calls) activations+=c.fields.contains("accept_revision");
+            f.controller.setLaunchGates({true,true,true,true});
+            check(!f.controller.connectProfile(QDir::rootPath()+"fixture.conf",QString(64,'c')) &&
+                !f.controller.gates_.ownerAuthoritativelyAbsent && f.launches==1 && activations==1,
+                "fresh gates consumed without duplicate launch or activation");
+        }
+        {
+            Fixture f; f.launch();
+            check(f.controller.activationDeadline_.interval()==30000,"initial activation intent has fixed bound");
+            QMetaObject::invokeMethod(&f.controller.deadline_,"timeout",Qt::DirectConnection);
+            check(f.controller.activationPending_,"read-only exchange timeout retains intent");
+            f.controller.poll(); f.controller.activationDeadline_.stop();
+            QMetaObject::invokeMethod(&f.controller.activationDeadline_,"timeout",Qt::DirectConnection);
+            f.deliver(f.reply());
+            for (const auto &c:f.calls) check(!c.fields.contains("accept_revision"),"late discovery beyond launch bound cannot activate");
+        }
+        for (bool stop : {false,true}) {
+            Fixture f; f.launch(); f.controller.failed("hello",T::Failure::Unavailable);
+            if (stop) f.controller.stop(); else f.controller.cancelExchange();
+            f.controller.poll(); f.deliver(f.reply());
+            if (stop) { check(f.calls.back().command=="stop","stop before pipe queued"); f.deliver(f.reply()); }
+            for (const auto &c:f.calls) check(!c.fields.contains("accept_revision"),"cancel before pipe never activates");
+            check(f.controller.closeOwner(),"validated never-activated owner may close");
+        }
+        for (auto failure : {T::Failure::IdentityRejected,T::Failure::InvalidResponse}) {
+            Fixture f; f.launch(); f.controller.failed("hello",failure); f.controller.poll();
+            check(f.calls.size()==1 && !f.controller.activationPending_ && f.controller.poisoned_,
+                "discovery identity or schema failure never activates");
+        }
+        {
+            Fixture f; f.discover();
+            check(f.controller.snapshot().native.isEmpty() && f.controller.closeOwner(),"Core initial idle hello may close");
+        }
+        for (bool requested : {false,true}) {
+            Fixture f; f.discover(); f.controller.poll(); f.deliver(f.sessionReply("connected",requested));
+            check(f.controller.snapshot().requested==requested && !f.controller.closeOwner(),"connected owner cannot close");
+            check(f.controller.stop(),"stop native session"); f.deliver(f.sessionReply("disconnected",requested));
+            check(f.controller.closeOwner(),"Core terminal cleanup permits close with protection on or off");
+        }
+        for (const auto &field : {"wfp","dns"}) for (const auto &value : {"retained","modified","unknown"}) {
+            Fixture f; f.discover(); f.controller.poll(); auto r=f.sessionReply("disconnected");
+            auto status=r.value("status").toObject(); auto n=status.value("native").toObject();
+            n.insert(field,value); status.insert("native",n); r.insert("status",status); f.deliver(r);
+            check(!f.controller.closeOwner(),"inactive intent never hides retained modified unknown protection");
+        }
+        for (const auto &field : {"ras_cleanup","dns_cleanup","wfp_cleanup"}) {
+            for (const auto &value : {"pending","failed"}) {
+                Fixture f; f.discover(); f.controller.poll(); auto r=f.sessionReply("disconnected");
+                auto status=r.value("status").toObject(); auto n=status.value("native").toObject();
+                n.insert(field,value); status.insert("native",n); r.insert("status",status); f.deliver(r);
+                check(!f.controller.closeOwner(),"incomplete cleanup blocks close even with protection off");
+            }
+        }
+        for (const auto &field : {"requested","recovery_required","ras_cleanup","dns_cleanup","wfp_cleanup","wfp","dns"}) {
+            Fixture f; f.discover(); f.controller.poll(); auto r=f.sessionReply("disconnected");
+            auto status=r.value("status").toObject(); auto n=status.value("native").toObject();
+            n.remove(field); status.insert("native",n); r.insert("status",status); f.deliver(r);
+            check(!f.controller.closeOwner(),"missing native cleanup field never proves safety");
+        }
+        {
+            Fixture f; f.launch(); f.deliver(f.reply()); f.controller.failed("hello",T::Failure::Timeout);
+            f.controller.poll(); f.deliver(f.reply());
+            check(!f.controller.closeOwner(),"missing native after ambiguous activation is not idle proof");
+        }
+        {
+            Fixture f; f.discover(); f.controller.poll(); f.deliver(f.sessionReply("connected"));
+            f.controller.poll(); auto r=f.sessionReply("disconnected"); auto status=r.value("status").toObject();
+            status.remove("native"); r.insert("status",status); f.deliver(r);
+            check(!f.controller.closeOwner(),"missing native after known session is not cleanup proof");
+        }
         {
             Fixture f; f.controller.setLaunchGates({true,true,true,true});
             check(f.controller.connectProfile(QDir::rootPath()+"fixture.conf",QString(64,'c')),"consent attempt");
@@ -83,7 +181,7 @@ struct NativeIKEv2SessionTest {
             check(f.controller.poisoned_,"lost established session identity rejected");
         }
         {
-            Fixture f; f.discover(); f.controller.poll(); auto r=f.reply();
+            Fixture f; f.discover(); f.controller.poll(); auto r=f.sessionReply("disconnected",true);
             auto status=r.value("status").toObject(); auto n=status.value("native").toObject();
             n.insert("wfp","modified"); n.insert("dns","unknown"); status.insert("native",n); r.insert("status",status); f.deliver(r);
             check(f.controller.snapshot().requested && f.controller.snapshot().wfp=="modified" &&
@@ -115,12 +213,12 @@ struct NativeIKEv2SessionTest {
             f.process=T::ProcessState::Exited; f.controller.poll(); check(f.controller.snapshot().ownerClosed,"closure plus observed exit");
         }
         {
-            Fixture f; f.discover(); auto r=f.reply(); auto status=r.value("status").toObject();
+            Fixture f; f.discover(); auto r=f.sessionReply("disconnected",true); auto status=r.value("status").toObject();
             auto n=status.value("native").toObject(); n.insert("wfp","retained"); status.insert("native",n); r.insert("status",status);
             f.controller.poll(); f.deliver(r); check(!f.controller.closeOwner(),"retained policy blocks clean close");
-            f.controller.poll(); r=f.reply(); r.insert("dropped",true); r.insert("cursor",4); f.deliver(r);
+            f.controller.poll(); r=f.sessionReply("disconnected",true); r.insert("dropped",true); r.insert("cursor",4); f.deliver(r);
             check(f.calls.back().command=="status","dropped events reread status immediately");
-            f.deliver(f.reply()); check(f.controller.snapshot().owner.value("created").toString()=="18446744073709551615","uint64 identity remains string");
+            f.deliver(f.sessionReply("disconnected",true)); check(f.controller.snapshot().owner.value("created").toString()=="18446744073709551615","uint64 identity remains string");
             f.controller.poll(); r=f.reply(); r.insert("instance",QString(32,'d')); f.deliver(r);
             check(!f.controller.snapshot().authoritative && f.controller.poisoned_,"instance change fails closed");
         }

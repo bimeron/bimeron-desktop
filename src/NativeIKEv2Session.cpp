@@ -40,8 +40,15 @@ NativeIKEv2Session::~NativeIKEv2Session() { if (transport_) transport_->releaseH
 void NativeIKEv2Session::initialize() {
     timer_.setSingleShot(true); timer_.setTimerType(Qt::PreciseTimer); deadline_.setSingleShot(true);
     connect(&timer_, &QTimer::timeout, this, &NativeIKEv2Session::poll);
+    activationDeadline_.setSingleShot(true);
+    connect(&activationDeadline_, &QTimer::timeout, this, [this] {
+        activationPending_ = false; unknown("native_timeout");
+    });
     connect(&deadline_, &QTimer::timeout, this, [this] {
-        hooks_.cancel(); pending_.clear(); launching_ = false; activationPending_ = false;
+        // Only a read-only hello may be retried with activation intent intact.
+        const bool discovering = pending_ == "hello" && !launching_ && !activationSent_;
+        hooks_.cancel(); pending_.clear(); launching_ = false;
+        if (!discovering) { activationPending_ = false; activationDeadline_.stop(); }
         unknown("native_timeout"); schedule();
     });
 }
@@ -74,9 +81,9 @@ bool NativeIKEv2Session::launchAllowed() {
 bool NativeIKEv2Session::connectProfile(const QString &p, const QString &hash) {
     if (!QDir::isAbsolutePath(p) || !hex(hash,64)) return false;
     if (!launchAllowed()) return false;
-    endpoint_ = Endpoint::Session; activationPending_ = true;
+    endpoint_ = Endpoint::Session; activationPending_ = true; activationDeadline_.start(30000);
     if (hooks_.session(p,hash)) return true;
-    launching_ = false; deadline_.stop(); activationPending_ = false; unknown("native_launch_blocked"); return false;
+    launching_ = false; deadline_.stop(); activationPending_ = false; activationDeadline_.stop(); unknown("native_launch_blocked"); return false;
 }
 bool NativeIKEv2Session::previewProfile(const QString &n,const QString &s,const QString &a) {
     if (n.isEmpty() || s.isEmpty() || (a != "apply" && a != "remove")) return false;
@@ -109,12 +116,20 @@ bool NativeIKEv2Session::clean() const {
     if (!snapshot_.authoritative || !terminal() || sessionActive_) return false;
     if (endpoint_ == Endpoint::Provisioning) return true;
     const auto n = snapshot_.native;
-    return !snapshot_.recoveryRequired && snapshot_.wfp == "inactive" && snapshot_.dns == "inactive" &&
-        n.value("ras_cleanup") == "succeeded" && n.value("dns_cleanup") == "succeeded" && n.value("wfp_cleanup") == "succeeded";
+    // Core New/Stop before Start omits both optional lifecycle objects. Only a
+    // validated never-activated idle owner may use that absence as cleanup proof.
+    if (n.isEmpty()) return neverActivatedIdle_;
+    const bool unrequested = n.value("requested") == QJsonValue(false);
+    return !snapshot_.session.isEmpty() && n.value("requested").isBool() &&
+        n.value("recovery_required") == QJsonValue(false) &&
+        snapshot_.wfp == "inactive" && snapshot_.dns == "inactive" &&
+        n.value("ras_cleanup") == "succeeded" &&
+        (n.value("dns_cleanup") == "succeeded" || (unrequested && n.value("dns_cleanup") == "not_started")) &&
+        (n.value("wfp_cleanup") == "succeeded" || (unrequested && n.value("wfp_cleanup") == "not_started"));
 }
 bool NativeIKEv2Session::stop() {
     if (endpoint_ != Endpoint::Session || poisoned_ || closeSent_) return false;
-    activationPending_ = false; stopPending_ = true;
+    activationPending_ = false; activationDeadline_.stop(); stopPending_ = true;
     if (launching_ || !pending_.isEmpty()) return true;
     if (snapshot_.instance.isEmpty()) return false;
     stopPending_ = false; return send("stop");
@@ -144,16 +159,21 @@ void NativeIKEv2Session::received(const QString &c,const QJsonObject &r) {
         !decimal64(owner.value("image_index")) ||
         (!snapshot_.instance.isEmpty() && (instance != snapshot_.instance || installation != snapshot_.installation || owner != snapshot_.owner)) ||
         (!snapshot_.session.isEmpty() && session != snapshot_.session)) {
-        poisoned_ = true; unknown("native_identity_changed"); return;
+        poisoned_ = true; activationPending_ = false; activationDeadline_.stop(); unknown("native_identity_changed"); return;
     }
     if (c == "hello" && r.value("error").toString().isEmpty()) {
         const auto core = r.value("core").toObject();
         const auto ike = r.value("capabilities").toObject().value("ikev2").toObject();
         if (core.value("revision") != approval_.revision || core.value("modified") != false || ike.value("supported") != true) {
-            poisoned_ = true; unknown("core_identity_mismatch"); return;
+            poisoned_ = true; activationPending_ = false; activationDeadline_.stop(); unknown("core_identity_mismatch"); return;
         }
         snapshot_.ikev2 = ike;
     }
+    sessionObserved_ = sessionObserved_ || status.contains("Session") || status.contains("native") ||
+        status.value("State") != "disconnected";
+    neverActivatedIdle_ = !sessionObserved_ && !activationSent_ && status.value("Attempt") == QJsonValue(0) &&
+        status.value("State") == "disconnected" && r.value("error").toString().isEmpty() &&
+        snapshot_.ikev2.value("supported") == QJsonValue(true);
     snapshot_.instance = instance; snapshot_.installation = installation; snapshot_.owner = owner;
     sessionActive_ = status.value("Session").toObject().value("active").toBool();
     snapshot_.session = session; snapshot_.state = status.value("State").toString();
@@ -165,7 +185,7 @@ void NativeIKEv2Session::received(const QString &c,const QJsonObject &r) {
     snapshot_.operation = r.value("operation").toString(); snapshot_.profile = r.value("profile").toObject();
     snapshot_.safeError = safe(r.value("error").toString()); snapshot_.authoritative = true;
     if (snapshot_.safeError == "stale_instance" || snapshot_.safeError == "installation_mismatch") {
-        poisoned_ = true; unknown("native_identity_changed"); return;
+        poisoned_ = true; activationPending_ = false; activationDeadline_.stop(); unknown("native_identity_changed"); return;
     }
     if (c == "close_owner") {
         snapshot_.closureAccepted = snapshot_.safeError.isEmpty();
@@ -182,14 +202,17 @@ void NativeIKEv2Session::received(const QString &c,const QJsonObject &r) {
     emit changed();
     if (stopPending_) { stopPending_ = false; send("stop"); return; }
     if (activationPending_ && !activationSent_ && c == "hello" && snapshot_.safeError.isEmpty()) {
-        activationSent_ = true; activationPending_ = false;
+        activationSent_ = true; activationPending_ = false; activationDeadline_.stop();
         send("hello",{{"accept_revision",approval_.revision}}); return;
     }
     schedule();
 }
 void NativeIKEv2Session::failed(const QString &c,NativeIKEv2Transport::Failure f) {
     if ((pending_ != c && !launching_) || poisoned_) return;
-    pending_.clear(); launching_ = false; deadline_.stop(); activationPending_ = false;
+    const bool retryDiscovery = c == "hello" && !activationSent_ &&
+        (f == NativeIKEv2Transport::Failure::Unavailable || f == NativeIKEv2Transport::Failure::Timeout);
+    pending_.clear(); launching_ = false; deadline_.stop();
+    if (!retryDiscovery) { activationPending_ = false; activationDeadline_.stop(); }
     if (f == NativeIKEv2Transport::Failure::IdentityRejected || f == NativeIKEv2Transport::Failure::InvalidResponse) poisoned_ = true;
     unknown(f == NativeIKEv2Transport::Failure::Cancelled ? "native_cancelled" : "native_transport_unavailable");
     if (c == "launch" && (f == NativeIKEv2Transport::Failure::Cancelled ||
@@ -197,7 +220,7 @@ void NativeIKEv2Session::failed(const QString &c,NativeIKEv2Transport::Failure f
     schedule();
 }
 void NativeIKEv2Session::cancelExchange() {
-    hooks_.cancel(); pending_.clear(); launching_ = false; activationPending_ = false; deadline_.stop();
+    hooks_.cancel(); pending_.clear(); launching_ = false; activationPending_ = false; activationDeadline_.stop(); deadline_.stop();
     unknown("native_cancelled"); schedule();
 }
 void NativeIKEv2Session::schedule() {

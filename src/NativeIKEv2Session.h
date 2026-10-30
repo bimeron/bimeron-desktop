@@ -66,11 +66,12 @@ private:
     Gates gates_;
     Snapshot snapshot_;
     Endpoint endpoint_ = Endpoint::Session;
-    QTimer timer_, deadline_;
+    QTimer timer_, deadline_, activationDeadline_;
     QString pending_, action_, name_, server_;
     bool launching_ = false, activationPending_ = false, activationSent_ = false;
     bool stopPending_ = false, confirmationSent_ = false, closeSent_ = false;
     bool launchAttempted_ = false, sessionActive_ = false;
+    bool sessionObserved_ = false, neverActivatedIdle_ = false;
     bool fake_ = false, poisoned_ = false, eventsNext_ = false;
     double cursor_ = 0;
     friend struct NativeIKEv2SessionTest;
