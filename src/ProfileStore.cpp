@@ -175,7 +175,7 @@ QString ProfileStore::importConfig(const QString &source, QString *error) const 
         return {};
     }
     const QByteArray data = input.read(64 * 1024 + 1);
-    if (data.size() > 64 * 1024 || !data.contains("[Profile]") || !data.contains("[AccessKey]")) {
+    if (data.size() > 64 * 1024 || !data.contains("[Profile]") || (!data.contains("[AccessKey]") && !data.contains("[IKEv2]"))) {
         if (error) *error = QObject::tr("The file does not appear to be a supported Bimeron configuration");
         return {};
     }
@@ -255,10 +255,13 @@ ProfileConnectionInfo ProfileStore::connectionInfo(const QString &configText) {
     QString value;
     QString type;
     info.interfaceMode = QStringLiteral("vpn");
+    bool native = false, packet = false;
     for (const QString &line : configText.split('\n')) {
-        const QString trimmed = line.trimmed();
+        const QString trimmed = QString(line).remove(QChar(0xfeff)).trimmed();
         if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
             section = trimmed.mid(1, trimmed.size() - 2);
+            native = native || section == "IKEv2";
+            packet = packet || section == "AccessKey";
             continue;
         }
         if (trimmed.startsWith('#') || trimmed.startsWith(';')) continue;
@@ -275,6 +278,14 @@ ProfileConnectionInfo ProfileStore::connectionInfo(const QString &configText) {
             value = field;
         }
     }
+    if (native) {
+        if (!packet) {
+            info.backend = ProfileConnectionInfo::Backend::NativeIKEv2;
+            info.protocol = QStringLiteral("IKEv2");
+        }
+        return info; // connectable retains its packet-only meaning.
+    }
+    if (packet) info.backend = ProfileConnectionInfo::Backend::Packet;
     if (source.compare("File", Qt::CaseInsensitive) == 0) {
         info.keyFile = value;
         info.connectable = !value.isEmpty();

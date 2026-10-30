@@ -243,6 +243,17 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
     if (capabilities.value("vpn").toBool()) mode_->addItem(tr("System VPN"), "vpn");
     if (capabilities.value("proxy").toBool()) mode_->addItem(tr("Local SOCKS5"), "proxy");
     listen_ = new QLineEdit;
+    windowsProfile_ = new QLineEdit;
+    windowsProfile_->setObjectName("windowsProfile");
+    nativeServerName_ = new QLineEdit;
+    nativeServerName_->setObjectName("nativeServerName");
+    nativeKillSwitch_ = new HiDpiCheckBox(tr("Request native traffic and DNS protection"));
+    nativeKillSwitch_->setObjectName("nativeKillSwitch");
+    generalForm->addRow(tr("Windows VPN profile"), windowsProfile_);
+    generalForm->addRow(tr("Server name"), nativeServerName_);
+    generalForm->addRow(nativeKillSwitch_);
+    nativeMode_ = new QLabel(tr("System VPN (vpn)"));
+    generalForm->addRow(tr("Mode"), nativeMode_);
     generalForm->addRow(tr("Name"), name_);
     generalForm->addRow(tr("Key source"), keySource_);
     generalForm->addRow(tr("Key or path"), keyRow);
@@ -456,9 +467,15 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
             QMessageBox::warning(this, tr("Error"), tr("SS2022 does not support Prefix. Clear Prefix before saving."));
             return;
         }
-        if (!rawOnly_ && !rawDirty_ && !parameterError().isEmpty()) {
+        if (!native_ && !rawOnly_ && !rawDirty_ && !parameterError().isEmpty()) {
             QMessageBox::warning(this, tr("Error"), parameterError());
             return;
+        }
+        if (valueFor(configText(), "IKEv2", "KillSwitch") == "true"
+            && valueFor(originalText_, "IKEv2", "KillSwitch") != "true") {
+            if (QMessageBox::question(this, tr("Native protection"),
+                tr("Initial connection bootstrap is unprotected. Native protection blocks ordinary LAN access. A crash or failed cleanup can retain WFP and DNS protection and leave this computer offline until explicit administrative recovery. Enable it?"),
+                QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes) return;
         }
         accept();
     });
@@ -823,6 +840,10 @@ void ProfileEditorDialog::loadText(const QString &text) {
             blockers.push_back(std::make_unique<QSignalBlocker>(widget));
     }
     loadedText_ = text;
+    native_ = QRegularExpression("(?m)^\\s*\\[IKEv2\\]\\s*$").match(QString(text).remove(QChar(0xfeff))).hasMatch();
+    windowsProfile_->setText(valueFor(text, "IKEv2", "WindowsProfile"));
+    nativeServerName_->setText(valueFor(text, "IKEv2", "ServerName"));
+    nativeKillSwitch_->setChecked(valueFor(text, "IKEv2", "KillSwitch") == "true");
     rules_->setRowCount(0);
     ignoreLocalNetwork_->setChecked(false);
     hasUnknownSettings_ = false;
@@ -900,7 +921,7 @@ void ProfileEditorDialog::loadText(const QString &text) {
         rawOnly_ = true;
     const QString configuredMode = valueFor(text, "Interface", "Mode");
     const int modeIndex = mode_->findData(configuredMode);
-    if (!configuredMode.isEmpty() && modeIndex < 0) hasUnknownSettings_ = true;
+    if (!native_ && !configuredMode.isEmpty() && modeIndex < 0) hasUnknownSettings_ = true;
     mode_->setCurrentIndex(qMax(0, modeIndex));
     listen_->setText(valueFor(text, "Interface", "Listen").isEmpty() ? "127.0.0.1:1080" : valueFor(text, "Interface", "Listen"));
     interfaceName_->setText(valueFor(text, "Interface", "Name").isEmpty() ? "Bimeron" : valueFor(text, "Interface", "Name"));
@@ -931,12 +952,16 @@ void ProfileEditorDialog::loadText(const QString &text) {
         else if (section == "Rule" && trimmed.startsWith("Action")) rule.action = trimmed.mid(trimmed.indexOf('=') + 1).trimmed();
     }
     finishRule(rule);
-    const QHash<QString, QSet<QString>> known{
+    const QHash<QString, QSet<QString>> packetKnown{
         {"Profile", {"Version", "Name"}},
         {"AccessKey", {"SS", "SSConf", "SOCKS5", "VLESS", "Hysteria2", "SSH", "Key", "File", "Type", "Server", "Port", "Method", "Username", "Password", "Prefix", "Plugin", "PluginOpts", "IdentityFile", "KnownHostsFile", "CAFile", "MASQUEPath", "ID", "Encryption", "Flow", "Network", "Security", "ServerName", "PublicKey", "ShortID", "Fingerprint", "SpiderX", "ALPN", "WSPath", "WSHost", "WSEarlyData", "GRPCServiceName", "GRPCAuthority", "GRPCMultiMode", "XHTTPPath", "XHTTPHost", "XHTTPMode"}},
         {"ShadowTLS", {"ServerName", "Password"}},
         {"Interface", {"Mode", "Name", "MTU", "DNS", "IPv6", "KillSwitch", "Listen"}},
         {"Routing", {"Default"}}, {"Rule", {"CIDR", "Domain", "Action"}}};
+    const QHash<QString, QSet<QString>> known = native_
+        ? QHash<QString, QSet<QString>>{{"Profile", {"Version", "Name"}},
+            {"IKEv2", {"WindowsProfile", "ServerName", "KillSwitch"}}, {"Interface", {"Mode"}}}
+        : packetKnown;
     QString currentSection;
     for (const QString &sourceLine : text.split('\n')) {
         const QString line = QString(sourceLine).remove(QChar(0xfeff)).trimmed();
@@ -1002,6 +1027,14 @@ void ProfileEditorDialog::moveRule(int delta) {
 }
 
 QString ProfileEditorDialog::buildText() const {
+    if (native_) {
+        QString text = "[Profile]\nVersion = 1\nName = " + name_->text()
+            + "\n\n[IKEv2]\nWindowsProfile = " + windowsProfile_->text()
+            + "\nServerName = " + nativeServerName_->text();
+        if (nativeKillSwitch_->isChecked() || !valueFor(loadedText_, "IKEv2", "KillSwitch").isEmpty())
+            text += "\nKillSwitch = " + QString(nativeKillSwitch_->isChecked() ? "true" : "false");
+        return text + "\n\n[Interface]\nMode = vpn\n";
+    }
     QString accessKey;
     const QString selected = keySource_->currentData().toString();
     if (selected == "ExplicitTrojan" || QStringList{"Explicithttp", "Explicithttps", "Explicitnaive", "Explicitmasque"}.contains(selected)) {
@@ -1093,7 +1126,24 @@ QString ProfileEditorDialog::buildText() const {
 
 void ProfileEditorDialog::assessRepresentation() {
     const QSignalBlocker tabBlocker(tabs_);
+    auto *general = qobject_cast<QFormLayout *>(name_->parentWidget()->layout());
+    for (int row = 0; row < general->rowCount(); ++row) general->setRowVisible(row, true);
+    for (int i = 1; i < tabs_->count() - 1; ++i) tabs_->setTabVisible(i, true);
     if (refreshControls_) refreshControls_();
+    general->setRowVisible(windowsProfile_, native_);
+    general->setRowVisible(nativeServerName_, native_);
+    general->setRowVisible(nativeKillSwitch_, native_);
+    general->setRowVisible(nativeMode_, native_);
+    if (native_) {
+        for (int row = 0; row < general->rowCount(); ++row) {
+            auto *item = general->itemAt(row, QFormLayout::FieldRole);
+            auto *widget = item ? item->widget() : nullptr;
+            general->setRowVisible(row, widget == name_ || widget == windowsProfile_
+                || widget == nativeServerName_ || widget == nativeKillSwitch_ || widget == nativeMode_);
+        }
+    }
+    for (int i = 1; i < tabs_->count() - 1; ++i)
+        if (native_) tabs_->setTabVisible(i, false);
     visualBaseline_ = buildText();
     // This is a conservative serializer guard, not a second Core validator.
     // Compare configured tokens with the actual serializer, including ordered rules.
@@ -1156,7 +1206,8 @@ void ProfileEditorDialog::assessRepresentation() {
         if (QStringList{"Profile/", "AccessKey/", "Interface/", "Routing/"}.contains(it.key())) continue;
         if (!defaults.contains(it.key()) || defaults.value(it.key()) != it.value()) valid = false;
     }
-    rawOnly_ = rawOnly_ || hasUnknownSettings_ || !valid || !parameterError().isEmpty();
+    rawOnly_ = rawOnly_ || hasUnknownSettings_ || !valid || (!native_ && !parameterError().isEmpty());
+    if (native_ && (windowsProfile_->text().isEmpty() || nativeServerName_->text().isEmpty())) rawOnly_ = true;
     const int rawIndex = tabs_->count() - 1;
     for (int i = 0; i < rawIndex; ++i) tabs_->setTabEnabled(i, !rawOnly_);
     tabs_->widget(1)->setEnabled(!rawOnly_ && keySource_->currentData().toString() == "ExplicitVLESS");

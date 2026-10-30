@@ -85,7 +85,7 @@ static void preservationRegressions(const QString &directory) {
         base + "[Interface]\nMTU = 2000\n",
         base + "[Routing]\nDefault = future\n",
         base + "[Rule]\nDomain = example.invalid\nAction = future\n",
-        "[Profile]\nVersion = 1\nName = Native\n[IKEv2]\nWindowsProfile = Native\nServerName = example.invalid\n"
+        "[Profile]\nVersion = 1\nName = Native\n[IKEv2]\nWindowsProfile = Native\nServerName = example.invalid\nUnknown = retained\n"
     };
     for (const QString &method : {"2022-blake3-aes-128-gcm", "2022-blake3-aes-256-gcm", "2022-blake3-chacha20-poly1305"}) {
         const QString input = QString(base).replace("aes-256-gcm", method);
@@ -497,6 +497,141 @@ static void parameterForms(const QString &directory) {
     require(conflict.configText().contains("WSPath = /retained"));
 }
 
+static void nativeRegressions(const QString &directory) {
+    const QString base = "[Profile]\nVersion = 1\nName = Native\n[IKEv2]\nWindowsProfile = Corporate\nServerName = vpn.example.invalid\n[Interface]\nMode = vpn\n";
+    const QJsonObject caps{{"proxy", true}}; // Packet capabilities do not govern native editing.
+    for (bool protection : {false, true}) {
+        QString input = base;
+        if (protection) input.replace("[Interface]", "KillSwitch = true\n[Interface]");
+        input.replace("\n", "\r\n");
+        input.prepend(QChar(0xfeff));
+        const auto info = ProfileStore::connectionInfo(input);
+        require(info.backend == ProfileConnectionInfo::Backend::NativeIKEv2);
+        require(info.protocol == "IKEv2" && !info.connectable && info.keyFile.isEmpty());
+        ProfileEditorDialog editor(input, caps);
+        auto *tabs = editor.findChild<QTabWidget *>();
+        require(tabs->isTabEnabled(0));
+        require(editor.configText() == input);
+        require(editor.findChild<QCheckBox *>("nativeKillSwitch")->isChecked() == protection);
+        tabs->setCurrentIndex(tabs->count() - 1);
+        tabs->setCurrentIndex(0);
+        require(editor.configText() == input);
+        editor.findChild<QLineEdit *>("windowsProfile")->setText("Edited");
+        const QString output = editor.configText();
+        require(output.contains("WindowsProfile = Edited"));
+        require(!output.contains("AccessKey") && !output.contains("Routing") && !output.contains("ShadowTLS")
+            && !output.contains("DNS =") && !output.contains("MTU ="));
+        require(output.contains("KillSwitch = true") == protection);
+    }
+    for (const QString &input : {QString(base).replace("[Interface]\nMode = vpn\n", ""),
+            QString(base).replace("[Interface]", "KillSwitch = false\n[Interface]")}) {
+        ProfileEditorDialog editor(input, caps);
+        require(editor.findChild<QTabWidget *>()->isTabEnabled(0));
+        require(editor.configText() == input);
+    }
+    const QString mixed = base + "[AccessKey]\nSSH = ssh://alice@example.invalid\n";
+    require(ProfileStore::connectionInfo(mixed).backend == ProfileConnectionInfo::Backend::Unknown);
+    require(!ProfileStore::connectionInfo(mixed).connectable);
+    require(ProfileStore::connectionInfo("[AccessKey]\nSSH = ssh://alice@example.invalid\n").backend
+        == ProfileConnectionInfo::Backend::Packet);
+    for (const QString &input : {mixed, QString(base).replace("WindowsProfile = Corporate\n", ""), base + "[Routing]\nDefault = proxy\n",
+            base + "[Interface]\nDNS = 1.1.1.1\n", base + "[Future]\nSecret = SENTINEL\n",
+            QString(base).replace("Mode = vpn", "Mode = proxy"),
+            QString(base).replace("WindowsProfile = Corporate", "WindowsProfile = \"Corporate\""),
+            QString(base).replace("ServerName = vpn.example.invalid", "ServerName = vpn.example.invalid\nServerName = other.invalid")}) {
+        ProfileEditorDialog editor(input, caps);
+        require(!editor.findChild<QTabWidget *>()->isTabEnabled(0));
+        require(editor.findChild<QPlainTextEdit *>("rawConfig")->isHidden());
+        editor.findChild<QLineEdit *>("windowsProfile")->setText("Do not overwrite");
+        require(editor.configText() == input);
+    }
+    ProfileEditorDialog enabling(base, caps);
+    enabling.findChild<QCheckBox *>("nativeKillSwitch")->setChecked(true);
+    bool confirmed = false;
+    QTimer::singleShot(0, [&] {
+        auto *box = qobject_cast<QMessageBox *>(QApplication::activeModalWidget());
+        require(box);
+        confirmed = box->text().contains("unprotected") && box->text().contains("offline");
+        box->button(QMessageBox::No)->click();
+    });
+    enabling.findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Save)->click();
+    require(confirmed && enabling.result() != QDialog::Accepted);
+    QTimer::singleShot(0, [&] {
+        auto *box = qobject_cast<QMessageBox *>(QApplication::activeModalWidget());
+        require(box);
+        box->button(QMessageBox::Yes)->click();
+    });
+    enabling.findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Save)->click();
+    require(enabling.result() == QDialog::Accepted);
+    ProfileEditorDialog importedProtection(QString(base).replace("[Interface]", "KillSwitch = true\n[Interface]"), caps);
+    importedProtection.findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Save)->click();
+    require(importedProtection.result() == QDialog::Accepted);
+    ProfileEditorDialog rejected(base, caps, nullptr, [](const QString &, QString *error) {
+        *error = "Rejected selected CLI validation";
+        return false;
+    });
+    rejected.findChild<QPlainTextEdit *>("rawConfig")->appendPlainText("# draft");
+    const QString draft = rejected.configText();
+    QTimer::singleShot(0, [] {
+        auto *box = qobject_cast<QMessageBox *>(QApplication::activeModalWidget());
+        require(box);
+        box->accept();
+    });
+    rejected.findChild<QPushButton *>("useVisual")->click();
+    require(rejected.configText() == draft);
+    bool validated = false;
+    ProfileEditorDialog transition(base, caps, nullptr, [&](const QString &, QString *) { validated = true; return true; });
+    const QString packet = "[Profile]\nName = Packet\n[AccessKey]\nSSH = ssh://alice@example.invalid\n[Interface]\nMode = proxy\n";
+    transition.findChild<QPlainTextEdit *>("rawConfig")->setPlainText(packet);
+    transition.findChild<QPushButton *>("useVisual")->click();
+    require(validated && transition.findChild<QTabWidget *>()->isTabEnabled(0));
+    require(transition.configText() == packet);
+    transition.findChild<QLineEdit *>("profileName")->setText("Packet edit");
+    require(transition.configText().contains("[AccessKey]") && !transition.configText().contains("[IKEv2]"));
+    ProfileStore store(directory + "/native-imports");
+    const QString source = directory + "/native-source.conf";
+    QString error;
+    const QByteArray bytes = QByteArray::fromHex("efbbbf") + base.toUtf8().replace("\n", "\r\n");
+    require(ProfileStore::writeConfig(source, bytes, &error));
+    const QString copied = store.importConfig(source, &error);
+    require(!copied.isEmpty());
+    QFile file(copied);
+    require(file.open(QIODevice::ReadOnly) && file.readAll() == bytes);
+    file.close();
+    require(!ProfileStore::writeConfig(directory + "/missing/native.conf", bytes, &error));
+    const QByteArray boundary = bytes + QByteArray(65536 - bytes.size(), '#');
+    require(boundary.size() == 65536);
+    require(ProfileStore::writeConfig(source, boundary, &error));
+    const QString boundaryCopy = store.importConfig(source, &error);
+    require(!boundaryCopy.isEmpty());
+    QFile boundaryFile(boundaryCopy);
+    require(boundaryFile.open(QIODevice::ReadOnly) && boundaryFile.readAll() == boundary);
+    const QString blockedRoot = directory + "/blocked-native-imports";
+    require(ProfileStore::writeConfig(blockedRoot, "occupied", &error));
+    ProfileStore blockedStore(blockedRoot);
+    require(blockedStore.importConfig(source, &error).isEmpty());
+    const auto before = QDir(directory + "/native-imports").entryList(QDir::Files | QDir::Hidden);
+    require(ProfileStore::writeConfig(source, bytes + QByteArray(65536, '#'), &error));
+    require(store.importConfig(source, &error).isEmpty());
+    require(QDir(directory + "/native-imports").entryList(QDir::Files | QDir::Hidden) == before);
+    // The existing caller validates the selected copy and removes it on rejection.
+    // Exercise that same contract with the exact opt-in offline Core CLI.
+    const QString core = qEnvironmentVariable("BIMERON_IKEV2_CORE");
+    if (!core.isEmpty()) {
+        for (const QString &input : {base, mixed}) {
+            require(ProfileStore::writeConfig(source, input.toUtf8(), &error));
+            const QString path = store.importConfig(source, &error);
+            require(!path.isEmpty());
+            QProcess process;
+            process.start(core, {"validate", path});
+            require(process.waitForStarted(5000) && process.waitForFinished(20000));
+            require(process.exitStatus() == QProcess::NormalExit);
+            require((process.exitCode() == 0) == (input == base));
+            if (process.exitCode() != 0) require(QFile::remove(path));
+        }
+    }
+}
+
 int main(int argc, char **argv) {
     QApplication app(argc, argv);
     if (app.arguments().size() == 3 && app.arguments().at(1) == "--permission-fixture")
@@ -541,6 +676,7 @@ int main(int argc, char **argv) {
         return 0;
     }
     parameterForms(temporary.path());
+    nativeRegressions(temporary.path());
     preservationRegressions(temporary.path());
     sshProfiles(temporary.path());
     ProfileStore uriStore(temporary.path() + "/uri-import");

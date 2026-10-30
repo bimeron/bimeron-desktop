@@ -11,10 +11,12 @@ struct Profile {
 };
 
 struct ProfileConnectionInfo {
+    enum class Backend { Packet, NativeIKEv2, Unknown };
+    Backend backend = Backend::Unknown;
     QString protocol;
     QString interfaceMode;
     QString keyFile;
-    bool connectable = false;
+    bool connectable = false; // Packet start eligibility; native sessions use a separate controller.
 };
 
 class ProfileStore {

@@ -43,6 +43,11 @@ private:
     QLineEdit *shadowPassword_ = nullptr;
     QWidget *parameterPage_ = nullptr;
 
+    bool native_ = false;
+    QLineEdit *windowsProfile_ = nullptr;
+    QLineEdit *nativeServerName_ = nullptr;
+    QLabel *nativeMode_ = nullptr;
+    QCheckBox *nativeKillSwitch_ = nullptr;
     QTabWidget *tabs_ = nullptr;
     QLineEdit *name_ = nullptr;
     QComboBox *keySource_ = nullptr;
