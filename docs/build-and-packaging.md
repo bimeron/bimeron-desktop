@@ -548,3 +548,10 @@ installation, VM or release was run. Linux and production matrix/benchmarks are
 inapplicable to this disconnected Windows-only target. Commands, trace schema,
 identities, hashes and remaining runtime limits are recorded in
 `packaging/windows/foreground-prototype/foreground-README.md`.
+
+The corrected lab uses `EnsureTable` to create an empty Component table. The
+read-only checker requires all six columns with the MSI schema and zero rows;
+its prior strict allowlist and negative checks remain in force. The earlier ICE
+pass did not establish runtime behavior. The first Success VM attempt failed at
+InstallInitialize after error 2205 for the missing table; causality remains a
+hypothesis pending independent review and a parent-led repeat.

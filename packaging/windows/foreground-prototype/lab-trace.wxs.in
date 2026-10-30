@@ -3,6 +3,7 @@
   <Product Id="@LAB_PRODUCT@" Name="Bimeron LABTRACEONLY @variant@" Language="1033" Version="0.0.1" Manufacturer="Bimeron" UpgradeCode="@LAB_UPGRADE@">
     <Package Id="*" InstallerVersion="500" Compressed="yes" InstallScope="perMachine" Platform="@WIX_ARCH@" />
     <Media Id="1" />
+    <EnsureTable Id="Component" />
     <Binary Id="LabTraceBinary" SourceFile="@LAB_DLL@" />
     <CustomAction Id="ObservationPreflight" BinaryKey="LabTraceBinary" DllEntry="ObservationPreflight" Execute="immediate" Return="check" />
     <CustomAction Id="ObservationRollback" BinaryKey="LabTraceBinary" DllEntry="ObservationRollback" Execute="rollback" Impersonate="no" Return="check" />
