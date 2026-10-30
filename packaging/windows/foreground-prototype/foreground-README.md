@@ -15,9 +15,7 @@ payload are installed.
 Five synchronous checked Binary exports observe preflight before Initialize,
 rollback and deferred begin within the transaction, commit within the transaction,
 and post-finalize after Finalize. Deferred, rollback and commit run without
-impersonation. Only the compiled failure point returns installation failure. Lab
-uninstall targets only the chosen registered lab product and runs no extra actions
-in an unsuitable context. Read-only table and PE inspection must check exact action
+impersonation. Only the compiled failure point returns installation failure. The zero-resource lab may remain unregistered: ProductState -1 before and after is expected. An explicit uninstall is only meaningful for a registered lab product and runs no extra actions in an unsuitable context. Read-only table and PE inspection must check exact action
 types, conditions and order, identities, embedded digest, architecture, system
 imports, static CRT, no delay imports and SYSTEM32 dependent-load flags. Normal ICE
 validation remains enabled. Negative fixtures must reject modified flags, order,
@@ -387,3 +385,70 @@ remain pending. No MSI actions ran on the host and no production gate changed.
 The parent-operated disposable x64 VM full-server `/qn` run of the FeatureComponents-only discriminator (SHA-256 prefix `443858`) returned 0, passed CostInitialize, InstallInitialize and InstallFinalize, and reported four successful Preflight, DeferredBegin, Commit and PostFinalize callbacks with no Rollback. The both-changes case also returned 0; Component-stream-only (`99a` prefix) and original EnsureTable-Component-only (`0c737` prefix) failed with 2728 at CostInitialize. Client probes all returned 0 and did not discriminate. Creating the empty FeatureComponents database table is sufficient for that fixture; these results do not identify an internal engine cause. ProductState -1 before and after is expected for this zero-resource lab and is not product-install acceptance.
 
 Acceptance before implementation: add only WiX EnsureTable for FeatureComponents alongside Component. Require both actual logical tables, exact Component schema and the two nonnullable primary-key FeatureComponents columns, and zero rows in each. Preserve strict allowlists, payload and sequence gates. Add missing, malformed and nonempty FeatureComponents negatives and reject frozen e583169 Component-only MSI specifically as missing FeatureComponents. No physical Component stream patch, dummy resources, production integration, C++ or runner changes. Build all three variants in fresh x64 and ARM64 directories with cached WiX and unsuppressed ICE; run x64 CTest and ARM64 host checks, inspect actual tables, Binary and PE, and record source commit, hashes and identities. Preserve frozen bytes. Fresh artifacts are untested at runtime until independent review and a parent-led VM run. No host MSI actions are authorized.
+
+
+## FeatureComponents correction offline evidence
+
+Source commit `a761106bd03f3710fbd2b092943cc493727289d1` produced these fresh artifacts in `build/foreground-lab-featurecomponents-x64/Release` and `build/foreground-lab-featurecomponents-arm64/Release`. All six linked with cached WiX and normal unsuppressed ICE. x64 CTest passed 4/4 and ARM64 host checks passed 3/3. Actual read-only MSI table, Binary and PE inspection passed, including 60 negative mutations per architecture. A copy of the frozen e583169 Success MSI, hash `0c73788944a2d520628e7dd619df2eb507821021fd76cef4dd879851586d0dbf`, was rejected by the checker specifically for missing FeatureComponents. No MSI actions ran on the host. Previous frozen bytes were retained. These fresh bytes have not run in a VM; independent review and a parent-led run remain required. ARM64 execution, production installation, enrollment, benchmarks, profiling and release packaging are outside this offline fixture.
+
+### x64
+
+```json
+{
+  "Success": {
+    "file": "lab-trace-Success.msi",
+    "sha256": "c9ef15c85efdd28181ed4048fae661e0330970f05db4480b5823a6108cd604c4",
+    "dllSha256": "d46d4dc948f44ac25d5cc00a6b0cede7e64d2407f70a10151d05c38bed942885",
+    "productCode": "{CE9008DD-B756-44CD-8476-1C4BE01CC575}",
+    "upgradeCode": "{C1E57450-91F2-4B89-AE8F-66D47D3EE21B}",
+    "packageCode": "{8FCD8560-9EE5-4C64-B326-0344FE7EDDAF}"
+  },
+  "CommitFail": {
+    "file": "lab-trace-CommitFail.msi",
+    "sha256": "db756bb22271ca839b9f5e72bdf75f785c2f2de423c38d7b3fed93ff56aea5fa",
+    "dllSha256": "6da5244d0f9f4fb739de4f92dd915fe7b938fd9543d9ed70f0bcabfaf798499e",
+    "productCode": "{691221DA-B50B-458F-B5D5-94F8422ECCE8}",
+    "upgradeCode": "{60AB3D9D-062E-4EF8-86E4-2F4FBB46D367}",
+    "packageCode": "{7724ECBB-E126-44B4-8BD9-847461A921E9}"
+  },
+  "PostFinalizeFail": {
+    "file": "lab-trace-PostFinalizeFail.msi",
+    "sha256": "e29f8e43e261926bca496ca1d8140c9c2c4a69d54b8855f116ecbc126eacbfa9",
+    "dllSha256": "669de02b10ce5dd442431636cc1e615f89aac74331bbdb64d2f112bf28a5b0b3",
+    "productCode": "{166442D2-DEBA-42CD-A80E-D37DC11E35A7}",
+    "upgradeCode": "{E9B1A76B-170C-435A-9348-C668940DD32B}",
+    "packageCode": "{3DC3F934-2F7C-4188-894C-C94AF3EA4A75}"
+  }
+}
+```
+
+### arm64
+
+```json
+{
+  "Success": {
+    "file": "lab-trace-Success.msi",
+    "sha256": "e1002ffa17a9278f26fce4e341cafaa4d8953ef094ed219b1c1f63cc57fa04f2",
+    "dllSha256": "7907b9720b479f9bd8f8b3e5174fdf65b8a651080756ad976f3ac4b8237a841b",
+    "productCode": "{3F8223D1-6CD4-4369-AAEF-78C255C6291E}",
+    "upgradeCode": "{9B2B52EA-EE11-4105-A2C2-2412B6ED3D2A}",
+    "packageCode": "{48509725-C4A6-40B9-8D59-2B5EE3A7938B}"
+  },
+  "CommitFail": {
+    "file": "lab-trace-CommitFail.msi",
+    "sha256": "5021145d935798908ffb69186a325ea8e771eb535ee760eec45c8d13f519b5fb",
+    "dllSha256": "8e1fbe68e1d8bb326eb4f8030e732ccc42a11a2e6655d472002810a7b49736c5",
+    "productCode": "{43C44411-622A-4EFB-8D3B-6AB3655622BA}",
+    "upgradeCode": "{D7344906-9227-46A7-8C06-B28829E08F18}",
+    "packageCode": "{173E560B-6A57-4E82-B67F-3F88BAD06A23}"
+  },
+  "PostFinalizeFail": {
+    "file": "lab-trace-PostFinalizeFail.msi",
+    "sha256": "2c9cc5d38f0fa642c8b51e6bee6feaf31706b438b70ca0b024091ce26da2f2f7",
+    "dllSha256": "d2b54c174a0b4162f00ec5db2315af1585f08fd5cd2759bfdd57e1fa4beee05d",
+    "productCode": "{A9B3F99B-A06D-40E6-8B10-5546CCFA2C93}",
+    "upgradeCode": "{09DABFCB-497D-45F2-86E1-6DA0FA36628E}",
+    "packageCode": "{4FFFF894-F28C-4C21-AA24-B4D16971E77C}"
+  }
+}
+```

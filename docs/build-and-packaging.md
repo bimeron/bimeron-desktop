@@ -579,3 +579,24 @@ The saved restricted-mode guest run returned 0 for all four cases; a full `/qn`
 run of the original source MSI failed with 2728 at CostInitialize. This is a
 discrimination experiment, not a claimed fix. Independent review precedes the
 parent's guest run of the new mode.
+
+
+The parent-operated disposable x64 VM full-server FeatureComponents-only
+discriminator passed CostInitialize, InstallInitialize and InstallFinalize, with
+four successful intended callbacks and no Rollback; the both-changes case also
+passed. Component-stream-only and the original Component-only MSI failed with
+2728 at CostInitialize. Client probes all passed and did not discriminate. The
+empty FeatureComponents database table is sufficient for that fixture; no internal
+engine cause is established. ProductState -1 before and after is expected for
+the zero-resource lab and is not production installation acceptance.
+
+The accepted correction adds WiX EnsureTable for FeatureComponents, retaining
+Component and all strict payload and sequence gates. Source commit
+`a761106bd03f3710fbd2b092943cc493727289d1` produced six fresh MSIs and DLLs;
+x64 CTest passed 4/4 and ARM64 host checks 3/3, with unsuppressed ICE and actual
+read-only table/Binary/PE checks. The old Component-only MSI is rejected for the
+missing FeatureComponents table. Exact hashes, identities, paths and VM limits
+are in the prototype README. These fresh bytes remain runtime-untested pending
+independent review and a parent-operated VM run. No host MSI actions, production
+integration or release matrix were performed; Linux, performance and profiling
+are inapplicable to this disconnected Windows fixture.
