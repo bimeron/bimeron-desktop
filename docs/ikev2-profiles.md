@@ -591,3 +591,31 @@ Freeze fresh ignored source/hash/MSI/DLL/manifest/GUID/log/effect evidence as a
 partial offline fixture, not a guest-ready runner. Parent owns VM work; no runner,
 termination, host MSI actions, native production or existing bundle/state changes.
 Linux, benchmarks, profiling and release matrix are inapplicable.
+
+### Read-only current-context CLI acceptance
+
+Add only exact `foreground-test.exe --observe-context-only` to the existing test
+executable. Dispatch before all fixtures, temporary files, child processes and
+crash cases; call the reviewed `observeCallbackInteractiveContext` exactly once
+with no descriptor. Print one fixed numeric summary of completeness, current
+principal eligibility, token source/type/elevation/authority/session, LSA validity,
+logon type and refusal/status. Never print account names, SIDs, logon/token IDs,
+environment or arbitrary input. Only logon types 2/10 remain eligible.
+
+Exit 0 means complete observation, including policy refusal, never a security test
+pass. Token/LSA query failure or invalid/missing LSA data is incomplete and exits 1,
+even if an earlier policy refusal masks that failure. Invalid arguments exit 2
+without running fixtures; exact internal --probe/--crash forms retain behavior.
+The mode performs native token/LSA queries only, with no owned file writes, child
+process, network, SCM, registry or ACL mutation. No new executable, hook, export,
+initiating-client correlation, arbitrary-path option or build flow is introduced.
+
+Acceptance: existing x64 focused CTest, x64 exact-mode output/exit and invalid-mode
+checks demonstrating no full-suite output; x64/ARM64 existing target /W4 /WX builds,
+ARM64 static checks only. Freeze committed source, executable/required DLL hashes
+and logs in new ignored build/context-observer-review; preserve all MSI bytes.
+Host observations and models remain separate. Parent alone owns later disposable
+VM Elevated/Limited/Session-0 observations; those need separate review and scope.
+No result proves authority, protected-object open, designated-user identity,
+callback continuity or preload provenance. Production remains disabled. No GUI,
+Linux/package matrix, VM execution, benchmarks or profiling applies to this mode.
