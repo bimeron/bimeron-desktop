@@ -498,6 +498,9 @@ static void parameterForms(const QString &directory) {
 }
 
 static void nativeRegressions(const QString &directory) {
+    // Review acceptance: normalize section whitespace without changing stored bytes;
+    // quoted native protection requires consent when newly enabled, preserves imported
+    // enabled intent, and declined consent never accepts a replacement for storage.
     const QString base = "[Profile]\nVersion = 1\nName = Native\n[IKEv2]\nWindowsProfile = Corporate\nServerName = vpn.example.invalid\n[Interface]\nMode = vpn\n";
     const QJsonObject caps{{"proxy", true}}; // Packet capabilities do not govern native editing.
     for (bool protection : {false, true}) {
@@ -566,6 +569,43 @@ static void nativeRegressions(const QString &directory) {
     ProfileEditorDialog importedProtection(QString(base).replace("[Interface]", "KillSwitch = true\n[Interface]"), caps);
     importedProtection.findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Save)->click();
     require(importedProtection.result() == QDialog::Accepted);
+    const QString consentPath = directory + "/consent.conf";
+    require(ProfileStore::writeConfig(consentPath, base.toUtf8()));
+    const QString spaced = QString(base).replace("[Profile]", "[ Profile ]").replace("[IKEv2]", "[ IKEv2 ]").replace("[Interface]", "[ Interface ]");
+    require(ProfileStore::connectionInfo(spaced).backend == ProfileConnectionInfo::Backend::NativeIKEv2);
+    ProfileEditorDialog spacedEditor(spaced, caps);
+    require(spacedEditor.findChild<QTabWidget *>()->isTabEnabled(0));
+    require(spacedEditor.configText() == spaced);
+    spacedEditor.findChild<QLineEdit *>("windowsProfile")->setText("Edited spaced native");
+    require(spacedEditor.configText().contains("WindowsProfile = Edited spaced native"));
+    require(ProfileStore::connectionInfo(spaced + "[ AccessKey ]\nSSH = ssh://alice@example.invalid\n").backend == ProfileConnectionInfo::Backend::Unknown);
+    for (const QString &token : {QString("true"), QString("\"true\""), QString("\"\\x74rue\"")}) {
+        const QString enabled = QString(spaced).replace("[ Interface ]", "KillSwitch = " + token + "\n[ Interface ]");
+        ProfileEditorDialog rawEnabling(base, caps);
+        rawEnabling.findChild<QPlainTextEdit *>("rawConfig")->setPlainText(enabled);
+        bool asked = false;
+        QTimer::singleShot(0, [&] {
+            auto *box = qobject_cast<QMessageBox *>(QApplication::activeModalWidget());
+            require(box);
+            asked = true;
+            box->button(QMessageBox::No)->click();
+        });
+        rawEnabling.findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Save)->click();
+        require(asked && rawEnabling.result() != QDialog::Accepted);
+        require(rawEnabling.configText() == enabled);
+        if (rawEnabling.result() == QDialog::Accepted)
+            require(ProfileStore::writeConfig(consentPath, rawEnabling.configText().toUtf8()));
+        QFile retained(consentPath);
+        require(retained.open(QIODevice::ReadOnly) && retained.readAll() == base.toUtf8());
+    }
+    const QString quotedEnabled = QString(spaced).replace("[ Interface ]", "KillSwitch = \"true\"\n[ Interface ]");
+    ProfileEditorDialog preserved(quotedEnabled, caps);
+    require(preserved.findChild<QCheckBox *>("nativeKillSwitch")->isChecked());
+    require(!preserved.findChild<QTabWidget *>()->isTabEnabled(0));
+    require(preserved.configText() == quotedEnabled);
+    preserved.findChild<QPlainTextEdit *>("rawConfig")->setPlainText(QString(base).replace("[Interface]", "KillSwitch = true\n[Interface]"));
+    preserved.findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Save)->click();
+    require(preserved.result() == QDialog::Accepted);
     ProfileEditorDialog rejected(base, caps, nullptr, [](const QString &, QString *error) {
         *error = "Rejected selected CLI validation";
         return false;
@@ -591,7 +631,7 @@ static void nativeRegressions(const QString &directory) {
     ProfileStore store(directory + "/native-imports");
     const QString source = directory + "/native-source.conf";
     QString error;
-    const QByteArray bytes = QByteArray::fromHex("efbbbf") + base.toUtf8().replace("\n", "\r\n");
+    const QByteArray bytes = QByteArray::fromHex("efbbbf") + spaced.toUtf8().replace("\n", "\r\n");
     require(ProfileStore::writeConfig(source, bytes, &error));
     const QString copied = store.importConfig(source, &error);
     require(!copied.isEmpty());
@@ -618,7 +658,7 @@ static void nativeRegressions(const QString &directory) {
     // Exercise that same contract with the exact opt-in offline Core CLI.
     const QString core = qEnvironmentVariable("BIMERON_IKEV2_CORE");
     if (!core.isEmpty()) {
-        for (const QString &input : {base, mixed}) {
+        for (const QString &input : {base, spaced, quotedEnabled, mixed, spaced + "[AccessKey]\nSSH = ssh://alice@example.invalid\n"}) {
             require(ProfileStore::writeConfig(source, input.toUtf8(), &error));
             const QString path = store.importConfig(source, &error);
             require(!path.isEmpty());
@@ -626,7 +666,7 @@ static void nativeRegressions(const QString &directory) {
             process.start(core, {"validate", path});
             require(process.waitForStarted(5000) && process.waitForFinished(20000));
             require(process.exitStatus() == QProcess::NormalExit);
-            require((process.exitCode() == 0) == (input == base));
+            require((process.exitCode() == 0) == (!input.contains("[AccessKey]")));
             if (process.exitCode() != 0) require(QFile::remove(path));
         }
     }

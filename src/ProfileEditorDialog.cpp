@@ -71,13 +71,24 @@ QString valueFor(const QString &text, const QString &section, const QString &key
     QString current;
     for (const QString &line : text.split('\n')) {
         const QString trimmed = QString(line).remove(QChar(0xfeff)).trimmed();
-        if (trimmed.startsWith('[') && trimmed.endsWith(']')) current = trimmed.mid(1, trimmed.size() - 2);
+        if (trimmed.startsWith('[') && trimmed.endsWith(']')) current = ProfileStore::sectionName(trimmed);
         else if (current == section) {
             const auto match = QRegularExpression(QString("^%1\\s*=\\s*(.*)$").arg(QRegularExpression::escape(key))).match(trimmed);
             if (match.hasMatch()) return match.captured(1).trimmed();
         }
     }
     return {};
+}
+
+enum class ProtectionIntent { Disabled, Enabled, Unknown };
+
+ProtectionIntent nativeProtectionIntent(const QString &text) {
+    const QString value = valueFor(text, "IKEv2", "KillSwitch");
+    if (value.isEmpty() || value == "false" || value == "\"false\"") return ProtectionIntent::Disabled;
+    if (value == "true" || value == "\"true\"") return ProtectionIntent::Enabled;
+    // Core decodes Go escapes. Leave other spellings to authoritative validation;
+    // never treat an unrecognized candidate as safely disabled or imported consent.
+    return ProtectionIntent::Unknown;
 }
 
 QString normalizedCidrs(const QString &value) {
@@ -471,8 +482,9 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
             QMessageBox::warning(this, tr("Error"), parameterError());
             return;
         }
-        if (valueFor(configText(), "IKEv2", "KillSwitch") == "true"
-            && valueFor(originalText_, "IKEv2", "KillSwitch") != "true") {
+        if (configText() != originalText_
+            && nativeProtectionIntent(configText()) != ProtectionIntent::Disabled
+            && nativeProtectionIntent(originalText_) != ProtectionIntent::Enabled) {
             if (QMessageBox::question(this, tr("Native protection"),
                 tr("Initial connection bootstrap is unprotected. Native protection blocks ordinary LAN access. A crash or failed cleanup can retain WFP and DNS protection and leave this computer offline until explicit administrative recovery. Enable it?"),
                 QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes) return;
@@ -840,10 +852,12 @@ void ProfileEditorDialog::loadText(const QString &text) {
             blockers.push_back(std::make_unique<QSignalBlocker>(widget));
     }
     loadedText_ = text;
-    native_ = QRegularExpression("(?m)^\\s*\\[IKEv2\\]\\s*$").match(QString(text).remove(QChar(0xfeff))).hasMatch();
+    native_ = false;
+    for (const auto &line : text.split('\n'))
+        native_ = native_ || ProfileStore::sectionName(line) == "IKEv2";
     windowsProfile_->setText(valueFor(text, "IKEv2", "WindowsProfile"));
     nativeServerName_->setText(valueFor(text, "IKEv2", "ServerName"));
-    nativeKillSwitch_->setChecked(valueFor(text, "IKEv2", "KillSwitch") == "true");
+    nativeKillSwitch_->setChecked(nativeProtectionIntent(text) != ProtectionIntent::Disabled);
     rules_->setRowCount(0);
     ignoreLocalNetwork_->setChecked(false);
     hasUnknownSettings_ = false;
@@ -945,7 +959,7 @@ void ProfileEditorDialog::loadText(const QString &text) {
         QString trimmed = line.trimmed();
         const bool commented = trimmed.startsWith('#');
         if (commented) trimmed = trimmed.mid(1).trimmed();
-        if (trimmed == "[Rule]") { finishRule(rule); rule = {}; rule.enabled = !commented; section = "Rule"; }
+        if (ProfileStore::sectionName(trimmed) == "Rule") { finishRule(rule); rule = {}; rule.enabled = !commented; section = "Rule"; }
         else if (trimmed.startsWith('[')) section.clear();
         else if (section == "Rule" && trimmed.startsWith("CIDR")) { rule.target = trimmed.mid(trimmed.indexOf('=') + 1).trimmed(); rule.domain = false; }
         else if (section == "Rule" && trimmed.startsWith("Domain")) { rule.target = trimmed.mid(trimmed.indexOf('=') + 1).trimmed(); rule.domain = true; }
@@ -967,7 +981,7 @@ void ProfileEditorDialog::loadText(const QString &text) {
         const QString line = QString(sourceLine).remove(QChar(0xfeff)).trimmed();
         if (line.isEmpty() || line.startsWith('#') || line.startsWith(';')) continue;
         if (line.startsWith('[') && line.endsWith(']')) {
-            currentSection = line.mid(1, line.size() - 2).trimmed();
+            currentSection = ProfileStore::sectionName(line);
             if (!known.contains(currentSection)) hasUnknownSettings_ = true;
         } else if (line.contains('=')) {
             const QString key = line.left(line.indexOf('=')).trimmed();
@@ -1158,15 +1172,15 @@ void ProfileEditorDialog::assessRepresentation() {
             if (line.isEmpty() || line.startsWith(';')) continue;
             if (line.startsWith('#')) {
                 line = line.mid(1).trimmed();
-                if (line != "[Rule]" && !section.startsWith("DisabledRule")) continue;
-                if (line == "[Rule]") {
+                if (ProfileStore::sectionName(line) != "Rule" && !section.startsWith("DisabledRule")) continue;
+                if (ProfileStore::sectionName(line) == "Rule") {
                     section = "DisabledRule" + QString::number(++rule);
                     result.insert(section + "/", {});
                     continue;
                 }
             }
             if (line.startsWith('[') && line.endsWith(']')) {
-                section = line.mid(1, line.size() - 2);
+                section = ProfileStore::sectionName(line);
                 if (section == "Rule") section += QString::number(++rule);
                 else if (sections.contains(section)) *valid = false;
                 sections.insert(section);
