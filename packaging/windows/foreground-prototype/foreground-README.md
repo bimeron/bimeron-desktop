@@ -775,3 +775,24 @@ identify path/manifest gates, 10-14 freshness/rollback, 30/31 header/resources,
 60/61 create/ack, 70 compiled failure and 90 exception. No property values are
 logged. Build new immutable artifacts after this source change; old bytes and
 failed VM state remain evidence, not release candidates.
+
+### ACK diagnostic offline build evidence
+
+Source `a1ab61778e8f6c2013392e94a0b30615c5b7b9fd` built in fresh
+`build/ack-diagnostic-x64` and `build/ack-diagnostic-arm64` directories using
+VS 18 BuildTools, SDK 10.0.26100 and cached WiX. All six MSIs linked with
+normal unsuppressed ICE and no warning/error diagnostics. x64 focused CTest
+passed 4/4; ARM64 host read-only passed 1/1. Each architecture checked actual
+MSI tables, Binary and PE imports and 57 negative database models. The checker
+change `fd03e308873d4e79dc96b6b2e9675360cbe5601f` allows only ordinal 113,
+observed in the linked DLL and mapped to MsiQueryProductStateW in system msi.dll.
+No C++ source changed in that checker commit.
+
+Frozen source archives, six MSI/DLL pairs, manifests, 18 GUIDs, reports, logs,
+and a proposed Success-only guest bundle are under
+`build/ack-diagnostic-review-a1ab617`; its SHA256SUMS.txt SHA-256 is
+`712e10ffcc707b1dac8e878b496f858cda0125c4ed5a707016e71e6a3d477efc`.
+No MSI actions, protected writes, VM execution or release were performed. The
+bundle is review material; callback behavior and resource state remain unobserved.
+ARM64 runtime, Linux, product packaging, benchmarks and profiling are outside
+this disconnected Windows fixture.
