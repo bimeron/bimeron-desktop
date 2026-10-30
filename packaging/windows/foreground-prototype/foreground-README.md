@@ -10,23 +10,34 @@ same-user interactive invocation procedure. Reliance on that procedure is a
 deliberate residual risk, acceptable only after independent review. The original
 `verifyInitiatingClient` stays Unknown. No code or fixture result is relabeled.
 
-Acceptance for the next disconnected fixture, as separate implementation work:
+Accepted bounded implementation (specification committed before code):
 
-- Exercise THREAD-first queries, PROCESS fallback only on ERROR_NO_TOKEN, other
-  query errors, filtered thread over privileged process, elevation/high integrity,
-  enabled Administrators, restriction and impersonation levels, and actual
-  protected access. No RevertToSelf or elevation-type-only permit.
-- Exercise SID/session/logon mismatch, missing or unauthenticated interactive
-  binding and production Session 0 refusal. Identify exactly which callbacks need
-  binding and how OS token/LSA context reaches each through an authenticated
-  mechanism before claiming runtime support. SYSTEM deferred access is separate.
-- Reject substituted preload/package/Binary, effective database/sequence/condition
-  changes, unapproved mutation properties, transforms/MSP, unsupported cache or
-  old nested packages and external payloads. DLL self-check and receipt/property/
-  CustomActionData tuples cannot prove preload or initiating-client authority.
-- Prove that callback success alone never grants authority or publishes Clean.
-  Clean still requires fresh token/required user binding, exact generation, final
-  inventory and quiescence checks; caller-received success is not the criterion.
+- Add CallbackInteractiveContextObservation, never Verified, with bounded refusal
+  and numeric query status, token source/type/authority, SID/session/authentication
+  LUID, selected TokenId and LSA status. No plaintext account names.
+- Reuse THREAD-first selection, PROCESS only on ERROR_NO_TOKEN; retain that exact
+  handle through token queries, LSA comparison and explicit-token AccessCheck.
+  Never RevertToSelf or override a filtered/error thread with process authority.
+- Require elevation, high integrity, enabled non-deny-only Administrators,
+  unrestricted/non-AppContainer and adequate impersonation; Full type alone is
+  insufficient and nonsplit administrators are positive models.
+- Validate LSA data bounds and exact LUID/SID/nonzero-session match; allow only
+  logon types 2 and 10. SYSTEM/service principals and unknown data refuse.
+- Future Preflight/PostFinalize inspect the CURRENT interactive principal.
+  Deferred/Commit/Rollback permit privileged SYSTEM access without an interactive
+  claim or Clean. Intended same-user invocation remains procedural; another full
+  administrator can pass local eligibility. Protected designated-user/continuity
+  reference gates, if required, remain future work. No receipt self-comparison.
+- Keep original initiating-client Unknown, both always-failing exports and existing
+  eligibility/settlement semantics. No production caller, MSI or preload work.
+  Package/Binary/loading trust and future pins remain separate requirements.
+- Test actual current/impersonated/restricted/anonymous/identification contexts
+  where available, exact selected TokenId, query/fallback/full-field failures,
+  malformed LSA and SID/session/LUID mismatches, SYSTEM with nonzero session,
+  type allowlist, descriptor access denial and nonsplit positive models. Report
+  unavailable native contexts explicitly; models do not establish native positives.
+- Build x64/ARM64 /W4 /WX, run focused x64 and existing fail-closed regressions and
+  ARM64 source/PE statics. No MSI builds, VM, GUI/Linux matrix or benchmarks.
 
 All runtime/readers, enrolled updater/rollback compatibility, continuous mutex,
 terminal settlement and native-proof gates remain. Core's 64-byte record and

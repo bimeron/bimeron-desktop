@@ -71,16 +71,23 @@ protected-object access. Elevation type alone is insufficient, including for
 nonsplit administrators. SYSTEM deferred work can prove privileged access, not
 the identity of an interactive user.
 
-The procedural same-user interactive reference is an OS-observed elevated token
-and its LSA interactive logon context. SID, session and logon identifiers must be
-OS observations, never MSI properties, environment, ancestry or assumed equality
-between callback host and client. Production Session 0 invocation is unsupported;
-existing Session 0 labs are historical access/order evidence only. Before runtime
-implementation, the reviewed design must identify which callbacks require the
-interactive binding and how each obtains and authenticates that binding. A
-receipt, property or CustomActionData tuple is not an authenticated channel;
-missing or unproved binding refuses before mutation. The procedure does not
-supply this missing callback mechanism or prove the original process identity.
+The accepted option-1 callback split is: future Preflight and PostFinalize require
+full administrator authority and the CURRENT effective interactive principal.
+Deferred, Commit and Rollback require effective privileged protected-object access;
+SYSTEM is allowed there but supplies no interactive identity and cannot publish Clean.
+The intended same-user invocation is procedural. No receipt self-comparison is an
+authenticated reference: another full administrator may pass local eligibility.
+This does not machine-enforce a designated user or continuity between callbacks.
+If required, protected designated-user/reference and continuity gates are future work.
+
+The next disconnected observation reads the selected token's SID, nonzero session
+and AuthenticationId, then LsaGetLogonSessionData for that exact LUID. Require valid
+bounded data, matching LUID/SID/session and exactly Interactive (2) or
+RemoteInteractive (10). Reject SYSTEM, service principals, Session 0, unknown LSA,
+query failures, restricted/AppContainer tokens and inadequate impersonation.
+Elevation type Full alone never suffices; nonsplit administrators can qualify.
+An in-memory explicit-token AccessCheck is only descriptor evidence, not an actual
+protected-object open. No observation authorizes mutation, Clean or admission.
 
 Independent approval before preload must bind the exact package, Binary DLL and
 protected selection/loading path. DLL self-checks cannot retroactively establish
