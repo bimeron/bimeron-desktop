@@ -647,3 +647,21 @@ An owned temporary native case-sensitive directory demonstrated actual different
 cased open behavior and rejection; protected Program Files positive remained
 unavailable. See the prototype README for model/native evidence boundaries.
 No build option, supported packaging flow, guest harness or release changed.
+
+### Offline protected-file guest harness
+
+The optional standalone `FOREGROUND_LAB_PROTECTED_FILE` build also exposes the
+explicit, excluded-from-ALL `lab-protected-file-guest` target. It has no install
+rule and does not enter packages. With existing Visual Studio x64 and ARM64 C++
+toolchains and an existing `dumpbin.exe`, run from the repository root:
+
+```powershell
+./packaging/windows/foreground-prototype/lab-protected-file-guest-check.ps1 -Dumpbin '<absolute path to dumpbin.exe>'
+```
+
+The script builds both architectures offline, checks imports and host-side
+argument/path refusal, and writes a provisional hash and effects manifest under
+`build/guest-bundle`. It does not provision or run the guest experiment. See
+[the guest acceptance criteria](../packaging/windows/foreground-prototype/lab-protected-file-guest-README.md).
+Rebuild and rehash after primitive changes; native success requires separate
+permission and a disposable Windows VM.
