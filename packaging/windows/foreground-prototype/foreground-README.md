@@ -1,5 +1,64 @@
 # Bounded elevated-client and settlement prototype
 
+## Acceptance for the separate foreground trace lab
+
+This section specifies a proposed disposable-VM experiment; it does not authorize
+production enrollment or change the existing fail-closed fixture. The lab is off
+by default, built explicitly in ignored `build/foreground-lab-*` directories, and
+has no install rule or production CPack connection. Its three separately identified
+and hashed per-machine empty MSIs compile fixed Success, CommitFail, and
+PostFinalizeFail behavior. Product, upgrade, and package identities are distinct
+from one another, production, and the original fixture; no upgrade removes another
+product. No files, components, application registry, service, network or other
+payload are installed.
+
+Five synchronous checked Binary exports observe preflight before Initialize,
+rollback and deferred begin within the transaction, commit within the transaction,
+and post-finalize after Finalize. Deferred, rollback and commit run without
+impersonation. Only the compiled failure point returns installation failure. Lab
+uninstall targets only the chosen registered lab product and runs no extra actions
+in an unsuitable context. Read-only table and PE inspection must check exact action
+types, conditions and order, identities, embedded digest, architecture, system
+imports, static CRT, no delay imports and SYSTEM32 dependent-load flags. Normal ICE
+validation remains enabled. Negative fixtures must reject modified flags, order,
+actions, payload, identities and hashes.
+
+Trace output is fixed, bounded and versioned through MSI messages. It records UTC,
+process and thread identifiers and process creation time, effective thread token
+or process token only on ERROR_NO_TOKEN, token class and impersonation level,
+elevation, integrity, session, administrator group state, restricted status,
+SHA-256 SID hash, bounded logon identifier, numeric status and intended return.
+It never records account names, environment, properties, arguments, exceptions or
+credentials. Query or logging failure means incomplete evidence. Similar runner
+and callback fields do not authenticate the initiating client: that remains Unknown.
+
+The manual guest runner accepts only the literal disposable-VM acknowledgment,
+closed case and starting-token choices, a parent-communicated manifest SHA-256,
+and optional exact hexadecimal expected hashes. It operates only in the exact
+`C:/Users/Public/Documents/BimeronInstallerLab` tree after resolving paths and
+rejecting reparse points in ancestors. Positive sanitized CIM manufacturer/model
+evidence is required but does not authenticate the VM; the parent confirms it.
+The fixed-schema manifest binds variants, identities and artifact hashes. Its hash
+is an external trust anchor; the parent separately verifies the runner hash before
+invocation. Recheck context and hashes after the user opens an elevated shell;
+never automatically elevate or accept arbitrary commands, properties or paths.
+
+Invoke the verified native system msiexec with fixed quoted package and log paths,
+fixed arguments and `/norestart`. Record runner identity, hash, context, time and
+the returned process identity as observations. Wait at most five minutes; timeout
+or an unresolved UAC/installer state stops all further cases and cleanup without
+killing processes. Never automatically run a failure case after Success or uninstall
+an ambiguous result. Explicit uninstall uses only the known registered variant.
+Summaries contain sanitized case, hash, token classes, callback order, exit or
+timeout, and MSI registration-query state; full logs remain in the guest. Validate
+syntax and offline predicates without invoking the guarded runner on the host.
+
+The empty fixture can only observe callback token fields and ordering. It cannot
+prove real resource rollback, exact initiating-client authentication, outer MSI
+authority, a durable barrier, production approval or native enrollment. Parent
+static review precedes any VM execution. No signing, credentials, network policy,
+VM access, native clipboard, installation or release action belongs to this task.
+
 ## Acceptance recorded before implementation
 
 Offline only, based on Desktop 2183b74 and Core 66d84d8f / 4366a5c9.
