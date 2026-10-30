@@ -836,3 +836,37 @@ Host protected-path success and MSI execution remain untested. Linux/product
 matrix and performance profiling are inapplicable to this bounded Windows lab.
 Frozen review evidence is under build/ack-active-tables-review; parent independent
 review and VM execution remain outstanding.
+
+### Accepted ACK runtime metadata projection correction
+
+The parent observed Success active _Tables with 24 names versus 15 source names
+on Windows 10 engine 5.00.10011 only. ARM64 runtime remains unproved.
+Before implementation, accept this bounded correction: classify only _Tables.Name
+and _Columns.Table row owners, sharing one tiny exact case-sensitive classifier.
+Exclude only #_BaselineCost, #_BaselineData, #_BaselineFile, #_FolderCache,
+#_MsiRedirectedFile, #_PatchCache, CostAdjuster, _Property and __MsiPatchMedia,
+and only when MsiDatabaseIsTablePersistentW returns FALSE. Known metadata with
+TRUE/NONE/ERROR refuses; unknown owners with any persistence refuse. The fifteen
+canonical persistent owners require TRUE. Query row owners, never the virtual
+catalogs _Tables/_Columns/_Streams/_Storages themselves (their NONE is expected).
+Preserve every retained schema/row, Binary, Property, summary, stream and manifest
+encoding byte exactly. No other normalization or source-checker allowlist change.
+Persisted runtime-name collisions must be rejected by runtime and source checks.
+
+Keep freshness, zero-resource, REMOVE, rollback and token gates unchanged;
+initiating client remains Unknown and records remain Pending only. Snapshot is
+still selected only by Success Preflight stage 41/detail 1; successful projection
+must not snapshot. Bounded numeric diagnostics distinguish query/policy refusal
+from byte mismatch without logging names or values.
+
+Acceptance: actual owned MSI databases without installer actions compare baseline
+exactly, normalize an all-TEMPORARY-column CostAdjuster HOLD table, refuse unknown
+temporary/persistent tables, persisted CostAdjuster, missing persistent tables and
+changed schema. Exercise _Columns owner filtering with rows where exposed, without
+assuming temporary columns are visible; separately check NONE/ERROR classification.
+Retain a source collision negative. Build x64 and ARM64 /W4 /WX, six fresh cached
+WiX MSIs with unsuppressed ICE, focused x64 CTest and ARM64 static-only checks.
+Freeze new ignored evidence with identities/hashes/manifests/source/build logs;
+never overwrite older bundles. Independent review and parent VM execution remain
+separate gates. No host MSI action, protected write, production authority, release,
+benchmark or profiling belongs to this disconnected Windows-only correction.

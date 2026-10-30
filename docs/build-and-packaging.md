@@ -726,3 +726,12 @@ adds only fixed private active-tables.txt on Success Preflight stage 41/detail 1
 It retains strict canonical projection, original 1603 and protected CREATE_NEW
 semantics. Fresh cached-WiX bundles are required; old frozen inputs remain intact.
 Supported production packaging is unchanged. Parent alone performs VM checks.
+
+ACK runtime metadata projection correction: the accepted foreground README limits
+exclusion to nine exact engine metadata row-owner names with persistence FALSE,
+only in _Tables/_Columns. Persistent owners require TRUE; all other owners refuse.
+Canonical persistent bytes and source MSI strict allowlists remain unchanged.
+New x64/ARM64 cached-WiX builds and immutable review evidence are required; no
+host MSI actions or protected writes are authorized. Windows 10 engine 5.00.10011
+is the sole parent runtime observation; ARM64 runtime and production authority
+remain unproved. Supported release packaging is unchanged.
