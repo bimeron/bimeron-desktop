@@ -1507,3 +1507,18 @@ both Linux targets cannot execute this native-x64-only disconnected runner and n
 product build input changed, so the full product/package matrix is inapplicable.
 No performance-sensitive product path changed; benchmark/profiling and release
 work are inapplicable. No push/watch, production authority or Clean claim.
+
+Checkpoint final review correction: reserve the CREATE_NEW log through a native
+metadata-only handle (desired access zero, read/write sharing, no delete sharing).
+A writable reservation could conflict with msiexec's logger sharing mode. This
+preserves the exact new-file/no-replacement effect without imposing a competing
+read/write access requirement. Exact interop compilation and both offline suites
+must pass again; native logger behavior still awaits the parent VM. The initial
+f91af47 review bundle remains frozen, superseded by fresh ignored
+build/ack-checkpoint-runner-ready-review-final. Its source ZIP is assembled from
+exact Git blobs after the final commit and both suites run on those extracted
+immutable runner/test bytes. The rejected host-EOL git-archive output stays in the
+initial bundle as explicitly labeled preparation diagnostics. No old bundle is
+modified or relabeled. Intervening context-observer commits were made by another
+writer despite the stated no-other-writer assumption; these checkpoint commits
+change only the authorized runner/test/README/canonical document files.

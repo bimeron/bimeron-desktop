@@ -227,7 +227,9 @@ public sealed class CheckpointOperation : IDisposable {
  void Fresh(){Revalidate();Absent(state+"\\pending.bin");Absent(state+"\\checkpoint.bin");if(CheckpointNative.MsiQueryProductStateW(CheckpointFormat.Product)!=-1)throw new IOException("Fresh product state required");}
  public IntPtr Launch(){Fresh();string log=LogPath;
   // Reserve only this unique output; retain the log pin through late completion.
-  var stream=new FileStream(log,FileMode.CreateNew,FileAccess.ReadWrite,FileShare.ReadWrite);pins.Add(stream);
+  // Metadata-only reservation imposes no read/write sharing demand on the MSI logger.
+  var logPin=CheckpointNative.CreateFileW(log,0,3,IntPtr.Zero,1,0x00200000,IntPtr.Zero);
+  if(logPin.IsInvalid){logPin.Dispose();throw new IOException("Fresh log reservation failed");}pins.Add(logPin);
   return CheckpointNative.Launch(exe,root+"\\lab-protected-ack-Checkpoint.msi",log);
  }
  public bool Ready(IntPtr ignored){

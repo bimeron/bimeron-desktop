@@ -826,3 +826,9 @@ foreground README for path/pin/decision semantics, exact effects and untested VM
 boundaries. Historical hard API-entry deadline evidence remains superseded, not
 deleted. No MSI rebuild, original Run-Lab/ACK/context/CMake change or release flow
 change occurred; all protected/isolated state and late-server uncertainty remain.
+
+Final checkpoint log-reservation review uses metadata-only CREATE_NEW access to
+avoid competing with native logger write access. The fresh final review bundle is
+build/ack-checkpoint-runner-ready-review-final; earlier bundles remain intact.
+Both PS suites rerun on exact committed ZIP-extracted sources, and source hashes
+cover those same immutable Git-blob bytes. Native runtime remains a parent gate.
