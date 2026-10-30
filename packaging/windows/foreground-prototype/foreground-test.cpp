@@ -174,7 +174,30 @@ static void contextChecks() {
     CloseHandle(explicitToken); LocalFree(deny); CloseHandle(process);
     std::cout << "MODEL context/full-field/LSA mismatch/type checks passed; protected-object access unavailable\n";
 }
+static int observeContextOnly() {
+    const auto o = foreground::observeCallbackInteractiveContext();
+    // LSA failure can be masked by an earlier policy refusal; report it separately.
+    const bool complete = o.queried && o.status == 0 && o.lsaStatus == 0 && o.lsaDataValid;
+    std::cout << "CONTEXT_ONLY complete=" << complete
+              << " eligible=" << (complete && o.refusal == foreground::ContextRefusal::None)
+              << " refusal=" << static_cast<int>(o.refusal)
+              << " status=" << o.status << " lsaStatus=" << o.lsaStatus
+              << " source=" << static_cast<int>(o.source)
+              << " type=" << static_cast<int>(o.type)
+              << " elevationType=" << static_cast<int>(o.elevationType)
+              << " impersonation=" << static_cast<int>(o.impersonation)
+              << " queried=" << o.queried << " elevated=" << o.elevated
+              << " enabledAdmin=" << o.enabledAdmin << " adminDenyOnly=" << o.adminDenyOnly
+              << " restricted=" << o.restricted << " appContainer=" << o.appContainer
+              << " servicePrincipal=" << o.servicePrincipal
+              << " integrity=" << o.integrity << " session=" << o.session
+              << " lsaDataValid=" << o.lsaDataValid << " lsaSession=" << o.lsaSession
+              << " logonType=" << o.logonType << '\n';
+    return complete ? 0 : 1;
+}
 int wmain(int argc, wchar_t** argv) {
+    if (argc == 2 && std::wstring(argv[1]) == L"--observe-context-only")
+        return observeContextOnly();
     if (argc == 3 && std::wstring(argv[1]) == L"--probe") return probe(argv[2]);
     if (argc == 4 && std::wstring(argv[1]) == L"--crash") {
         HANDLE mutex = OpenMutexW(SYNCHRONIZE | MUTEX_MODIFY_STATE, FALSE, argv[2]);
@@ -182,6 +205,10 @@ int wmain(int argc, wchar_t** argv) {
         foreground::Worker worker(mutex, argv[3], "crash-rollback-metadata\n");
         if (!worker.begin()) return 3;
         ExitProcess(0); // Deliberate death of this isolated fixture, no destructors.
+    }
+    if (argc != 1) {
+        std::cerr << "CONTEXT_CLI invalidArguments=1\n";
+        return 2;
     }
     try {
         contextChecks();

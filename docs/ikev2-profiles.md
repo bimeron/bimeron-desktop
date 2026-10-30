@@ -619,3 +619,48 @@ VM Elevated/Limited/Session-0 observations; those need separate review and scope
 No result proves authority, protected-object open, designated-user identity,
 callback continuity or preload provenance. Production remains disabled. No GUI,
 Linux/package matrix, VM execution, benchmarks or profiling applies to this mode.
+
+Read-only CLI evidence (2026-10-30): the acceptance above preceded implementation.
+Only foreground-test.cpp changes behavior. Existing callback-context-x64 and
+callback-context-arm64 targets built Release /W4 /WX, without WiX. x64 CTest
+passed 2/2; ARM64 foreground-sequence passed 1/1 as host static validation only.
+The inherited PE checker passed both DLLs; DLL hashes remain exactly those from
+reviewed observation source 0af7a0ee. No MSI target was built or MSI bytes changed.
+
+Exact host mode returned 0 with complete=1, eligible=1, refusal=0, status=0,
+lsaStatus=0, source=2 (process), type=1 (primary), elevationType=2 (Full), elevated=1,
+enabledAdmin=1, adminDenyOnly=0, restricted=0, appContainer=0, servicePrincipal=0,
+integrity=12288, session=1, lsaDataValid=1, lsaSession=1 and logonType=2.
+This native host observation had no refusal; it does not substitute for native
+Limited or Session-0 runs. Existing full-suite native checks separately refused
+identification/restricted tokens and anonymous query (1347); malformed LSA,
+SYSTEM/session and exact 2/10 coverage remain models, not CLI native positives.
+
+The ignored mode check executes the exact CLI and four invalid forms, checks
+single-line numeric output under 1024 bytes, exit/completeness agreement and no
+MODEL/NATIVE/PASS suite output. Extra observer arguments, misspelling and malformed
+internal forms exit 2 with fixed diagnostics. Existing exact internal forms pass
+through the full regression suite. Diff review confirms early dispatch and one
+observer call, with no fixture side effects on that path; no production authority,
+protected open, continuity, designated-user or preload proof is claimed.
+
+Frozen review location: `build/context-observer-review`. Minimal x64 VM input is
+only `x64/foreground-test.exe` and adjacent `x64/foreground-prototype.dll` (static
+CRT; remaining imports are Windows system DLLs). From that directory run:
+
+```powershell
+.\foreground-test.exe --observe-context-only
+```
+
+x64 executable SHA-256:
+`4f42af033b00d0524756f6f9cd3f0aeeba30dbf711dbc60df00f6c43a26a5246`.
+ARM64 executable SHA-256 (compile/static only):
+`63c9df759540a37798ee48d46d1b5dda79acb83a6ae21ef2684775170ea61d9c`.
+The post-commit inventory freezes source commit/bytes, both architectures, logs,
+mode check and existing MSI inventory, without later documentation edits. Parent
+VM scope remains separately reviewed Elevated/Limited/Session-0 observation only;
+no MSI, protected writes or installation is needed. Canonical build documentation
+is unchanged because this is one mode in the same existing target and build flow.
+No review finding remains within this bounded change; native context coverage,
+loading trust and production/ARM64 runtime acceptance remain open. GUI/Linux,
+release matrix, benchmarks and profiling are inapplicable; no release is prepared.
