@@ -852,3 +852,12 @@ safe inherited OS DACLs are allowed, protected lab DACLs remain mandatory. See t
 foreground README for the MEDIUM specification, separated model/native checks,
 immutable review freeze and parent review gate. No MSI rebuild or supported flow
 change; no VM, launch, termination or product matrix belongs to this correction.
+
+Fixed-system-image offline evidence: PS 5.1/7 pass 150 unchanged worker regressions
+plus 34 descriptor/metadata/role models. Separately selected native checks verify
+the exact two-link host system image, trusted owner/DACL/ancestor metadata/identity,
+retained read-open compatibility and owned hardlink sharing/refusal. No operation
+constructor, launch, termination, MSI API/action or VM ran. New ignored
+build/ack-checkpoint-system-image-review freezes exact committed sources and
+unchanged artifact pins for fresh parent review. Native guest/loader/logger and
+server behavior remain unproved; supported package flow is unchanged.

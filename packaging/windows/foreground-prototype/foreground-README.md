@@ -1589,3 +1589,35 @@ from one immutable commit with exact source archive/hashes, unchanged MSI/DLL/MF
 logs, native evidence, effects and proposed command. Preserve older bundles.
 Parent fresh independent review precedes any second new-bytes VM attempt; no retry
 is automatic. No product matrix, Core, production, benchmark or release changes.
+
+Fixed-system-image implementation evidence: specification 2c7c900 precedes code.
+PS 5.1.19041.6456 and 7.6.9 pass the unchanged 150 worker regressions and 34
+additional exact-source role/link/metadata/descriptor assertions. An ObjectAce
+SDDL with no GUID normalizes to CommonAce; the unknown-ACE regression therefore
+constructs an actual ObjectAce rather than claiming that string tested rejection.
+The initial native-fixture C# definite-assignment error was corrected before checks
+passed. No check was bypassed. The worker/format/pins/deadline/retention code and
+frozen MSI/DLL/manifest constants are unchanged.
+
+Run lab-checkpoint-runner-test.ps1 normally for native-free models; select
+-NativeReadOnly separately for native evidence. The latter opens only the exact
+GetSystemDirectoryW-selected system image and ancestors, retains read-only sharing,
+checks metadata/case/identity and actual handle owner/DACL, compares DOS and
+volume-GUID image identity, and tests a compatible second read open. On this host
+msiexec has two links and exact TrustedInstaller owner. The owned temporary native
+hardlink fixture independently proves shared identity, lab metadata refusal and
+write/delete alias sharing violations; it is not an OS trust positive. It deletes
+only its own temporary files after closing them. No CheckpointOperation constructor,
+process launch/termination, MSI API/action or VM operation runs in these checks.
+These host observations do not establish guest API availability, logger/loader
+compatibility, actual launch/death, MSI server quiescence or production authority.
+
+New ignored build/ack-checkpoint-system-image-review freezes one immutable committed
+source archive and same-byte hash inventory, exact extracted-source PS checks,
+separate native-query evidence, unchanged frozen checkpoint inputs and updated
+effects/proposed command. Older bundles remain preserved. Parent fresh independent
+review is required before a second new-bytes VM attempt; no automatic retry.
+Focused checks and diff --check are the relevant CI-equivalent checks. Diff review
+found no worker/record/hash/ACK/context/Core/production changes or broader lab-link
+admission. Product/architecture matrix and benchmarks/profiling are inapplicable to
+this disconnected native-x64-only runner correction; no MSI build or release.

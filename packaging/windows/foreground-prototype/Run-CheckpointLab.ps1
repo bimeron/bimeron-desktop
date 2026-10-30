@@ -178,29 +178,42 @@ public static class CheckpointNative {
   CloseHandle(info.thread);return info.process;
  }
  static bool Trusted(SecurityIdentifier sid){return sid!=null && (sid.Value=="S-1-5-18" || sid.Value=="S-1-5-32-544" || sid.Value=="S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464");}
- public static void Descriptor(SafeFileHandle handle){IntPtr sd;uint e=GetSecurityInfo(handle,1,5,IntPtr.Zero,IntPtr.Zero,IntPtr.Zero,IntPtr.Zero,out sd);if(e!=0)throw new IOException("Descriptor query failed");
-  try{uint length=GetSecurityDescriptorLength(sd);if(length==0 || length>65536)throw new IOException("Descriptor bounds");var bytes=new byte[length];Marshal.Copy(sd,bytes,0,bytes.Length);var raw=new RawSecurityDescriptor(bytes,0);
-   if(!Trusted(raw.Owner) || (raw.ControlFlags&ControlFlags.DiscretionaryAclProtected)==0 || raw.DiscretionaryAcl==null)throw new IOException("Protected descriptor required");
+ public static string Descriptor(SafeFileHandle handle,CheckpointPinRole role){IntPtr sd;uint e=GetSecurityInfo(handle,1,5,IntPtr.Zero,IntPtr.Zero,IntPtr.Zero,IntPtr.Zero,out sd);if(e!=0)throw new IOException("Descriptor query failed error="+e);
+  try{uint length=GetSecurityDescriptorLength(sd);if(length==0 || length>65536)throw new IOException("Descriptor bounds");var bytes=new byte[length];Marshal.Copy(sd,bytes,0,bytes.Length);var raw=new RawSecurityDescriptor(bytes,0);ValidateDescriptor(raw,role);return raw.GetSddlForm(AccessControlSections.Owner|AccessControlSections.Access);
+  }finally{if(sd!=IntPtr.Zero)LocalFree(sd);}
+ }
+ public static void ValidateDescriptor(RawSecurityDescriptor raw,CheckpointPinRole role){
+   if(!Trusted(raw.Owner) || (raw.ControlFlags&ControlFlags.DiscretionaryAclPresent)==0 || raw.DiscretionaryAcl==null || (role==CheckpointPinRole.LabProtected && (raw.ControlFlags&ControlFlags.DiscretionaryAclProtected)==0))throw new IOException("Protected descriptor required");
    foreach(GenericAce generic in raw.DiscretionaryAcl){var ace=generic as CommonAce;if(ace==null || ace.IsCallback || (ace.AceQualifier!=AceQualifier.AccessAllowed && ace.AceQualifier!=AceQualifier.AccessDenied))throw new IOException("Unknown ACE");
     if(ace.AceQualifier==AceQualifier.AccessDenied || (ace.AceFlags&AceFlags.InheritOnly)!=0)continue;
     // All generic write/all, maximum allowed and file mutation/control rights.
     if(!Trusted(ace.SecurityIdentifier) && (unchecked((uint)ace.AccessMask)&0x520d0156u)!=0)throw new IOException("Untrusted mutation rights");
    }
-  }finally{if(sd!=IntPtr.Zero)LocalFree(sd);}
  }
 }
+public enum CheckpointPinRole { TraversalOnly, LabProtected, TrustedOS, InternalSystemImagePin }
 public sealed class CheckpointPin : IDisposable {
- public readonly SafeFileHandle Handle;readonly CheckpointNative.Info identity;readonly bool directory,authority;
- public CheckpointPin(string path,bool dir,bool protectedAcl){directory=dir;authority=protectedAcl;
+ public readonly SafeFileHandle Handle;public readonly string BoundPath;readonly CheckpointNative.Info identity;readonly bool directory;readonly CheckpointPinRole role;
+ public CheckpointPin(string path,bool dir,CheckpointPinRole selected):this(path,dir,selected,false){}
+ public static CheckpointPin SystemImage(){return new CheckpointPin(CheckpointNative.VolumePath(CheckpointNative.SystemExe()),false,CheckpointPinRole.InternalSystemImagePin,true);}
+ private CheckpointPin(string path,bool dir,CheckpointPinRole selected,bool fixedSystemImage){
+  if(selected<CheckpointPinRole.TraversalOnly || selected>CheckpointPinRole.InternalSystemImagePin || (selected==CheckpointPinRole.InternalSystemImagePin && !fixedSystemImage))throw new IOException("Internal fixed image role required");
+  directory=dir;role=selected;BoundPath=path;
   Handle=CheckpointNative.CreateFileW(path,(dir?0x80u:0x80000000u)|0x20000u,1,IntPtr.Zero,3,0x02200000,IntPtr.Zero);
   if(Handle.IsInvalid){int error=Marshal.GetLastWin32Error();Handle.Dispose();throw new System.ComponentModel.Win32Exception(error);}
   try{identity=Check();}catch{Handle.Dispose();throw;}
  }
- CheckpointNative.Info Check(){CheckpointNative.Info info;uint flags;
-  if(CheckpointNative.GetFileType(Handle)!=1 || !CheckpointNative.GetFileInformationByHandle(Handle,out info) || (info.Attributes&0x400)!=0 || ((info.Attributes&16)!=0)!=directory || (!directory && info.Links!=1) ||
-   (directory && (!CheckpointNative.GetFileInformationByHandleEx(Handle,23,out flags,4) || flags!=0)))throw new IOException("Unsafe file metadata/case");
-  if(authority)CheckpointNative.Descriptor(Handle);return info;
+ public static void Metadata(CheckpointNative.Info info,bool directory,CheckpointPinRole role,uint caseFlags){
+  if((info.Attributes&0x400)!=0 || ((info.Attributes&16)!=0)!=directory || (!directory && !ValidLinks(info.Links,role)) || (directory && caseFlags!=0))throw new IOException("Unsafe file metadata/case");
  }
+ CheckpointNative.Info Check(){CheckpointNative.Info info;uint flags=0;
+  if(CheckpointNative.GetFileType(Handle)!=1)throw new IOException("Disk file required");
+  if(!CheckpointNative.GetFileInformationByHandle(Handle,out info))throw new IOException("Native metadata/case query failed error="+Marshal.GetLastWin32Error());
+  if(directory && !CheckpointNative.GetFileInformationByHandleEx(Handle,23,out flags,4))throw new IOException("Native metadata/case query failed error="+Marshal.GetLastWin32Error());
+  Metadata(info,directory,role,flags);
+  if(role!=CheckpointPinRole.TraversalOnly)CheckpointNative.Descriptor(Handle,role);return info;
+ }
+ public static bool ValidLinks(uint links,CheckpointPinRole role){return role==CheckpointPinRole.InternalSystemImagePin?links>=1:links==1;}
  public void Revalidate(){var current=Check();if(current.Volume!=identity.Volume || current.IndexHigh!=identity.IndexHigh || current.IndexLow!=identity.IndexLow)throw new IOException("Pin identity changed");}
  public bool Same(CheckpointPin other){return identity.Volume==other.identity.Volume && identity.IndexHigh==other.identity.IndexHigh && identity.IndexLow==other.identity.IndexLow;}
  public byte[] Read(int max){Revalidate();using(var stream=new FileStream(new SafeFileHandle(Handle.DangerousGetHandle(),false),FileAccess.Read)){
@@ -212,9 +225,10 @@ public sealed class CheckpointOperation : IDisposable {
  readonly List<IDisposable> pins=new List<IDisposable>();readonly List<CheckpointPin> checks=new List<CheckpointPin>();
  readonly string root,state,exe; CheckpointPin manifest,msi,checkpoint,pending;bool disposed;
  public readonly string RunnerPath,LogPath;
- CheckpointPin Add(string path,bool directory,bool authority){var pin=new CheckpointPin(path,directory,authority);pins.Add(pin);checks.Add(pin);return pin;}
- void Chain(string path,string anchor,bool protectedAcl=true){int end=path.IndexOf("}\\",StringComparison.Ordinal)+2;if(end<3)throw new IOException("Volume path required");bool authority=false;
-  while(true){string part=path.Substring(0,end);if(part==anchor)authority=true;Add(part,true,authority && protectedAcl);if(end==path.Length)break;end=path.IndexOf('\\',end+1);if(end<0)end=path.Length;}
+ CheckpointPin Keep(CheckpointPin pin){pins.Add(pin);checks.Add(pin);return pin;}
+ CheckpointPin Add(string path,bool directory,CheckpointPinRole role){var pin=new CheckpointPin(path,directory,role);pins.Add(pin);checks.Add(pin);return pin;}
+ void Chain(string path,string anchor,CheckpointPinRole role=CheckpointPinRole.LabProtected){int end=path.IndexOf("}\\",StringComparison.Ordinal)+2;if(end<3)throw new IOException("Volume path required");bool authority=false;
+  while(true){string part=path.Substring(0,end);if(part==anchor)authority=true;Add(part,true,authority?role:CheckpointPinRole.TraversalOnly);if(end==path.Length)break;end=path.IndexOf('\\',end+1);if(end<0)end=path.Length;}
   if(!authority)throw new IOException("Anchor missing");
  }
  public CheckpointOperation(string runner,string expectedRunner,string expectedManifest,string expectedMsi){try{
@@ -222,14 +236,14 @@ public sealed class CheckpointOperation : IDisposable {
   if(runner!=RunnerPath || expectedManifest.ToLowerInvariant()!=CheckpointFormat.ManifestHash || expectedMsi.ToLowerInvariant()!=CheckpointFormat.MsiHash)throw new IOException("Fixed input pins refused");
   string anchor=CheckpointNative.VolumePath(known);root=anchor+"\\BimeronCheckpointClientLab";state=anchor+"\\BimeronProtectedAckLab\\LABProtectedFiles";
   LogPath=root+"\\checkpoint-"+Guid.NewGuid().ToString("N")+".log";
-  var independent=Add(anchor,true,true);Chain(root,anchor);Chain(state,anchor);
+  var independent=Add(anchor,true,CheckpointPinRole.LabProtected);Chain(root,anchor);Chain(state,anchor);
   // The independently opened known folder must be the traversal anchor object.
   bool matched=false;foreach(var pin in checks)if(!Object.ReferenceEquals(pin,independent) && pin.Same(independent))matched=true;if(!matched)throw new IOException("Known folder mismatch");
-  var self=Add(root+"\\Run-CheckpointLab.ps1",false,true);if(CheckpointFormat.Hash(self.Read(1048576))!=expectedRunner.ToLowerInvariant())throw new IOException("Runner digest refused");
-  manifest=Add(root+"\\run.manifest",false,true);CheckpointFormat.Manifest(manifest.Read(65536));
-  var protectedManifest=Add(state+"\\run.manifest",false,true);CheckpointFormat.Manifest(protectedManifest.Read(65536));
-  msi=Add(root+"\\lab-protected-ack-Checkpoint.msi",false,true);if(CheckpointFormat.Hash(msi.Read(16777216))!=CheckpointFormat.MsiHash)throw new IOException("MSI digest refused");
-  exe=CheckpointNative.SystemExe();string systemVolume=CheckpointNative.VolumePath(exe);Chain(systemVolume.Substring(0,systemVolume.LastIndexOf('\\')),CheckpointNative.VolumePath("C:\\Windows"),false);Add(systemVolume,false,false);
+  var self=Add(root+"\\Run-CheckpointLab.ps1",false,CheckpointPinRole.LabProtected);if(CheckpointFormat.Hash(self.Read(1048576))!=expectedRunner.ToLowerInvariant())throw new IOException("Runner digest refused");
+  manifest=Add(root+"\\run.manifest",false,CheckpointPinRole.LabProtected);CheckpointFormat.Manifest(manifest.Read(65536));
+  var protectedManifest=Add(state+"\\run.manifest",false,CheckpointPinRole.LabProtected);CheckpointFormat.Manifest(protectedManifest.Read(65536));
+  msi=Add(root+"\\lab-protected-ack-Checkpoint.msi",false,CheckpointPinRole.LabProtected);if(CheckpointFormat.Hash(msi.Read(16777216))!=CheckpointFormat.MsiHash)throw new IOException("MSI digest refused");
+  exe=CheckpointNative.SystemExe();var image=Keep(CheckpointPin.SystemImage());string systemDirectory=image.BoundPath.Substring(0,image.BoundPath.LastIndexOf('\\'));Chain(systemDirectory,systemDirectory.Substring(0,systemDirectory.LastIndexOf('\\')),CheckpointPinRole.TrustedOS);
   Fresh();
  }catch{Dispose();throw;}}
  static void Absent(string path){using(var h=CheckpointNative.CreateFileW(path,0x80,7,IntPtr.Zero,3,0x02200000,IntPtr.Zero)){
@@ -245,8 +259,8 @@ public sealed class CheckpointOperation : IDisposable {
  }
  public bool Ready(IntPtr ignored){
   Revalidate();
-  if(checkpoint==null){try{checkpoint=Add(state+"\\checkpoint.bin",false,true);}catch(System.ComponentModel.Win32Exception e){if(e.NativeErrorCode==2 || e.NativeErrorCode==32)return false;throw;}}
-  if(pending==null)pending=Add(state+"\\pending.bin",false,true);
+  if(checkpoint==null){try{checkpoint=Add(state+"\\checkpoint.bin",false,CheckpointPinRole.LabProtected);}catch(System.ComponentModel.Win32Exception e){if(e.NativeErrorCode==2 || e.NativeErrorCode==32)return false;throw;}}
+  if(pending==null)pending=Add(state+"\\pending.bin",false,CheckpointPinRole.LabProtected);
   CheckpointFormat.Records(checkpoint.Read(80),pending.Read(48));Revalidate();return true;
  }
  public CheckpointWorker Worker(){var clock=Stopwatch.StartNew();long deadline=300000;
