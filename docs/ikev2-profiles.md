@@ -681,3 +681,31 @@ Keep task execution unlimited/no forced termination, but bound parent observatio
 to 60 seconds. Timeout preserves task/evidence and stops later cases. Remove only
 each exact task after confirmed terminal state. Report local context eligibility,
 not human UAC consent, intended-user causality or protected-object access.
+
+### Native context-only observations (2026-10-30)
+
+The parent ran immutable 24ea7958 x64 observer bytes in the disposable VM:
+EXE SHA-256 4f42af033b00d0524756f6f9cd3f0aeeba30dbf711dbc60df00f6c43a26a5246;
+adjacent DLL 3416a65ab196d89c3d7d4b2b7c9238b9ed509072d5de940fd96eb39fa2b181d4.
+Hashes were checked in the guest. A fresh protected Program Files lab held inputs;
+the desktop SID had read/execute access and write access only to its output folder.
+The initial console-user query returned no user before provisioning, despite an
+Explorer session. The parent instead resolved the unique Explorer session/owner SID
+through OS queries and rechecked it immediately before each InteractiveToken task.
+This selects the test user; it is not MSI initiating-client authentication.
+
+All observations were complete with token/LSA status zero and observer exit 0:
+- Session 0 administrative PowerShell Direct: eligible 0, refusal 4, high integrity,
+  elevated enabled administrator, token/LSA session 0, logon type 2.
+- Task Scheduler InteractiveToken Limited: eligible 0, refusal 3, medium integrity,
+  elevation false, administrator deny-only, restricted, token/LSA session 1/type 2.
+- Task Scheduler InteractiveToken Highest: eligible 1, refusal 0, high integrity,
+  elevated enabled administrator, unrestricted, token/LSA session 1/type 2.
+
+Both demand-only tasks completed with result 0 and no running instances, then were
+removed by exact name. Fixed capture scripts/output and observer inputs are retained;
+no MSI or full fixture suite was run. Private output is under ignored
+build/vm-lab-evidence-20261030/context-observer-*. Eligibility is a local context
+observation only, not human UAC consent, intended-user causality/continuity,
+protected-object access, preload provenance or actual MSI callback authority.
+ARM64 runtime and RemoteInteractive type 10 were not exercised.
