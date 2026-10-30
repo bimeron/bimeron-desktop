@@ -56,3 +56,25 @@ static CRT imports include dynamic loading APIs. Direct-import inspection cannot
 prove absence of dynamic loading; source inspection found no arbitrary dynamic
 path in the guest/primitive sources. Negative parser fixtures reject unknown
 DLLs, unknown APIs, and delay imports without running the harness.
+
+## Authorized native x64 result (2026-10-30)
+
+After explicit user approval of the final x64 bundle, the parent provisioned only
+native Program Files\BimeronProtectedFileLab and its LABProtectedFiles child in
+the checkpointed Windows 10 STD VM. New-directory ACLs were protected and limited
+to SYSTEM/Administrators with Administrator ownership. System root and Program
+Files ACLs were not changed. The parent verified the frozen EXE hash before and
+after copying, confirmed pending.bin absent, and ran the exact guest command once.
+
+The harness returned 0 and emitted Pending/counter 1. Its successful return means
+native pin/create/read/acknowledge completed, and existing-file, stale-installation,
+stale-generation and sharing-conflict attempts refused while preserving bytes.
+The retained file is 48 bytes; an independent parent-side decode confirmed BLPF,
+version 1, Pending 1 and counter 1. The parent retained both guest residue and an
+ignored local evidence copy. No retry, deletion, repair, cleanup, MSI, registry,
+service, VPN or production operation was performed by this file experiment.
+
+This is native x64 protected-file primitive evidence only. ARM64 remains unbuilt
+for this bundle. It does not establish MSI integration, initiating-client identity,
+post-Finalize access, crash/power-loss durability, protected substitution/reparse
+attack resistance, production admission readers or clean settlement authority.
