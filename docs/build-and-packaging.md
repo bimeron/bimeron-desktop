@@ -565,12 +565,12 @@ execution requires independent review and proof of the documented isolation gate
 
 Implementation appendix: the standalone
 [bounded costing probe](../packaging/windows/foreground-prototype/lab-costing-probe/README.md)
-uses only a flag-1 restricted MSI handle and literal CostInitialize. Its cached-tool
+originally used a flag-1 restricted MSI handle and literal CostInitialize. Its cached-tool
 x64 build, four frozen-input copies, actual compound/logical comparisons, hash
 negatives and compiled MSI API allowlist passed offline. It is outside production
-CMake/CPack and does not change the supported package flow. No host MSI actions,
-VM execution, release or architecture matrix were performed. Independent review
-and parent-operated disposable x64 VM execution remain pending.
+CMake/CPack and does not change the supported package flow. No host MSI actions, release or architecture matrix were performed. The restricted
+mode was subsequently run in a disposable x64 VM; review and guest execution
+of the new mode remain pending.
 
 The accepted follow-up specification in the probe README adds a separately
 selected normal machine-dependent handle, with the same fixed inputs and bounded

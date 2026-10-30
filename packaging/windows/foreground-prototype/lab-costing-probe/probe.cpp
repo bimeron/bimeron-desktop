@@ -19,7 +19,9 @@ std::string hash(const std::filesystem::path& p){
 int wmain(int argc,wchar_t** argv){
  if(argc!=2)return 2;
  bool verify=wcscmp(argv[1],L"--verify-only")==0;
- if(!verify&&wcscmp(argv[1],L"--guest-cost-initialize")!=0)return 2;
+ bool restricted=wcscmp(argv[1],L"--guest-cost-initialize")==0;
+ bool machine=wcscmp(argv[1],L"--guest-cost-initialize-machine-state")==0;
+ if(!verify&&!restricted&&!machine)return 2;
  wchar_t exe[32768];DWORD n=GetModuleFileNameW(nullptr,exe,32768);if(!n||n==32768)return 3;
  auto root=std::filesystem::path(exe).parent_path();
  // Hold read-only, non-write/non-delete-shared handles through all sessions.
@@ -28,10 +30,11 @@ int wmain(int argc,wchar_t** argv){
  // Validate every fixed case before opening any installer session.
  for(int i=0;i<4;++i)if(hash(root/names[i])!=pins[i]){printf("{\"case\":%d,\"validation\":1}\n",i);return 4;}
  if(verify){puts("{\"validation\":0}");return 0;}
+ printf("{\"mode\":\"%s\",\"options\":%u}\n",machine?"machine-state":"restricted",machine?0u:1u);
  HRESULT co=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);
  printf("{\"com\":%lu}\n",(unsigned long)co);if(FAILED(co))return 5;
  for(int i=0;i<4;++i){MSIHANDLE h=0;auto p=root/names[i];
-  UINT opened=MsiOpenPackageExW(p.c_str(),MSIOPENPACKAGEFLAGS_IGNOREMACHINESTATE,&h);
+  UINT opened=machine?MsiOpenPackageExW(p.c_str(),0,&h):MsiOpenPackageExW(p.c_str(),MSIOPENPACKAGEFLAGS_IGNOREMACHINESTATE,&h);
   UINT action=ERROR_FUNCTION_NOT_CALLED,closed=ERROR_INVALID_HANDLE;
   if(opened==ERROR_SUCCESS){action=MsiDoActionW(h,L"CostInitialize");closed=MsiCloseHandle(h);}
   printf("{\"case\":%d,\"sha256\":\"%s\",\"open\":%u,\"action\":%u,\"close\":%u}\n",i,pins[i],opened,action,closed);

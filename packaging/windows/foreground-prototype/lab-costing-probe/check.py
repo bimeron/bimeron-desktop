@@ -1,8 +1,11 @@
 """Host checks: hash-only mode and rejection; no MSI action execution."""
-import hashlib, re, subprocess
+import hashlib, re, subprocess, sys
+import prepare
 from pathlib import Path
 from prepare import OUT, HERE, NAMES, logical, streams, sha, SOURCE, PIN
 import json
+OUT=Path(sys.argv[1]).resolve() if len(sys.argv)==2 else OUT
+prepare.OUT=OUT
 report=json.loads((OUT/'offline-report.json').read_text())
 assert sha(SOURCE)==PIN
 for name in NAMES:
@@ -21,7 +24,8 @@ for i,name in enumerate(NAMES):
     p=OUT/(name+'.msi'); original=p.read_bytes()
     try:
         p.write_bytes(original+b'bad')
-        assert run('--verify-only',4)==f'{{"case":{i},"validation":1}}\n'
+        for arg in ('--verify-only','--guest-cost-initialize','--guest-cost-initialize-machine-state'):
+            assert run(arg,4)==f'{{"case":{i},"validation":1}}\n'
     finally:p.write_bytes(original)
 a,b=[OUT/(n+'.msi') for n in NAMES[:2]]
 x,y=a.read_bytes(),b.read_bytes()
@@ -38,7 +42,10 @@ assert 'delay load' not in imports.lower()
 src=(HERE/'probe.cpp').read_text()
 assert len(re.findall(r'MsiDoActionW\(',src))==1
 assert 'MsiDoActionW(h,L"CostInitialize")' in src
-assert 'MsiOpenPackageExW(p.c_str(),MSIOPENPACKAGEFLAGS_IGNOREMACHINESTATE,&h)' in src
+assert 'MsiOpenPackageExW(p.c_str(),0,&h):MsiOpenPackageExW(p.c_str(),MSIOPENPACKAGEFLAGS_IGNOREMACHINESTATE,&h)' in src
+assert 'L"--guest-cost-initialize-machine-state"' in src
+assert 'L"--guest-cost-initialize"' in src
+assert 'if(!verify&&!restricted&&!machine)return 2;' in src
 (OUT/'probe.imports.txt').write_text(imports)
 print('PASS: four corrupt hashes, swapped cases, three invalid arguments, fixed MSI imports/action; host verify-only')
 for name in ['lab-costing-probe.exe','lab-storage.exe']+[n+'.msi' for n in NAMES]:

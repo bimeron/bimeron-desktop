@@ -11,14 +11,14 @@ creates a machine-state-independent restricted handle incapable of changing
 machine state, excludes DLL/EXE/script custom actions, and permits CostInitialize.
 It requires COM initialization on the same thread. [MsiDoActionW](https://learn.microsoft.com/en-us/windows/win32/api/msiquery/nf-msiquery-msidoactionw)
 permits CostInitialize outside an initialized installation transaction.
-The probe initializes COM on its sole calling thread, opens only flag-1 handles,
+The original restricted mode initializes COM on its sole calling thread, opens flag-1 handles,
 passes only literal `CostInitialize`, closes each successful handle, and balances
 COM cleanup. There is no sequence, default action, installation or other action
 entry point. The source and compiled MSI import allowlist are checked offline.
 
-Independent review is pending. Only the parent may run the guest command after
+Independent review of the new mode is pending. Only the parent may run the guest command after
 review in a disposable x64 Windows VM. Never run the guest mode on the host.
-No VM, elevation, credential, installation, download or external mutation was used.
+The restricted mode was run in the disposable VM; no guest run of the new mode has occurred.
 
 ## Build and offline checks
 
@@ -71,7 +71,7 @@ check resolves the actual ordinals (232, 34, 8). No action was invoked to test t
 
 Artifacts: `build/lab-costing-probe/Release/`. Copy only the probe executable and
 four MSI files together to a private directory in the disposable guest.
-The executable accepts exactly `--verify-only` or `--guest-cost-initialize`,
+The original executable accepted `--verify-only` or `--guest-cost-initialize`,
 locates the four fixed names beside itself, pins all four hashes before opening
 any session, and retains non-write/non-delete-shared file handles until cleanup.
 There is no case, path, property, action or environment override. Output contains
@@ -100,7 +100,7 @@ MSVC x64 standalone compilation and all described offline checks passed.
 Diff review found no production registration or resource changes. No performance
 path changed, so benchmarks/profiling are inapplicable. Windows ARM64 and both
 Linux targets are unaffected by this disconnected x64 Windows experiment; the
-release build/package matrix and VM execution were not run. Remaining risks:
+release build/package matrix was not run. Remaining risks:
 independent review and guest results pending; results cannot establish native
 installation safety, callback behavior, outer transaction settlement or enrollment.
 
@@ -128,3 +128,24 @@ reports all four actions returned 0. A full `/qn` run of the same original sourc
 MSI failed with 2728 at CostInitialize; neither result establishes a fix.
 Microsoft documents [normal and restricted open options](https://learn.microsoft.com/en-us/windows/win32/api/msi/nf-msi-msiopenpackageexw)
 and [CostInitialize outside an installation transaction](https://learn.microsoft.com/en-us/windows/win32/api/msiquery/nf-msiquery-msidoactionw).
+
+## Machine-state build and offline results
+
+The new executable is `build/lab-costing-probe-machine-state/Release/lab-costing-probe.exe`,
+SHA-256 `e9c74d70bf3e4993ff0f52b385687e9fe12c700383cc3b7ff070cf9901abb642`.
+The four pinned MSIs and the original executable in the parent build directory
+were retained untouched; copies of the MSIs and offline report were used in the
+new directory. The checker accepts that directory as its sole optional argument:
+
+```powershell
+python packaging/windows/foreground-prototype/lab-costing-probe/check.py build/lab-costing-probe-machine-state/Release
+```
+
+It checks the two fixed open branches and literal action in source, the compiled
+MSI import allowlist, all four hashes and logical/stream comparisons, invalid
+arguments, and corruption rejection for verify-only and both guest arguments.
+No host MSI action was invoked. After independent review, the parent may run
+`lab-costing-probe.exe --guest-cost-initialize-machine-state` only in the
+disposable guest with the four pinned files beside it. The new mode remains
+untested in the guest; neither the restricted result nor the full-install failure
+proves a cause or fix.
