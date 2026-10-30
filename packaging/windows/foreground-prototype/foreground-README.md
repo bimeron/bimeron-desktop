@@ -452,3 +452,29 @@ Source commit `a761106bd03f3710fbd2b092943cc493727289d1` produced these fresh ar
   }
 }
 ```
+
+### Fresh supported-authoring VM observations (2026-10-30)
+
+The frozen x64 artifacts from source `a761106` were run separately in the
+checkpointed Windows 10 STD VM through native x64 msiexec `/qn /norestart`, from
+an elevated noninteractive PowerShell Direct session (session 0). Hashes were
+checked before execution. Each case had a fresh private verbose log.
+
+| Case | Exit | Observed callback order | Finalize | Product state |
+| --- | --- | --- | --- | --- |
+| Success | 0 | Preflight, DeferredBegin, Commit, PostFinalize | succeeded | -1 |
+| CommitFail | 1603 | Preflight, DeferredBegin, Commit, Rollback | failed | -1 |
+| PostFinalizeFail | 1603 | Preflight, DeferredBegin, Commit, PostFinalize | succeeded before injected failure | -1 |
+
+All observed records were complete with status 0. The selected failure callback
+reported intendedReturn 1603; other callbacks reported 0. No rollback callback
+was observed in Success or PostFinalizeFail. Immediate observations used an
+elevated high-integrity user process token; deferred/commit/rollback observations
+used a SYSTEM process token. These are OS token observations, not authenticated
+initiating-client evidence. No timeout, reboot or process termination occurred.
+
+The zero-resource fixture left all three ProductCodes unregistered; uninstall
+was therefore not run. These results establish callback/order observations only,
+not resource rollback/restoration, interactive UAC, durable exclusion, privileged
+settlement, host-death behavior or native/production compatibility. Raw logs are
+retained under ignored private evidence and are not committed.
