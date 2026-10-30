@@ -14,6 +14,8 @@
 // Include in DeveloperModeTest.cpp and call NativeIKEv2TransportTest::run().
 // Pure wire/identity fixtures and an unapproved asynchronous request only:
 // no elevated launch, production endpoint, real Core or network mutation.
+// Define NATIVE_IKEV2_TRANSPORT_TESTING for both transport and harness to also
+// exercise isolated Windows IO/pin boundaries; this never bypasses authentication.
 struct NativeIKEv2TransportTest {
     static void check(bool value, const char *message) {
         if (!value) qFatal("Native transport regression: %s", message);
@@ -21,6 +23,9 @@ struct NativeIKEv2TransportTest {
     static void run() {
         using T = NativeIKEv2Transport;
 #ifdef Q_OS_WIN
+#ifdef NATIVE_IKEV2_TRANSPORT_TESTING
+        check(T::offlineWindowsBoundaries(), "pending pipe cancellation and retained file pins");
+#endif
         auto descriptor = [](const wchar_t *sddl, bool expected, bool unknownAce = false) {
             PSECURITY_DESCRIPTOR sd = nullptr;
             check(ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl, SDDL_REVISION_1, &sd, nullptr), "ACL fixture parses");
@@ -97,6 +102,47 @@ struct NativeIKEv2TransportTest {
         };
         check(decode(bytes(base)), "authenticated response with exact 64-bit identities");
         check(!QJsonDocument(result).toJson().contains("secret-sentinel"), "diagnostics stripped");
+        // Source-derived wire fixture: encoding/json of the exact Event and
+        // LoggedEvent declarations from Core 66d84d8f, core/engine.go and
+        // internal/control/server.go. Zero value and populated diagnostic event;
+        // no Core execution, credentials, network or elevated owner is involved.
+        const auto coreEvents = QJsonDocument::fromJson(R"json([
+            {"sequence":1,"event":{"Time":"0001-01-01T00:00:00Z","State":"","Code":"","Message":"","Attempt":0,"LastError":""}},
+            {"sequence":2,"event":{"Time":"2026-10-30T00:00:00.123456789Z","State":"connected","Code":"secret-sentinel","Message":"secret-sentinel","Attempt":1,"LastError":"secret-sentinel","ErrorStage":"secret-sentinel"}}
+        ])json").array();
+        auto eventResponse = base;
+        eventResponse.insert("events", coreEvents);
+        check(decode(bytes(eventResponse)), "Core zero and populated event serialization");
+        check(!QJsonDocument(result).toJson().contains("secret-sentinel"), "event diagnostics stripped or mapped");
+        const auto zeroEvent = coreEvents.first().toObject().value("event").toObject();
+        auto withEvent = [&](const QJsonValue &event) {
+            auto response = base;
+            response.insert("events", QJsonArray{QJsonObject{{"sequence", 1}, {"event", event}}});
+            return bytes(response);
+        };
+        check(!decode(withEvent(QJsonObject{})), "empty event rejected");
+        for (const auto &key : {"Time", "State", "Code", "Message", "Attempt", "LastError"}) {
+            auto event = zeroEvent; event.remove(key);
+            check(!decode(withEvent(event)), "each mandatory event field required");
+        }
+        for (const auto &key : {"Time", "State", "Code", "Message", "Attempt", "LastError", "ErrorStage"}) {
+            for (const auto &value : QJsonArray{QJsonValue::Null, true, QJsonObject{}, QJsonArray{}, 1, ""}) {
+                if ((QString(key) == "Attempt" && value.isDouble()) ||
+                    (QString(key) != "Attempt" && value.isString())) continue;
+                auto event = zeroEvent; event.insert(key, value);
+                check(!decode(withEvent(event)), "each event field type checked before stripping");
+            }
+        }
+        auto event = zeroEvent; event.insert("ErrorStage", "");
+        check(decode(withEvent(event)), "empty optional event stage");
+        event.insert("unknown", ""); check(!decode(withEvent(event)), "unknown event field refused");
+        event = zeroEvent; event.insert("Attempt", -1); check(!decode(withEvent(event)), "negative event attempt refused");
+        event.insert("Attempt", 9007199254740992.0); check(!decode(withEvent(event)), "event numeric bound retained");
+        auto nilStatus = base;
+        nilStatus.insert("error", "response_too_large");
+        nilStatus.insert("status", QJsonObject{{"State", ""}, {"Attempt", 0},
+            {"Since", "0001-01-01T00:00:00Z"}, {"LastError", ""}});
+        check(decode(bytes(nilStatus)), "Core zero status omits nil Session and Native pointers");
         auto bad = base; bad.insert("id", "stale"); check(!decode(bytes(bad)), "correlation");
         bad = base; bad.insert("version", 2); check(!decode(bytes(bad)), "wire version");
         bad = base; bad.insert("installation", QString(32, 'd')); check(!decode(bytes(bad)), "installation binding");

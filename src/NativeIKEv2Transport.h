@@ -65,6 +65,9 @@ private:
     static bool approved(const Approval &approval);
 #ifdef Q_OS_WIN
     static bool protectedDescriptor(const void *descriptor);
+#ifdef NATIVE_IKEV2_TRANSPORT_TESTING
+    static bool offlineWindowsBoundaries();
+#endif
 #endif
     static QByteArray encodeRequest(Endpoint endpoint, const QString &command,
                                    const QString &id, const QString &installation,

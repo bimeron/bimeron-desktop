@@ -12,6 +12,11 @@
 #include <QUuid>
 #include <atomic>
 #include <vector>
+#if defined(Q_OS_WIN) && defined(NATIVE_IKEV2_TRANSPORT_TESTING)
+#include <QFile>
+#include <QTemporaryDir>
+#include <thread>
+#endif
 
 #ifdef Q_OS_WIN
 #include <qt_windows.h>
@@ -235,6 +240,10 @@ bool payload(QJsonObject *o) {
             if (!entry.isObject() || e.size() != 2 || !keys(e, {"sequence", "event"}) || !integer(e.value("sequence")) || !e.value("event").isObject()) return false;
             auto event = e.value("event").toObject();
             if (!fields(event, {"Time", "State", "Code", "Message", "LastError", "ErrorStage"}, {}, {"Attempt"})) return false;
+            // core.Event at the approved revision omits only ErrorStage. Validate
+            // diagnostics before removing them, including the zero-valued event.
+            for (const auto &key : {"Time", "State", "Code", "Message", "Attempt", "LastError"})
+                if (!event.contains(key)) return false;
             event.remove("Message"); event.remove("LastError"); event.remove("ErrorStage");
             if (event.contains("Code")) event.insert("Code", safeError(event.value("Code").toString()));
             e.insert("event", event); events.append(e);
@@ -528,6 +537,56 @@ struct NativeIKEv2Transport::State {
     Endpoint endpoint = Endpoint::Session;
 #endif
 };
+
+#if defined(Q_OS_WIN) && defined(NATIVE_IKEV2_TRANSPORT_TESTING)
+bool NativeIKEv2Transport::offlineWindowsBoundaries() {
+    // Exercise the actual IO and pin helpers without authenticating a test image
+    // or weakening the protected-install path. Never connect to a Core endpoint.
+    QTemporaryDir directory;
+    if (!directory.isValid()) return false;
+    const auto path = directory.filePath("pinned.conf");
+    { QFile file(path); if (!file.open(QIODevice::WriteOnly) || file.write("fixture") != 7) return false; }
+    auto transport = std::make_unique<NativeIKEv2Transport>(Approval{});
+    auto file = openLocked(path, false, false);
+    if (!file.valid()) return false;
+    transport->state_->configPins.push_back(std::move(file));
+    auto retained = transport->state_;
+    transport.reset(); // Destruction cancels, while a worker still owns the state.
+    auto replacementRefused = [&] {
+        Handle writer(CreateFileW(native(path).c_str(), GENERIC_WRITE, FILE_SHARE_READ,
+                                  nullptr, OPEN_EXISTING, 0, nullptr));
+        if (writer.valid() || GetLastError() != ERROR_SHARING_VIOLATION) return false;
+        return !DeleteFileW(native(path).c_str()) && GetLastError() == ERROR_SHARING_VIOLATION;
+    };
+    if (!retained->cancel.load() || !replacementRefused()) return false;
+    retained.reset();
+    { QFile writable(path); if (!writable.open(QIODevice::WriteOnly)) return false; }
+
+    const auto name = QStringLiteral("\\\\.\\pipe\\Bimeron.Desktop.OfflineTest.%1").arg(QUuid::createUuid().toString(QUuid::Id128));
+    Handle server(CreateNamedPipeW(native(name).c_str(), PIPE_ACCESS_INBOUND | FILE_FLAG_OVERLAPPED | FILE_FLAG_FIRST_PIPE_INSTANCE,
+        PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS, 1, 4096, 4096, 0, nullptr));
+    if (!server.valid()) return false;
+    Handle client(CreateFileW(native(name).c_str(), GENERIC_WRITE, 0, nullptr, OPEN_EXISTING, 0, nullptr));
+    if (!client.valid()) return false;
+    Handle connected(CreateEventW(nullptr, TRUE, FALSE, nullptr));
+    OVERLAPPED connection{}; connection.hEvent = connected.value;
+    if (!connected.valid() || (!ConnectNamedPipe(server.value, &connection) && GetLastError() != ERROR_PIPE_CONNECTED)) return false;
+    std::atomic_bool cancel{false};
+    std::thread canceller([&] { Sleep(50); cancel.store(true); });
+    char buffer[16]{}; DWORD transferred = 0;
+    const bool completed = exchangeIO(server.value, false, buffer, sizeof(buffer), &transferred, GetTickCount64() + 3000, cancel);
+    const auto error = GetLastError();
+    canceller.join();
+    // exchangeIO must drain cancellation before its stack OVERLAPPED/buffer die.
+    if (completed || !cancel.load() || error != ERROR_OPERATION_ABORTED) return false;
+    cancel.store(false);
+    DWORD written = 0;
+    char sent = 'x';
+    if (!WriteFile(client.value, &sent, 1, &written, nullptr) || written != 1) return false;
+    return exchangeIO(server.value, false, buffer, sizeof(buffer), &transferred, GetTickCount64() + 3000, cancel) &&
+        transferred == 1 && buffer[0] == sent; // Cancellation never closes the peer.
+}
+#endif
 
 NativeIKEv2Transport::NativeIKEv2Transport(Approval approval, QObject *parent)
     : QObject(parent), approval_(std::move(approval)), state_(std::make_shared<State>()) {}
