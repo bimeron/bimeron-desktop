@@ -155,14 +155,41 @@ static bool writeRecord(HANDLE h,const Record& r, unsigned failure) {
 #endif
     return FlushFileBuffers(h)!=FALSE;
 }
-bool Directory::operate(const Id& installation,const Id& generation,bool createNew,bool once) {
-    Record r{installation,generation,0}; Bytes check;
-    if(path.empty() || !encode(r,check)) return false;
+bool Directory::revalidate() {
     BY_HANDLE_FILE_INFORMATION knownInfo{}, traversalInfo{};
     if(anchorPin==INVALID_HANDLE_VALUE || authority==0 || authority>=pins.size() ||
         !secure(anchorPin,true,knownInfo) || !secure(pins[authority],true,traversalInfo) ||
         !sameIdentity(knownInfo,traversalInfo)) return false;
     for(size_t n=0;n<pins.size();++n) { BY_HANDLE_FILE_INFORMATION i{}; if(!secure(pins[n],true,i,n>=authority)) return false; }
+    return true;
+}
+static bool writeDiagnostic(HANDLE h,const std::vector<unsigned char>& bytes) {
+    if(bytes.empty() || bytes.size()>65536) return false;
+    DWORD written=0;
+    return WriteFile(h,bytes.data(),static_cast<DWORD>(bytes.size()),&written,nullptr) &&
+        written==bytes.size() && FlushFileBuffers(h);
+}
+bool Directory::writeAckTablesDiagnostic(const std::vector<unsigned char>& bytes) {
+    if(!ackMode || path.empty() || bytes.empty() || bytes.size()>65536 || !revalidate()) return false;
+    PSECURITY_DESCRIPTOR descriptor=nullptr;
+    if(!ConvertStringSecurityDescriptorToSecurityDescriptorW(
+        L"D:P(A;;FA;;;SY)(A;;FA;;;BA)",SDDL_REVISION_1,&descriptor,nullptr)) return false;
+    SECURITY_ATTRIBUTES attributes{sizeof(SECURITY_ATTRIBUTES),descriptor,FALSE};
+    const auto leaf=path.substr(0,path.find_last_of(L'\\'))+L"\\active-tables.txt";
+    HANDLE h=CreateFileW(leaf.c_str(),GENERIC_READ|GENERIC_WRITE|READ_CONTROL,0,&attributes,
+        CREATE_NEW,FILE_FLAG_OPEN_REPARSE_POINT|FILE_FLAG_WRITE_THROUGH,nullptr);
+    LocalFree(descriptor);
+    if(h==INVALID_HANDLE_VALUE) return false;
+    BY_HANDLE_FILE_INFORMATION before{},after{};
+    bool ok=secure(h,false,before) && revalidate() && secure(h,false,after) && sameIdentity(before,after);
+    if(ok) ok=writeDiagnostic(h,bytes);
+    ok=ok && secure(h,false,after) && sameIdentity(before,after) && revalidate();
+    CloseHandle(h); return ok; // Retain even incomplete residue; never delete or overwrite.
+}
+bool Directory::operate(const Id& installation,const Id& generation,bool createNew,bool once) {
+    Record r{installation,generation,0}; Bytes check;
+    if(path.empty() || !encode(r,check)) return false;
+    if(!revalidate()) return false;
     PSECURITY_DESCRIPTOR descriptor=nullptr;
     if(createNew && !ConvertStringSecurityDescriptorToSecurityDescriptorW(
         L"D:P(A;;FA;;;SY)(A;;FA;;;BA)",SDDL_REVISION_1,&descriptor,nullptr)) return false;
@@ -205,6 +232,7 @@ bool Directory::readAckManifest(std::vector<unsigned char>& bytes) {
     return ok;
 }
 #ifdef LAB_PROTECTED_FILE_TESTING
+bool testDiagnosticWrite(HANDLE h,const std::vector<unsigned char>& bytes) { return writeDiagnostic(h,bytes); }
 bool testWrite(HANDLE h,const Record& r,Failure f) { return writeRecord(h,r,static_cast<unsigned>(f)); }
 #endif
 }

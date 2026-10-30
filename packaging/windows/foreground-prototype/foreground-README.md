@@ -796,3 +796,43 @@ No MSI actions, protected writes, VM execution or release were performed. The
 bundle is review material; callback behavior and resource state remain unobserved.
 ARM64 runtime, Linux, product packaging, benchmarks and profiling are outside
 this disconnected Windows fixture.
+
+### Accepted active-table diagnostic specification
+
+Only the Success build (LAB_FAILPOINT=0), AckPreflight callback 0, and original
+stage 41/detail 1 may attempt one diagnostic. It reads the active database's
+SELECT Name FROM _Tables, sorts UTF-16 names, and records each name with the raw
+MsiDatabaseIsTablePersistentW enum, including error values. Names use quoted
+ASCII with every non-printable/non-ASCII code unit and quote/backslash escaped
+as \uXXXX. Collection refuses more than 4096 rows or 65536 total output bytes
+before writing. No Property values, Binary payload, or _Columns are collected.
+No MsiDatabaseExportW is permitted inside a custom action.
+
+The already pinned ACK Directory alone may create the fixed active-tables.txt
+leaf, with protected SYSTEM/Administrators DACL, CREATE_NEW, no sharing, disk,
+single-link, no-reparse and identity checks, complete WriteFile and flush.
+Anchor, descriptor, case and volume identity checks remain mandatory. Existing
+files refuse; every failure preserves residue. No generic path writer is exposed.
+The original failure and 1603 remain unchanged regardless of diagnostic outcome.
+The numeric snapshotStatus is 0 not attempted, 1 written, 2 collection refused,
+3 write refused. MSI logs contain no names. Canonical acceptance is unchanged.
+
+Acceptance: native owned temporary MSI permanent and HOLD temporary tables,
+sorted escaped bounded output, trigger selection, owned temporary file complete
+write/flush and existing-destination refusal; actual MSI/Binary/import checks and
+fresh GUID/hash manifests. No host installer actions/protected writes, VM actions,
+production changes, cleanup, enrollment or release. Parent owns VM execution.
+
+Implementation evidence: all three x64 and ARM64 /W4 /WX variants linked with
+cached WiX and unsuppressed ICE. x64 focused CTest passed 4/4; ARM64 actual
+MSI/Binary/PE checks passed 1/1 (compile/static only). Ordinal 165 was mapped
+by system msi.dll dumpbin to MsiDatabaseIsTablePersistentW. The native temporary
+MSI test uses an all-TEMPORARY column with HOLD; HOLD alone does not make a
+persistent column temporary. See [Microsoft SQL syntax](https://learn.microsoft.com/en-us/windows/win32/msi/sql-syntax)
+and [custom-action database restrictions](https://learn.microsoft.com/en-us/windows/win32/msi/accessing-a-database-or-session-from-inside-a-custom-action).
+No acceptance filter or temporary-table exception was added. Diff/security review
+found no production registration, arbitrary path API, overwrite or cleanup route.
+Host protected-path success and MSI execution remain untested. Linux/product
+matrix and performance profiling are inapplicable to this bounded Windows lab.
+Frozen review evidence is under build/ack-active-tables-review; parent independent
+review and VM execution remain outstanding.

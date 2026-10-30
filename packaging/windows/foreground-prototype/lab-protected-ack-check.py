@@ -36,6 +36,7 @@ API_IMPORTS = {'ADVAPI32.DLL': ['ConvertStringSecurityDescriptorToSecurityDescri
                   'OpenProcessToken',
                   'OpenThreadToken'],
  'MSI.DLL': ['#103',
+             '#165',  # MsiDatabaseIsTablePersistentW (dumpbin system export)
              '#113',  # MsiQueryProductStateW (system msi.dll export)
              '#118',
              '#120',

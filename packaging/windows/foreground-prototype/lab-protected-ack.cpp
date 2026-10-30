@@ -12,7 +12,7 @@
 #endif
 namespace {
 using Buffer=std::vector<unsigned char>;
-struct Diagnostic { unsigned stage=0, detail=0; DWORD status=0; };
+struct Diagnostic { unsigned stage=0, detail=0; DWORD status=0; unsigned snapshotStatus=0; };
 bool refused(Diagnostic& d,unsigned stage,unsigned detail=0,DWORD status=0) {
     if(!d.stage) d={stage,detail,status};
     return false;
@@ -31,6 +31,44 @@ bool field(MSIHANDLE r,unsigned n,std::wstring& s) {
     wchar_t b[32768]; DWORD size=32768;
     if(MsiRecordGetStringW(r,n,b,&size)!=ERROR_SUCCESS) return false;
     s.assign(b,size); return true;
+}
+bool encodeTables(std::vector<std::pair<std::wstring,int>> values,Buffer& out) {
+    out.clear();
+    if(values.size()>4096) return false;
+    std::sort(values.begin(),values.end());
+    std::string result="BIMERON_ACK_ACTIVE_TABLES_V1\n";
+    for(const auto& row:values) {
+        result+='"';
+        for(wchar_t c:row.first) {
+            if(c>=32 && c<=126 && c!=L'"' && c!=L'\\') result+=static_cast<char>(c);
+            else { char escaped[7]{}; sprintf_s(escaped,"\\u%04X",static_cast<unsigned>(c)); result+=escaped; }
+            if(result.size()>65536) return false;
+        }
+        result+="\"\t"+std::to_string(row.second)+"\n";
+        if(result.size()>65536) return false;
+    }
+    out.assign(result.begin(),result.end()); return true;
+}
+bool collectTables(MSIHANDLE db,Buffer& out) {
+    if(!db) return false;
+    Msi view;
+    if(MsiDatabaseOpenViewW(db,L"SELECT `Name` FROM `_Tables`",&view.h)!=ERROR_SUCCESS ||
+        MsiViewExecute(view.h,0)!=ERROR_SUCCESS) return false;
+    std::vector<std::pair<std::wstring,int>> values;
+    size_t total=0;
+    for(;;) {
+        Msi record; UINT e=MsiViewFetch(view.h,&record.h);
+        if(e==ERROR_NO_MORE_ITEMS) break;
+        if(e!=ERROR_SUCCESS || values.size()>=4096) return false;
+        std::wstring name; if(!field(record.h,1,name)) return false;
+        total+=name.size()*2; if(total>65536) return false;
+        int persistence=static_cast<int>(MsiDatabaseIsTablePersistentW(db,name.c_str()));
+        values.emplace_back(name,persistence);
+    }
+    return encodeTables(values,out);
+}
+bool snapshotSelected(unsigned point,const Diagnostic& d,unsigned failpoint=LAB_FAILPOINT) {
+    return failpoint==0 && point==0 && d.stage==41 && d.detail==1;
 }
 bool rows(MSIHANDLE db,const wchar_t* table,const wchar_t* columns,unsigned count,Buffer& out) {
     std::wstring sql=L"SELECT "; sql+=columns; sql+=L" FROM `"; sql+=table; sql+=L"`";
@@ -203,7 +241,20 @@ UINT action(MSIHANDLE h,unsigned point,Diagnostic& d) {
     if(!dir.pinAck()) { refused(d,1); return ERROR_INSTALL_FAILURE; }
     if(!dir.readAckManifest(b)) { refused(d,2); return ERROR_INSTALL_FAILURE; }
     if(!validManifest(b,i,g)) { refused(d,3); return ERROR_INSTALL_FAILURE; }
-    if(point==0) return logical(h,b,d) ? ERROR_SUCCESS : ERROR_INSTALL_FAILURE;
+    if(point==0) {
+        if(logical(h,b,d)) return ERROR_SUCCESS;
+        if(snapshotSelected(point,d)) {
+            d.snapshotStatus=2;
+            try {
+                Msi db; db.h=MsiGetActiveDatabase(h); Buffer tables;
+                if(collectTables(db.h,tables)) {
+                    d.snapshotStatus=3;
+                    if(dir.writeAckTablesDiagnostic(tables)) d.snapshotStatus=1;
+                }
+            } catch(...) { /* Preserve first failure and numeric snapshot status. */ }
+        }
+        return ERROR_INSTALL_FAILURE;
+    }
     if(point==2) { if(dir.create(i,g)) return ERROR_SUCCESS; refused(d,60); return ERROR_INSTALL_FAILURE; }
     if(LAB_FAILPOINT==2) { refused(d,70); return ERROR_INSTALL_FAILURE; }
     if(!effectiveToken()) { refused(d,50); return ERROR_INSTALL_FAILURE; }
@@ -215,7 +266,7 @@ UINT safe(MSIHANDLE h,unsigned point) noexcept {
     UINT result=ERROR_INSTALL_FAILURE; Diagnostic d;
     try { result=action(h,point,d); } catch(...) { refused(d,90); }
     Msi record; record.h=MsiCreateRecord(0); wchar_t message[256]{};
-    swprintf_s(message,L"BIMERON_PROTECTED_ACK_V1 callback=%u result=%u stage=%u detail=%u api=%lu removeOriginUnknown=1 initiatingClientUnknown=1 accessOnly=1",point,result,d.stage,d.detail,d.status);
+    swprintf_s(message,L"BIMERON_PROTECTED_ACK_V1 callback=%u result=%u stage=%u detail=%u api=%lu snapshotStatus=%u removeOriginUnknown=1 initiatingClientUnknown=1 accessOnly=1",point,result,d.stage,d.detail,d.status,d.snapshotStatus);
     if(!record.h || MsiRecordSetStringW(record.h,0,message)!=ERROR_SUCCESS ||
         MsiProcessMessage(h,INSTALLMESSAGE_INFO,record.h)!=0) return ERROR_INSTALL_FAILURE;
     return result;

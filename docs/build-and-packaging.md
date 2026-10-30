@@ -720,3 +720,9 @@ changes do not change the frozen source-a1ab617 MSI/DLL behavior bytes. Initial
 unbuilt-target and test-build/cleanup failures were resolved before this pass;
 none was skipped to report success. Frozen Success artifact review and a new VM
 run remain separate gates. No product runtime or release matrix is established.
+
+ACK active-table diagnostic appendix: the accepted standalone README specification
+adds only fixed private active-tables.txt on Success Preflight stage 41/detail 1.
+It retains strict canonical projection, original 1603 and protected CREATE_NEW
+semantics. Fresh cached-WiX bundles are required; old frozen inputs remain intact.
+Supported production packaging is unchanged. Parent alone performs VM checks.

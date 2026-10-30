@@ -28,6 +28,7 @@ public:
     bool pin();
     bool pinAck();
     bool readAckManifest(std::vector<unsigned char>&);
+    bool writeAckTablesDiagnostic(const std::vector<unsigned char>&);
     bool acknowledgeOnce(const Id&, const Id&);
     bool create(const Id&, const Id&);
     bool acknowledge(const Id&, const Id&);
@@ -39,10 +40,12 @@ private:
     bool ackMode = false;
     HANDLE anchorPin = INVALID_HANDLE_VALUE;
     bool pinInternal(bool ack);
+    bool revalidate();
     bool operate(const Id&, const Id&, bool, bool once = false);
 };
 #ifdef LAB_PROTECTED_FILE_TESTING
 enum class Failure { None, ShortWrite, Flush };
+bool testDiagnosticWrite(HANDLE, const std::vector<unsigned char>&);
 bool testWrite(HANDLE, const Record&, Failure);
 #endif
 }
