@@ -535,3 +535,39 @@ file ancestry, pinned handles, isolated mutex, records, external package pin,
 and actual client-process correlation remain unimplemented. This fixture makes
 no client identity or authority claim. Do not execute it in a guest or use it
 for installation. The existing trace and production exports are unchanged.
+
+### Disconnected pending-file fixture
+
+Acceptance is recorded in docs/ikev2-profiles.md under the distinct disconnected
+pending-file subsection. Build with FOREGROUND_LAB_PROTECTED_FILE=ON and explicit
+target foreground-lab-protected-file; run CTest -R foreground-lab-protected-file.
+The record never represents Clean. Strict ancestor validation may reject the
+host build tree; the harness reports native positive unavailable separately from
+pure models and owned temporary I/O. No MSI or production integration is added.
+
+Pending-file evidence (2026-10-30): MSVC 19.51 / Windows SDK 10.0.26100 x64
+and ARM64 Release compiled the non-injected static primitive and injected harness
+with /W4 /WX. x64 CTest foreground-lab-protected-file passed 1/1. Output labels
+pure codec/stale-ID/counter/ACL/reparse/link/identity cases MODEL; short write and
+flush failure are narrow MODEL injection into the actual writer. The owned
+build-local temporary file exercised real WriteFile/FlushFileBuffers and was
+removed after closing. The strict native directory pin refused the host path:
+protected create/acknowledge, real reparse/substitution attacks and protected
+flush are unavailable, not established by these results. ARM64 runtime was not
+run. No host ownership changes, protected-state writes, MSI, VM, installation,
+network, production build, Linux build, benchmark or release occurred.
+
+The primitive uses protected SYSTEM/Administrators-only file DACLs at creation;
+creation cannot change owner or grant the caller privilege. An untrusted default
+creator owner therefore causes refusal with the created file retained. Read and
+acknowledgment require exact persisted identity IDs and an exclusive file handle.
+Failures do not retry, remove the file, or claim recoverability or Clean. The
+non-injected library is compiled separately; no installed code links it. Existing
+LabProtectedBegin and LabProtectedAcknowledge remain unconditional failures.
+
+Review refinement: native path opens use one resolved volume GUID, avoiding DOS
+drive-letter remapping after admission. Reparse components remain forbidden.
+The existing token-source/unconditionally failing callback regression also passed:
+x64 CTest foreground-lab-protected-(file|access) completed 2/2. Source review
+found no production registration or callback changes. Protected positive evidence
+and actual filesystem substitution attacks remain unavailable on this host.

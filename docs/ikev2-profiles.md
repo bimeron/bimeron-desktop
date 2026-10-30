@@ -327,3 +327,43 @@ so these images do not establish readable text, clipping or visual acceptance.
 Native-platform presentation and real tray/close behavior remain manual acceptance
 gates. This is partial offline GUI integration, not native activation, protected
 installation, enrollment, live networking or release acceptance.
+
+### Disconnected pending-file fixture acceptance (bounded batch)
+
+This batch permits only a disconnected pending-file primitive, not MSI authority.
+The standalone default-off FOREGROUND_LAB_PROTECTED_FILE target has no install
+rules. The only native directory is LABProtectedFiles beside the harness image;
+no command line, environment or arbitrary path is accepted. It must already exist.
+Before CREATE_NEW of pending.bin, pin every component from the local drive root
+through that directory with read sharing only, OPEN_REPARSE_POINT, and directory
+handles retained for the operation lifetime. Reject nonlocal/UNC/device paths,
+reparse components, untrusted owners, null DACLs, unknown ACE types, and any
+untrusted mutation rights (including delete-child, owner and DACL rights).
+All components require protected DACLs; this deliberately strict policy may make
+the host build directory unavailable. Do not change host ownership to pass it.
+Trust is limited to SYSTEM and Administrators, as in the existing foreground
+fixture. File opens deny all sharing and check disk type, identity, single link,
+non-directory/non-reparse attributes, owner and protected DACL before I/O.
+
+The exact 48-byte record is ASCII BLPF, version byte 1, pending byte 1, two zero
+reserved bytes, 16 installation bytes, 16 generation bytes, a little-endian
+32-bit acknowledgment counter (0..1024), and four zero reserved bytes. Both IDs
+must be nonzero and immutable. No other size, version, state or reserved value is
+accepted. CREATE_NEW writes counter zero; acknowledgment rereads exact bytes,
+compares both IDs and increments only below the bound, then writes completely
+and FlushFileBuffers. Errors preserve the file, including partial writes; no
+clean state, delete, recovery, retry or settlement API exists. Exclusive handles
+serialize operations without a named mutex. Security is rechecked before writes.
+
+Acceptance checks separate pure record/ACL models and injected short-write/flush
+failure from native protected-path observations. Only owned ignored build fixtures
+may be written. Native positive unavailability is reported, not bypassed. Compile
+x64/ARM64; run x64 tests. Linux/performance/release checks are inapplicable to this
+Windows-only disconnected target. MSI/client correlation, effective database trust,
+package pins, participating host exclusion and durable clean publication remain
+unimplemented gates; prospective exports must continue unconditionally failing.
+
+Path-pinning refinement: resolve the module's local drive root once to its volume
+GUID using GetVolumeNameForVolumeMountPointW, then use only that canonical volume
+path for every pin and leaf open. This prevents later DOS drive-letter remapping
+from redirecting the fixed leaf. Caller-supplied device/UNC paths remain absent.

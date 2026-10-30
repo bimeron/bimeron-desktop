@@ -609,3 +609,21 @@ The separate standalone foreground prototype offers the default-off
 observation only, with no install rule or distributable MSI. See the prototype
 README for its missing security and guest-execution gates. It does not alter
 supported build or packaging flows.
+
+### Disconnected pending-file build option
+
+The standalone foreground project adds default-off FOREGROUND_LAB_PROTECTED_FILE
+and explicit foreground-lab-protected-file target, with no install rule or MSI.
+Configure separate ignored build/foreground-file-amd64 and arm64 directories with
+that option; build that target in Release and run only its x64 CTest. It uses
+installed MSVC and Windows SDK only. Strict protected-path positive availability
+is reported separately from codec/ACL models and owned temporary I/O; passing
+models cannot establish installer authority. Supported package flow is unchanged.
+
+Pending-file offline evidence: both Windows architectures compiled the standalone
+non-injected library and injected harness with /W4 /WX. x64 CTest passed 1/1;
+ARM64 is compile-only. Strict native protected-path admission was unavailable on
+the host. Codec/ACL/identity models and owned temporary write/flush checks do not
+establish protected storage or installer trust. See the fixture README for the
+exact limits. Linux/performance/package checks are inapplicable to this isolated
+Windows-only option; no release artifacts were generated.
