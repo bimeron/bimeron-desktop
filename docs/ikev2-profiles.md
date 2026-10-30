@@ -261,3 +261,18 @@ compile-only; native ARM runtime/CI was not run locally. Diff hygiene and
 case-sensitive translation JSON parsing passed. No package generation,
 protected installation, native GUI connection, enrollment or live VPN acceptance
 is established by this matrix.
+
+### Offline protected-ack access fixture acceptance
+
+A separate, default-off standalone Windows lab target may observe effective-token
+access without authorizing enrollment. Its callbacks must fail closed, report
+initiating-client correlation as Unknown, and never publish clean state. The
+fixture must not write a pending or acknowledgment file unless a fixed private
+lab directory, its ancestors and pinned handles have been validated against
+reparse and owner/DACL substitution. A complete implementation additionally
+requires an isolated validated mutex, CREATE_NEW and flushed bounded records,
+immutable generation matching, and external exact-package and client-process
+pins. Until those requirements are implemented and independently checked, no
+MSI is suitable for guest execution. Offline tests must distinguish actual OS
+observations from injected failure models; no installation, registry, network,
+service, credential, elevation or guest action is authorized by this amendment.
