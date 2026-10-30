@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 import struct
 import sys
+import uuid
 
 msi = C.WinDLL('msi.dll', winmode=0x800)
 for name, args in {
@@ -62,7 +63,7 @@ def eligible_input(e):
 
 def validate(t, digest):
     assert {r[0] for r in t['_Tables']} == {'AdminExecuteSequence','AdminUISequence','AdvtExecuteSequence','Binary','CustomAction','Directory','Feature','File','InstallExecuteSequence','InstallUISequence','LaunchCondition','Media','Property','Upgrade','_Validation'}
-    assert t['File'] == [] and t['Media'] == []
+    assert t['File'] == [] and t['Media'] == [['1', '0', '', '', '', '']]
     for sequence in ['AdminExecuteSequence','AdminUISequence','AdvtExecuteSequence','InstallUISequence']:
         assert all(r[0] not in {'ForegroundPrototypeGate', 'ForegroundPostFinalizeGate'} for r in t[sequence])
     assert t['CustomAction'] == sorted([
@@ -92,9 +93,15 @@ def validate(t, digest):
     props = dict(t['Property'])
     assert set(props) == {'ALLUSERS','Manufacturer','ProductCode','ProductLanguage',
                           'ProductName','ProductVersion','SecureCustomProperties','UpgradeCode'}
+    assert str(uuid.UUID(props['ProductCode'].strip('{}'))).upper() == props['ProductCode'].strip('{}')
+    assert props['ProductCode'] != props['UpgradeCode']
     assert props['Manufacturer'] == 'Bimeron' and props['ProductLanguage'] == '1033'
     assert props['SecureCustomProperties'] == 'WIX_DOWNGRADE_DETECTED;WIX_UPGRADE_DETECTED'
     assert props['UpgradeCode'] == '{A8945D41-FEAD-441D-AC52-FB832E9E6BE9}'
+    assert t['Upgrade'] == sorted([
+        [props['UpgradeCode'], '', props['ProductVersion'], '', '1', '', 'WIX_UPGRADE_DETECTED'],
+        [props['UpgradeCode'], props['ProductVersion'], '', '', '2', '', 'WIX_DOWNGRADE_DETECTED']])
+    assert t['LaunchCondition'] == [['NOT WIX_DOWNGRADE_DETECTED', 'Fixture only']]
     assert props['ProductName'] == 'Bimeron foreground feasibility fixture'
     assert props['ProductVersion'] == '0.0.1' and props['ALLUSERS'] == '1'
     assert not set(props) & {'TRANSFORMS', 'PATCH', 'DISABLEROLLBACK', 'REINSTALL', 'REMOVE', 'ADDLOCAL'}
@@ -139,7 +146,9 @@ if __name__ == '__main__':
     path, dll, arch = Path(sys.argv[1]).resolve(), Path(sys.argv[2]).resolve(), sys.argv[3]
     digest = pe_check(dll, arch)
     db = W.UINT(); check(msi.MsiOpenDatabaseW(str(path), None, C.byref(db))) # MSIDBOPEN_READONLY
-    columns = {'_Tables':['Name'], 'File':['File'], 'Media':['DiskId'],
+    columns = {'_Tables':['Name'], 'File':['File'], 'Media':['DiskId','LastSequence','DiskPrompt','Cabinet','VolumeLabel','Source'],
+               'Upgrade':['UpgradeCode','VersionMin','VersionMax','Language','Attributes','Remove','ActionProperty'],
+               'LaunchCondition':['Condition','Description'],
                **{name:['Action','Condition','Sequence'] for name in ['AdminExecuteSequence','AdminUISequence','AdvtExecuteSequence','InstallUISequence']}, 'CustomAction':['Action','Type','Source','Target'], 'Binary':['Name','Data'],
                'InstallExecuteSequence':['Action','Condition','Sequence'],
                'Directory':['Directory','Directory_Parent','DefaultDir'],
@@ -156,6 +165,33 @@ if __name__ == '__main__':
         try: validate(bad, digest)
         except AssertionError: pass
         else: raise AssertionError('unsafe effective database accepted')
+    for table in ['Upgrade', 'LaunchCondition']:
+        bad = copy.deepcopy(tables); bad[table] = []
+        try: validate(bad, digest)
+        except AssertionError: pass
+        else: raise AssertionError(f'empty {table} accepted')
+    for index in range(len(tables['Upgrade'])):
+        bad = copy.deepcopy(tables); bad['Upgrade'].pop(index)
+        try: validate(bad, digest)
+        except AssertionError: pass
+        else: raise AssertionError('missing Upgrade row accepted')
+    for row, column, value in [(0,0,'{00000000-0000-0000-0000-000000000000}'),
+                               (0,1,'0.0.1'), (0,2,'0.0.2'), (0,3,'1033'),
+                               (0,4,'0'), (0,5,'ALL'), (0,6,'OTHER'),
+                               (1,1,'0.0.2'), (1,2,'0.0.2'), (1,4,'0')]:
+        bad = copy.deepcopy(tables); bad['Upgrade'][row][column] = value
+        try: validate(bad, digest)
+        except AssertionError: pass
+        else: raise AssertionError('unsafe Upgrade row accepted')
+    bad = copy.deepcopy(tables)
+    next(r for r in bad['Property'] if r[0] == 'SecureCustomProperties')[1] = 'WIX_UPGRADE_DETECTED'
+    try: validate(bad, digest)
+    except AssertionError: pass
+    else: raise AssertionError('unsecured downgrade property accepted')
+    bad = copy.deepcopy(tables); bad['LaunchCondition'][0][0] = '1'
+    try: validate(bad, digest)
+    except AssertionError: pass
+    else: raise AssertionError('unsafe downgrade condition accepted')
     for name in ['ForegroundPrototypeGate', 'ForegroundPostFinalizeGate', 'RemoveExistingProducts']:
         bad = copy.deepcopy(tables)
         row = next(r for r in bad['InstallExecuteSequence'] if r[0] == name)

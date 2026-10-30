@@ -20,7 +20,7 @@ The exact own MSI must bind synchronous checked Binary DLL exports, removal afte
 InstallExecute before InstallFinalize, rollback/commit work inside Initialize to
 Finalize and only a nonmutating acknowledgment after Finalize. Refuse disabled
 rollback, patches, transforms, unsupported maintenance and mutation properties.
-Inspect linked MSI tables and Binary bytes read-only if cached WiX is available.
+Inspect linked MSI tables and Binary bytes read-only if cached WiX is available. Require exactly the WiX 3 MajorUpgrade rows, downgrade launch condition, matching product identity and secured action properties. Reject missing, empty or altered upgrade and downgrade rows on both architectures.
 External payload and signature trust are absent; effective runtime database trust
 and production enrollment must refuse regardless of offline fixture results.
 
@@ -90,7 +90,7 @@ The offline effective-input model explicitly rejects these and all maintenance
 except the fresh fixture, with an empty mutation-property allowlist. It is not a
 runtime effective-database verifier. The table verifier checks the exact execute
 sequence, custom actions, source/target/type, conditions, directories, features,
-properties and embedded digest, and rejects negative variants. Actual external
+properties, exact Upgrade and LaunchCondition rows and embedded digest, and rejects negative variants. The former validator accepted empty Upgrade and LaunchCondition rows in a baseline mutation; the revised validator rejects them and missing or altered rows. Synthetic settlement booleans are model inputs, not authenticated authority. Actual external
 payload provenance/signature and a trusted effective runtime database are absent.
 Static CRT, system-only imports, no delay imports and SYSTEM32 dependent-load flags
 bound this DLL's dependencies; code-loading provenance in MSI still needs VM proof.
@@ -98,8 +98,11 @@ bound this DLL's dependencies; code-loading provenance in MSI still needs VM pro
 ## Recorded offline result (2026-10-30)
 
 Both MSVC Release architectures compiled. Cached WiX 3 candle/light linked both
-MSIs; ICE ran and emitted ICE71 (empty Media table) for each. This warning is
-expected for the payload-free fixture, not a warning-free ICE result. x64 CTest
+MSIs. The initial MediaTemplate produced an empty Media table and ICE71. The
+revised fixture uses an explicit Media row with DiskId 1 and LastSequence 0.
+Normal verbose light validation ran ICE, including ICE71, on both revised MSIs
+with no warning or error diagnostics; ICE09 noted that the Component table is
+absent and cannot be checked. No ICE was suppressed. x64 CTest
 covers worker/process exclusion, descriptor/context/settlement negatives, generated
 WiX and actual read-only MSI/PE inspection. ARM64 runs only host-side source/MSI/PE
 checks, never its executable. No performance-sensitive path changed; benchmarks
@@ -117,3 +120,10 @@ missing callbacks, filtered contexts, host death/reboot/sharing failures; enforc
 participation of all runnable native/network/recovery hosts and enrolled updater
 rollback compatibility. All require a separately authorized VM/contract phase.
 Implementation is partial and production enrollment remains unavailable.
+
+Revised fixture SHA-256 (local builds, not release artifacts):
+
+| Architecture | MSI | Binary DLL |
+|---|---|---|
+| x64 | `14fe4bab14d0c5461dfdf0c1d55457dd8d32f92504eeb2a1477cd65a6be5562f` | `490fd505c74f3f76255dce226d2d4cb57acea9ff28f73e3c33e883be0cbe4625` |
+| ARM64 | `aa8936c47484f5aca029552eb51bb591e10804356b24d6ce6cc309404789f5a9` | `6a13ef9aef96c9a23774cd7a11acec1c6b30eacbb130598811887f1a45faa7e8` |

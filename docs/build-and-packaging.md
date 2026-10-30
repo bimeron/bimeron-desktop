@@ -521,3 +521,10 @@ Unknown; the current-token reader and privileged positive AccessCheck are not
 actual MSI callback proof. Both MSI exports always refuse. Core does not read
 this fixture journal, so durable host exclusion and native enrollment remain
 unimplemented. See the owned README for commands and remaining VM gates.
+
+The standalone offline foreground prototype now authors a single empty-payload
+Media row and verifies the linked WiX MajorUpgrade and downgrade condition rows.
+Its two architecture fixtures passed normal ICE validation without warning or
+error diagnostics; ICE09 could not check the absent Component table. This does
+not change or validate production packaging. See the prototype README for hashes
+and remaining authorization and runtime gates.

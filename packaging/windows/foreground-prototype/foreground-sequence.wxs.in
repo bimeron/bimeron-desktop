@@ -6,7 +6,7 @@
            Version="0.0.1" Manufacturer="Bimeron" UpgradeCode="A8945D41-FEAD-441D-AC52-FB832E9E6BE9">
     <Package InstallerVersion="500" Compressed="yes" InstallScope="perMachine" Platform="@WIX_ARCH@" />
     <MajorUpgrade Schedule="afterInstallExecute" DowngradeErrorMessage="Fixture only" />
-    <MediaTemplate EmbedCab="yes" />
+    <Media Id="1" />
     <Binary Id="ForegroundPrototypeBinary" SourceFile="@FOREGROUND_DLL@" />
     <CustomAction Id="ForegroundPrototypeGate" BinaryKey="ForegroundPrototypeBinary"
                   DllEntry="ForegroundPrototype" Execute="immediate" Return="check" />
