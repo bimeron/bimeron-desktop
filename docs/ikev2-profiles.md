@@ -23,6 +23,22 @@ live-tested executable.
 
 ## Approved installation and owner contract
 
+The user accepted explicit, separate native enrollment on 2026-10-30. Ordinary
+packet-only installations and their existing signed update/rollback behavior must
+remain unchanged. Trusted absence of enrollment means native operations are
+unavailable; it must not become a new global packet-start prerequisite. Pending,
+unsafe or incomplete enrolled installation state must fail closed for participating
+protected admissions. Abnormal native-installation failure may require explicit
+administrative recovery. Routine successful installation must not silently leave
+the product indefinitely locked pending manual settlement.
+
+This accepts the limited product boundary, not a particular registry schema or
+an unproven MSI completion protocol. The global missing-state refusal and proposed
+settle-before-service-restart updater redesign were rejected. Native execution
+remains disabled until safe terminal settlement, migration/participating-host
+exclusion and preserved update/rollback are demonstrated. No setup wrapper,
+installed general-purpose helper or automatic administrative recovery is added.
+
 Each approved Windows GUI build embeds the exact reviewed Core revision and
 architecture-specific executable digest from verified final artifacts. Authenticate
 the protected Core image before initial hello, then independently verify the OS
