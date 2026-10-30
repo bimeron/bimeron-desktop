@@ -1095,3 +1095,32 @@ Canonical supported build/package flow is unchanged, so its document is unchange
 Product CI/matrix, ARM64/Linux runtime, benchmarks/profiling and release are not
 applicable to this disconnected native-x64 runner change. VM observation remains
 outstanding; Equal/Different/Unknown comparisons remain observations only.
+
+### Retained client identity observation (2026-10-30)
+
+The parent provisioned the separate fixed native Program Files BimeronTraceClientLab
+with protected Administrators/SYSTEM permissions after inspecting ancestor SDDL.
+The earlier Public/Documents location was not used because its untrusted delete-child
+rights cannot provide the intended boundary without broader ACL changes. Program
+Files/root ACLs and both existing protected Pending fixtures were unchanged.
+Two preparation checks failed before provisioning because of SID translation and
+PowerShell casting errors; inspection then used raw SDDL. The initial script invocation
+was blocked by ExecutionPolicy before MSI launch. Only the subsequent process-scoped
+Bypass invocation ran the reviewed runner; no persistent policy was changed.
+
+Runner source 31018c3f, SHA-256
+`da99ca4e0990f0480ad68114217da0fc0aef0d36b62991ca8ae5d9cd7858c78f`,
+and manifest `61f15a4bfd277612acd323012b743008e31a4fc91a3bd2bbcb3fb0ba2830536a`
+launched the unchanged a761106 Success MSI
+`c9ef15c85efdd28181ed4048fae661e0330970f05db4480b5823a6108cd604c4`
+once in native x64 Elevated Session 0. Exit was 0, no timeout or late operation,
+ProductState -1 before/after, complete Preflight/DeferredBegin/Commit/PostFinalize.
+The retained launched-process identity was PID 7580, raw creation FILETIME
+`01dd685c3fc9a342`. All four callback identity comparisons were Different.
+This disproves direct callback-host equality with this launched client in this
+particular experiment. It does not authenticate an interactive initiator, prove a
+general MSI placement rule, or identify a safe custom-action termination target.
+No process was discovered or terminated for this comparison. No failure variant,
+retry, uninstall or cleanup was run. Private summary, receipt, log and result are
+retained under ignored build/vm-lab-evidence-20261030. Production/enrollment and
+crash authority remain unavailable; no new wrapper requirement is inferred.
