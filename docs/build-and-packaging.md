@@ -159,7 +159,7 @@ The script performs the following process:
 1. checks WSL unless `-WindowsOnly` was requested, then fetches and verifies the required core archives;
 2. creates `dist` and removes old Bimeron `.msi`, `.exe` and `.deb` packages;
 3. downloads portable WiX if necessary;
-4. configures, builds, stages and packages Windows amd64 and ARM64 with `BIMERON_REQUIRE_CORE=ON`;
+4. configures, builds and stages Windows amd64 and ARM64 with `BIMERON_REQUIRE_CORE=ON`, rejects any staged EXE/DLL with a mismatched PE architecture, then packages;
 5. unless `-WindowsOnly` was requested, runs `scripts/package-linux.sh` in WSL for the two DEBs;
 6. removes temporary `dist/_CPack_Packages` and displays the finished packages.
 
@@ -226,7 +226,7 @@ The `stage/windows-amd64` or `stage/windows-arm64` tree is the source of the MSI
 - `bimeron-core.exe` of the same architecture;
 - `wintun.dll` of the same architecture;
 - necessary DLLs and Qt plugins;
-- architecture-matched MSVC redistributable DLLs, including `VCRUNTIME140_1.dll`, copied from the installed Visual Studio toolchain;
+- architecture-matched MSVC redistributable DLLs, copied from the installed Visual Studio toolchain (`VCRUNTIME140_1.dll` is x64-only; the ARM64 redist directory's unused x64 compatibility copy is excluded);
 - `translations/qt_ru.qm` for localized Qt buttons and dialogs;
 - `WINTUN-LICENSE.txt`;
 - `CORE-LICENSE.txt`;
@@ -306,7 +306,7 @@ DEB is not yet subscribed or published to the APT repository. A typical APT sign
 
 ## Review before publishing
 
-GitHub Actions `Desktop CI` runs on pushes, pull requests and manual dispatch. It configures and compiles the GUI for Windows amd64 and ARM64 (MSVC 2022 and Qt 6.8.3; ARM64 cross-compiles on an x64 runner) and Linux amd64 and arm64 (Ubuntu 24.04 and system Qt 6). CI does not download core, create installation packages or publish them. It also runs CTest on native Windows x64 and both native Linux runners. Windows ARM64 remains cross-compile-only. On Windows ARM64, CI sets `BIMERON_DEPLOY_QT=OFF` because the ARM64 deployment tool cannot run on the x64 runner. Local package builds use the default `ON`. Without downloaded core, CMake uses CPack's default license text while configuring CI; package builds require the actual core notices and licenses.
+GitHub Actions `Desktop CI` runs on pushes, pull requests and manual dispatch. It configures and compiles the GUI for Windows amd64 and ARM64 (MSVC 2022 and Qt 6.8.3; ARM64 cross-compiles on an x64 runner) and Linux amd64 and arm64 (Ubuntu 24.04 and system Qt 6). CI does not download core, create installation packages or publish them. It also runs CTest on native Windows x64 and both native Linux runners. Windows ARM64 remains cross-compile-only. On Windows ARM64, CI sets `BIMERON_DEPLOY_QT=OFF` because the ARM64 deployment tool cannot run on the x64 runner. Local package builds use the default `ON`. Deployment passes the selected target Qt installation through `--qtpaths`, so an x64 host tool deploys ARM64 Qt for an ARM64 build. `--no-compiler-runtime` leaves MSVC runtime installation to CMake's architecture-specific redistributable rule. After correcting an earlier deployment architecture, remove stale DLLs from that configuration's generated output and clear its staging tree before rebuilding; inspecting only the GUI executable is insufficient. Without downloaded core, CMake uses CPack's default license text while configuring CI; package builds require the actual core notices and licenses.
 
 `ctest` runs `profile-vless-test`, covering profile preservation, atomic replacement, permissions/DACLs, relative-reference import refusal, and secret redaction as well as existing protocol round trips. It uses Qt's offscreen platform on Linux and the Windows platform plugin on Windows. Set `BIMERON_VLESS_CORE` to a VLESS-capable core CLI path to additionally validate each generated profile against the core. Set `BIMERON_HYSTERIA2_CORE` for Hysteria2 validation and `BIMERON_PRESERVATION_CORE` to the exact reviewed newer CLI for SS2022, plugin, wrapper, and opaque-source preservation fixtures. These variables are for local contract testing and do not affect packages.
 

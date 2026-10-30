@@ -62,8 +62,13 @@ if(WIN32)
         get_target_property(QT_QMAKE_EXECUTABLE Qt6::qmake IMPORTED_LOCATION)
         get_filename_component(QT_BIN_DIR "${QT_QMAKE_EXECUTABLE}" DIRECTORY)
         find_program(WINDEPLOYQT_EXECUTABLE windeployqt HINTS "${QT_BIN_DIR}" REQUIRED)
+        get_target_property(QT_TARGET_CORE Qt6::Core IMPORTED_LOCATION_RELEASE)
+        get_filename_component(QT_TARGET_BIN_DIR "${QT_TARGET_CORE}" DIRECTORY)
+        find_program(QT_TARGET_PATHS NAMES qtpaths.exe qtpaths.bat
+            PATHS "${QT_TARGET_BIN_DIR}" NO_DEFAULT_PATH NO_CACHE REQUIRED)
         add_custom_command(TARGET bimeron-desktop POST_BUILD
-            COMMAND "${WINDEPLOYQT_EXECUTABLE}" --translations ru
+            COMMAND "${WINDEPLOYQT_EXECUTABLE}" --qtpaths "${QT_TARGET_PATHS}"
+                --no-compiler-runtime --translations ru
                 --no-system-d3d-compiler --no-opengl-sw "$<TARGET_FILE:bimeron-desktop>"
             VERBATIM)
     endif()
@@ -211,10 +216,18 @@ if(WIN32)
         PATTERN "profile-vless-test*" EXCLUDE
         PATTERN "developer-mode-test*" EXCLUDE)
     set(CMAKE_INSTALL_SYSTEM_RUNTIME_DESTINATION ".")
+    set(CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS_SKIP TRUE)
     include(InstallRequiredSystemLibraries)
-    if(NOT CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS MATCHES "vcruntime140_1\\.dll")
+    if(BIMERON_PACKAGE_ARCH STREQUAL "arm64")
+        # Microsoft's ARM64 redist also contains this unused x64 compatibility DLL.
+        list(FILTER CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS EXCLUDE REGEX "/vcruntime140_1\\.dll$")
+    elseif(NOT CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS MATCHES "vcruntime140_1\\.dll")
         message(FATAL_ERROR "MSVC redistributable runtime was not found for ${BIMERON_PACKAGE_ARCH}")
     endif()
+    if(NOT CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS MATCHES "/vcruntime140\\.dll")
+        message(FATAL_ERROR "MSVC runtime was not found for ${BIMERON_PACKAGE_ARCH}")
+    endif()
+    install(PROGRAMS ${CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS} DESTINATION .)
 else()
     install(TARGETS bimeron-desktop
         RUNTIME DESTINATION bin
