@@ -14,8 +14,13 @@ if (@('Success','CommitFail','PostFinalizeFail','UninstallSuccess','UninstallCom
 if ($LabOnlyAllow -cne 'DisposableWindowsVM') { throw 'Literal lab acknowledgment required.' }
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+function Get-LabRoot {
+ Initialize-LabHelpers
+ if ($env:OS -ne 'Windows_NT' -or -not [BimeronLabLaunch]::NativeAmd64()) { throw 'Native amd64 Windows runner required.' }
+ return [IO.Path]::Combine([BimeronLabLaunch]::ProgramFiles(), 'BimeronTraceClientLab')
+}
 function Assert-LabPath([string]$Path) {
- $root = 'C:\Users\Public\Documents\BimeronInstallerLab'
+ $root = Get-LabRoot
  $full = [IO.Path]::GetFullPath($Path)
  if ($Path -ne $full -or ($full -ne $root -and -not $full.StartsWith($root + '\', [StringComparison]::OrdinalIgnoreCase))) { throw 'Noncanonical lab path.' }
  $item = $full
@@ -73,8 +78,16 @@ public sealed class BimeronLabLaunch {
  }
  readonly Func<Process,BimeronLabIdentity> capture; readonly Action<Process> wait;
  public volatile BimeronLabIdentity Identity; public volatile bool IdentityFailed;
- [DllImport("kernel32.dll")] static extern void GetNativeSystemInfo(IntPtr info);
- public static bool NativeAmd64(){IntPtr info=Marshal.AllocHGlobal(64);try{GetNativeSystemInfo(info);return Marshal.ReadInt16(info)==9;}finally{Marshal.FreeHGlobal(info);}}
+ [DllImport("kernel32.dll", SetLastError=true)] static extern bool IsWow64Process2(IntPtr process,out ushort processMachine,out ushort nativeMachine);
+ [DllImport("shell32.dll", ExactSpelling=true)] static extern int SHGetKnownFolderPath(ref Guid id,uint flags,IntPtr token,out IntPtr path);
+ public static bool SupportedArchitecture(int pointerSize,ushort processMachine,ushort nativeMachine){return pointerSize==8 && processMachine==0 && nativeMachine==0x8664;}
+ public static bool NativeAmd64(){ushort processMachine,nativeMachine;using(var p=Process.GetCurrentProcess()){return IsWow64Process2(p.Handle,out processMachine,out nativeMachine) && SupportedArchitecture(IntPtr.Size,processMachine,nativeMachine);}}
+ public static string ProgramFiles(){
+  var id=new Guid("905e63b6-c1bf-494e-b29c-65b732d3d21a");IntPtr path=IntPtr.Zero;
+  try{if(SHGetKnownFolderPath(ref id,0,IntPtr.Zero,out path)!=0 || path==IntPtr.Zero)throw new InvalidOperationException("Program Files query failed.");
+   string value=Marshal.PtrToStringUni(path);if(String.IsNullOrEmpty(value) || !System.IO.Path.IsPathRooted(value) || System.IO.Path.GetFullPath(value)!=value)throw new InvalidOperationException("Invalid Program Files path.");return value;
+  }finally{if(path!=IntPtr.Zero)Marshal.FreeCoTaskMem(path);}
+ }
  readonly IDisposable[] pins; readonly Func<Process> launch;
  readonly ManualResetEvent done=new ManualResetEvent(false);
  public Process Process; public int? ExitCode; public bool Failed;
@@ -188,8 +201,7 @@ function Open-LabPinned([string]$Path, [string]$Hash) {
 }
 # No library/test-mode entry point: tests extract only helper AST definitions.
 Initialize-LabHelpers
-if ($env:OS -ne 'Windows_NT' -or -not [Environment]::Is64BitProcess -or -not [BimeronLabLaunch]::NativeAmd64()) { throw 'Native amd64 Windows runner required.' }
-$root = 'C:\Users\Public\Documents\BimeronInstallerLab'
+$root = Get-LabRoot
 $null = Assert-LabPath $root
 if ($PSCommandPath -cne "$root\Run-Lab.ps1") { throw 'Runner must be at its fixed guest path.' }
 $pins = [Collections.Generic.List[IDisposable]]::new()

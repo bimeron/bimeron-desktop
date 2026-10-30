@@ -33,7 +33,7 @@ and callback fields do not authenticate the initiating client: that remains Unkn
 The manual guest runner accepts only the literal disposable-VM acknowledgment,
 closed case and starting-token choices, a parent-communicated manifest SHA-256,
 and optional exact hexadecimal expected hashes. It operates only in the exact
-`C:/Users/Public/Documents/BimeronInstallerLab` tree after resolving paths and
+native Program Files `BimeronTraceClientLab` tree after resolving paths and
 rejecting reparse points in ancestors. Positive sanitized CIM manufacturer/model
 evidence is required but does not authenticate the VM; the parent confirms it.
 The fixed-schema manifest binds variants, identities and artifact hashes. Its hash
@@ -1038,8 +1038,8 @@ three-variant lab-manifest.json and revised runner/tests. Only one Success run i
 proposed; no ACK bytes are reused or relabeled. Frozen runner SHA-256:
 885f8999f66d32f6e991cb34f7de3842eda8b089611c57902799fc94cde6ed5f.
 
-Concrete preparation gap: Assert-LabPath and PSCommandPath require the exact
-C:\Users\Public\Documents\BimeronInstallerLab root and runner leaf. A fresh private
+Historical preparation gap (resolved by the fixed-root specification below): Assert-LabPath and PSCommandPath require the exact
+old Public Documents fixed root and runner leaf. A fresh private
 guest directory is incompatible with that contract. The bundle is not runtime
 ready and supplies no bypass or permission. Parent must resolve this policy before
 execution. All three MSI inputs remain mandatory even for one Success invocation.
@@ -1072,3 +1072,26 @@ new ignored build/trace-client-protected-root-review with revised runner/tests,
 original a761106 manifest and all three original MSI bytes, carried-forward actual
 table/Binary/import evidence, test logs and hash inventory. No rebuild, VM, push,
 watch, benchmark, profiling or release/product matrix is applicable here.
+
+### Fixed trace-client root offline evidence
+
+Specification 7bb03db precedes this runner-only implementation. PS 5.1 and 7
+harnesses pass 47 negative checks, including lexical refusal of the old Public
+root, arbitrary siblings and traversal before filesystem checks; native known-folder
+lookup and native-x64/unsupported architecture decisions are checked offline.
+Existing early handle/FILETIME capture, incomplete identity, late launch, deadline
+and retained-pin checks pass. IsWow64Process2 failure or missing entry point throws
+or returns refusal with no fallback; no unsupported guest was executed.
+
+New ignored bundle build/trace-client-protected-root-review carries the unchanged
+original a761106 manifest/MSI/DLL bytes and actual table reports. Prior independent
+review's actual MSI/Binary/import checks carry forward by unchanged artifact hashes;
+no native rebuild or MSI action was run. Only runner/tests/docs changed. Diff review
+found no arbitrary root, environment path fallback, ACL repair, production or ACK
+change. Parent must provision and verify the native Program Files anchor/fixed lab
+ACLs and review this bundle before the Elevated Session 0 Success observation.
+No Public ancestor ACLs or protected ACK/standalone Pending records were touched.
+Canonical supported build/package flow is unchanged, so its document is unchanged.
+Product CI/matrix, ARM64/Linux runtime, benchmarks/profiling and release are not
+applicable to this disconnected native-x64 runner change. VM observation remains
+outstanding; Equal/Different/Unknown comparisons remain observations only.

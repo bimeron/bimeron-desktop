@@ -5,7 +5,7 @@ $path=Join-Path $PSScriptRoot 'Run-Lab.ps1'
 $tokens=$null;$errors=$null
 $ast=[Management.Automation.Language.Parser]::ParseFile($path,[ref]$tokens,[ref]$errors)
 if ($errors.Count) { throw 'Runner syntax failure.' }
-foreach ($name in @('Compare-LabProcessIdentity','Get-LabTokenClass','Initialize-LabHelpers','Convert-LabJsonObject','Read-LabJson','Test-LabTraceComplete','Assert-JsonKeys','Assert-LabPath','Assert-Fields','Assert-Hash','Read-LabManifest','Read-LabTrace','Get-LabOutcome')) {
+foreach ($name in @('Get-LabRoot','Compare-LabProcessIdentity','Get-LabTokenClass','Initialize-LabHelpers','Convert-LabJsonObject','Read-LabJson','Test-LabTraceComplete','Assert-JsonKeys','Assert-LabPath','Assert-Fields','Assert-Hash','Read-LabManifest','Read-LabTrace','Get-LabOutcome')) {
  $fn=$ast.Find({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name},$true)
  . ([scriptblock]::Create($fn.Extent.Text))
 }
@@ -36,8 +36,23 @@ $manifest.variants.Success.productCode=$manifest.variants.CommitFail.productCode
 $manifest.variants.Success.productCode=$originalCode
 Reject { Assert-Hash ('a'*63) }
 Reject { Assert-Hash 42 }
-Reject { Assert-LabPath 'C:\Windows\System32' }
-Reject { Assert-LabPath 'C:\Users\Public\Documents\BimeronInstallerLab\..\escape' }
+function Reject-LabPath([string]$Value) {
+ $message='';try {$null=Assert-LabPath $Value} catch {$message=$_.Exception.Message}
+ if ($message -cne 'Noncanonical lab path.') {throw 'Expected lexical path refusal before filesystem checks.'}
+ $script:count++
+}
+Reject-LabPath 'C:\Windows\System32'
+Reject-LabPath 'C:\Users\Public\Documents\BimeronInstallerLab'
+$fixedRoot=Get-LabRoot
+if ($fixedRoot -cne ([IO.Path]::Combine([BimeronLabLaunch]::ProgramFiles(),'BimeronTraceClientLab'))) {throw 'Fixed known-folder root mismatch.'}
+Reject-LabPath ($fixedRoot+'\..\escape')
+Reject-LabPath ($fixedRoot+'Other')
+if (-not [BimeronLabLaunch]::SupportedArchitecture(8,0,0x8664)) {throw 'Native x64 refused.'}
+foreach ($pair in @(@(4,0,0x8664),@(8,0x14c,0x8664),@(8,0x8664,0xaa64),@(8,0,0xaa64),@(8,0,0))) {
+ Reject {if ([BimeronLabLaunch]::SupportedArchitecture($pair[0],$pair[1],$pair[2])) {return};throw 'Unsupported architecture.'}
+}
+# The closed parameter contract must not admit a caller-selected root.
+if (@($ast.ParamBlock.Parameters.Name.VariablePath.UserPath) -contains 'Root') {throw 'Arbitrary root parameter.'}
 Reject { Read-LabManifest '{"schema":"1","architecture":"amd64","traceSchema":1,"variants":{}}' }
 Reject { Read-LabTrace 'BIMERON_LAB_TRACE_V1 {"callback":"shell"}' }
 Reject { Read-LabTrace ('BIMERON_LAB_TRACE_V1 '+('x'*2049)) }
