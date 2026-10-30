@@ -39,6 +39,29 @@ remains disabled until safe terminal settlement, migration/participating-host
 exclusion and preserved update/rollback are demonstrated. No setup wrapper,
 installed general-purpose helper or automatic administrative recovery is added.
 
+The user additionally accepted an already-elevated, same-user interactive MSI
+client for native enrollment and every modification of an enrolled installation.
+Without independently established effective-token/session evidence, refuse before
+mutation and request elevated installation. Per-machine server elevation alone
+does not satisfy this condition. Ordinary nonenrolled packet installation and its
+existing update/rollback retain their behavior. This authorizes only an offline
+prototype, not enrollment or a protected installation experiment.
+
+The prototype must constrain its own approved package: old-product removal after
+InstallExecute and before InstallFinalize, all destructive/rollback/commit work
+inside that transaction, and no later resource mutation. Post-Finalize settlement
+is a separate protected journal acknowledgment, not rollback-covered resource
+work or proof that the caller received a successful MSI return. Effective token,
+same-user/session, approved effective package, exact generation, final inventory
+and quiescence must be reverified before durable clean publication. Unsupported
+transforms, patches, maintenance baselines or mutation-driving properties refuse.
+Filtered callback tokens, missing callbacks, failed verification/flush, interrupted
+or reboot-incomplete outcomes retain pending for explicit administrative recovery.
+Actual callback identity, code-loading provenance, ordering and durable host reads
+remain unproved. The current continuous-mutex contract is not silently replaced
+by a callback assertion; production stays disabled pending reviewed amendments
+and disposable-VM evidence.
+
 Each approved Windows GUI build embeds the exact reviewed Core revision and
 architecture-specific executable digest from verified final artifacts. Authenticate
 the protected Core image before initial hello, then independently verify the OS
