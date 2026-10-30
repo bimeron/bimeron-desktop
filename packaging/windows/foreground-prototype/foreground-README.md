@@ -478,3 +478,23 @@ was therefore not run. These results establish callback/order observations only,
 not resource rollback/restoration, interactive UAC, durable exclusion, privileged
 settlement, host-death behavior or native/production compatibility. Raw logs are
 retained under ignored private evidence and are not committed.
+
+### InteractiveToken observation plan
+
+The parent may run the frozen source-a761106 x64 Success fixture through two
+sequential, temporary Task Scheduler tasks: InteractiveToken Limited, then Highest.
+Revalidate the actual logged-on explorer owner SID and positive session ID before
+each launch. Use RunEx with TASK_RUN_USE_SESSION_ID and no action parameters,
+credentials, triggers, recurrence or fallback logon. Fix the absolute native
+msiexec path, hash-pinned MSI, `/i /qn /norestart` and distinct private log paths.
+Keep payload directories administrator/SYSTEM writable with user read access;
+only the separate log directory grants the selected user write access.
+
+Record exact task/action/session metadata before registration. Require product
+state -1 before the next install; unexpected state blocks progression pending
+explicit verified lab cleanup. Observe for at most five minutes without task/process
+termination. Disable scheduler execution timeout and hard termination. On timeout
+retain the task/evidence and stop. After confirmed completion capture task result,
+MSI log/callback observations and product state, then delete only that exact task.
+Label results Task Scheduler-launched InteractiveToken Limited/Highest; human UAC
+consent remains not tested and authenticated human initiator remains unknown.
