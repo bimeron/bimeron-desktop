@@ -1,0 +1,105 @@
+# Bounded CostInitialize probe
+
+Accepted contract: parent specification commit 776ea9a. This standalone x64
+experiment is disconnected from production builds and installation rules.
+It is a discrimination experiment, not a fix or native enrollment evidence.
+
+## Isolation proof and execution boundary
+
+Microsoft documents that [MsiOpenPackageExW flag 1](https://learn.microsoft.com/en-us/windows/win32/api/msi/nf-msi-msiopenpackageexw)
+creates a machine-state-independent restricted handle incapable of changing
+machine state, excludes DLL/EXE/script custom actions, and permits CostInitialize.
+It requires COM initialization on the same thread. [MsiDoActionW](https://learn.microsoft.com/en-us/windows/win32/api/msiquery/nf-msiquery-msidoactionw)
+permits CostInitialize outside an initialized installation transaction.
+The probe initializes COM on its sole calling thread, opens only flag-1 handles,
+passes only literal `CostInitialize`, closes each successful handle, and balances
+COM cleanup. There is no sequence, default action, installation or other action
+entry point. The source and compiled MSI import allowlist are checked offline.
+
+Independent review is pending. Only the parent may run the guest command after
+review in a disposable x64 Windows VM. Never run the guest mode on the host.
+No VM, elevation, credential, installation, download or external mutation was used.
+
+## Build and offline checks
+
+Use cached Visual Studio 18 Build Tools and CMake, without dependencies:
+
+```powershell
+cmake -S packaging/windows/foreground-prototype/lab-costing-probe -B build/lab-costing-probe -G "Visual Studio 18 2026" -A x64 "-DCMAKE_GENERATOR_INSTANCE=C:/Program Files (x86)/Microsoft Visual Studio/18/BuildTools"
+cmake --build build/lab-costing-probe --config Release --target lab-storage
+python packaging/windows/foreground-prototype/lab-costing-probe/prepare.py
+cmake --build build/lab-costing-probe --config Release
+python packaging/windows/foreground-prototype/lab-costing-probe/check.py
+```
+
+Preparation refuses existing output MSIs. It verifies the exact frozen input
+path/hash before copying and again afterward. Existing copies are retained as
+evidence; use a separately reviewed fresh build directory if preparing again
+(the preparation script currently fixes the documented build directory).
+Regenerated artifacts must be reviewed and repinned; do not assume byte-for-byte
+reproducibility of Windows Installer database commits.
+
+`prepare.py` reuses the read-only checker to compare every persistent table,
+actual columns and data (including Binary hashes). Component schema includes its
+primary-key type and remains exactly equal with zero rows. FeatureComponents has
+its two nonnullable primary-key columns and no rows. The feature-only change may
+alter only the table/column/string metadata compound streams; all other stream
+bytes are equal. The explicit Component change adds exactly one zero-byte stream,
+leaving every existing stream unchanged. Summary, Binary, sequence, identities,
+resource and validation data remain unchanged. Physical container allocation is
+not required to be identical after native storage/database commits.
+
+Table stream encoding is derived from Wine's primary implementation,
+https://github.com/wine-mirror/wine/blob/master/dlls/msi/table.c
+(`encode_streamname`, `read_stream_data`): 0x4840 prefix, the MSI 64-character
+alphabet and paired six-bit encoding. The mapping is checked against existing
+nonempty Feature, Directory, Property, _Tables and _Columns streams in the frozen
+MSI before adding Component. Thus the name is not inferred from an absent stream.
+`lab-storage` uses native IStorage only; it is an offline preparation utility,
+not part of the guest probe. It never opens an MSI session.
+
+The generated `Release/offline-report.json` records all logical tables and
+physical stream sizes/hashes for each copy. `check.py` passes corrupt-hash tests
+for each fixed case, swapped-case rejection, three invalid argument tests,
+verify-only mode, and compiled MSI import inspection. The Windows SDK links MSI
+by ordinal; the check resolves these against the system DLL exports and requires
+exactly MsiOpenPackageExW, MsiDoActionW and MsiCloseHandle. No delay imports occur.
+An initial name-only import check failed because of ordinal imports; the corrected
+check resolves the actual ordinals (232, 34, 8). No action was invoked to test this.
+
+## Frozen artifacts and guest command
+
+Artifacts: `build/lab-costing-probe/Release/`. Copy only the probe executable and
+four MSI files together to a private directory in the disposable guest.
+The executable accepts exactly `--verify-only` or `--guest-cost-initialize`,
+locates the four fixed names beside itself, pins all four hashes before opening
+any session, and retains non-write/non-delete-shared file handles until cleanup.
+There is no case, path, property, action or environment override. Output contains
+only numeric case/status fields and pinned hashes; a failed action is a measured
+result, not a probe process failure. Close status is reported separately. No logs
+containing accounts or environment are requested.
+
+Fixed parent-operated guest command, from that directory:
+
+```powershell
+.\lab-costing-probe.exe --guest-cost-initialize
+```
+
+SHA-256:
+
+```text
+lab-costing-probe.exe 3e13664c8430a2b3af7e6eee94b11ac850659b06fac3bc92e339272ddc263b67
+lab-storage.exe       03d9f89861543de3a179e02f57c5c95caa4c99e46867dd7a3bf8a83b60ba0cb5
+original.msi          0c73788944a2d520628e7dd619df2eb507821021fd76cef4dd879851586d0dbf
+component-stream.msi  99a09d53f05af7c82c8eede7c64a3200731eeee87bdde9bc86dc0aedc1290561
+feature-components.msi 4438582783be142a9eceae71bf9f53bfdc124747eacd27f938f6c626bd739447
+both.msi              0eda7262ab1fe7e365e1db8cbd374a1aa00d5fb4442816172f1da316226cb2df
+```
+
+MSVC x64 standalone compilation and all described offline checks passed.
+Diff review found no production registration or resource changes. No performance
+path changed, so benchmarks/profiling are inapplicable. Windows ARM64 and both
+Linux targets are unaffected by this disconnected x64 Windows experiment; the
+release build/package matrix and VM execution were not run. Remaining risks:
+independent review and guest results pending; results cannot establish native
+installation safety, callback behavior, outer transaction settlement or enrollment.

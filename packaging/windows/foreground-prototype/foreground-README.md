@@ -372,3 +372,12 @@ with no dependencies or generated files committed. If a valid zero-length stream
 cannot be represented or verified, report the limitation instead of inventing a fix.
 Linux, ARM64, benchmark, profiling and release matrix are inapplicable to this
 standalone discrimination fixture.
+
+## Implemented bounded costing probe
+
+The accepted 776ea9a experiment is implemented in
+[lab-costing-probe/README.md](lab-costing-probe/README.md), with fixed hash pins,
+standalone build commands, physical/logical offline checks and the parent-only
+guest command. Official restricted-handle API semantics establish the isolation
+boundary. Offline x64 checks passed; independent review and disposable-VM results
+remain pending. No MSI actions ran on the host and no production gate changed.

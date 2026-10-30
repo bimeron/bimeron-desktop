@@ -562,3 +562,12 @@ The separate foreground lab specifies four frozen-MSI costing cases and strict
 isolation and offline verification gates in its README. This is not a release
 package, product change, or authorization to run MSI actions on the host. Guest
 execution requires independent review and proof of the documented isolation gate.
+
+Implementation appendix: the standalone
+[bounded costing probe](../packaging/windows/foreground-prototype/lab-costing-probe/README.md)
+uses only a flag-1 restricted MSI handle and literal CostInitialize. Its cached-tool
+x64 build, four frozen-input copies, actual compound/logical comparisons, hash
+negatives and compiled MSI API allowlist passed offline. It is outside production
+CMake/CPack and does not change the supported package flow. No host MSI actions,
+VM execution, release or architecture matrix were performed. Independent review
+and parent-operated disposable x64 VM execution remain pending.

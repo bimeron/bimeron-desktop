@@ -1,0 +1,2 @@
+static const wchar_t* names[]={L"original.msi",L"component-stream.msi",L"feature-components.msi",L"both.msi"};
+static const char* pins[]={"0c73788944a2d520628e7dd619df2eb507821021fd76cef4dd879851586d0dbf","99a09d53f05af7c82c8eede7c64a3200731eeee87bdde9bc86dc0aedc1290561","4438582783be142a9eceae71bf9f53bfdc124747eacd27f938f6c626bd739447","0eda7262ab1fe7e365e1db8cbd374a1aa00d5fb4442816172f1da316226cb2df"};
