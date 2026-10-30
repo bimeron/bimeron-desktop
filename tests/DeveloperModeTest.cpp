@@ -49,6 +49,8 @@ static bool waitFor(const std::function<bool()> &condition, int timeout = 3000) 
 }
 
 #include "ConnectionManagementTest.h"
+#include "NativeIKEv2TransportTest.h"
+#include "NativeIKEv2SessionTest.h"
 
 static void testRouting() {
     QLocalServer first;
@@ -245,6 +247,8 @@ int main(int argc, char **argv) {
         return 0;
     }
     testRouting();
+    NativeIKEv2TransportTest::run();
+    NativeIKEv2SessionTest::run();
     ConnectionManagementTest::run();
     DevelopmentCore backend(temporary.filePath("missing-helper"));
     bool completed = false;

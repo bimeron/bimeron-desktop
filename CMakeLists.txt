@@ -23,6 +23,8 @@ target_link_libraries(core-update PUBLIC Qt6::Network)
 set(BIMERON_DESKTOP_SOURCES
     src/MainWindow.cpp src/MainWindow.h
     src/CoreClient.cpp src/CoreClient.h
+    src/NativeIKEv2Transport.cpp src/NativeIKEv2Transport.h
+    src/NativeIKEv2Session.cpp src/NativeIKEv2Session.h
     src/DevelopmentCore.cpp src/DevelopmentCore.h
     src/CoreUpdater.cpp src/CoreUpdater.h
     src/TrustedCore.cpp src/TrustedCore.h
@@ -70,7 +72,7 @@ if(WIN32)
 endif()
 target_link_libraries(bimeron-desktop PRIVATE Qt6::Widgets Qt6::Network core-update)
 if(WIN32)
-    target_link_libraries(bimeron-desktop PRIVATE shell32 advapi32)
+    target_link_libraries(bimeron-desktop PRIVATE shell32 advapi32 ole32)
 endif()
 target_compile_definitions(bimeron-desktop PRIVATE
     BIMERON_GUI_VERSION="${PROJECT_VERSION}"
@@ -87,10 +89,11 @@ if(BUILD_TESTING)
     target_include_directories(developer-mode-test PRIVATE src)
     target_link_libraries(developer-mode-test PRIVATE Qt6::Widgets Qt6::Network core-update)
     target_compile_definitions(developer-mode-test PRIVATE
+        NATIVE_IKEV2_TRANSPORT_TESTING
         BIMERON_GUI_VERSION="${PROJECT_VERSION}"
         BIMERON_CORE_UPDATE_PUBLIC_KEY="")
     if(WIN32)
-        target_link_libraries(developer-mode-test PRIVATE advapi32 shell32)
+        target_link_libraries(developer-mode-test PRIVATE advapi32 shell32 ole32)
     endif()
     add_test(NAME developer-mode-test COMMAND developer-mode-test --visual-check)
     if(NOT WIN32)

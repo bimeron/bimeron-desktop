@@ -9,6 +9,13 @@
 #include <QCloseEvent>
 #include <QSystemTrayIcon>
 #include <QTranslator>
+#include <QMenu>
+#include "NativeIKEv2SessionTest.h"
+
+// Compile the application translator itself; never invoke its renamed entry point.
+#define main bimeronApplicationEntryForTranslationTest
+#include "../src/main.cpp"
+#undef main
 
 // Uses only temporary profiles/settings, a private pipe/socket and this test's
 // validate subcommand. Never reaches a system endpoint or privileged helper.
@@ -53,6 +60,27 @@ struct ConnectionManagementTest {
         const QString path = directory.filePath("preview.conf");
         QFile profile(path);
         require(profile.open(QIODevice::WriteOnly), "preview profile");
+        if (app.arguments().contains("--native-preview")) {
+            profile.write("[Profile]\nName = Native\n[IKEv2]\nWindowsProfile = Fixture\nServerName = vpn.invalid\n[Interface]\nMode = vpn\n");
+            profile.close();
+            window.profiles_.append({"native-preview", "Native IKEv2", path});
+            window.profileList_->addItem("Native IKEv2");
+            window.profileList_->setCurrentRow(0);
+            window.handleStatus({{"State", "disconnected"}});
+            window.updateProfileAppearance();
+            window.updateConnectionButton();
+            NativeIKEv2SessionTest::Fixture nativePreview;
+            if (app.arguments().contains("--native-bound-preview")) {
+                nativePreview.discover();
+                nativePreview.observe(nativePreview.sessionReply("connected", true));
+                window.bindNativeController(&nativePreview.controller);
+                nativePreview.controller.cancelExchange();
+            }
+            window.show();
+            QCoreApplication::processEvents();
+            require(window.grab().save(destination), "native unavailable preview image");
+            return 0;
+        }
         profile.write("[Profile]\nName = Example proxy\n[AccessKey]\nSOCKS5 = socks5://localhost:1080\n[Interface]\nMode = proxy\n");
         profile.close();
         window.profiles_.append({"preview", "Example proxy", path});
@@ -614,15 +642,212 @@ struct ConnectionManagementTest {
         require(waitFor(synchronized) && starts == 4 && window.reconnectResultProfileId_.isEmpty(),
                 "unconnectable update target must finish with cancellation, not hang reconnecting");
 
-        const int before = requests;
+        // Native profiles remain displayable but can never use packet lifecycle paths.
+        const QString nativePath = directory.filePath("native.conf");
+        write(nativePath, "[Profile]\nName = Native\n[IKEv2]\nWindowsProfile = Fixture\nServerName = vpn.invalid\n[Interface]\nMode = vpn\n");
+        const Profile native{ProfileStore::identity(nativePath), "Native", nativePath};
+        window.profiles_.append(native);
+        window.store_ = ProfileStore(directory.path());
+        require(window.store_.save(window.profiles_), "save isolated native selector fixture");
+        window.refreshProfiles();
+        const int nativeRow = window.profiles_.size() - 1;
+        require(window.profileInfo(nativeRow).backend == ProfileConnectionInfo::Backend::NativeIKEv2,
+                "native backend discriminator");
+        require(window.autoConnectProfile_->findData(native.id) < 0, "native excluded from startup selector");
+        require(!window.profileList_->item(nativeRow)->data(Qt::UserRole + 1).toBool(),
+                "native unavailable label is not replaced by unknown protocol");
+        window.profileList_->setCurrentRow(nativeRow);
+        window.updateConnectionButton();
+        require(!window.connectButton_->isEnabled() && window.nativeStatusLabel_->text().contains("approval"),
+                "native action disabled with approval explanation");
+        const auto settingsKeys = QSettings().allKeys();
+        const auto startupProfile = QSettings().value("app/autoConnectProfile");
+        window.toggleConnection();
+        require(!window.startProfile(nativeRow) && window.operation_.isEmpty(), "native never starts packet validation");
+        require(QSettings().allKeys() == settingsKeys && QSettings().value("app/autoConnectProfile") == startupProfile,
+                "blocked native route does not mutate settings");
+        require(waitFor(synchronized), "native dispatch fixture synchronized");
+        window.startReadyPath_ = nativePath;
+        window.operation_ = "start";
+        window.poll();
+        require(window.operation_.isEmpty() && starts == 4, "stale dispatch cannot send native daemon start");
+        QSettings().setValue("app/autoConnectProfile", native.id);
+        QSettings().setValue("app/autoConnect", true);
+        window.autoConnectAttempted_ = false;
+        window.completeSynchronization();
+        require(window.autoConnectAttempted_ && starts == 4 && window.operation_.isEmpty(), "stale native autostart is ignored");
+        window.coreUpdateAwaitingResult_ = true;
+        window.expectedCoreVersionAfterUpdate_ = version;
+        window.reconnectProfileAfterUpdate_ = native.id;
+        window.completeSynchronization();
+        require(!window.coreUpdateAwaitingResult_ && window.reconnectResultProfileId_.isEmpty() && starts == 4,
+                "native never restored by packet updater");
+        // Selection must not strand the authoritative packet session. Neither an
+        // unsupported packet profile nor native selection is a switch target.
+        holdStop = false;
+        for (const int selectedRow : {0, nativeRow}) {
+            for (const QString activeState : {QStringLiteral("connected"), QStringLiteral("connecting"), QStringLiteral("reconnecting")}) {
+                status = {{"State", activeState}, {"Session", QJsonObject{
+                    {"id", "packet-selection"}, {"active", true}, {"profile_id", window.profiles_[1].id}, {"mode", "proxy"}}}};
+                request("status");
+                window.profileList_->setCurrentRow(selectedRow);
+                window.updateConnectionButton();
+                require(window.connectButton_->isEnabled() && window.connectButton_->text() == "Disconnect",
+                        "unavailable selection must allow authoritative packet disconnect");
+                const int previousStops = stops;
+                window.connectButton_->click();
+                require(!window.connectButton_->isEnabled(), "pending packet stop disables duplicate action");
+                window.toggleConnection();
+                require(waitFor([&] { return stops == previousStops + 1 && synchronized() && window.operation_.isEmpty(); }),
+                        "unavailable selection sends exactly one packet stop");
+                require(starts == 4 && window.pendingStartPath_.isEmpty() && !window.nativeSession_,
+                        "disconnect never starts native or switches backend");
+            }
+        }
+        for (const QString blockedState : {QStringLiteral("stopping"), QStringLiteral("unknown")}) {
+            status = {{"State", blockedState}, {"Session", QJsonObject{{"id", "packet-selection"}, {"active", true}}}};
+            request("status");
+            const int previousStops = stops;
+            require(!window.connectButton_->isEnabled(), "ambiguous or stopping state disables disconnect");
+            window.toggleConnection();
+            require(stops == previousStops && window.operation_.isEmpty(), "blocked state cannot duplicate stop");
+        }
+        status = {{"State", "disconnected"}};
+        window.retryAt_ = 0;
+        window.poll();
+        require(waitFor(synchronized), "unknown state resynchronizes before polling test");
+
+        // Prove the update guard independently, before the permanent native block.
+        require(!window.nativeOwnerBlocked_ && synchronized(), "polling fixture has no native owner block");
+        window.nextStatus_ = 0;
+        const int liveBefore = requests;
+        window.poll();
+        require(waitFor([&] { return requests > liveBefore && synchronized(); }), "regular polling is live before update");
+        window.nextStatus_ = 0;
+        const int suspendedBefore = requests;
         window.coreUpdateCommand_ = true;
         window.poll();
-        require(requests == before, "service update must suspend regular polling");
+        require(requests == suspendedBefore && !window.core_.busy(), "service update alone suspends polling");
         window.coreUpdateCommand_ = false;
+        window.poll();
+        require(waitFor([&] { return requests > suspendedBefore && synchronized(); }), "regular polling resumes after update");
+
+        const int beforeUpdateRefresh = requests;
+        window.refreshCoreAfterUpdate();
+        require(waitFor([&] { return requests > beforeUpdateRefresh && synchronized(); }),
+                "unbound update refresh still synchronizes the packet backend");
+        if (!window.developmentStatus_) window.developmentPage()->setParent(&window);
+        const quint64 beforeDevelopmentChange = window.connectionGeneration_;
+        window.development_->select("relative-invalid-core");
+        require(window.connectionGeneration_ > beforeDevelopmentChange
+                && window.connectionLabel_->text() == "Core unavailable"
+                && window.developmentStatus_->text() == window.development_->status()
+                && !window.development_->busy() && window.development_->failed(),
+                "unbound Development failure still resets packet state and updates controls");
+        window.core_.setEndpoint(server.serverName());
+
         window.connectionFailure("hello", CoreClient::Failure::AccessDenied, "Access to Core was denied");
         require(window.connectionLabel_->text() == "Access to Core was denied", "access denial must be distinct");
         window.connectionFailure("hello", CoreClient::Failure::Incompatible, "incompatible");
         require(window.connectionLabel_->text().contains("incompatible"), "incompatible IPC must be distinct");
+        require(!window.nativeController_, "ordinary packet window never constructs a native controller");
+        auto nativeFixture = std::make_unique<NativeIKEv2SessionTest::Fixture>();
+        nativeFixture->discover();
+        nativeFixture->observe(nativeFixture->sessionReply("connected", true));
+        bool queuedRefreshDelivered = false, queuedDevelopmentDelivered = false;
+        const auto queueLegacyCallbacks = [&] {
+            queuedRefreshDelivered = queuedDevelopmentDelivered = false;
+            QTimer::singleShot(0, &window, [&] {
+                window.refreshCoreAfterUpdate();
+                queuedRefreshDelivered = true;
+            });
+            QTimer::singleShot(0, &window, [&] {
+                emit window.development_->changed();
+                queuedDevelopmentDelivered = true;
+            });
+        };
+        const auto checkLegacyCallbacks = [&] {
+            const QString presentation = window.connectionLabel_->text();
+            const quint64 generation = window.connectionGeneration_;
+            const int previousRequests = requests;
+            const auto previousCalls = nativeFixture ? nativeFixture->calls.size() : 0;
+            if (!window.trayMenu_) window.trayMenu_ = new QMenu(&window);
+            window.rebuildTrayMenu();
+            const QString trayStatus = window.trayStatusAction_->text();
+            window.developmentStatus_->setText("stale development status");
+            require(waitFor([&] { return queuedRefreshDelivered && queuedDevelopmentDelivered; }),
+                    "queued legacy callbacks delivered after native authority transition");
+            require(window.nativeOwnerBlocked_ && window.connectionLabel_->text() == presentation
+                    && window.nativeStatusLabel_->text() == presentation
+                    && window.trayStatusAction_->text() == trayStatus
+                    && window.connectionGeneration_ == generation,
+                    "queued legacy callbacks preserve native presentation tray and authority");
+            require(!window.core_.busy() && requests == previousRequests
+                    && (!nativeFixture || nativeFixture->calls.size() == previousCalls),
+                    "queued legacy callbacks send no daemon hello or native activation");
+            require(window.developmentStatus_->text() == window.development_->status()
+                    && window.developmentStopOrphan_->isHidden() == !window.development_->orphanAvailable(),
+                    "native authority preserves Development status and cleanup controls");
+        };
+        queueLegacyCallbacks();
+        window.bindNativeController(&nativeFixture->controller);
+        checkLegacyCallbacks();
+        require(window.nativeOwnerBlocked_ && !window.nativeSession_
+                && window.nativeStatusLabel_->text().contains("Active"),
+                "initial real controller snapshot binds independently of daemon flag");
+        nativeFixture->observe(nativeFixture->sessionReply("stopping", true));
+        require(window.nativeStatusLabel_->text().contains("Inactive"), "changed signal propagates stopping snapshot");
+        auto retained = nativeFixture->sessionReply("stopping", true);
+        auto ns = retained["status"].toObject();
+        auto protection = ns["native"].toObject();
+        protection["wfp"] = "retained"; protection["dns"] = "modified";
+        ns["native"] = protection; retained["status"] = ns;
+        nativeFixture->observe(retained);
+        require(window.nativeStatusLabel_->text().contains("Retained")
+                && window.nativeStatusLabel_->text().contains("Modified"), "retained signal reaches native UI");
+        JsonTranslator applicationTranslator;
+        require(applicationTranslator.load(QFileInfo(QString::fromUtf8(__FILE__)).dir().filePath("../assets/translations/ru.json")),
+                "load actual Russian translator");
+        QCoreApplication::installTranslator(&applicationTranslator);
+        nativeFixture->observe(retained);
+        require(!window.nativeStatusLabel_->text().contains("WFP: Retained"), "controller signal uses Russian translation");
+        QCoreApplication::removeTranslator(&applicationTranslator);
+        nativeFixture->observe(retained);
+        const QString retainedText = window.nativeStatusLabel_->text();
+        window.handleStatus({{"State", "disconnected"}});
+        window.refreshProfiles();
+        window.trayMenu_ = new QMenu(&window);
+        window.rebuildTrayMenu();
+        require(window.nativeStatusLabel_->text() == retainedText
+                && window.connectionLabel_->text() == retainedText
+                && window.trayStatusAction_->text().contains(retainedText),
+                "packet replies profile refresh and tray rebuild preserve native uncertainty");
+        const auto nativeCalls = nativeFixture->calls.size();
+        QCloseEvent close;
+        window.closeEvent(&close);
+        window.trayMenu_->actions().last()->trigger();
+        require(!window.quitRequested_ && nativeFixture->calls.size() == nativeCalls,
+                "close and tray quit never stop or close native owner");
+        queueLegacyCallbacks();
+        nativeFixture.reset();
+        checkLegacyCallbacks();
+        require(!window.nativeController_ && window.nativeOwnerBlocked_
+                && window.nativeStatusLabel_->text().contains("Unknown"),
+                "controller destruction leaves guarded sticky unknown");
+        require(!window.runServiceCommand({"service", "update"}, "fixture") && !window.coreUpdatePrerequisite(),
+                "native unknown ownership blocks service mutation");
+        const int nativeRequests = requests;
+        QSettings().setValue("app/autoConnect", true);
+        QSettings().setValue("app/autoConnectProfile", window.profiles_.first().id);
+        window.autoConnectAttempted_ = false;
+        window.completeSynchronization();
+        window.restartApplication();
+        require(!window.quitRequested_ && !window.canActivateProfile(0), "settings and restart cannot bypass native block");
+        window.poll();
+        window.toggleConnection();
+        require(requests == nativeRequests && starts == 4 && !window.connectButton_->isEnabled(),
+                "native ownership blocks polling and packet activation");
+
         window.core_.cancel();
         QSettings().clear();
     }

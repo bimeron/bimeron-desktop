@@ -105,7 +105,7 @@ bool ProfileStore::importReferencesSafe(const QByteArray &data, QString *error) 
         const QString trimmed = line.trimmed();
         if (trimmed.startsWith('#') || trimmed.startsWith(';')) continue;
         if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
-            section = trimmed.mid(1, trimmed.size() - 2).trimmed();
+            section = sectionName(trimmed);
             continue;
         }
         if (section != "AccessKey") continue;
@@ -175,7 +175,10 @@ QString ProfileStore::importConfig(const QString &source, QString *error) const 
         return {};
     }
     const QByteArray data = input.read(64 * 1024 + 1);
-    if (data.size() > 64 * 1024 || !data.contains("[Profile]") || !data.contains("[AccessKey]")) {
+    QSet<QString> sections;
+    for (const auto &line : QString::fromUtf8(data).split('\n')) sections.insert(sectionName(line));
+    if (data.size() > 64 * 1024 || !sections.contains("Profile")
+        || (!sections.contains("AccessKey") && !sections.contains("IKEv2"))) {
         if (error) *error = QObject::tr("The file does not appear to be a supported Bimeron configuration");
         return {};
     }
@@ -184,6 +187,13 @@ QString ProfileStore::importConfig(const QString &source, QString *error) const 
     const QString destination = QDir(root_).filePath(QUuid::createUuid().toString(QUuid::WithoutBraces) + ".conf");
     if (!writeConfig(destination, data, error)) return {};
     return QFileInfo(destination).absoluteFilePath();
+}
+
+QString ProfileStore::sectionName(const QString &line) {
+    QString text = line;
+    if (text.startsWith(QChar(0xfeff))) text.remove(0, 1);
+    text = text.trimmed();
+    return text.startsWith('[') && text.endsWith(']') ? text.mid(1, text.size() - 2).trimmed() : QString();
 }
 
 QString ProfileStore::uriSourceField(const QString &uri) {
@@ -255,10 +265,13 @@ ProfileConnectionInfo ProfileStore::connectionInfo(const QString &configText) {
     QString value;
     QString type;
     info.interfaceMode = QStringLiteral("vpn");
+    bool native = false, packet = false;
     for (const QString &line : configText.split('\n')) {
-        const QString trimmed = line.trimmed();
+        const QString trimmed = QString(line).remove(QChar(0xfeff)).trimmed();
         if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
-            section = trimmed.mid(1, trimmed.size() - 2);
+            section = sectionName(trimmed);
+            native = native || section == "IKEv2";
+            packet = packet || section == "AccessKey";
             continue;
         }
         if (trimmed.startsWith('#') || trimmed.startsWith(';')) continue;
@@ -275,6 +288,14 @@ ProfileConnectionInfo ProfileStore::connectionInfo(const QString &configText) {
             value = field;
         }
     }
+    if (native) {
+        if (!packet) {
+            info.backend = ProfileConnectionInfo::Backend::NativeIKEv2;
+            info.protocol = QStringLiteral("IKEv2");
+        }
+        return info; // connectable retains its packet-only meaning.
+    }
+    if (packet) info.backend = ProfileConnectionInfo::Backend::Packet;
     if (source.compare("File", Qt::CaseInsensitive) == 0) {
         info.keyFile = value;
         info.connectable = !value.isEmpty();
@@ -355,7 +376,7 @@ bool ProfileStore::sshFilesReadable(const QString &configText, const QString &pr
         bool access = false;
         for (const QString &line : text.split('\n')) {
             const QString value = QString(line).remove(QChar(0xfeff)).trimmed();
-            if (value.startsWith('[')) { access = value == "[AccessKey]"; continue; }
+            if (value.startsWith('[')) { access = sectionName(value) == "AccessKey"; continue; }
             const auto equal = value.indexOf('=');
             if (access && equal > 0 && !value.startsWith('#') && !value.startsWith(';'))
                 result.insert(value.left(equal).trimmed(), value.mid(equal + 1).trimmed());

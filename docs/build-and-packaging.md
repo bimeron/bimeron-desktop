@@ -412,3 +412,488 @@ connection test executable also covers transient SSH challenge UI and private IP
 Protocol URI import tests use `BIMERON_PRESERVATION_CORE` targeting Core
 `v0.3.0-beta.1` revision `9f527efe0a4959786084675f1ff795edb8a0d910`.
 The current bundle pin is not evidence of support for these new protocols.
+
+## Foreground installer feasibility prototype (not enabled)
+
+Status: the [trusted invocation procedure revision](ikev2-profiles.md#trusted-invocation-procedure-selected-specification-review-pending)
+is selected for independent specification review, not production acceptance.
+This docs-only revision changes no supported build, packaging or installer flow.
+
+Specification and acceptance for this isolated prototype: follow stage 8
+`e4e6d05` and Core `66d84d8f4dcfc6ada625eb11894b19feea51b7ba`'s complete
+`docs/IKEV2_FOREGROUND_CONTROL.MD` and internal `windowsnet` transaction guard.
+Before production registration, demonstrate a dedicated OS thread retaining the
+connect mutex through destructive actions, final policy publication, and settled
+commit/rollback, with DLL lifetime pinned. Offline acceptance covers competing
+threads/processes, abandoned ownership, strict owner/DACL and marker decisions,
+flushed create-new journal refusal and preserved rollback metadata. Test journals
+and Local objects are isolated surrogates, never installed policy or Global locks.
+Generated WiX must embed an architecture-matched Binary, schedule admission before
+RemoveExistingProducts/InstallFiles and settlement after all mutations, and fail
+closed without approved final Core/GUI inputs. Sequence inspection alone cannot
+prove execution order across nested transactions or callback process lifetimes.
+
+The prototype must not register in production CMake/CPack. Its MSI entry point
+always refuses: secure cross-process callback routing, MSI server lifetime through
+rollback/commit and nested major-upgrade uninstall are unresolved prerequisites.
+No installed helper, policy writer, reboot replacement, process termination or
+network operation is authorized. A successful offline test is not MSI acceptance.
+
+Offline result (2026-10-30): the standalone project at
+`packaging/windows/foreground-prototype` builds with MSVC for x64 and ARM64.
+Native x64 CTest exercises descriptor fixtures, actual user-owned object refusal,
+absent/present/wrong-type markers, different callback threads and child-process
+exclusion, nested-worker refusal, completed commit/rollback, incomplete settlement,
+teardown, process crash, journal preservation and abandonment refusal. The generated
+WiX fixture and five invalid variants are checked for both architectures; cached
+WiX 3 candle accepts both generated sources. This is syntax/sequence inspection,
+not a linked or executed MSI transaction. ARM64 runtime is untested. The default
+VS Insiders instance lacked ARM64 configuration; explicit installed Build Tools
+selection compiled it successfully. Linux targets are unaffected: no production
+CMake, install rules, packet updater or package flow changed. No full GUI/package
+matrix, performance benchmark, network operation or release was run for this
+standalone Windows-only experiment.
+
+Blocker established by the experiment: a second independent worker/process cannot
+acquire the mutex while the transaction worker owns it; creating another static
+handle does not route a callback to that owner. In particular the nested-worker
+uninstall fixture refuses admission. DLL pinning prevents unload but cannot keep
+an MSI server process alive; deliberate child-process death leaves a flushed
+journal and abandoned mutex and subsequent admission refuses even after abandonment
+is consumed. There is no authenticated cross-process transport or demonstrated
+MSI host lifetime. Production integration therefore remains blocked.
+
+The worker accepts only test fixture handles and writes opaque rollback metadata
+into a private temporary journal with CREATE_NEW, write-through and FlushFileBuffers.
+It does not claim protected journal durability across power loss, validate protected
+Program Files ancestors/reparse points/effective ACLs, retain real image handles,
+parse/publish schema 1 policy, generate an installation ID, compute the final GUI
+hash, or restore installed bytes. These security requirements cannot be replaced
+by the temporary fixture. Settlement is an explicit simulated completion signal,
+not evidence that MSI completed rollback. Module pinning lasts until process exit.
+Do not wire this DLL into production: its sole MSI export always returns failure.
+
+Integration instructions and remaining acceptance are in
+`packaging/windows/foreground-prototype/foreground-README.md`. Final artifacts and
+approved architecture-specific Core digests are still absent; future GUI approval
+must bind final installed GUI bytes, preserve the random public 16-byte installation
+ID and previous exact policy/rollback metadata through repair/upgrade. Keep existing
+signed packet installation/update behavior. Do not enable native packaging by
+default until the live transaction and trust prerequisites above are satisfied.
+
+## Offline native IKEv2 build integration
+
+The GUI source list includes `NativeIKEv2Transport` and `NativeIKEv2Session`,
+including unsupported Linux stubs. Compiling these sources does not instantiate
+or approve a native controller, enable IKEv2, or supply a default approval digest.
+Windows targets compiling them link `ole32` alongside `advapi32` and `shell32`.
+
+The existing `developer-mode-test` target includes both native fixture headers
+and runs their transport and session fixtures before the connection-management
+suite. Only this test target defines `NATIVE_IKEV2_TRANSPORT_TESTING`, for both
+transport and fixture compilation; the session seam remains a private friend.
+No additional executable or package payload is introduced; existing install
+exclusions still apply. Run offline fixtures with Qt 6.8.3 and
+`QT_QPA_PLATFORM=offscreen` explicitly, without native-platform fallback. Its
+clipboard is process-local and provides no native clipboard acceptance evidence.
+Clear optional `BIMERON_*CORE` validation variables for offline-only runs.
+
+`BIMERON_IKEV2_CORE` is an optional exact reviewed Core CLI validation input for
+native profile fixtures when those fixtures are integrated. It does not select
+or change the bundled Core. This build registration alone does not establish
+integrated profile-test coverage. Protected executable/peer authentication,
+same-user elevation, architecture-specific final executable approvals, MSI
+transaction safety and live native networking remain separate acceptance gates.
+
+## Bounded elevated-client prototype follow-up
+
+The standalone foreground prototype now targets the accepted 2183b74 offline
+contract. Its owned README records acceptance and evidence limits before code.
+It remains outside production CMake/CPack; all MSI exports fail closed. No registry
+reader/writer, enrollment, helper or Core admission change is authorized. Linked
+MSI/table and token-descriptor fixture evidence is separate from actual initiating
+MSI client correlation, outer completion, protected journal durability and VM gates.
+
+Follow-up offline evidence: MSVC x64/ARM64 standalone compilation and cached WiX 3
+candle/light linking completed. x64 CTest passed 3/3; ARM64 host-side WiX/MSI/PE
+checks passed 2/2 (no ARM64 execution). ICE emitted ICE71 for the empty Media table;
+it was not suppressed. Read-only table reports live in each build's
+`Release/fixture.tables.json`, beside `fixture.msi`. The completion boolean was
+removed; only bounded PostFinalize fixture evidence can acknowledge a temporary
+journal. Commit callbacks cannot settle. Current-client correlation remains
+Unknown; the current-token reader and privileged positive AccessCheck are not
+actual MSI callback proof. Both MSI exports always refuse. Core does not read
+this fixture journal, so durable host exclusion and native enrollment remain
+unimplemented. See the owned README for commands and remaining VM gates.
+
+The standalone offline foreground prototype now authors a single empty-payload
+Media row and verifies the linked WiX MajorUpgrade and downgrade condition rows.
+Its two architecture fixtures passed normal ICE validation without warning or
+error diagnostics; ICE09 could not check the absent Component table. This does
+not change or validate production packaging. See the prototype README for hashes
+and remaining authorization and runtime gates.
+
+## Separate offline foreground trace lab (not a release package)
+
+The standalone foreground project has a default-OFF `FOREGROUND_LAB_TRACE`
+option. With explicitly supplied cached WiX, build only the explicit
+`foreground-lab-trace` target for Success, CommitFail and PostFinalizeFail empty
+per-machine LABTRACEONLY MSIs. No production CMake/CPack or install rule references
+them. Keep artifacts in ignored `build/foreground-lab-*`, never stage/dist.
+Each DLL compiles a fixed failure point; no runtime command/property selects it.
+The separate observer does not link the worker/journal and cannot enroll or
+authorize native operation. Existing fail-closed exports are unchanged.
+
+MSVC x64/ARM64 compilation, unsuppressed ICE for six actual MSIs and read-only
+MSI/Binary/PE checks passed. x64 standalone CTest passed 4/4; ARM64 host-side checks
+passed 3/3, including 42 negative database mutations per architecture. ICE09 notes
+the absent Component table; ICE71 passes the explicit empty Media row. No callback,
+installation, VM or release was run. Linux and production matrix/benchmarks are
+inapplicable to this disconnected Windows-only target. Commands, trace schema,
+identities, hashes and remaining runtime limits are recorded in
+`packaging/windows/foreground-prototype/foreground-README.md`.
+
+The corrected lab uses `EnsureTable` to create an empty Component table. The
+read-only checker requires all six columns with the MSI schema and zero rows;
+its prior strict allowlist and negative checks remain in force. The earlier ICE
+pass did not establish runtime behavior. The first Success VM attempt failed at
+InstallInitialize after error 2205 for the missing table; causality remains a
+hypothesis pending independent review and a parent-led repeat.
+
+## CostInitialize discrimination experiment (specification only)
+
+The separate foreground lab specifies four frozen-MSI costing cases and strict
+isolation and offline verification gates in its README. This is not a release
+package, product change, or authorization to run MSI actions on the host. Guest
+execution requires independent review and proof of the documented isolation gate.
+
+Implementation appendix: the standalone
+[bounded costing probe](../packaging/windows/foreground-prototype/lab-costing-probe/README.md)
+originally used a flag-1 restricted MSI handle and literal CostInitialize. Its cached-tool
+x64 build, four frozen-input copies, actual compound/logical comparisons, hash
+negatives and compiled MSI API allowlist passed offline. It is outside production
+CMake/CPack and does not change the supported package flow. No host MSI actions, release or architecture matrix were performed. The restricted
+mode was subsequently run in a disposable x64 VM; review and guest execution
+of the new mode remain pending.
+
+The accepted follow-up specification in the probe README adds a separately
+selected normal machine-dependent handle, with the same fixed inputs and bounded
+CostInitialize call path. The normal handle itself does not guarantee immutability.
+The saved restricted-mode guest run returned 0 for all four cases; a full `/qn`
+run of the original source MSI failed with 2728 at CostInitialize. This is a
+discrimination experiment, not a claimed fix. Independent review precedes the
+parent's guest run of the new mode.
+
+
+The parent-operated disposable x64 VM full-server FeatureComponents-only
+discriminator passed CostInitialize, InstallInitialize and InstallFinalize, with
+four successful intended callbacks and no Rollback; the both-changes case also
+passed. Component-stream-only and the original Component-only MSI failed with
+2728 at CostInitialize. Client probes all passed and did not discriminate. The
+empty FeatureComponents database table is sufficient for that fixture; no internal
+engine cause is established. ProductState -1 before and after is expected for
+the zero-resource lab and is not production installation acceptance.
+
+The accepted correction adds WiX EnsureTable for FeatureComponents, retaining
+Component and all strict payload and sequence gates. Source commit
+`a761106bd03f3710fbd2b092943cc493727289d1` produced six fresh MSIs and DLLs;
+x64 CTest passed 4/4 and ARM64 host checks 3/3, with unsuppressed ICE and actual
+read-only table/Binary/PE checks. The old Component-only MSI is rejected for the
+missing FeatureComponents table. Exact hashes, identities, paths and VM limits
+are in the prototype README. These fresh bytes remain runtime-untested pending
+independent review and a parent-operated VM run. No host MSI actions, production
+integration or release matrix were performed; Linux, performance and profiling
+are inapplicable to this disconnected Windows fixture.
+
+### Offline protected access observation
+
+The separate standalone foreground prototype offers the default-off
+`FOREGROUND_LAB_PROTECTED_ACCESS` option and explicit
+`foreground-lab-protected-access` target. It is a fail-closed token-source
+observation only, with no install rule or distributable MSI. See the prototype
+README for its missing security and guest-execution gates. It does not alter
+supported build or packaging flows.
+
+### Disconnected pending-file build option
+
+The standalone foreground project adds default-off FOREGROUND_LAB_PROTECTED_FILE
+and explicit foreground-lab-protected-file target, with no install rule or MSI.
+Configure separate ignored build/foreground-file-amd64 and arm64 directories with
+that option; build that target in Release and run only its x64 CTest. It uses
+installed MSVC and Windows SDK only. Strict protected-path positive availability
+is reported separately from codec/ACL models and owned temporary I/O; passing
+models cannot establish installer authority. Supported package flow is unchanged.
+
+Pending-file offline evidence: both Windows architectures compiled the standalone
+non-injected library and injected harness with /W4 /WX. x64 CTest passed 1/1;
+ARM64 is compile-only. Strict native protected-path admission was unavailable on
+the host. Codec/ACL/identity models and owned temporary write/flush checks do not
+establish protected storage or installer trust. See the fixture README for the
+exact limits. Linux/performance/package checks are inapplicable to this isolated
+Windows-only option; no release artifacts were generated.
+
+The standalone pending-file follow-up uses the native Program Files known folder
+as its authority boundary and exact TrustedInstaller SID in addition to SYSTEM and
+Administrators. It retains root-to-leaf traversal pins and revalidates descriptors
+from that boundary. x64/ARM64 /W4 /WX compilation and x64 offline CTest passed;
+protected native positive was unavailable on the host. No guest bundle or guest
+execution is authorized by this result. See the prototype README for the minimal
+separate guest-mode plan. Supported packaging and MSI exports are unchanged.
+
+
+Pending-file anchor correction appendix: the standalone primitive now retains a
+separate native known-folder handle, compares its volume/file identity with the
+traversal anchor, and rejects every case-sensitive or unqueryable directory pin.
+There is no unsupported-query fallback. The single volume-GUID mapping, existing
+DACL/mutation/reparse/root pins and unconditional MSI export failures remain.
+MSVC x64/ARM64 /W4 /WX builds passed; x64 protected-file/access CTest passed 2/2.
+An owned temporary native case-sensitive directory demonstrated actual differently
+cased open behavior and rejection; protected Program Files positive remained
+unavailable. See the prototype README for model/native evidence boundaries.
+No build option, supported packaging flow, guest harness or release changed.
+
+### Offline protected-file guest harness
+
+The optional standalone `FOREGROUND_LAB_PROTECTED_FILE` build also exposes the
+explicit, excluded-from-ALL `lab-protected-file-guest` target. It has no install
+rule and does not enter packages. With existing Visual Studio x64 and ARM64 C++
+toolchains and an existing `dumpbin.exe`, run from the repository root:
+
+```powershell
+./packaging/windows/foreground-prototype/lab-protected-file-guest-check.ps1 -Dumpbin '<absolute path to dumpbin.exe>' -FrozenBundlePath '<existing frozen guest-bundle directory>'
+```
+
+The script performs static-only frozen x64 hash and explicit DLL/API allowlist
+inspection, including negative parser fixtures; it never executes the harness or
+builds either architecture. It preserves the old provisional bundle and writes a
+final x64-only permission manifest under new `build/guest-bundle-final-x64-reviewed`.
+ARM64 remains unbuilt for this bundle and completeArchitectureMatrix is false;
+this does not block x64 permission preparation or claim full release validation.
+Independent final review and explicit approval of the concrete bundle precede
+guest provisioning/execution. Preparation-only edits need no executable rebuild. It does not provision or run the guest experiment. See
+[the guest acceptance criteria](../packaging/windows/foreground-prototype/lab-protected-file-guest-README.md).
+Rebuild and rehash after primitive changes; native success requires separate
+permission and a disposable Windows VM.
+
+### Isolated protected ACK MSI access fixture
+
+The standalone foreground project adds default-OFF FOREGROUND_LAB_PROTECTED_ACK
+and explicit `foreground-lab-protected-ack`, excluded from ALL and installation.
+It produces three compiled Success/CommitFail/PostFinalizeFail Binary DLL/MSI pairs
+per Windows architecture using explicitly supplied cached WiX 3, with normal
+unsuppressed ICE. Empty Component and FeatureComponents tables use EnsureTable;
+there are no installed resources or production CPack changes. Its only protected
+path is native Program Files\BimeronProtectedAckLab\LABProtectedFiles, separate
+from all earlier guest state. The original pending-file pin/counter behavior and
+fail-closed exports remain unchanged.
+
+See the foreground README for exact configure/build/CTest commands, canonical
+post-build protected manifest encoding, external MSI hash pinning, offline coverage,
+frozen review-bundle paths and proposed guest effects. The x64 native test opens
+actual MSI databases read-only and exercises token precedence and owned temporary
+record I/O; it never opens an installer session. ARM64 is compile/static-check only.
+No MSI actions, host protected writes, elevation, VM operation or release are part
+of this build flow. A review bundle grants no guest permission or production trust.
+Linux, performance and full production package checks are inapplicable to this
+disconnected Windows-only target. Supported release packaging is unchanged.
+
+Protected ACK offline evidence: all six x64/ARM64 /W4 /WX DLL/MSI variants built;
+normal verbose ICE passed without warning/error diagnostics. x64 focused CTest
+passed 4/4; ARM64 host read-only checks passed 1/1, with 57 database negative models
+per architecture. C++ read-only MSI projection matched the generated manifest;
+actual token precedence/error refusal and owned temporary record I/O passed.
+No host MSI action or guest execution occurred. Review and runtime limitations,
+source/artifact evidence and the permission-not-granted bundle are in the foreground
+README and ignored build/protected-ack-review state.
+
+ACK freshness/diagnostic source follow-up adds an OS product-state query and fixed
+numeric stage reporting. The lab-only REMOVE=ALL allowance requires an exact
+canonical zero-resource database and UNKNOWN product state; it grants no caller
+provenance or production authority. The standalone import checker must explicitly
+allow the new MSI API entry after inspecting the linked image. Fresh source builds,
+read-only checks, manifests and review are required; never overwrite frozen inputs.
+Supported production packaging and original fail-closed exports remain unchanged.
+
+ACK expanded offline verification follow-up: after the new native resource-query
+negative test's Unicode sentinel and owned-database commit corrections, the parent
+rebuilt its x64 harness and the previously unbuilt base fixture targets. The full
+configured x64 standalone CTest set passed 7/7, including missing/nonempty resource
+queries without installer actions. The revised test target also compiled for
+ARM64; ARM64 actual read-only ACK checks passed 1/1. These later test-only source
+changes do not change the frozen source-a1ab617 MSI/DLL behavior bytes. Initial
+unbuilt-target and test-build/cleanup failures were resolved before this pass;
+none was skipped to report success. Frozen Success artifact review and a new VM
+run remain separate gates. No product runtime or release matrix is established.
+
+ACK active-table diagnostic appendix: the accepted standalone README specification
+adds only fixed private active-tables.txt on Success Preflight stage 41/detail 1.
+It retains strict canonical projection, original 1603 and protected CREATE_NEW
+semantics. Fresh cached-WiX bundles are required; old frozen inputs remain intact.
+Supported production packaging is unchanged. Parent alone performs VM checks.
+
+ACK runtime metadata projection correction: the accepted foreground README limits
+exclusion to nine exact engine metadata row-owner names with persistence FALSE,
+only in _Tables/_Columns. Persistent owners require TRUE; all other owners refuse.
+Canonical persistent bytes and source MSI strict allowlists remain unchanged.
+New x64/ARM64 cached-WiX builds and immutable review evidence are required; no
+host MSI actions or protected writes are authorized. Windows 10 engine 5.00.10011
+is the sole parent runtime observation; ARM64 runtime and production authority
+remain unproved. Supported release packaging is unchanged.
+
+ACK runtime metadata correction offline result: fresh build/ack-projection-x64 and
+arm64 compiled /W4 /WX and linked six cached-WiX MSIs with unsuppressed ICE.
+x64 focused CTest passed 4/4; ARM64 read-only checks passed 1/1, never executing
+ARM64 code. Owned MSI copies verified exact baseline/temporary metadata projection
+and unknown/persisted collision/missing/schema refusal. Source allowlists and
+manifest encoding remain strict. Stages 42/43 distinguish persistence query/policy
+refusal from mismatch. New ignored build/ack-projection-review freezes source,
+identities, hashes, manifests and logs for independent review and parent VM work;
+it grants no guest permission or production authority. Existing admission and
+snapshot gates are unchanged. See the foreground README for evidence limits.
+
+The isolated protected ACK Success fixture from a6d93adc was observed once in the disposable x64 VM on 2026-10-30: exit 0, all four successful callbacks, retained Pending counter 1, and no diagnostic snapshot. See the prototype README's Native x64 protected ACK Success observation for exact artifact hashes and limits. This is access evidence only; production packaging, enrollment and ARM64 runtime remain unavailable.
+The two frozen x64 protected ACK failure variants were subsequently observed once each in the disposable VM: CommitFail rolled back with Pending counter 0; PostFinalizeFail failed after successful Finalize without rollback and retained counter 0. The prototype README records the acceptance and evidence limits; no production packaging behavior changed.
+
+### Bounded offline ACK checkpoint build
+
+The separate default-OFF FOREGROUND_LAB_PROTECTED_ACK_CHECKPOINT option exposes
+only explicit foreground-lab-protected-ack-checkpoint on x64, outside ALL/install
+and production packaging. It reuses the protected ACK source/sequence with fresh
+identities and variant 3. See the foreground README acceptance for exact 80-byte
+checkpoint encoding, fixed 60-second fail-closed wait and unconditional pre-ACK
+PostFinalize refusal. This is partial offline fixture preparation; no runner,
+termination or VM implementation belongs here. Existing ACK/trace contracts and
+supported release packaging remain unchanged. Shared code requires existing six
+ACK static checks, focused x64 regressions and ARM64 compilation; the checkpoint
+constructor refuses ARM64. Use cached WiX and unsuppressed ICE, freezing all new
+review evidence in a fresh ignored build directory. No guest-ready bundle claim.
+
+Checkpoint offline result: fresh x64 checkpoint plus three existing ACK pairs and
+three ARM64 ACK regression pairs compiled /W4 /WX and linked cached WiX with
+unsuppressed ICE. x64 focused checks passed 6/6; ARM64 read-only checks passed 1/1,
+with no ARM64 execution. Explicit ARM64 checkpoint configure refuses; default
+options stay OFF. The fresh build/ack-checkpoint-review bundle is partial offline
+evidence only, without a runner or VM execution. See the foreground README for
+commands, fixed encoding, model/native evidence separation and review limits.
+Supported production packaging remains unchanged.
+
+Checkpoint owned-client runner blocker: the separate Run-CheckpointLab.ps1 refuses
+before launch because the requested hard no-termination-after-deadline contract
+cannot be enforced atomically by TerminateProcess(HANDLE, UINT). The prototype
+README specifies the scheduling witness and explicit safe-API blocker fallback.
+Offline PS 5.1/7 tests and a fresh ignored blocker-only evidence bundle are required;
+this is not a guest-ready implementation and must not trigger parent MSI execution.
+Frozen checkpoint inputs, supported packaging and existing runners stay unchanged.
+The strict-deadline blocker witness passed offline on PS 5.1 and 7.6.9. The new
+ignored build/ack-checkpoint-runner-blocked-review contains unchanged frozen
+checkpoint inputs and refusal-only source/evidence, pending independent review.
+Operational interruption acceptance is unimplemented; this bundle must not be
+used to authorize parent MSI execution. No build/package flow changed.
+
+### Disconnected callback interactive-context observation
+
+The standalone foreground-prototype DLL now links Windows secur32 for
+LsaGetLogonSessionData/LsaFreeReturnBuffer; its DLL and test compile /W4 /WX.
+Configure fresh ignored build/callback-context-x64 and callback-context-arm64 with
+the existing standalone VS commands, omitting WIX_TOOL_DIR. Build only
+--target foreground-test; run x64 CTest and ARM64 foreground-sequence only.
+No MSI is built. This observation has no production caller or install rule.
+The original MSI PE checker still permits only its historical three imports;
+new MSI preparation would require a separately scoped secur32 allowlist review.
+Supported production packaging, checkpoint, trace, runner and package pins are unchanged.
+
+### Checkpoint client commitment-deadline runner
+
+The accepted foreground README resolution supersedes the refusal-only runner
+contract while retaining its historical hard-deadline witness. The separate runner
+uses a 300-second monotonic commitment deadline and one Eligible/Cancelled/Committed
+gate; API entry/return/death and observer latency are unbounded after commitment.
+Only the owned retained launch handle can receive one direct TerminateProcess call.
+Frozen reconciled checkpoint MSI/DLL/manifest bytes are reused without rebuilding;
+Run-Lab and the three-variant contract remain unchanged. Offline PS 5.1/7 mocks and
+interop compilation precede a new ignored READY FOR REVIEW bundle. Parent VM
+execution, retained protected state and possible late server work are separate
+review gates. This disconnected Windows x64 runner changes no supported release
+build or package flow; product matrix, benchmarks and profiling are inapplicable.
+
+Checkpoint commitment runner offline result: PS 5.1 and 7 each passed 106 managed
+assertions and AST checks with exact interop compiled only, no native API calls or
+real process/MSI execution. Frozen index/inventory/sums, 180 immutable source ZIP
+entries and seven MSI/DLL/manifest bindings verified. The separate native-x64-only
+runner and exact committed source evidence are frozen under ignored
+build/ack-checkpoint-runner-ready-review-cf12d14, READY FOR REVIEW only. See the
+foreground README for path/pin/decision semantics, exact effects and untested VM
+boundaries. Historical hard API-entry deadline evidence remains superseded, not
+deleted. No MSI rebuild, original Run-Lab/ACK/context/CMake change or release flow
+change occurred; all protected/isolated state and late-server uncertainty remain.
+
+Final checkpoint log-reservation review uses metadata-only CREATE_NEW access to
+avoid competing with native logger write access. The fresh final review bundle is
+build/ack-checkpoint-runner-ready-review-final; earlier bundles remain intact.
+Both PS suites rerun on exact committed ZIP-extracted sources, and source hashes
+cover those same immutable Git-blob bytes. Native runtime remains a parent gate.
+
+Checkpoint P1 ownership correction: final wait/query failure or unconfirmed death
+now retains the worker, actual process handle and input pins in an explicit sticky
+pending owner until host exit. Observers report Unresolved, Completed false and
+possibleLateOperation true; observer completion is not resource release. No retry,
+polling or recovery API was added. Confirmed death releases once; failure before
+any process exists can release. PS 5.1/7 each pass 150 exact-worker assertions and
+AST/interop checks without native execution. Fresh ignored
+build/ack-checkpoint-runner-retention-review freezes exact committed source and
+unchanged MSI/DLL/manifest with updated tests/effects for a fresh parent independent
+review before VM work. Earlier bundles remain preserved. No supported packaging
+flow, product matrix, MSI build/action, VM, benchmark/profile or release change.
+
+Checkpoint fixed-system-image correction acceptance: only the internally selected
+GetSystemDirectoryW-validated System32 msiexec pin may have >=1 links. Lab leaves
+remain single-link. Explicit trusted OS owner/DACL checks replace the OS bypass;
+safe inherited OS DACLs are allowed, protected lab DACLs remain mandatory. See the
+foreground README for the MEDIUM specification, separated model/native checks,
+immutable review freeze and parent review gate. No MSI rebuild or supported flow
+change; no VM, launch, termination or product matrix belongs to this correction.
+
+Fixed-system-image offline evidence: PS 5.1/7 pass 150 unchanged worker regressions
+plus 34 descriptor/metadata/role models. Separately selected native checks verify
+the exact two-link host system image, trusted owner/DACL/ancestor metadata/identity,
+retained read-open compatibility and owned hardlink sharing/refusal. No operation
+constructor, launch, termination, MSI API/action or VM ran. New ignored
+build/ack-checkpoint-system-image-review freezes exact committed sources and
+unchanged artifact pins for fresh parent review. Native guest/loader/logger and
+server behavior remain unproved; supported package flow is unchanged.
+
+### Optional callback context trace build
+
+The standalone project may enable default-OFF FOREGROUND_LAB_TRACE_CONTEXT only
+with FOREGROUND_LAB_TRACE. Configure fresh ignored build/trace-context-x64 and
+build/trace-context-arm64 using the standalone VS 18 BuildTools commands and
+explicit cached WIX_TOOL_DIR, adding both options ON. Build foreground-lab-trace,
+foreground-test and lab-context-record-test. Run native x64 tests and ARM64 host
+source/static tests only. Only context trace DLLs link the shared observer and
+secur32; historical trace builds remain context-OFF. Use the explicit checker
+context profile; default invocation keeps the historical profile. Normal WiX ICE
+remains unsuppressed. No production install/CPack flow changes. See the foreground
+README acceptance for immutable evidence, review and parent-only VM limits.
+
+Implementation uses shared callback-context.cpp only for token/LSA capture and
+policy; foreground retains its descriptor wrapper. Explicit context checker API
+sets and .imports.json reports cover actual direct symbols, while default
+historical profile still refuses secur32. The fixed numeric context record is
+bounded to 2048 wchar including termination; its complete/eligible values are
+observations only. Build only explicit targets and use the focused test filters
+in the foreground README. Context-OFF regressions use separate ignored
+build/trace-historical-x64 and arm64 directories. No production flow changes.
+
+Callback context trace offline result: immutable source
+751426da89c586ae66ab79b7b7f37fc2ed03e48d built six fresh x64/ARM64 context pairs
+with cached WiX and unsuppressed ICE; actual tables/Binary/PE/API checks passed.
+x64 focused CTest passed 4/4, ARM64 host statics 2/2 (compile-only runtime).
+Context-OFF regression pairs passed historical checks on both architectures,
+including default-profile invocation. Default-OFF/dependency refusal, fixed record
+bounds/errors/logging return preservation and selected-token/LSA regressions pass.
+The foreground README records resolved preparation errors and exact evidence.
+Ignored build/trace-context-review-751426d freezes immutable source/archive,
+artifact hashes/18 context GUIDs, tables/imports/logs/effects before evidence append.
+This is offline review material, NOT VM-READY; parent review/execution remains.
+No supported package flow changed. Linux/product matrix and performance checks
+are inapplicable; no host MSI actions, protected writes, VM or release occurred.

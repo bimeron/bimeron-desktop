@@ -71,13 +71,24 @@ QString valueFor(const QString &text, const QString &section, const QString &key
     QString current;
     for (const QString &line : text.split('\n')) {
         const QString trimmed = QString(line).remove(QChar(0xfeff)).trimmed();
-        if (trimmed.startsWith('[') && trimmed.endsWith(']')) current = trimmed.mid(1, trimmed.size() - 2);
+        if (trimmed.startsWith('[') && trimmed.endsWith(']')) current = ProfileStore::sectionName(trimmed);
         else if (current == section) {
             const auto match = QRegularExpression(QString("^%1\\s*=\\s*(.*)$").arg(QRegularExpression::escape(key))).match(trimmed);
             if (match.hasMatch()) return match.captured(1).trimmed();
         }
     }
     return {};
+}
+
+enum class ProtectionIntent { Disabled, Enabled, Unknown };
+
+ProtectionIntent nativeProtectionIntent(const QString &text) {
+    const QString value = valueFor(text, "IKEv2", "KillSwitch");
+    if (value.isEmpty() || value == "false" || value == "\"false\"") return ProtectionIntent::Disabled;
+    if (value == "true" || value == "\"true\"") return ProtectionIntent::Enabled;
+    // Core decodes Go escapes. Leave other spellings to authoritative validation;
+    // never treat an unrecognized candidate as safely disabled or imported consent.
+    return ProtectionIntent::Unknown;
 }
 
 QString normalizedCidrs(const QString &value) {
@@ -243,6 +254,17 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
     if (capabilities.value("vpn").toBool()) mode_->addItem(tr("System VPN"), "vpn");
     if (capabilities.value("proxy").toBool()) mode_->addItem(tr("Local SOCKS5"), "proxy");
     listen_ = new QLineEdit;
+    windowsProfile_ = new QLineEdit;
+    windowsProfile_->setObjectName("windowsProfile");
+    nativeServerName_ = new QLineEdit;
+    nativeServerName_->setObjectName("nativeServerName");
+    nativeKillSwitch_ = new HiDpiCheckBox(tr("Request native traffic and DNS protection"));
+    nativeKillSwitch_->setObjectName("nativeKillSwitch");
+    generalForm->addRow(tr("Windows VPN profile"), windowsProfile_);
+    generalForm->addRow(tr("Server name"), nativeServerName_);
+    generalForm->addRow(nativeKillSwitch_);
+    nativeMode_ = new QLabel(tr("System VPN (vpn)"));
+    generalForm->addRow(tr("Mode"), nativeMode_);
     generalForm->addRow(tr("Name"), name_);
     generalForm->addRow(tr("Key source"), keySource_);
     generalForm->addRow(tr("Key or path"), keyRow);
@@ -456,9 +478,16 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
             QMessageBox::warning(this, tr("Error"), tr("SS2022 does not support Prefix. Clear Prefix before saving."));
             return;
         }
-        if (!rawOnly_ && !rawDirty_ && !parameterError().isEmpty()) {
+        if (!native_ && !rawOnly_ && !rawDirty_ && !parameterError().isEmpty()) {
             QMessageBox::warning(this, tr("Error"), parameterError());
             return;
+        }
+        if (configText() != originalText_
+            && nativeProtectionIntent(configText()) != ProtectionIntent::Disabled
+            && nativeProtectionIntent(originalText_) != ProtectionIntent::Enabled) {
+            if (QMessageBox::question(this, tr("Native protection"),
+                tr("Initial connection bootstrap is unprotected. Native protection blocks ordinary LAN access. A crash or failed cleanup can retain WFP and DNS protection and leave this computer offline until explicit administrative recovery. Enable it?"),
+                QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes) return;
         }
         accept();
     });
@@ -823,6 +852,12 @@ void ProfileEditorDialog::loadText(const QString &text) {
             blockers.push_back(std::make_unique<QSignalBlocker>(widget));
     }
     loadedText_ = text;
+    native_ = false;
+    for (const auto &line : text.split('\n'))
+        native_ = native_ || ProfileStore::sectionName(line) == "IKEv2";
+    windowsProfile_->setText(valueFor(text, "IKEv2", "WindowsProfile"));
+    nativeServerName_->setText(valueFor(text, "IKEv2", "ServerName"));
+    nativeKillSwitch_->setChecked(nativeProtectionIntent(text) != ProtectionIntent::Disabled);
     rules_->setRowCount(0);
     ignoreLocalNetwork_->setChecked(false);
     hasUnknownSettings_ = false;
@@ -900,7 +935,7 @@ void ProfileEditorDialog::loadText(const QString &text) {
         rawOnly_ = true;
     const QString configuredMode = valueFor(text, "Interface", "Mode");
     const int modeIndex = mode_->findData(configuredMode);
-    if (!configuredMode.isEmpty() && modeIndex < 0) hasUnknownSettings_ = true;
+    if (!native_ && !configuredMode.isEmpty() && modeIndex < 0) hasUnknownSettings_ = true;
     mode_->setCurrentIndex(qMax(0, modeIndex));
     listen_->setText(valueFor(text, "Interface", "Listen").isEmpty() ? "127.0.0.1:1080" : valueFor(text, "Interface", "Listen"));
     interfaceName_->setText(valueFor(text, "Interface", "Name").isEmpty() ? "Bimeron" : valueFor(text, "Interface", "Name"));
@@ -924,25 +959,29 @@ void ProfileEditorDialog::loadText(const QString &text) {
         QString trimmed = line.trimmed();
         const bool commented = trimmed.startsWith('#');
         if (commented) trimmed = trimmed.mid(1).trimmed();
-        if (trimmed == "[Rule]") { finishRule(rule); rule = {}; rule.enabled = !commented; section = "Rule"; }
+        if (ProfileStore::sectionName(trimmed) == "Rule") { finishRule(rule); rule = {}; rule.enabled = !commented; section = "Rule"; }
         else if (trimmed.startsWith('[')) section.clear();
         else if (section == "Rule" && trimmed.startsWith("CIDR")) { rule.target = trimmed.mid(trimmed.indexOf('=') + 1).trimmed(); rule.domain = false; }
         else if (section == "Rule" && trimmed.startsWith("Domain")) { rule.target = trimmed.mid(trimmed.indexOf('=') + 1).trimmed(); rule.domain = true; }
         else if (section == "Rule" && trimmed.startsWith("Action")) rule.action = trimmed.mid(trimmed.indexOf('=') + 1).trimmed();
     }
     finishRule(rule);
-    const QHash<QString, QSet<QString>> known{
+    const QHash<QString, QSet<QString>> packetKnown{
         {"Profile", {"Version", "Name"}},
         {"AccessKey", {"SS", "SSConf", "SOCKS5", "VLESS", "Hysteria2", "SSH", "Key", "File", "Type", "Server", "Port", "Method", "Username", "Password", "Prefix", "Plugin", "PluginOpts", "IdentityFile", "KnownHostsFile", "CAFile", "MASQUEPath", "ID", "Encryption", "Flow", "Network", "Security", "ServerName", "PublicKey", "ShortID", "Fingerprint", "SpiderX", "ALPN", "WSPath", "WSHost", "WSEarlyData", "GRPCServiceName", "GRPCAuthority", "GRPCMultiMode", "XHTTPPath", "XHTTPHost", "XHTTPMode"}},
         {"ShadowTLS", {"ServerName", "Password"}},
         {"Interface", {"Mode", "Name", "MTU", "DNS", "IPv6", "KillSwitch", "Listen"}},
         {"Routing", {"Default"}}, {"Rule", {"CIDR", "Domain", "Action"}}};
+    const QHash<QString, QSet<QString>> known = native_
+        ? QHash<QString, QSet<QString>>{{"Profile", {"Version", "Name"}},
+            {"IKEv2", {"WindowsProfile", "ServerName", "KillSwitch"}}, {"Interface", {"Mode"}}}
+        : packetKnown;
     QString currentSection;
     for (const QString &sourceLine : text.split('\n')) {
         const QString line = QString(sourceLine).remove(QChar(0xfeff)).trimmed();
         if (line.isEmpty() || line.startsWith('#') || line.startsWith(';')) continue;
         if (line.startsWith('[') && line.endsWith(']')) {
-            currentSection = line.mid(1, line.size() - 2).trimmed();
+            currentSection = ProfileStore::sectionName(line);
             if (!known.contains(currentSection)) hasUnknownSettings_ = true;
         } else if (line.contains('=')) {
             const QString key = line.left(line.indexOf('=')).trimmed();
@@ -1002,6 +1041,14 @@ void ProfileEditorDialog::moveRule(int delta) {
 }
 
 QString ProfileEditorDialog::buildText() const {
+    if (native_) {
+        QString text = "[Profile]\nVersion = 1\nName = " + name_->text()
+            + "\n\n[IKEv2]\nWindowsProfile = " + windowsProfile_->text()
+            + "\nServerName = " + nativeServerName_->text();
+        if (nativeKillSwitch_->isChecked() || !valueFor(loadedText_, "IKEv2", "KillSwitch").isEmpty())
+            text += "\nKillSwitch = " + QString(nativeKillSwitch_->isChecked() ? "true" : "false");
+        return text + "\n\n[Interface]\nMode = vpn\n";
+    }
     QString accessKey;
     const QString selected = keySource_->currentData().toString();
     if (selected == "ExplicitTrojan" || QStringList{"Explicithttp", "Explicithttps", "Explicitnaive", "Explicitmasque"}.contains(selected)) {
@@ -1093,7 +1140,24 @@ QString ProfileEditorDialog::buildText() const {
 
 void ProfileEditorDialog::assessRepresentation() {
     const QSignalBlocker tabBlocker(tabs_);
+    auto *general = qobject_cast<QFormLayout *>(name_->parentWidget()->layout());
+    for (int row = 0; row < general->rowCount(); ++row) general->setRowVisible(row, true);
+    for (int i = 1; i < tabs_->count() - 1; ++i) tabs_->setTabVisible(i, true);
     if (refreshControls_) refreshControls_();
+    general->setRowVisible(windowsProfile_, native_);
+    general->setRowVisible(nativeServerName_, native_);
+    general->setRowVisible(nativeKillSwitch_, native_);
+    general->setRowVisible(nativeMode_, native_);
+    if (native_) {
+        for (int row = 0; row < general->rowCount(); ++row) {
+            auto *item = general->itemAt(row, QFormLayout::FieldRole);
+            auto *widget = item ? item->widget() : nullptr;
+            general->setRowVisible(row, widget == name_ || widget == windowsProfile_
+                || widget == nativeServerName_ || widget == nativeKillSwitch_ || widget == nativeMode_);
+        }
+    }
+    for (int i = 1; i < tabs_->count() - 1; ++i)
+        if (native_) tabs_->setTabVisible(i, false);
     visualBaseline_ = buildText();
     // This is a conservative serializer guard, not a second Core validator.
     // Compare configured tokens with the actual serializer, including ordered rules.
@@ -1108,15 +1172,15 @@ void ProfileEditorDialog::assessRepresentation() {
             if (line.isEmpty() || line.startsWith(';')) continue;
             if (line.startsWith('#')) {
                 line = line.mid(1).trimmed();
-                if (line != "[Rule]" && !section.startsWith("DisabledRule")) continue;
-                if (line == "[Rule]") {
+                if (ProfileStore::sectionName(line) != "Rule" && !section.startsWith("DisabledRule")) continue;
+                if (ProfileStore::sectionName(line) == "Rule") {
                     section = "DisabledRule" + QString::number(++rule);
                     result.insert(section + "/", {});
                     continue;
                 }
             }
             if (line.startsWith('[') && line.endsWith(']')) {
-                section = line.mid(1, line.size() - 2);
+                section = ProfileStore::sectionName(line);
                 if (section == "Rule") section += QString::number(++rule);
                 else if (sections.contains(section)) *valid = false;
                 sections.insert(section);
@@ -1156,7 +1220,8 @@ void ProfileEditorDialog::assessRepresentation() {
         if (QStringList{"Profile/", "AccessKey/", "Interface/", "Routing/"}.contains(it.key())) continue;
         if (!defaults.contains(it.key()) || defaults.value(it.key()) != it.value()) valid = false;
     }
-    rawOnly_ = rawOnly_ || hasUnknownSettings_ || !valid || !parameterError().isEmpty();
+    rawOnly_ = rawOnly_ || hasUnknownSettings_ || !valid || (!native_ && !parameterError().isEmpty());
+    if (native_ && (windowsProfile_->text().isEmpty() || nativeServerName_->text().isEmpty())) rawOnly_ = true;
     const int rawIndex = tabs_->count() - 1;
     for (int i = 0; i < rawIndex; ++i) tabs_->setTabEnabled(i, !rawOnly_);
     tabs_->widget(1)->setEnabled(!rawOnly_ && keySource_->currentData().toString() == "ExplicitVLESS");
