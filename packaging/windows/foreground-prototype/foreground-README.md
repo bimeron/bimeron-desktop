@@ -186,3 +186,133 @@ Revised fixture SHA-256 (local builds, not release artifacts):
 |---|---|---|
 | x64 | `14fe4bab14d0c5461dfdf0c1d55457dd8d32f92504eeb2a1477cd65a6be5562f` | `490fd505c74f3f76255dce226d2d4cb57acea9ff28f73e3c33e883be0cbe4625` |
 | ARM64 | `aa8936c47484f5aca029552eb51bb591e10804356b24d6ce6cc309404789f5a9` | `6a13ef9aef96c9a23774cd7a11acec1c6b30eacbb130598811887f1a45faa7e8` |
+
+## Phase 1 offline trace artifacts (2026-10-30)
+
+Implemented the accepted separate lab; no runner belongs to this phase. The
+`FOREGROUND_LAB_TRACE` option defaults OFF. Only the explicit
+`foreground-lab-trace` target builds three observation-only DLL/MSI pairs; neither
+these DLLs nor packages are in ALL or install rules. No root production registration
+changed. The original DLL, worker, journal and always-failing exports are unchanged.
+Success means observation return 0 only, never enrollment or authorization.
+
+Configure the existing standalone project with the commands above, substituting
+`build/foreground-lab-amd64` and adding `-DFOREGROUND_LAB_TRACE=ON`. Build with:
+
+```powershell
+cmake --build build/foreground-lab-amd64 --config Release --target foreground-lab-trace
+ctest --test-dir build/foreground-lab-amd64 -C Release --output-on-failure
+```
+
+For existing worker regression tests, first build the standalone default target.
+Repeat configure/build for `build/foreground-lab-arm64` with `-A ARM64`; run only
+`foreground-sequence|foreground-msi-readonly|foreground-lab-static` on x64.
+Use cached WiX only. Files are named `lab-trace-Success.msi`,
+`lab-trace-CommitFail.msi`, `lab-trace-PostFinalizeFail.msi` and matching DLLs in
+`Release/`. Product/upgrade UUIDs are unique per variant and build directory,
+preserved in CMakeCache; WiX generates a fresh package UUID when linking. Once
+hashed for review, preserve the exact bytes; rebuilding requires new evidence.
+There is no Upgrade table or RemoveExistingProducts action.
+
+Every normal message begins `BIMERON_LAB_TRACE_V1 ` followed by bounded flat JSON
+(schema 1). `callback` is an exact export name; `utc` is an ISO UTC timestamp;
+`pid`, `tid`, `processSession`, `tokenSession`, `integrityRID`, `status` are unsigned
+32-bit values. `processCreated` is a 16-hex FILETIME and `logonId` a 16-hex LUID.
+`tokenSource` is 0 unknown, 1 thread, 2 process; fallback is only ERROR_NO_TOKEN.
+`tokenType` is 0 unknown, 1 primary, 2 impersonation; `impersonation` is -1 when
+not applicable, otherwise 0..3. `elevationType` is 0 unknown or 1..3;
+`elevated`, `adminEnabled`, `adminDenyOnly`, `restricted` are 0/1.
+`sidSHA256` is 64 lowercase hex digits or `unknown`. `evidence` is `observed` or
+`incomplete`; numeric status is the first query failure. All fields in an incomplete
+record are observations only and may be unknown defaults. `initiatingClient` is
+always `Unknown`; `intendedReturn` is 0 or 1603. Fallback records contain only
+schema, callback, evidence=incomplete, numeric status, initiatingClient and
+intendedReturn. A missing/unparseable callback or failed message means incomplete
+evidence, even when the fallback cannot be logged. No names, properties,
+environment, command lines, exception text or credentials are logged.
+
+MSVC x64 and ARM64 Release compilation passed with /W4 /WX, static CRT,
+SYSTEM32 dependent-load flags, exactly five exports, no delay imports and only
+KERNEL32/ADVAPI32/MSI/BCRYPT imports. Normal unsuppressed verbose ICE passed all
+six linked MSIs without warning/error diagnostics. ICE09 cannot inspect the
+intentionally absent Component table; explicit Media row passed ICE71. x64 CTest
+passed 4/4; ARM64 host-side CTest passed 3/3. The lab check validates actual tables,
+summary architecture/package code, per-machine properties, exact custom action
+types and sequences, empty payload and embedded DLL SHA-256, with 42 negative
+mutations per architecture (flags, exports, order, payload, production identities,
+extra actions/tables and altered Binary digest). Reports are `Release/*.tables.json`
+and `Release/lab-trace-evidence.json`; verbose ICE is in `build.log`.
+
+No callbacks/MSI installation, VM access, registry access, elevation, network,
+signing, secrets, guest runner, manifest publication or release was performed.
+ARM64 was compiled, never executed. Linux/full GUI/package matrix and performance
+benchmarks/profiling are inapplicable: this disconnected Windows-only target changes
+no production code or packaging. Static review found no production integration or
+application resources. Runtime callback identity/order/rollback and logging remain
+unproved until a separately authorized disposable VM phase. The empty fixture
+cannot prove real resource rollback, outer completion or authenticated initiator.
+
+Final artifact evidence (SHA-256; identities read from linked MSI, checked against
+configured lab identity; these are inert local fixtures, never release artifacts):
+
+### amd64
+
+```json
+{
+  "Success": {
+    "file": "lab-trace-Success.msi",
+    "sha256": "7fc52c25dedc5a68031311f9e3bad0c2b48e339df0813be4a4c3c29e4fee35e2",
+    "dllSha256": "d87301a4433667e1ebe5b3becfec535f1c30953b2fa6886c52715ba2e35d9414",
+    "productCode": "{A96FF6D5-FB68-44DF-BE50-6199ED3EC9C3}",
+    "upgradeCode": "{42A71F28-A5D9-4860-82B2-517166C98E42}",
+    "packageCode": "{846D28F8-B92B-46B5-B836-DB2D696FB38E}"
+  },
+  "CommitFail": {
+    "file": "lab-trace-CommitFail.msi",
+    "sha256": "0970fcd8c86464bd54ea7fd9d5a1ed520e2c05b1146df9b1247da474ca36c309",
+    "dllSha256": "85464ac58903bb23cfff6199646da202d11970a4832eebec5b9b15569ddde865",
+    "productCode": "{948171C5-070E-49FF-9332-E3A0AEE27701}",
+    "upgradeCode": "{AFA8D094-C57F-4C94-87F1-FF4E06D741E0}",
+    "packageCode": "{F807B7EF-BAAF-4F4D-B34B-1B4881936F64}"
+  },
+  "PostFinalizeFail": {
+    "file": "lab-trace-PostFinalizeFail.msi",
+    "sha256": "e2431fc8ac9c3472cf9890aca3ce3b5c0e390a099c0872d494031a48ed10b841",
+    "dllSha256": "1c0cf5067a457c0b1a1dafb6f2ac301773892b5be2f561de99b1e490d7e9075a",
+    "productCode": "{16C37902-2E8D-4618-8D68-2EBAB4CC556A}",
+    "upgradeCode": "{C1D8B2C2-1779-431C-9980-CAC6785FFE7E}",
+    "packageCode": "{E106B694-1318-4DDF-B167-976C4839BAE1}"
+  }
+}
+```
+
+### arm64
+
+```json
+{
+  "Success": {
+    "file": "lab-trace-Success.msi",
+    "sha256": "812aa440a96d160b932bd26571e3532ba863602022b7c648acdc0a02e6295fe0",
+    "dllSha256": "24888eea032d5f3330b8de776969a09705f93462e8f5bb7347faa2f4bf6627ab",
+    "productCode": "{50D8651B-A1F6-43CE-9228-CCA41F3F1750}",
+    "upgradeCode": "{FB9B1631-ECED-4801-AC9B-0F07064F256C}",
+    "packageCode": "{3CA46ED5-DCE8-4B04-A94C-FB294C4ECE8F}"
+  },
+  "CommitFail": {
+    "file": "lab-trace-CommitFail.msi",
+    "sha256": "a3fff4b6d95627de2fd3bca083a42aee241068dd71287f17f2b99b75f7be462a",
+    "dllSha256": "4e6f2695409300b6c34b3f318e58d5118b3742a17c1b77b14816e26ec9e9b672",
+    "productCode": "{F606DB2D-0307-4C65-89FA-C21860510E1C}",
+    "upgradeCode": "{7A6CFC69-0138-48D4-AAD7-3C8B6D777E66}",
+    "packageCode": "{3A81D373-6467-428E-9655-B0955F9C0758}"
+  },
+  "PostFinalizeFail": {
+    "file": "lab-trace-PostFinalizeFail.msi",
+    "sha256": "81b02173fd11c91be0de66a3224c4e39cd7e012e2db778957d9b3c9c4d8f3a00",
+    "dllSha256": "908c80be2d82c838f30499fd49fe0b3a82a82608ec252680c4fb529bd5e2b130",
+    "productCode": "{2A2C0686-33CC-4D2A-80E6-5E4C08527BDE}",
+    "upgradeCode": "{21757994-5169-48BB-9D35-82B41F0740B5}",
+    "packageCode": "{D5596412-5029-4F35-87E9-54D685C89847}"
+  }
+}
+```

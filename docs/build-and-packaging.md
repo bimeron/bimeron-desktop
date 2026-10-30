@@ -528,3 +528,23 @@ Its two architecture fixtures passed normal ICE validation without warning or
 error diagnostics; ICE09 could not check the absent Component table. This does
 not change or validate production packaging. See the prototype README for hashes
 and remaining authorization and runtime gates.
+
+## Separate offline foreground trace lab (not a release package)
+
+The standalone foreground project has a default-OFF `FOREGROUND_LAB_TRACE`
+option. With explicitly supplied cached WiX, build only the explicit
+`foreground-lab-trace` target for Success, CommitFail and PostFinalizeFail empty
+per-machine LABTRACEONLY MSIs. No production CMake/CPack or install rule references
+them. Keep artifacts in ignored `build/foreground-lab-*`, never stage/dist.
+Each DLL compiles a fixed failure point; no runtime command/property selects it.
+The separate observer does not link the worker/journal and cannot enroll or
+authorize native operation. Existing fail-closed exports are unchanged.
+
+MSVC x64/ARM64 compilation, unsuppressed ICE for six actual MSIs and read-only
+MSI/Binary/PE checks passed. x64 standalone CTest passed 4/4; ARM64 host-side checks
+passed 3/3, including 42 negative database mutations per architecture. ICE09 notes
+the absent Component table; ICE71 passes the explicit empty Media row. No callback,
+installation, VM or release was run. Linux and production matrix/benchmarks are
+inapplicable to this disconnected Windows-only target. Commands, trace schema,
+identities, hashes and remaining runtime limits are recorded in
+`packaging/windows/foreground-prototype/foreground-README.md`.

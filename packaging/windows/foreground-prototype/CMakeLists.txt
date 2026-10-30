@@ -47,3 +47,50 @@ if(WIX_TOOL_DIR)
     "${CMAKE_CURRENT_SOURCE_DIR}/foreground-msi-test.py"
     "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/fixture.msi" "$<TARGET_FILE:foreground-prototype>" "${WIX_ARCH}")
 endif()
+
+# Separate observation-only lab. Never part of ALL, install, or production CPack.
+option(FOREGROUND_LAB_TRACE "Enable explicit offline LABTRACEONLY artifact target" OFF)
+if(FOREGROUND_LAB_TRACE)
+  if(NOT WIX_TOOL_DIR)
+    message(FATAL_ERROR "Lab requires explicitly supplied cached WiX 3 tools")
+  endif()
+  set(lab_outputs)
+  foreach(variant Success CommitFail PostFinalizeFail)
+    if(variant STREQUAL "Success")
+      set(point 0)
+    elseif(variant STREQUAL "CommitFail")
+      set(point 1)
+    else()
+      set(point 2)
+    endif()
+    add_library(lab-trace-${variant} SHARED EXCLUDE_FROM_ALL lab-trace.cpp)
+    target_compile_features(lab-trace-${variant} PRIVATE cxx_std_17)
+    target_compile_options(lab-trace-${variant} PRIVATE /W4 /WX)
+    target_compile_definitions(lab-trace-${variant} PRIVATE LAB_FAILPOINT=${point})
+    target_link_libraries(lab-trace-${variant} PRIVATE advapi32 msi bcrypt)
+    target_link_options(lab-trace-${variant} PRIVATE /DEPENDENTLOADFLAG:0x800)
+    foreach(kind PRODUCT UPGRADE)
+      if(NOT LAB_${variant}_${kind})
+        execute_process(COMMAND "${Python3_EXECUTABLE}" -c "import uuid; print(str(uuid.uuid4()).upper())"
+          OUTPUT_VARIABLE guid OUTPUT_STRIP_TRAILING_WHITESPACE COMMAND_ERROR_IS_FATAL ANY)
+        set(LAB_${variant}_${kind} "${guid}" CACHE INTERNAL "Immutable lab identity")
+      endif()
+      set(LAB_${kind} "${LAB_${variant}_${kind}}")
+    endforeach()
+    set(LAB_DLL "$<TARGET_FILE:lab-trace-${variant}>")
+    configure_file(lab-trace.wxs.in lab-trace-${variant}.configured.wxs @ONLY)
+    file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/lab-trace-${variant}.wxs"
+      INPUT "${CMAKE_CURRENT_BINARY_DIR}/lab-trace-${variant}.configured.wxs")
+    set(output "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/lab-trace-${variant}.msi")
+    add_custom_command(OUTPUT "${output}"
+      COMMAND "${WIX_TOOL_DIR}/candle.exe" -nologo -out "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/lab-trace-${variant}.wixobj"
+        "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/lab-trace-${variant}.wxs"
+      COMMAND "${WIX_TOOL_DIR}/light.exe" -nologo -v -out "${output}"
+        "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/lab-trace-${variant}.wixobj"
+      DEPENDS lab-trace-${variant} "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/lab-trace-${variant}.wxs" VERBATIM)
+    list(APPEND lab_outputs "${output}")
+  endforeach()
+  add_custom_target(foreground-lab-trace DEPENDS ${lab_outputs})
+  add_test(NAME foreground-lab-static COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/lab-trace-check.py" "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>" "${WIX_ARCH}")
+endif()
