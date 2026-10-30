@@ -433,5 +433,10 @@
   "SSH VPN carries TCP and captured DNS only; other proxied UDP is dropped.": "SSH VPN передаёт только TCP и перехваченный DNS; остальной проксируемый UDP отбрасывается.",
   "Paste a Shadowsocks, SOCKS5, VLESS, Hysteria2, or SSH key": "Вставьте ключ Shadowsocks, SOCKS5, VLESS, Hysteria2 или SSH",
   "SSH requires a readable known_hosts file and, when selected, a readable identity file. Use explicit paths accessible to Core; service access can differ from GUI access.": "Для SSH требуется доступный для чтения файл known_hosts и выбранный файл ключа. Укажите пути, доступные Core; права сервиса могут отличаться от прав GUI.",
-  "SSH answers exceed the allowed size.": "Ответы SSH превышают допустимый размер."
+  "SSH answers exceed the allowed size.": "Ответы SSH превышают допустимый размер.",
+  "Native protection": "Системная защита",
+  "Request native traffic and DNS protection": "Запрашивать системную защиту трафика и DNS",
+  "Windows VPN profile": "Профиль VPN Windows",
+  "System VPN (vpn)": "Системный VPN (vpn)",
+  "Initial connection bootstrap is unprotected. Native protection blocks ordinary LAN access. A crash or failed cleanup can retain WFP and DNS protection and leave this computer offline until explicit administrative recovery. Enable it?": "Начальный этап подключения не защищён. Системная защита блокирует обычный доступ к локальной сети. После сбоя или ошибки очистки защита WFP и DNS может сохраниться и оставить компьютер без сети до явного восстановления администратором. Включить защиту?"
 }
