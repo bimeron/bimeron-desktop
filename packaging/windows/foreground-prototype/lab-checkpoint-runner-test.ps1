@@ -11,27 +11,27 @@ $add=$fn.Body.Find({param($n) $n -is [Management.Automation.Language.CommandAst]
 $source=$add.CommandElements[2].Value
 $fake = @'
 public sealed class CheckpointMock : IDisposable {
- public long Time,CallAt;public int Calls,Queries;public IntPtr Killed;
- public IDisposable Held;public bool IsAlive=true,IdentityBad,IdentityError,ApiError,ApiThrows,Signaled=true,Disposed;
+ public long Time,CallAt;public int Calls,Queries,Closes,Disposals,Waits;public IntPtr Killed;
+ public IDisposable Held;public bool IsAlive=true,IdentityBad,IdentityError,ApiError,ApiThrows,Signaled=true,Disposed,WaitThrows,DeathThrows,LaunchThrows;
  public readonly ManualResetEvent LaunchEntered=new ManualResetEvent(false),LaunchPermit=new ManualResetEvent(true),ReadyEntered=new ManualResetEvent(false),ReadyPermit=new ManualResetEvent(true),KillEntered=new ManualResetEvent(false),KillPermit=new ManualResetEvent(true),WaitEntered=new ManualResetEvent(false),WaitPermit=new ManualResetEvent(true);
  public Action BeforeReady,FinalQuery;
- public IntPtr Launch(){LaunchEntered.Set();LaunchPermit.WaitOne();return new IntPtr(1234);}
+ public IntPtr Launch(){LaunchEntered.Set();LaunchPermit.WaitOne();if(LaunchThrows)throw new Exception("Launch before process");return new IntPtr(1234);}
  public void Check(IntPtr h){if(h!=new IntPtr(1234))throw new Exception("Wrong retained handle");}
  public CheckpointIdentity Query(IntPtr h){Check(h);Queries++;if(IdentityError)throw new Exception("Query");if(Queries==2 && FinalQuery!=null)FinalQuery();return new CheckpointIdentity(IdentityBad && Queries>1?8u:7u,42);}
  public bool Alive(IntPtr h){Check(h);return IsAlive;}
  public bool Ready(IntPtr h){Check(h);ReadyEntered.Set();ReadyPermit.WaitOne();if(BeforeReady!=null)BeforeReady();return true;}
  public bool Kill(IntPtr h){Check(h);Killed=h;KillEntered.Set();KillPermit.WaitOne();Calls++;CallAt=Time;if(ApiThrows)throw new Exception("API");return !ApiError;}
- public bool Death(IntPtr h){Check(h);return Signaled;}
- public void Wait(IntPtr h){Check(h);WaitEntered.Set();WaitPermit.WaitOne();}
- public void Close(IntPtr h){Check(h);if(Disposed)throw new Exception("Pins released before handle");}
- public void Dispose(){if(Held!=null)Held.Dispose();Disposed=true;}
+ public bool Death(IntPtr h){Check(h);if(DeathThrows)throw new Exception("Death query");return Signaled;}
+ public void Wait(IntPtr h){Check(h);Waits++;WaitEntered.Set();WaitPermit.WaitOne();if(WaitThrows)throw new Exception("Wait");}
+ public void Close(IntPtr h){Check(h);Closes++;if(Disposed)throw new Exception("Pins released before handle");}
+ public void Dispose(){Disposals++;if(Held!=null)Held.Dispose();Disposed=true;}
  public CheckpointWorker Worker(){return new CheckpointWorker(delegate{return Time;},300000,Launch,Query,Alive,Ready,Kill,Death,Wait,Close,new IDisposable[]{this});}
 }
 public static class CheckpointTests {
  static int checks;
  static void Assert(bool value,string message){checks++;if(!value)throw new Exception(message);}
  static void Await(ManualResetEvent e){Assert(e.WaitOne(3000),"Mock barrier timed out");}
- static void Finish(CheckpointWorker w,CheckpointMock m){m.LaunchPermit.Set();m.ReadyPermit.Set();m.KillPermit.Set();m.WaitPermit.Set();Assert(w.Observe(3000),"Mock worker did not finish");Assert(m.Disposed,"Pins not released at completion");}
+ static void Finish(CheckpointWorker w,CheckpointMock m){m.LaunchPermit.Set();m.ReadyPermit.Set();m.KillPermit.Set();m.WaitPermit.Set();Assert(w.Observe(3000),"Mock worker did not finish");Assert(m.Disposed && m.Disposals==1 && m.Closes==(m.LaunchThrows?0:1) && w.Snapshot.Completed,"Owned resources not released exactly once");}
  static void Reject(Action action){bool rejected=false;try{action();}catch{rejected=true;}Assert(rejected,"Expected rejection");}
  public static string Run(byte[] manifest){
   Assert(Marshal.SizeOf(typeof(CheckpointNative.Info))==52 && Marshal.OffsetOf(typeof(CheckpointNative.Info),"Volume").ToInt32()==28,"Native file-information layout");
@@ -61,7 +61,21 @@ public static class CheckpointTests {
    if(bad=="manifest")m.BeforeReady=delegate{CheckpointFormat.Manifest(new byte[9512]);};
    w=m.Worker();w.Start();Finish(w,m);Assert(m.Calls==0,"Unsafe check: "+bad);
   }
-  foreach(string result in new string[]{"error","throws","unconfirmed"}){m=new CheckpointMock();m.ApiError=result=="error";m.ApiThrows=result=="throws";m.Signaled=result!="unconfirmed";w=m.Worker();w.Start();Finish(w,m);Assert(m.Calls==1,"Retry on API failure/unknown death");if(result=="error")Assert(w.Snapshot.ApiResult=="Failed","API error lost");if(result=="throws")Assert(w.Snapshot.ApiResult=="Unknown","API exception mislabeled");if(result=="unconfirmed")Assert(w.Snapshot.ClientDeath=="Unconfirmed","Death mislabeled");}
+  foreach(string result in new string[]{"error","throws"}){m=new CheckpointMock();m.ApiError=result=="error";m.ApiThrows=result=="throws";w=m.Worker();w.Start();Finish(w,m);Assert(m.Calls==1,"Retry on API failure/unknown death");if(result=="error")Assert(w.Snapshot.ApiResult=="Failed","API error lost");if(result=="throws")Assert(w.Snapshot.ApiResult=="Unknown","API exception mislabeled");}
+  foreach(string failure in new string[]{"wait","unconfirmed","deathQuery","identityWait","identityUnconfirmed","finalQuery"}){
+   m=new CheckpointMock();m.Signaled=false;m.WaitThrows=failure=="wait" || failure=="identityWait";m.DeathThrows=failure=="deathQuery";m.IdentityError=failure.StartsWith("identity");if(failure=="finalQuery")m.FinalQuery=delegate{throw new Exception("Final identity query");};
+   w=m.Worker();w.Start();Assert(w.Observe(3000),"Unresolved worker blocked");
+   Assert(w.Snapshot.Outcome=="Unresolved" && !w.Snapshot.Completed && w.Snapshot.PossibleLateOperation && w.Snapshot.ClientDeath=="Unconfirmed","Unresolved observation");
+   Assert(m.Calls==(m.IdentityError || failure=="finalQuery"?0:1) && m.Closes==0 && m.Disposals==0 && m.Waits==1,"Unresolved ownership/retry");
+   var unresolved=w.Snapshot;Assert(Object.ReferenceEquals(w.Timeout(),unresolved),"Timeout erased unresolved state");
+   var weak=new WeakReference(w);w=null;GC.Collect();GC.WaitForPendingFinalizers();GC.Collect();
+   Assert(weak.IsAlive && !m.Disposed,"Pending owner lost to GC");
+   var owners=(List<CheckpointWorker>)typeof(CheckpointWorker).GetField("pendingOwners",System.Reflection.BindingFlags.Static|System.Reflection.BindingFlags.NonPublic).GetValue(null);
+   Assert(owners.Contains((CheckpointWorker)weak.Target),"Worker not explicitly rooted");
+   Assert((IntPtr)typeof(CheckpointWorker).GetField("pendingHandle",System.Reflection.BindingFlags.Instance|System.Reflection.BindingFlags.NonPublic).GetValue(weak.Target)==new IntPtr(1234),"Actual handle not retained");
+  }
+  m=new CheckpointMock();m.LaunchThrows=true;w=m.Worker();w.Start();Finish(w,m);Assert(m.Calls==0 && m.Waits==0,"Preprocess launch failure performed operation");
+  m=new CheckpointMock();m.WaitThrows=true;w=m.Worker();w.Start();Finish(w,m);Assert(w.Snapshot.ClientDeath=="Signaled","Confirmed death lost after wait error");
   // A real owned temporary file proves the worker retains the supplied pin across cancellation.
   string temp=Path.GetTempFileName();
   try {

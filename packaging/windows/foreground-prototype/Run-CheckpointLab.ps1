@@ -38,6 +38,9 @@ public sealed class CheckpointSnapshot {
  }
 }
 public sealed class CheckpointWorker {
+ // Sticky diagnostic ownership: no polling/recovery; host exit ends retention.
+ static readonly List<CheckpointWorker> pendingOwners=new List<CheckpointWorker>();
+ IntPtr pendingHandle;
  readonly object gate=new object(); readonly ManualResetEvent done=new ManualResetEvent(false);
  readonly Func<long> now; readonly long deadline; readonly Func<IntPtr> launch;
  readonly Func<IntPtr,CheckpointIdentity> query; readonly Func<IntPtr,bool> alive,ready,terminate,death;
@@ -54,7 +57,7 @@ public sealed class CheckpointWorker {
  public int Remaining {get {return (int)Math.Max(0,Math.Min(300000,deadline-now()));}}
  public CheckpointSnapshot Snapshot {get {lock(gate){return snapshot;}}}
  public CheckpointSnapshot Timeout(){lock(gate){
-  if(snapshot.Completed)return snapshot;
+  if(snapshot.Completed || snapshot.Outcome=="Unresolved")return snapshot;
   if(state=="Eligible") {state="Cancelled";snapshot=new CheckpointSnapshot(state,"Cancelled","NotCalled","Unknown",true,false,snapshot.Identity);}
   else if(state=="Committed") snapshot=new CheckpointSnapshot(state,"TerminationDecisionInFlight",snapshot.ApiResult,snapshot.ClientDeath,true,false,snapshot.Identity);
   return snapshot;
@@ -92,11 +95,19 @@ public sealed class CheckpointWorker {
   finally {
    // Cancellation never kills a late client. Retain process and input pins until it ends.
    if(handle!=IntPtr.Zero){try{wait(handle);if(death(handle)){dead="Signaled";if(outcome=="ClientDeathUnconfirmed")outcome="OwnedClientDeathObserved";}}catch{outcome="WaitFailed";}}
-   if(handle!=IntPtr.Zero){try{close(handle);}catch{}}
-   foreach(var pin in pins){try{pin.Dispose();}catch{}}
+   bool resolved=handle==IntPtr.Zero || dead=="Signaled";
+   if(resolved){
+    if(handle!=IntPtr.Zero){try{close(handle);}catch{}}
+    foreach(var pin in pins){try{pin.Dispose();}catch{}}
+   }else{
+    // Root the worker AND its actual handle/pins after this thread returns.
+    pendingHandle=handle;
+    lock(pendingOwners){pendingOwners.Add(this);}
+    outcome="Unresolved";dead="Unconfirmed";
+   }
    lock(gate){
     if(state=="Eligible")state="Cancelled";
-    snapshot=new CheckpointSnapshot(state,outcome,api,dead,true,true,identity);
+    snapshot=new CheckpointSnapshot(state,outcome,api,dead,true,resolved,identity);
    }
    done.Set();
   }
@@ -261,5 +272,5 @@ try {
  $finished = $worker.Observe($worker.Remaining)
  $snapshot = if ($finished) { $worker.Snapshot } else { $worker.Timeout() }
  [ordered]@{labOnly=$true;logPath=$operation.LogPath;decision=$snapshot.Decision;outcome=$snapshot.Outcome;completed=$snapshot.Completed;terminationApi=$snapshot.ApiResult;clientDeath=$snapshot.ClientDeath;possibleLateOperation=$snapshot.PossibleLateOperation;latency=$snapshot.Latency;serverQuiescence=$snapshot.ServerQuiescence;initiatingClient='Unknown';clean='Unknown';childPid=$(if($null -eq $snapshot.Identity){$null}else{$snapshot.Identity.Pid});childCreatedRawFileTime=$(if($null -eq $snapshot.Identity){$null}else{$snapshot.Identity.Created.ToString('x16')});runnerHash=$ExpectedRunnerSha256;manifestHash=$ExpectedManifestSha256;msiHash=$ExpectedMsiSha256} | ConvertTo-Json -Compress
- Write-Output 'Preserve VM and all state. Stop orchestration: client death is not MSI server quiescence. No retry, uninstall or cleanup. Worker retains pins through late completion; host death loses them.'
+ Write-Output 'Preserve VM and all state. Stop orchestration: client death is not MSI server quiescence. No retry, uninstall or cleanup. Worker retains pins through late completion or unresolved death; unresolved ownership is sticky until host exit, which loses pins.'
 } finally { if (-not $transferred) { $operation.Dispose() } }

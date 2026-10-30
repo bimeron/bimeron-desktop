@@ -1538,3 +1538,23 @@ release once; launch failure before any process exists may release. Late launch
 and in-flight operations retain ownership. Offline exact-worker mocks must cover
 these branches on PS 5.1 and 7 without native execution. This is an existing
 contract bug fix, not a new termination or packaging contract.
+
+P1 retention fix offline result: PS 5.1.19041.6456 and PS 7.6.9 each pass 150
+assertions plus AST/interop compilation checks, including throwing final wait,
+returned wait/unconfirmed death, death-query failure, initial/final identity-query
+failures, explicit pending-owner/actual-handle retention across GC, sticky timeout,
+preprocess launch failure and exactly-once release after confirmed death. The
+unresolved worker returns without polling; static pending ownership deliberately
+lasts until host exit with no explicit recovery API. Completed is false even after
+Observe returns true for that worker. No termination retry or alternate target.
+
+Fresh ignored build/ack-checkpoint-runner-retention-review freezes the full exact
+committed Git-blob source ZIP/hash inventory, tests on ZIP-extracted runner/test
+bytes, unchanged prior frozen MSI/DLL/manifest and updated effects/command. This
+bundle requires a fresh parent independent review round before any VM work. Older
+bundles are preserved. Focused PS mocks and diff --check are CI-equivalent here;
+no native launch/termination, MSI build/action, VM, push/watch or release ran.
+Diff review found the P1 release-on-unknown-death path corrected and no unrelated
+ACK/context/MSI/CMake changes. Windows ARM64/Linux builds and benchmarks/profiling
+are inapplicable to this disconnected native-x64-only runner with no product build
+change. Native path/ACL/launch/death behavior and late server work remain unproved.

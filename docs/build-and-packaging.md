@@ -832,3 +832,15 @@ avoid competing with native logger write access. The fresh final review bundle i
 build/ack-checkpoint-runner-ready-review-final; earlier bundles remain intact.
 Both PS suites rerun on exact committed ZIP-extracted sources, and source hashes
 cover those same immutable Git-blob bytes. Native runtime remains a parent gate.
+
+Checkpoint P1 ownership correction: final wait/query failure or unconfirmed death
+now retains the worker, actual process handle and input pins in an explicit sticky
+pending owner until host exit. Observers report Unresolved, Completed false and
+possibleLateOperation true; observer completion is not resource release. No retry,
+polling or recovery API was added. Confirmed death releases once; failure before
+any process exists can release. PS 5.1/7 each pass 150 exact-worker assertions and
+AST/interop checks without native execution. Fresh ignored
+build/ack-checkpoint-runner-retention-review freezes exact committed source and
+unchanged MSI/DLL/manifest with updated tests/effects for a fresh parent independent
+review before VM work. Earlier bundles remain preserved. No supported packaging
+flow, product matrix, MSI build/action, VM, benchmark/profile or release change.
