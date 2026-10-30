@@ -498,3 +498,26 @@ retain the task/evidence and stop. After confirmed completion capture task resul
 MSI log/callback observations and product state, then delete only that exact task.
 Label results Task Scheduler-launched InteractiveToken Limited/Highest; human UAC
 consent remains not tested and authenticated human initiator remains unknown.
+
+### InteractiveToken observations (2026-10-30)
+
+Two separate demand-only tasks ran the frozen x64 Success MSI in the revalidated
+interactive desktop session 1. Both used the fixed native msiexec action and
+private log paths; neither stored credentials, triggers or recurrence.
+
+- Limited: task/Installer result 1603. Complete Preflight observed a filtered
+  medium-integrity user process token, session 1, elevation false. Initialize
+  succeeded; Finalize failed. No deferred, commit or PostFinalize records appeared.
+- Highest: task/Installer result 0. Complete Preflight and PostFinalize records
+  observed the same elevated high-integrity user process identity in session 1.
+  DeferredBegin and Commit observed SYSTEM process tokens in session 1. Initialize
+  and Finalize succeeded; the four callbacks had status 0 and intended return 0.
+
+Product state remained -1. The parent confirmed no running task instances and
+removed each exact temporary task only after completion. Limited's instance ended
+before its first Refresh call (0x8004130B); the parent then confirmed terminal task
+state, result and completed MSI log without rerunning it. No timeout, termination,
+retry, uninstall or reboot occurred. These results are Task Scheduler-launched
+InteractiveToken Limited/Highest observations. Human UAC consent was not tested;
+authenticated human/initiating-client identity and protected-journal access remain
+unproved. Raw logs and task plans stay in private ignored evidence.
