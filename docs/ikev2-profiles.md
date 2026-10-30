@@ -208,3 +208,13 @@ This artifact was used only for static validation, never authenticated foregroun
 execution, service installation or release approval. Earlier outstanding-validation
 statements above retain their historical scope; this closes the profile CLI fixture
 check only, not artifact approval or live integration.
+
+The final integrated offline pass at
+`21acc2789ad0a6eaa4b7286a3e78ca03751f39e9` built the GUI and all test targets
+for Windows amd64/ARM64 and Linux amd64/arm64. Windows x64 Qt 6.8.3 offscreen
+and Linux amd64 system Qt 6.4.2 offscreen each passed CTest 3/3. The hash-verified
+validate-only Core archive profile run passed 1/1. Both ARM64 results are
+compile-only; native ARM runtime/CI was not run locally. Diff hygiene and
+case-sensitive translation JSON parsing passed. No package generation,
+protected installation, native GUI connection, enrollment or live VPN acceptance
+is established by this matrix.
