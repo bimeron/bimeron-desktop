@@ -897,3 +897,12 @@ artifact hashes/18 context GUIDs, tables/imports/logs/effects before evidence ap
 This is offline review material, NOT VM-READY; parent review/execution remains.
 No supported package flow changed. Linux/product matrix and performance checks
 are inapplicable; no host MSI actions, protected writes, VM or release occurred.
+
+Checkpoint DOS argument correction acceptance (MEDIUM): the foreground README
+specifies native known-folder DOS /i and /L*V arguments with retained GUID pins,
+strict alias identity checks and immediate mapping/anchor revalidation. This is a
+bounded compatibility hypothesis after MSI path error 1314, not a proven root
+cause. Same-handle exit-code diagnostics follow confirmed signal before close;
+query failure cannot weaken P1 retention/release rules. New exact-source offline
+and separate read-only native evidence precede a fresh immutable review bundle
+and parent independent review. No guest, MSI rebuild or supported flow changes.

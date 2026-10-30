@@ -1882,3 +1882,45 @@ All prepared inputs, archives and log remain retained. No retry, uninstall or cl
 ran. Private result/log are under build/vm-lab-evidence-20261030/checkpoint-c260f52f-*
 and checkpoint-9701525611d543f48da06123a987d391.log. New path-policy diagnosis and
 review are required before another invocation; no sharing/security check was bypassed.
+
+### Accepted checkpoint DOS argument identity correction (MEDIUM)
+
+The c260f52f observation is MSI error 1314 (specified path unavailable), not Win32
+privilege error 1314. The GUID log was created and GUID package paths reached both
+client and server; this does not establish blanket GUID-path incompatibility.
+Use native Program Files DOS arguments as a bounded compatibility hypothesis,
+not a proven root cause or service-consumption proof.
+
+Only external /i and /L*V arguments change to the native Program Files known-folder
+DOS path plus fixed suffixes and an internally generated unique log GUID name.
+Keep all GUID traversal, metadata/security, hashes, freshness, lab single-link and
+SystemImage distinctions and retained pins. Immediately before CreateProcess,
+revalidate the original fixed-drive-to-volume mapping and native known-folder
+anchor. Retain strict DOS anchor/MSI aliases and compare volume/file IDs against
+original GUID pins. Reserve the GUID log with metadata-only CREATE_NEW access;
+open its DOS alias metadata-only with read/write sharing and no delete sharing,
+validate metadata/security and compare reservation identity. Any query/error or
+mismatch refuses before launch. No caller/environment/PATH/alternate/fallback.
+All aliases and original pins remain retained without write/delete sharing except
+the two metadata-only logger-compatible handles (read/write sharing, no delete).
+Identity is established at validation time, not atomically at service consumption.
+Privileged remapping is outside the explicit trusted OS/administrator boundary.
+
+After confirmed same-process-handle signal and before close, query
+GetExitCodeProcess exactly once. Publish nullable uint exit code plus bounded
+NotQueried/Succeeded/Failed status and nullable numeric error. Query failure does
+not alter confirmed-death release; unconfirmed death never queries/reopens by PID
+and retains P1 ownership. Keep the 300-second commitment gate, sticky unresolved
+retention and at-most-once termination unchanged; no retry/server kill/action.
+
+Acceptance: retain 150 worker and 34 policy assertions on PS 5.1/7; add matching
+alias identity, MSI/log/anchor mismatch, changed/failing mapping/fixed-drive/query
+refusal, logger flags, signal/query/close same-handle ordering, query-failure
+confirmed release once and no query on unconfirmed death. Separate read-only
+native DOS/GUID mapping/identity/system opens and owned temporary fixtures are
+allowed; no operation constructor, launch, MSI, guest or host protected writes.
+Freeze a NEW ignored bundle with exact committed Git-blob source/archive hashes,
+unchanged MSI/DLL/manifest, tests/native evidence/effects/command. Preserve old
+bundles. Parent fresh independent review precedes future VM work; parent must
+archive prepared client root intact under fresh suffix c260f52f without overwrite
+before staging. No Core/product/MSI rebuild, benchmark, full matrix or release.
