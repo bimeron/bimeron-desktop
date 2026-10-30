@@ -1243,3 +1243,51 @@ client claim. Host protected positive, actual MSI callbacks/wait behavior and VM
 execution remain untested; parent owns VM work. No host MSI actions, protected
 writes, termination, push, watch, merge or release occurred. Linux/product matrix,
 benchmarks and profiling are inapplicable to this isolated Windows fixture.
+
+### Owned checkpoint client runner: strict deadline blocker specification
+
+The requested separate Run-CheckpointLab.ps1 contract is restricted to the frozen
+Checkpoint MSI/manifest from reconciled index SHA-256
+6ddb8fe82ad514fd0613637e2186513705290580ae885bb1faf13e503108e966.
+It must not change the three-variant runner, checkpoint fixture, protected state,
+package hashes, authority or initiating-client Unknown/no-Clean conclusions.
+
+Implementation acceptance includes a hard prohibition on a TerminateProcess call
+after the shared 300-second launch/observation deadline, including a scheduling
+race immediately before the call. Win32 TerminateProcess(HANDLE, UINT) has no
+deadline/cancellation parameter. A final monotonic clock read and cancellation
+check cannot be atomic with kernel entry: preemption can occur between them.
+An observer lock either permits that late call or blocks expiry cancellation;
+another thread/timer adds another scheduling boundary. Retaining the launch
+handle solves identity reuse, but does not solve this deadline condition.
+Reference: https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-terminateprocess
+
+Use the task's explicit safe-API/deadline blocker fallback. Before code, specify:
+Run-CheckpointLab.ps1 is an unconditional refusal entry point, with literal VM
+acknowledgment and runner/manifest/MSI hash parameters only; it performs no launch,
+termination, native API invocation, file writes or protected-path access. It does
+not pretend that fixed-path admission, checkpoint validation or a worker is
+implemented. Its structured result states BlockedStrictDeadline,
+initiatingClient Unknown, clean Unknown, guestReady false and zero launch/kill.
+No flag bypasses refusal. Exit nonzero. No arbitrary path/command/case input.
+
+lab-checkpoint-runner-test.ps1 must run offline under PS 5.1 and 7, extract the
+refusal function by AST without executing the runner, and compile/run a pure
+managed scheduling witness (no native imports or real processes). Demonstrate
+that even a retained-handle identity model and final clock check can authorize
+one simulated call before expiry yet execute it after expiry under preemption;
+compare ordinary in-budget and already-expired cases. Also assert every input
+combination remains refused and the production entry point has no execution or
+termination escape. These are blocker witnesses, not passing implementation
+acceptance for the requested runner/worker/checkpoint/pin tests.
+
+Freeze a new ignored blocker review bundle with exact unchanged MSI/DLL/manifest,
+source, test logs, inventory, effects and exact refusal-only guest command.
+Independent review remains pending; parent must not execute the MSI from this
+bundle. No guest execution, rebuild, recovery, cleanup, retry or uninstall.
+Parent owns preservation of all old ACK/standalone states. Scoped
+-ExecutionPolicy Bypass applies only to a new PowerShell process; never change
+persistent execution policy. Linux/ARM64/product package matrix and benchmarks
+are inapplicable to this refusal-only standalone Windows runner. A runnable
+interrupting worker remains blocked unless an independently reviewed mechanism
+satisfies the original deadline condition; this specification relaxes none of it.

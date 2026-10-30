@@ -776,3 +776,11 @@ options stay OFF. The fresh build/ack-checkpoint-review bundle is partial offlin
 evidence only, without a runner or VM execution. See the foreground README for
 commands, fixed encoding, model/native evidence separation and review limits.
 Supported production packaging remains unchanged.
+
+Checkpoint owned-client runner blocker: the separate Run-CheckpointLab.ps1 refuses
+before launch because the requested hard no-termination-after-deadline contract
+cannot be enforced atomically by TerminateProcess(HANDLE, UINT). The prototype
+README specifies the scheduling witness and explicit safe-API blocker fallback.
+Offline PS 5.1/7 tests and a fresh ignored blocker-only evidence bundle are required;
+this is not a guest-ready implementation and must not trigger parent MSI execution.
+Frozen checkpoint inputs, supported packaging and existing runners stay unchanged.
