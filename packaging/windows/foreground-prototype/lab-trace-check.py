@@ -107,7 +107,7 @@ def summary(db, field):
     finally: msi.MsiCloseHandle(h)
 
 COLUMNS = {'_Tables':['Name'], '_Columns':['Table','Number','Name','Type'],
-    'Component':['Component','ComponentId','Directory_','Attributes','Condition','KeyPath'], 'File':['File'], 'Media':['DiskId','LastSequence','DiskPrompt','Cabinet','VolumeLabel','Source'],
+    'Component':['Component','ComponentId','Directory_','Attributes','Condition','KeyPath'], 'FeatureComponents':['Feature_','Component_'], 'File':['File'], 'Media':['DiskId','LastSequence','DiskPrompt','Cabinet','VolumeLabel','Source'],
     **{name:['Action','Condition','Sequence'] for name in ['AdminExecuteSequence','AdminUISequence','AdvtExecuteSequence','InstallUISequence','InstallExecuteSequence']},
     'CustomAction':['Action','Type','Source','Target'], 'Binary':['Name','Data'],
     'Directory':['Directory','Directory_Parent','DefaultDir'],
@@ -123,10 +123,16 @@ COMPONENT_SCHEMA = [['Component', str(n), name, str(kind)] for n, name, kind in 
     (1, 'Component', 11592), (2, 'ComponentId', 7462), (3, 'Directory_', 3400),
     (4, 'Attributes', 1282), (5, 'Condition', 7679), (6, 'KeyPath', 7496)]]
 
+FEATURE_COMPONENTS_SCHEMA = [['FeatureComponents', '1', 'Feature_', '11558'],
+                             ['FeatureComponents', '2', 'Component_', '11592']]
+
 def validate(t, digest, variant, arch, identities):
     assert ['Component'] in t['_Tables'], 'missing Component table'
     assert [r for r in t['_Columns'] if r[0] == 'Component'] == COMPONENT_SCHEMA, 'malformed Component schema'
     assert t['Component'] == [], 'nonempty Component table'
+    assert ['FeatureComponents'] in t['_Tables'], 'missing FeatureComponents table'
+    assert [r for r in t['_Columns'] if r[0] == 'FeatureComponents'] == FEATURE_COMPONENTS_SCHEMA, 'malformed FeatureComponents schema'
+    assert t['FeatureComponents'] == [], 'nonempty FeatureComponents table'
     assert {r[0] for r in t['_Tables']} == (set(COLUMNS) - {'_Tables', '_Columns'}) | {'_Validation'}, t['_Tables']
     assert t['File'] == [] and t['Media'] == [['1','0','','','','']]
     assert t['Directory'] == [['TARGETDIR','','SourceDir']]
@@ -167,6 +173,7 @@ if __name__ == '__main__':
         try:
             table_names = rows(db, '_Tables', ['Name'])
             assert ['Component'] in table_names, 'missing Component table'
+            assert ['FeatureComponents'] in table_names, 'missing FeatureComponents table'
             tables = {t:rows(db,t,c) for t,c in COLUMNS.items()}
             tables.update(summaryTemplate=summary(db,7), summaryPackage=summary(db,9), summaryFlags=summary(db,15))
         finally: msi.MsiCloseHandle(db)
@@ -192,6 +199,9 @@ if __name__ == '__main__':
         bad = copy.deepcopy(tables); bad['_Tables'].remove(['Component']); mutations.append(bad)
         bad = copy.deepcopy(tables); next(r for r in bad['_Columns'] if r[0] == 'Component')[3] = '0'; mutations.append(bad)
         bad = copy.deepcopy(tables); bad['Component'].append(['dummy'] * 6); mutations.append(bad)
+        bad = copy.deepcopy(tables); bad['_Tables'].remove(['FeatureComponents']); mutations.append(bad)
+        bad = copy.deepcopy(tables); next(r for r in bad['_Columns'] if r[0] == 'FeatureComponents')[3] = '0'; mutations.append(bad)
+        bad = copy.deepcopy(tables); bad['FeatureComponents'].append(['dummy'] * 2); mutations.append(bad)
         for bad in mutations:
             try: validate(bad,digest,variant,arch,ids)
             except AssertionError: pass
@@ -199,4 +209,4 @@ if __name__ == '__main__':
         evidence[variant] = dict(file=path.name,sha256=hashlib.sha256(path.read_bytes()).hexdigest(),dllSha256=digest,**ids)
     (folder/'lab-trace-evidence.json').write_text(json.dumps(evidence,indent=2))
     print(json.dumps(evidence,indent=2))
-    print('PASS: 3 linked MSIs; fixed tables/sequence/identities/Binary/PE; 51 negative cases; LAB TRACE ONLY')
+    print('PASS: 3 linked MSIs; fixed tables/sequence/identities/Binary/PE; 60 negative cases; LAB TRACE ONLY')
