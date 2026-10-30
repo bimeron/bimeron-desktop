@@ -66,3 +66,9 @@ inspection of every packaged EXE/DLL: x64 MSI contains x64 PE files and ARM64 MS
 contains ARM64 PE files, including Qt plugins and vcruntime140_1.dll. Remove only
 stale generated deployment files before rebuilding; preserve other packages and
 all parked work. No GUI behavior or dependency version changes are intended.
+
+The installed MSVC ARM64 redistributable directory also contains an x64
+vcruntime140_1.dll compatibility file. Actual dependency inspection of every
+staged ARM64 EXE/DLL finds no import of it. Exclude that unused compatibility
+file from ARM64 installation; retain it for x64. ARM64 runtime acceptance requires
+vcruntime140.dll and architecture-correct remaining runtime files.
