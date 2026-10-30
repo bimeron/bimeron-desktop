@@ -789,3 +789,15 @@ ignored build/ack-checkpoint-runner-blocked-review contains unchanged frozen
 checkpoint inputs and refusal-only source/evidence, pending independent review.
 Operational interruption acceptance is unimplemented; this bundle must not be
 used to authorize parent MSI execution. No build/package flow changed.
+
+### Disconnected callback interactive-context observation
+
+The standalone foreground-prototype DLL now links Windows secur32 for
+LsaGetLogonSessionData/LsaFreeReturnBuffer; its DLL and test compile /W4 /WX.
+Configure fresh ignored build/callback-context-x64 and callback-context-arm64 with
+the existing standalone VS commands, omitting WIX_TOOL_DIR. Build only
+--target foreground-test; run x64 CTest and ARM64 foreground-sequence only.
+No MSI is built. This observation has no production caller or install rule.
+The original MSI PE checker still permits only its historical three imports;
+new MSI preparation would require a separately scoped secur32 allowlist review.
+Supported production packaging, checkpoint, trace, runner and package pins are unchanged.

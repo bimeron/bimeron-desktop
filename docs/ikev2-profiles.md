@@ -56,8 +56,8 @@ below are trusted; a malicious privileged administrator is outside this boundary
 
 Residual risk: callbacks cannot prove that this procedure was followed or that
 the original initiating process was already fully elevated. Option 1 deliberately
-accepts reliance on correct procedure only after independent review. The selected
-revision is review-pending, not production acceptance. The original
+accepts reliance on correct procedure only after independent review. The revised procedural contract has independent review for the disconnected
+observation only, not production acceptance. The original
 `verifyInitiatingClient` remains Unknown; do not rename it Verified. Any future
 implementation is separate work. Ordinary nonenrolled packet installation and
 signed update/rollback remain unchanged, with no new Clean or admission gate.

@@ -1326,3 +1326,60 @@ The runner does not read or mutate any protected path, state, ACL, log or packag
 Diff review found no launch/termination/native import or cleanup path, production
 change, authority relaxation or package hash rewrite. No benchmark/profile or
 production matrix is relevant to this refusal-only Windows lab entry point.
+
+### Disconnected callback context observation evidence (2026-10-30)
+
+Base: 50e811525d56f243f25d5b9eb8391e43d4cedcb1, including revised contract
+59c566631dab25e2844e8e82997e5ea98d88b56e. Specification cb3b5b1 precedes code.
+The independently reviewed option-1 revision is implemented only as an observation;
+no production callback invokes it. Original client correlation remains Unknown,
+both MSI exports unconditionally fail, and old eligibility/settlement are unchanged.
+
+Build without WIX_TOOL_DIR in build/callback-context-x64 and
+build/callback-context-arm64 using the standalone VS 18 BuildTools commands.
+Build --config Release --target foreground-test. Both architectures compile /W4 /WX
+with MSVC 19.51.36248 / SDK 10.0.26100. Run x64 CTest -C Release -V (2/2 passed),
+ARM64 CTest -C Release -R '^foreground-sequence$' -V (1/1 passed on x64).
+Logs: each directory's build.log and test.log. No MSI was built.
+
+Native x64 observed the current process token with exact TokenId, matching LSA
+SID/session/authentication LUID and local refusal None. This is current principal
+eligibility only, not intended-user identity or callback continuity. Actual
+impersonation and identification tokens were selected by exact TokenId;
+identification refused. Anonymous query refused with ERROR_CANT_OPEN_ANONYMOUS
+(1347), without process fallback; its token fields were unavailable. An actual
+restricted thread token refused. Actual AccessCheck denied an in-memory descriptor,
+and the adapter refused it. No protected object was opened. Models separately
+cover full-field failures, query failure/fallback, malformed LSA structure size,
+null/invalid SID, LUID/SID/session mismatch, SYSTEM with nonzero session, service
+principals, exact 2/10 type allowlist, nonsplit positive and Full-only negative.
+LSA Size bounds the fields read; SID validation bounds decoding. The native LSA
+allocation/pointers are OS-owned, not a caller-provided serialized buffer, and
+there is no invented total allocation length or protected-object access claim.
+
+Ignored build/callback-context-pe-check.py reuses the existing pe_check function
+with only SECUR32.DLL added to its in-memory import allowlist. Both DLLs passed
+machine, hard-gate exports, static CRT/system imports, no delay imports and
+SYSTEM32 dependent-load flags. Actual direct imports are ADVAPI32, SECUR32 and
+KERNEL32. Log: build/callback-context-pe-check.log. The committed MSI checker is
+unchanged and would need an explicit secur32 allowlist review before any new MSI.
+
+SHA-256 DLLs: x64
+3416a65ab196d89c3d7d4b2b7c9238b9ed509072d5de940fd96eb39fa2b181d4;
+ARM64 86c0b9e23d43d374b03c0e78b60f9d7cc28b33553fd16f6b1eb8da5576fb8d56.
+Final source/artifact/log hash inventory: build/callback-context-evidence.json.
+Initial /W4 warnings (exported unique_ptr and shadowed fixture variable) were
+resolved by exporting Worker methods and renaming the fixture local. The first
+native run exposed TokenHasRestrictions returning one byte on this host; the
+reader now accepts its bounded 1..sizeof(DWORD) output, with zero initialization.
+Final focused checks pass after these corrections.
+
+Diff/security review found no process override, RevertToSelf, receipt/property
+reference, account-name logging, protected writes, Clean/admission or production
+caller. Only the listed foreground files and documentation changed; checkpoint,
+runner, trace and package pins are untouched. No unresolved finding in this
+bounded implementation; independent review is the next gate. ARM64 runtime,
+actual MSI callbacks, designated-user/continuity enforcement, protected opens and
+preload trust remain unproved. No VM-ready or guest-ready bundle exists.
+No VM, MSI, push, watch, GUI/Linux matrix, benchmark/profile or release was run:
+this Windows-only disconnected fixture changes no product or performance path.

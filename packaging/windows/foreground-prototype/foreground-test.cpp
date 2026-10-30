@@ -32,6 +32,148 @@ static void runChild(const std::wstring& arguments) {
     CloseHandle(process.hProcess);
     check(code == 0, "separate callback process must remain excluded");
 }
+static void contextChecks() {
+    using namespace foreground;
+    CallbackInteractiveContextObservation model;
+    model.source = TokenSource::Process; model.type = TokenPrimary;
+    model.elevationType = TokenElevationTypeDefault; // nonsplit administrator
+    model.queried = model.elevated = model.enabledAdmin = model.lsaDataValid = true;
+    model.restricted = model.appContainer = false;
+    model.integrity = SECURITY_MANDATORY_HIGH_RID;
+    model.session = model.lsaSession = 1;
+    model.sid = model.lsaSid = L"S-1-5-21-1-2-3-1001";
+    model.authenticationId.LowPart = model.lsaAuthenticationId.LowPart = 7;
+    model.logonType = 2;
+    check(callbackContextRefusalFixture(model) == ContextRefusal::None, "MODEL nonsplit positive");
+    auto remote = model; remote.logonType = 10;
+    check(callbackContextRefusalFixture(remote) == ContextRefusal::None, "MODEL remote interactive");
+    for (int n = 0; n < 28; ++n) {
+        auto bad = model;
+        switch (n) {
+        case 0: bad.queried = false; break;
+        case 1: bad.source = TokenSource::Unknown; break;
+        case 2: bad.elevated = false; bad.elevationType = TokenElevationTypeFull; break;
+        case 3: bad.enabledAdmin = false; break;
+        case 4: bad.adminDenyOnly = true; break;
+        case 5: bad.restricted = true; break;
+        case 6: bad.appContainer = true; break;
+        case 7: bad.integrity = SECURITY_MANDATORY_MEDIUM_RID; break;
+        case 8: bad.type = TokenImpersonation; bad.impersonation = SecurityIdentification; break;
+        case 9: bad.session = 0; break;
+        case 10: bad.sid = bad.lsaSid = L"S-1-5-18"; break;
+        case 11: bad.sid = bad.lsaSid = L"S-1-5-19"; break;
+        case 12: bad.sid = bad.lsaSid = L"S-1-5-20"; break;
+        case 13: bad.sid = bad.lsaSid = L"S-1-5-80-123"; break;
+        case 14: bad.sid.clear(); break;
+        case 15: bad.authenticationId = {}; break;
+        case 16: bad.lsaStatus = static_cast<LONG>(0xc0000022); break;
+        case 17: bad.lsaDataValid = false; break;
+        case 18: bad.lsaSid += L"0"; break;
+        case 19: ++bad.lsaSession; break;
+        case 20: ++bad.lsaAuthenticationId.HighPart; break;
+        case 21: bad.type = static_cast<TOKEN_TYPE>(0); break;
+        case 22: bad.type = TokenImpersonation; bad.impersonation = SecurityAnonymous; break;
+        case 23: bad.servicePrincipal = true; break;
+        case 24: bad.status = ERROR_ACCESS_DENIED; break;
+        case 25: bad.elevationType = TokenElevationTypeLimited; break;
+        case 26: bad.elevationType = static_cast<TOKEN_ELEVATION_TYPE>(0); break;
+        case 27: bad.type = TokenImpersonation; bad.impersonation = static_cast<SECURITY_IMPERSONATION_LEVEL>(4); break;
+        }
+        check(callbackContextRefusalFixture(bad) != ContextRefusal::None, "MODEL unsafe context accepted");
+    }
+    for (DWORD type = 0; type < 16; ++type) {
+        auto bad = model; bad.logonType = type;
+        check((callbackContextRefusalFixture(bad) == ContextRefusal::None) == (type == 2 || type == 10),
+              "MODEL exact logon type allowlist");
+    }
+    SECURITY_LOGON_SESSION_DATA lsa{};
+    PSID sid = nullptr;
+    check(ConvertStringSidToSidW(model.sid.c_str(), &sid), "MODEL logon SID");
+    lsa.Size = sizeof(lsa); lsa.Sid = sid; lsa.LogonId = model.authenticationId;
+    lsa.Session = 1; lsa.LogonType = 2;
+    auto parsed = model;
+    captureLogonDataFixture(parsed, &lsa);
+    check(callbackContextRefusalFixture(parsed) == ContextRefusal::None, "MODEL logon parser positive");
+    for (int n = 0; n < 5; ++n) {
+        auto malformed = lsa;
+        BYTE invalidSid[SECURITY_MAX_SID_SIZE]{};
+        switch (n) {
+        case 0: malformed.Size = 0; break;
+        case 1: malformed.Size = 65537; break;
+        case 2: malformed.Sid = nullptr; break;
+        case 3: malformed.Sid = invalidSid; break;
+        case 4: break;
+        }
+        captureLogonDataFixture(parsed, n == 4 ? nullptr : &malformed);
+        check(!parsed.lsaDataValid && callbackContextRefusalFixture(parsed) != ContextRefusal::None,
+              "MODEL malformed LSA accepted");
+    }
+    LocalFree(sid);
+    auto current = observeCallbackInteractiveContext();
+
+    std::cout << "NATIVE current context refusal=" << static_cast<int>(current.refusal)
+              << " status=" << current.status << " lsaStatus=" << current.lsaStatus << '\n';
+    check(current.source == TokenSource::Process && current.queried, "NATIVE current process token query");
+    HANDLE process = nullptr;
+    check(OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY | TOKEN_DUPLICATE, &process), "native process token");
+    TOKEN_STATISTICS processStats{}; DWORD processSize = 0;
+    check(GetTokenInformation(process, TokenStatistics, &processStats, sizeof(processStats), &processSize),
+          "native process statistics");
+    check(current.selectedTokenId.LowPart == processStats.TokenId.LowPart &&
+          current.selectedTokenId.HighPart == processStats.TokenId.HighPart, "NATIVE process fallback TokenId");
+    TokenFixture legacy;
+    check(readEffectiveToken(legacy), "NATIVE legacy current token reader");
+    for (auto level : {SecurityImpersonation, SecurityIdentification, SecurityAnonymous}) {
+        HANDLE token = nullptr;
+        if (!DuplicateTokenEx(process, TOKEN_QUERY | TOKEN_IMPERSONATE, nullptr, level, TokenImpersonation, &token)) {
+            std::cout << "UNAVAILABLE native duplicate level=" << level << " status=" << GetLastError() << '\n';
+            continue;
+        }
+        TOKEN_STATISTICS stats{}; DWORD size = 0;
+        check(GetTokenInformation(token, TokenStatistics, &stats, sizeof(stats), &size), "native selected token ID");
+        if (SetThreadToken(nullptr, token)) {
+            auto selected = observeCallbackInteractiveContext();
+            // Restore only in test teardown, never to acquire callback authority.
+            check(SetThreadToken(nullptr, nullptr), "restore native test thread");
+            if (selected.queried) {
+                check(selected.source == TokenSource::Thread &&
+                      selected.selectedTokenId.LowPart == stats.TokenId.LowPart &&
+                      selected.selectedTokenId.HighPart == stats.TokenId.HighPart, "NATIVE exact selected TokenId");
+            } else {
+                check(selected.refusal != ContextRefusal::None && selected.source != TokenSource::Process,
+                      "NATIVE failed thread query used process");
+                std::cout << "UNAVAILABLE native query level=" << level << " status=" << selected.status << '\n';
+            }
+            if (level < SecurityImpersonation)
+                check(selected.refusal != ContextRefusal::None, "NATIVE weak impersonation accepted");
+        } else std::cout << "UNAVAILABLE native impersonation level=" << level << " status=" << GetLastError() << '\n';
+        CloseHandle(token);
+        std::cout << "NATIVE selected-token/weak-level checks completed level=" << level << '\n';
+    }
+    HANDLE restricted = nullptr;
+    check(CreateRestrictedToken(process, DISABLE_MAX_PRIVILEGE, 0, nullptr, 0, nullptr, 0, nullptr, &restricted),
+          "native restricted token");
+    HANDLE impersonation = nullptr;
+    check(DuplicateTokenEx(restricted, TOKEN_QUERY | TOKEN_IMPERSONATE, nullptr, SecurityImpersonation,
+                          TokenImpersonation, &impersonation), "native restricted impersonation");
+    check(SetThreadToken(nullptr, impersonation), "select restricted token");
+    auto limited = observeCallbackInteractiveContext();
+    check(SetThreadToken(nullptr, nullptr), "restore restricted test thread");
+    check(limited.queried && limited.source == TokenSource::Thread && limited.restricted &&
+          limited.refusal != ContextRefusal::None, "NATIVE restricted negative");
+    CloseHandle(impersonation); CloseHandle(restricted);
+    std::cout << "NATIVE restricted thread token refused\n";
+    PSECURITY_DESCRIPTOR deny = nullptr;
+    check(ConvertStringSecurityDescriptorToSecurityDescriptorW(
+        L"O:BAG:BAD:P(D;;KA;;;WD)(A;;KA;;;BA)", SDDL_REVISION_1, &deny, nullptr), "deny descriptor");
+    auto observedDeny = observeCallbackInteractiveContext(deny);
+    check(observedDeny.refusal != ContextRefusal::None, "NATIVE adapter descriptor denial");
+    HANDLE explicitToken = nullptr;
+    check(DuplicateToken(process, SecurityImpersonation, &explicitToken), "explicit access token");
+    check(!journalAccessFixture(deny, explicitToken, true, true), "NATIVE in-memory descriptor access denied");
+    CloseHandle(explicitToken); LocalFree(deny); CloseHandle(process);
+    std::cout << "MODEL context/full-field/LSA mismatch/type checks passed; protected-object access unavailable\n";
+}
 int wmain(int argc, wchar_t** argv) {
     if (argc == 3 && std::wstring(argv[1]) == L"--probe") return probe(argv[2]);
     if (argc == 4 && std::wstring(argv[1]) == L"--crash") {
@@ -42,6 +184,7 @@ int wmain(int argc, wchar_t** argv) {
         ExitProcess(0); // Deliberate death of this isolated fixture, no destructors.
     }
     try {
+        contextChecks();
         for (const auto& fixture : {
             std::pair{L"O:BAG:BAD:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;0x00100000;;;BU)", true},
             std::pair{L"O:SYG:SYD:P(A;;GA;;;SY)", true},
@@ -81,9 +224,9 @@ int wmain(int argc, wchar_t** argv) {
         check(mutex != nullptr, "fixture mutex");
         std::wstring marker = name + L".Marker";
         check(foreground::markerAbsent(marker.c_str()), "absent marker refused");
-        HANDLE owner = CreateMutexW(nullptr, FALSE, marker.c_str());
-        check(owner && !foreground::markerAbsent(marker.c_str()), "present marker ignored");
-        CloseHandle(owner);
+        HANDLE markerOwner = CreateMutexW(nullptr, FALSE, marker.c_str());
+        check(markerOwner && !foreground::markerAbsent(marker.c_str()), "present marker ignored");
+        CloseHandle(markerOwner);
         HANDLE wrongType = CreateEventW(nullptr, TRUE, FALSE, marker.c_str());
         check(wrongType && !foreground::markerAbsent(marker.c_str()), "wrong-type marker ignored");
         CloseHandle(wrongType);
