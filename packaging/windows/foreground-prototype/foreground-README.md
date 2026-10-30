@@ -1832,3 +1832,32 @@ records or timeout stops subsequent cases. No retry, failure variant, uninstall,
 cleanup or production/native operation is part of this procedure. Task launches
 are not evidence of human UAC consent. Existing exclusions and all authority gates
 remain unchanged; source review and focused tests are not a release matrix.
+
+### Actual context-trace observations (2026-10-30)
+
+The parent integrated the reviewed source with implementation-file equality to
+751426d; parent x64 foreground tests passed 2/2, ARM64 compiled and sequence 1/1
+passed. Frozen Success MSI 1ab76fde413c54e25e695ad0f4493cd0d86111459b98678a58f9c0f8f11e436b
+was hash-checked in the guest and executed once per accepted context. All three
+ProductState results remained -1. Original V1 and separate numeric context records
+are retained in private build/vm-lab-evidence-20261030/trace-context-* logs.
+
+Session0: exit 0, four complete context records in 0/2/3/4 order. Preflight and
+PostFinalize were high user contexts in session 0, refused Principal (4).
+Deferred/Commit were SYSTEM, restricted, session 0/logon type 0, refused Authority (3).
+Highest InteractiveToken task: result 0, four complete records 0/2/3/4.
+Preflight/PostFinalize were unrestricted high interactive session 1/type 2,
+eligible 1/refusal 0. Deferred/Commit were restricted SYSTEM session 1/type 0,
+eligible 0/refusal 3. Limited task: result 1603, only complete Preflight record,
+restricted/filtered user session 1/type 2, eligible 0/refusal 3; later callbacks
+are unavailable evidence. No rollback callback was observed in successful cases.
+
+Each temporary task had zero instances at completion and was removed by exact
+name. Task configuration records requested InteractiveToken run level; the original
+MSI client's primary token was not independently captured in these task launches.
+Observed callback tokens establish their current context, not causal initiation,
+human UAC consent or designated-user continuity. SYSTEM interactive refusal does
+not prove or disprove its separate privileged-access role. No protected-object
+open/write, preload provenance, ACK, Pending or production action was exercised.
+Inputs/logs and existing lab state were retained; no failure variant, retry,
+uninstall or cleanup ran. ARM64 runtime and RemoteInteractive remain untested.
