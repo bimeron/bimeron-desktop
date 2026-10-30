@@ -747,3 +747,19 @@ three actual MSI inspections passed 57 negative database models. Default configu
 omits the ACK project entirely. Diff/security review confirmed fixed paths, unchanged
 old fail-closed exports, no production registration and no record cleanup path.
 Host protected positive and all MSI callback execution remain untested by design.
+
+### First protected ACK VM observation (2026-10-30)
+
+The parent ran the frozen x64 Success MSI from source `270a674` once in the
+checkpointed Windows 10 STD VM, after the user authorized further VM checks.
+The pinned MSI and protected run.manifest hashes matched before launch. The
+installer returned 1603 at AckPreflight (callback 0); no pending.bin was created.
+The existing standalone protected-file Pending record remained byte-identical.
+All new input, manifest and log residue was preserved without retry or cleanup.
+
+The engine log establishes a first-time install without a caller REMOVE argument,
+then InstallValidate adds REMOVE=ALL before Preflight. The current fresh() rejects
+that value, a confirmed blocker if manifest validation reached it; the generic
+callback result does not establish the first failed internal gate. Bounded stage
+diagnostics and a separate, explicitly scoped zero-resource lab predicate are
+required before another candidate run. No production admission rule is relaxed.
