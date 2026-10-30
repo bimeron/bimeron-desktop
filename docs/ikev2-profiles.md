@@ -709,3 +709,14 @@ build/vm-lab-evidence-20261030/context-observer-*. Eligibility is a local contex
 observation only, not human UAC consent, intended-user causality/continuity,
 protected-object access, preload provenance or actual MSI callback authority.
 ARM64 runtime and RemoteInteractive type 10 were not exercised.
+
+### Callback context trace acceptance
+
+The accepted bounded batch is specified in the foreground README under
+"Accepted callback context trace batch". Default-OFF context tracing reuses the
+reviewed selected-token/LSA observer without protected access or authority. The
+original trace schema, MSI sequence and zero-resource contract remain unchanged.
+New immutable evidence and independent review precede parent-only VM observation;
+option 1 remains procedural same-user invocation, with no original-client
+attestation or silent continuity proof. Incomplete/early-failure results are valid
+unavailable evidence. Production enrollment remains disabled.

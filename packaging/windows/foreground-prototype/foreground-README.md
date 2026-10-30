@@ -1621,3 +1621,49 @@ Focused checks and diff --check are the relevant CI-equivalent checks. Diff revi
 found no worker/record/hash/ACK/context/Core/production changes or broader lab-link
 admission. Product/architecture matrix and benchmarks/profiling are inapplicable to
 this disconnected native-x64-only runner correction; no MSI build or release.
+
+### Accepted callback context trace batch
+
+On immutable base db810bc747cc85d440b73c3cac6cbb9a0ee219b4, add default-OFF
+FOREGROUND_LAB_TRACE_CONTEXT, requiring FOREGROUND_LAB_TRACE. Only context-enabled
+trace DLLs gain its definition, the small shared token/LSA capture/evaluator and
+secur32. Preserve the historical V1 record and unchanged WiX: five synchronous
+checked Binary actions, types 1/3329/3073/3585/1, sequences
+1499/1501/1502/1503/6601, empty Component/FeatureComponents and zero resources.
+No ACK/Pending machinery, runner, production or frozen artifact changes.
+
+Extract only reviewed token selection/capture and LSA evaluator/types. Retain the
+exact selected handle through all queries and foreground descriptor AccessCheck;
+keep AccessCheck wrapper, worker/journal, exported interfaces, Unknown correlation
+and failing exports in foreground. Context trace invokes descriptor-free shared
+capture exactly once per callback, independently of historical V1 observation.
+
+Add a separate BIMERON_LAB_CONTEXT_V1 bounded flat numeric record (version 1):
+callback ID 0..4 in export order, complete, eligible, process session, source/type/
+impersonation, selected TokenId and authentication LUID (16 hex), token session,
+elevation type/flag, integrity, enabled/deny-only admin, restricted/AppContainer,
+service and SYSTEM flags, token status, LSA status/data validity/session/LUID/logon
+type, SID equality and refusal. No SID strings, names or MSI properties. Partial
+queries, unknown enums, exceptions and failed logging cannot establish complete
+eligible evidence. Fixed compiled MSI returns survive every observer/logging
+failure. MSI return and local eligibility grant no authority, original-client
+attestation or silent continuity proof; option 1 remains procedural same-user.
+
+Explicit checker context profile enumerates actual DLL/API imports, rejects unknown
+symbols/ordinals and all delay imports, permits only LsaGetLogonSessionData and
+LsaFreeReturnBuffer from SECUR32, checks exactly five exports, static CRT and exact
+SYSTEM32 flag. Historical default profile remains unchanged. Review actual other
+imports before fixing API sets; no blind DLL allowance. Test record bounds,
+exceptions, unknown enums, incomplete evidence, retained selected-token/LSA matrix,
+SYSTEM refusal and exact 2/10 logon allowlist. Recheck context-OFF historical trace.
+
+Build six fresh context DLL/MSI pairs in separate x64/ARM64 directories (/W4 /WX,
+cached WiX, unsuppressed ICE), inspect actual tables/Binary/PE and 18 unique GUIDs;
+run native x64 tests and foreground regressions, ARM64 compile/host statics only.
+Freeze a new ignored bundle from immutable source commit/archive before appending
+evidence, with matching source hashes, artifacts, GUIDs, imports/tables/tests/ICE
+logs and exact effects. No VM-ready claim before independent review. Parent-only
+later Success VM cases are Session0/InteractiveHighest/Limited; incomplete or early
+failure is valid unavailable evidence, never authority. No host MSI actions,
+protected opens/writes, network, override, VM, push/watch/merge or release.
+Linux/product matrix, benchmarks and profiling are inapplicable to this isolated lab.

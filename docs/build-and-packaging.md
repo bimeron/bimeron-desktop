@@ -861,3 +861,16 @@ constructor, launch, termination, MSI API/action or VM ran. New ignored
 build/ack-checkpoint-system-image-review freezes exact committed sources and
 unchanged artifact pins for fresh parent review. Native guest/loader/logger and
 server behavior remain unproved; supported package flow is unchanged.
+
+### Optional callback context trace build
+
+The standalone project may enable default-OFF FOREGROUND_LAB_TRACE_CONTEXT only
+with FOREGROUND_LAB_TRACE. Configure fresh ignored build/trace-context-x64 and
+build/trace-context-arm64 using the standalone VS 18 BuildTools commands and
+explicit cached WIX_TOOL_DIR, adding both options ON. Build foreground-lab-trace,
+foreground-test and lab-context-record-test. Run native x64 tests and ARM64 host
+source/static tests only. Only context trace DLLs link the shared observer and
+secur32; historical trace builds remain context-OFF. Use the explicit checker
+context profile; default invocation keeps the historical profile. Normal WiX ICE
+remains unsuppressed. No production install/CPack flow changes. See the foreground
+README acceptance for immutable evidence, review and parent-only VM limits.
