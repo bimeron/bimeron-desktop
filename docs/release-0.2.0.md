@@ -15,9 +15,11 @@ service architecture, dependency upgrade or unrelated feature is in scope.
 ## Core input
 
 The current published Core 0.2 bundle does not implement all protocols exposed by
-this Desktop baseline. The candidate is the immutable existing Core tag
-`v0.3.0-beta.1`, commit `9f527efe0a4959786084675f1ff795edb8a0d910`.
-Do not move that tag or substitute a newer development binary. Pin the four final
+this Desktop baseline. The candidate is Core `v0.3.0-beta.2` from immutable
+reviewed commit `66d84d8f4dcfc6ada625eb11894b19feea51b7ba`.
+The old `v0.3.0-beta.1` tag remains at `9f527efe`; its packet test exposed the
+already fixed MASQUE shutdown error-precedence bug. Do not move that tag or
+substitute a newer development binary. Pin the four final
 archive hashes only after their exact source/version, architecture, payload,
 licenses and signed update metadata have been verified. The production update
 key and GUI compatibility interval `[0.2.0, 0.2.1)`, IPC 1 and profile format 1
