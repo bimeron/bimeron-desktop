@@ -438,5 +438,14 @@
   "Request native traffic and DNS protection": "Запрашивать системную защиту трафика и DNS",
   "Windows VPN profile": "Профиль VPN Windows",
   "System VPN (vpn)": "Системный VPN (vpn)",
-  "Initial connection bootstrap is unprotected. Native protection blocks ordinary LAN access. A crash or failed cleanup can retain WFP and DNS protection and leave this computer offline until explicit administrative recovery. Enable it?": "Начальный этап подключения не защищён. Системная защита блокирует обычный доступ к локальной сети. После сбоя или ошибки очистки защита WFP и DNS может сохраниться и оставить компьютер без сети до явного восстановления администратором. Включить защиту?"
+  "Initial connection bootstrap is unprotected. Native protection blocks ordinary LAN access. A crash or failed cleanup can retain WFP and DNS protection and leave this computer offline until explicit administrative recovery. Enable it?": "Начальный этап подключения не защищён. Системная защита блокирует обычный доступ к локальной сети. После сбоя или ошибки очистки защита WFP и DNS может сохраниться и оставить компьютер без сети до явного восстановления администратором. Включить защиту?",
+  "Native IKEv2 unavailable": "Нативный IKEv2 недоступен",
+  "Native IKEv2 connect, preview, apply and remove are unavailable. Final Core artifact approval, protected installation and MSI safety evidence, and Windows enrollment are pending. Native capabilities and owner/protection absence have not been verified. Statistics are unavailable. Automatic connection and reconnection are disabled.": "Подключение, просмотр плана, применение и удаление нативного IKEv2 недоступны. Ожидаются одобрение итогового файла Core, защищённая установка, подтверждение безопасности MSI и настройка регистрации Windows. Возможности нативного режима и отсутствие владельца и защиты не подтверждены. Статистика недоступна. Автоматическое подключение и переподключение отключены.",
+  "Native IKEv2 protection requested: %1. WFP: %2. DNS: %3. Cleanup and owner closure require authoritative confirmation. Statistics are unavailable.": "Запрошена защита нативного IKEv2: %1. WFP: %2. DNS: %3. Очистка и закрытие владельца требуют достоверного подтверждения. Статистика недоступна.",
+  "Active": "Активна",
+  "Retained": "Сохранена",
+  "Modified": "Изменена",
+  "Inactive": "Неактивна",
+  "Unknown": "Неизвестно",
+  "Native owner cleanup is unconfirmed; exit was canceled. Use the verified native owner to stop, clean up and close it.": "Очистка нативного владельца не подтверждена; выход отменён. Используйте проверенного нативного владельца для остановки, очистки и закрытия."
 }

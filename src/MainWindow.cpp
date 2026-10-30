@@ -655,6 +655,11 @@ QWidget *MainWindow::profilesPage() {
     buttons->addStretch();
     buttons->addWidget(connectButton_);
     layout->addLayout(buttons);
+    nativeStatusLabel_ = new QLabel;
+    nativeStatusLabel_->setTextFormat(Qt::PlainText);
+    nativeStatusLabel_->setWordWrap(true);
+    nativeStatusLabel_->hide();
+    layout->addWidget(nativeStatusLabel_);
     return page;
 }
 
@@ -1018,12 +1023,13 @@ void MainWindow::refreshProfiles() {
         const auto &profile = profiles_[row];
         const auto info = profileInfo(row);
         const QString interfaceName = info.interfaceMode == "proxy" ? tr("Local SOCKS5") : tr("System VPN");
-        const QString detail = !info.connectable ? tr("Unknown protocol")
+        const QString detail = info.backend == ProfileConnectionInfo::Backend::NativeIKEv2 ? tr("Native IKEv2 unavailable")
+            : !info.connectable ? tr("Unknown protocol")
             : info.keyFile.isEmpty() ? QString("%1 → %2").arg(info.protocol, interfaceName)
             : QString("%1%2").arg(activeProfileId_ == profile.id && state_ == "connected" && !activeFileProtocol_.isEmpty()
                 ? activeFileProtocol_ + QStringLiteral(" → ") : QString(), interfaceName);
         auto *item = new QListWidgetItem(statusDot(QColor("#94a3b8")), QString("%1\n%2").arg(profile.name, detail), profileList_);
-        item->setData(Qt::UserRole + 1, !info.connectable);
+        item->setData(Qt::UserRole + 1, !info.connectable && info.backend != ProfileConnectionInfo::Backend::NativeIKEv2);
         if (info.protocol.endsWith(QStringLiteral("⟳"))) item->setToolTip(tr("Dynamic profile"));
         item->setSizeHint(QSize(0, 50));
     }
@@ -1032,7 +1038,9 @@ void MainWindow::refreshProfiles() {
         const QString selected = QSettings().value("app/autoConnectProfile").toString();
         const QSignalBlocker blocker(autoConnectProfile_);
         autoConnectProfile_->clear();
-        for (const auto &profile : profiles_) autoConnectProfile_->addItem(profile.name, profile.id);
+        for (int row = 0; row < profiles_.size(); ++row)
+            if (profileInfo(row).backend != ProfileConnectionInfo::Backend::NativeIKEv2)
+                autoConnectProfile_->addItem(profiles_[row].name, profiles_[row].id);
         const int index = autoConnectProfile_->findData(selected);
         autoConnectProfile_->setCurrentIndex(index);
     }
@@ -1383,8 +1391,37 @@ void MainWindow::moveProfile(int delta) {
     profileList_->setFocus();
 }
 
+bool MainWindow::packetProfile(int row) const {
+    const auto info = profileInfo(row);
+    return info.backend == ProfileConnectionInfo::Backend::Packet && info.connectable;
+}
+
+QString MainWindow::nativeUnavailableReason() const {
+    return tr("Native IKEv2 connect, preview, apply and remove are unavailable. Final Core artifact approval, protected installation and MSI safety evidence, and Windows enrollment are pending. Native capabilities and owner/protection absence have not been verified. Statistics are unavailable. Automatic connection and reconnection are disabled.");
+}
+
+void MainWindow::showNativeSnapshot(const NativeIKEv2Session::Snapshot &snapshot) {
+    // Display-only offline seam. A snapshot never grants launch approval or absence.
+    // Production does not construct a controller without reviewed final artifacts.
+    nativeOwnerBlocked_ = true;
+    const auto protection = [this](const QString &value) {
+        if (value == "active") return tr("Active");
+        if (value == "retained") return tr("Retained");
+        if (value == "modified") return tr("Modified");
+        if (value == "inactive") return tr("Inactive");
+        return tr("Unknown");
+    };
+    nativeStatusLabel_->setText(tr("Native IKEv2 protection requested: %1. WFP: %2. DNS: %3. Cleanup and owner closure require authoritative confirmation. Statistics are unavailable.")
+        .arg(snapshot.requested ? tr("Yes") : tr("No"),
+             protection(snapshot.authoritative ? snapshot.wfp : QString{}),
+             protection(snapshot.authoritative ? snapshot.dns : QString{})));
+    nativeStatusLabel_->show();
+    resetMeasurements();
+    updateConnectionButton();
+}
+
 bool MainWindow::controlBlocked() const {
-    return development_->busy() || development_->failed() || coreUpdateCommand_
+    return nativeOwnerBlocked_ || development_->busy() || development_->failed() || coreUpdateCommand_
         || coreUpdateAwaitingResult_ || serviceCommandProcess_ || linuxServiceProcess_ || quitRequested_;
 }
 
@@ -1394,9 +1431,10 @@ bool MainWindow::cleanDisconnected() const {
 
 bool MainWindow::canActivateProfile(int row) const {
     if (row < 0 || row >= profiles_.size() || !helloReady_ || statusNeeded_ || controlBlocked()
-        || nativeSession_ || !operation_.isEmpty() || state_ == "stopping") return false;
+        || nativeSession_ || !operation_.isEmpty() || state_ == "stopping"
+        || profileInfo(row).backend == ProfileConnectionInfo::Backend::NativeIKEv2) return false;
     const bool active = sessionActive_ || state_ == "connecting" || state_ == "connected" || state_ == "reconnecting";
-    return (active && profiles_[row].id == activeProfileId_) || (!cleanupBlocked_ && profileInfo(row).connectable);
+    return (active && profiles_[row].id == activeProfileId_) || (!cleanupBlocked_ && packetProfile(row));
 }
 
 void MainWindow::probeValidationCli() {
@@ -1511,9 +1549,10 @@ void MainWindow::connectionFailure(const QString &, CoreClient::Failure reason, 
 
 void MainWindow::toggleConnection() {
     if (controlBlocked() || !helloReady_ || statusNeeded_ || !operation_.isEmpty() || nativeSession_) return;
-    autoConnectAttempted_ = true;
     const int row = profileList_->currentItem() && profileList_->currentItem()->isSelected()
         ? profileList_->currentRow() : -1;
+    if (row >= 0 && profileInfo(row).backend == ProfileConnectionInfo::Backend::NativeIKEv2) return;
+    autoConnectAttempted_ = true;
     const bool active = sessionActive_ || state_ == "connected" || state_ == "connecting"
         || state_ == "reconnecting" || state_ == "stopping";
     if (active) {
@@ -1538,7 +1577,7 @@ bool MainWindow::startProfile(int row) {
     if (row < 0 || row >= profiles_.size())
         return false;
     const auto info = profileInfo(row);
-    if (!info.connectable) return false;
+    if (!packetProfile(row)) return false;
     QFile profileFile(profiles_[row].path);
     if (!profileFile.open(QIODevice::ReadOnly)) {
         QMessageBox::warning(this, tr("Profile unavailable"), profileFile.errorString());
@@ -1635,12 +1674,13 @@ bool MainWindow::startProfile(int row) {
 void MainWindow::poll() {
     if (development_->busy() || development_->failed() || coreUpdateCommand_
         || serviceCommandProcess_ || linuxServiceProcess_ || quitRequested_ || core_.busy()) return;
+    if (nativeOwnerBlocked_) return;
     const qint64 now = pollClock_.elapsed();
     if (!helloReady_) {
         if (now >= retryAt_) core_.request("hello");
         return;
     }
-    if (stopRequested_) {
+    if (stopRequested_ && !nativeSession_) {
         clearSSHAuthentication();
         stopRequested_ = false;
         core_.request("stop", {}, 120000);
@@ -1650,8 +1690,12 @@ void MainWindow::poll() {
     if (!startReadyPath_.isEmpty()) {
         const QString path = startReadyPath_;
         startReadyPath_.clear();
+        QFile file(path);
+        const auto info = file.open(QIODevice::ReadOnly)
+            ? ProfileStore::connectionInfo(QString::fromUtf8(file.read(64 * 1024 + 1))) : ProfileConnectionInfo{};
         if (!controlBlocked() && !cleanupBlocked_ && !sessionActive_ && !nativeSession_
-            && (state_ == "disconnected" || state_ == "failed") && QFileInfo::exists(path)) {
+            && (state_ == "disconnected" || state_ == "failed")
+            && info.backend == ProfileConnectionInfo::Backend::Packet && info.connectable) {
             if (!QSettings().value("logs/keepPrevious", true).toBool()) log_->clear();
             core_.request("start", {{"config", path}});
         } else {
@@ -1663,7 +1707,7 @@ void MainWindow::poll() {
         }
         return;
     }
-    if (sshReplyReady_) {
+    if (sshReplyReady_ && !nativeSession_) {
         sshReplyReady_ = false;
         const QJsonObject arguments{{"challenge_id", sshChallenge_}, {"answers", sshAnswers_}};
         sshAnswers_ = {};
@@ -1868,6 +1912,7 @@ void MainWindow::handleReply(const QString &command, const QJsonObject &response
 void MainWindow::completeSynchronization() {
     if (coreUpdateAwaitingResult_ && !coreUpdateCommand_ && !expectedCoreVersionAfterUpdate_.isEmpty()) {
         const QString profileId = reconnectProfileAfterUpdate_;
+        reconnectResultProfileId_.clear();
         const bool verified = runningCoreVersion_ == expectedCoreVersionAfterUpdate_ && cleanDisconnected();
         coreUpdateAwaitingResult_ = false;
         expectedCoreVersionAfterUpdate_.clear();
@@ -1879,7 +1924,7 @@ void MainWindow::completeSynchronization() {
         } else {
             bool found = false;
             for (int row = 0; row < profiles_.size(); ++row) {
-                if (profiles_[row].id == profileId) {
+                if (profiles_[row].id == profileId && packetProfile(row)) {
                     found = true;
                     reconnectResultProfileId_ = profileId;
                     coreUpdateLabel_->setText((activeProxyMode() ? tr("Core %1 installed and verified; reconnecting proxy…") : tr("Core %1 installed and verified; reconnecting VPN…")).arg(runningCoreVersion_));
@@ -1900,7 +1945,7 @@ void MainWindow::completeSynchronization() {
         if (cleanDisconnected() && QSettings().value("app/autoConnect", false).toBool()) {
             const QString wanted = QSettings().value("app/autoConnectProfile").toString();
             for (int row = 0; row < profiles_.size(); ++row)
-                if (profiles_[row].id == wanted) { profileList_->setCurrentRow(row); startProfile(row); break; }
+                if (profiles_[row].id == wanted && packetProfile(row)) { profileList_->setCurrentRow(row); startProfile(row); break; }
         }
     }
 }
@@ -2010,6 +2055,12 @@ void MainWindow::updateConnectionButton() {
     const int row = profileList_->currentRow();
     const bool active = sessionActive_ || state_ == "connecting" || state_ == "connected" || state_ == "reconnecting";
     const bool selected = row >= 0 && row < profiles_.size() && profileList_->currentItem()->isSelected();
+    const bool nativeSelected = selected && profileInfo(row).backend == ProfileConnectionInfo::Backend::NativeIKEv2;
+    if (nativeStatusLabel_ && !nativeOwnerBlocked_) {
+        nativeStatusLabel_->setVisible(nativeSelected);
+        if (nativeSelected) nativeStatusLabel_->setText(nativeUnavailableReason());
+    }
+    connectButton_->setToolTip(nativeSelected ? nativeUnavailableReason() : QString{});
     const bool switchProfile = active && selected && profiles_[row].id != activeProfileId_;
     connectButton_->setText(!operation_.isEmpty() ? tr("Please wait…")
         : state_ == "stopping" ? tr("Disconnecting…")
@@ -2022,7 +2073,7 @@ void MainWindow::updateConnectionButton() {
     }
     connectButton_->setEnabled(helloReady_ && !statusNeeded_ && !controlBlocked() && !nativeSession_
         && operation_.isEmpty() && state_ != "stopping"
-        && ((active && !switchProfile) || (selected && canActivateProfile(row))));
+        && !nativeSelected && ((active && !switchProfile) || (selected && canActivateProfile(row))));
     if (trayMenu_) {
         for (auto *action : trayMenu_->actions())
             if (action->data().isValid()) action->setEnabled(canActivateProfile(action->data().toInt()));
@@ -2034,7 +2085,8 @@ void MainWindow::updateProfileAppearance() {
         auto *item = profileList_->item(row);
         const auto info = profileInfo(row);
         const QString interfaceName = info.interfaceMode == "proxy" ? tr("Local SOCKS5") : tr("System VPN");
-        const QString detail = !info.connectable ? tr("Unknown protocol")
+        const QString detail = info.backend == ProfileConnectionInfo::Backend::NativeIKEv2 ? tr("Native IKEv2 unavailable")
+            : !info.connectable ? tr("Unknown protocol")
             : info.keyFile.isEmpty() ? QString("%1 → %2").arg(info.protocol, interfaceName)
             : QString("%1%2").arg(profiles_[row].id == activeProfileId_ && state_ == "connected" && !activeFileProtocol_.isEmpty()
                 ? activeFileProtocol_ + QStringLiteral(" → ") : QString(), interfaceName);
@@ -2057,7 +2109,7 @@ void MainWindow::updateProfileAppearance() {
         }
         item->setIcon(statusDot(QColor(dotColor)));
         item->setForeground(QColor(color));
-        item->setData(Qt::UserRole + 1, !info.connectable);
+        item->setData(Qt::UserRole + 1, !info.connectable && info.backend != ProfileConnectionInfo::Backend::NativeIKEv2);
     }
 }
 
@@ -2206,6 +2258,16 @@ void MainWindow::showWindow() {
 }
 
 void MainWindow::requestShutdown() {
+    if (nativeOwnerBlocked_ || nativeSession_) {
+        quitRequested_ = false;
+        if (tray_) tray_->show();
+        const QString message = tr("Native owner cleanup is unconfirmed; exit was canceled. Use the verified native owner to stop, clean up and close it.");
+        nativeStatusLabel_->setText(message);
+        nativeStatusLabel_->show();
+        appendLog(message);
+        showWindow();
+        return;
+    }
     clearSSHAuthentication();
     if (development_->busy()) {
         QTimer::singleShot(250, this, &MainWindow::requestShutdown);
@@ -2309,7 +2371,7 @@ void MainWindow::saveDiagnostics() {
 }
 
 bool MainWindow::coreUpdatePrerequisite() {
-    if (development_->local() || development_->busy() || development_->failed()) return false;
+    if (nativeSession_ || nativeOwnerBlocked_ || development_->local() || development_->busy() || development_->failed()) return false;
     if (!updater_.available()) {
         coreUpdateLabel_->setText(tr("Signed updates are not available yet"));
         return false;
@@ -2328,7 +2390,7 @@ bool MainWindow::coreUpdatePrerequisite() {
 }
 
 bool MainWindow::runServiceCommand(const QStringList &arguments, const QString &description) {
-    if (development_->local() || development_->busy() || development_->failed()) return false;
+    if (nativeSession_ || nativeOwnerBlocked_ || development_->local() || development_->busy() || development_->failed()) return false;
     if (!operation_.isEmpty()) return false;
     if (serviceCommandProcess_ || linuxServiceProcess_)
         return false;
@@ -2715,7 +2777,7 @@ QWidget *MainWindow::developmentPage() {
     });
     layout->addStretch();
     connect(developmentApply_, &QPushButton::clicked, this, [this] {
-        if (development_->busy()) return;
+        if (nativeSession_ || nativeOwnerBlocked_ || development_->busy()) return;
         if (coreUpdateCommand_ || coreUpdateAwaitingResult_ || serviceCommandProcess_ || linuxServiceProcess_) {
             QMessageBox::information(this, tr("Development"), tr("Wait for the current service operation to finish"));
             return;
@@ -2727,7 +2789,8 @@ QWidget *MainWindow::developmentPage() {
                 activeProxyMode() ? tr("Switching cores disconnects the proxy. The selected local executable will run with administrator privileges. Continue?")
                                   : tr("Switching cores disconnects the VPN. The selected local executable will run with administrator privileges. Continue?"),
                 QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes) return;
-        if (coreUpdateCommand_ || coreUpdateAwaitingResult_ || serviceCommandProcess_ || linuxServiceProcess_ || development_->busy()) return;
+        if (nativeSession_ || nativeOwnerBlocked_ || coreUpdateCommand_ || coreUpdateAwaitingResult_
+            || serviceCommandProcess_ || linuxServiceProcess_ || development_->busy()) return;
         development_->select(path);
     });
     return page;
@@ -2772,6 +2835,7 @@ void MainWindow::updateDevelopment() {
 }
 
 void MainWindow::restartApplication(bool development) {
+    if (nativeSession_ || nativeOwnerBlocked_) return;
     if (coreUpdateCommand_ || coreUpdateAwaitingResult_ || serviceCommandProcess_ || linuxServiceProcess_ || development_->busy()) {
         QTimer::singleShot(250, this, [this, development] { restartApplication(development); });
         return;

@@ -53,6 +53,20 @@ struct ConnectionManagementTest {
         const QString path = directory.filePath("preview.conf");
         QFile profile(path);
         require(profile.open(QIODevice::WriteOnly), "preview profile");
+        if (app.arguments().contains("--native-preview")) {
+            profile.write("[Profile]\nName = Native\n[IKEv2]\nWindowsProfile = Fixture\nServerName = vpn.invalid\n[Interface]\nMode = vpn\n");
+            profile.close();
+            window.profiles_.append({"native-preview", "Native IKEv2", path});
+            window.profileList_->addItem("Native IKEv2");
+            window.profileList_->setCurrentRow(0);
+            window.handleStatus({{"State", "disconnected"}});
+            window.updateProfileAppearance();
+            window.updateConnectionButton();
+            window.show();
+            QCoreApplication::processEvents();
+            require(window.grab().save(destination), "native unavailable preview image");
+            return 0;
+        }
         profile.write("[Profile]\nName = Example proxy\n[AccessKey]\nSOCKS5 = socks5://localhost:1080\n[Interface]\nMode = proxy\n");
         profile.close();
         window.profiles_.append({"preview", "Example proxy", path});
@@ -613,6 +627,66 @@ struct ConnectionManagementTest {
         window.poll();
         require(waitFor(synchronized) && starts == 4 && window.reconnectResultProfileId_.isEmpty(),
                 "unconnectable update target must finish with cancellation, not hang reconnecting");
+
+        // Native profiles remain displayable but can never use packet lifecycle paths.
+        const QString nativePath = directory.filePath("native.conf");
+        write(nativePath, "[Profile]\nName = Native\n[IKEv2]\nWindowsProfile = Fixture\nServerName = vpn.invalid\n[Interface]\nMode = vpn\n");
+        const Profile native{ProfileStore::identity(nativePath), "Native", nativePath};
+        window.profiles_.append(native);
+        window.store_ = ProfileStore(directory.path());
+        require(window.store_.save(window.profiles_), "save isolated native selector fixture");
+        window.refreshProfiles();
+        const int nativeRow = window.profiles_.size() - 1;
+        require(window.profileInfo(nativeRow).backend == ProfileConnectionInfo::Backend::NativeIKEv2,
+                "native backend discriminator");
+        require(window.autoConnectProfile_->findData(native.id) < 0, "native excluded from startup selector");
+        require(!window.profileList_->item(nativeRow)->data(Qt::UserRole + 1).toBool(),
+                "native unavailable label is not replaced by unknown protocol");
+        window.profileList_->setCurrentRow(nativeRow);
+        window.updateConnectionButton();
+        require(!window.connectButton_->isEnabled() && window.nativeStatusLabel_->text().contains("approval"),
+                "native action disabled with approval explanation");
+        const auto settingsKeys = QSettings().allKeys();
+        const auto startupProfile = QSettings().value("app/autoConnectProfile");
+        window.toggleConnection();
+        require(!window.startProfile(nativeRow) && window.operation_.isEmpty(), "native never starts packet validation");
+        require(QSettings().allKeys() == settingsKeys && QSettings().value("app/autoConnectProfile") == startupProfile,
+                "blocked native route does not mutate settings");
+        require(waitFor(synchronized), "native dispatch fixture synchronized");
+        window.startReadyPath_ = nativePath;
+        window.operation_ = "start";
+        window.poll();
+        require(window.operation_.isEmpty() && starts == 4, "stale dispatch cannot send native daemon start");
+        QSettings().setValue("app/autoConnectProfile", native.id);
+        QSettings().setValue("app/autoConnect", true);
+        window.autoConnectAttempted_ = false;
+        window.completeSynchronization();
+        require(window.autoConnectAttempted_ && starts == 4 && window.operation_.isEmpty(), "stale native autostart is ignored");
+        window.coreUpdateAwaitingResult_ = true;
+        window.expectedCoreVersionAfterUpdate_ = version;
+        window.reconnectProfileAfterUpdate_ = native.id;
+        window.completeSynchronization();
+        require(!window.coreUpdateAwaitingResult_ && window.reconnectResultProfileId_.isEmpty() && starts == 4,
+                "native never restored by packet updater");
+        NativeIKEv2Session::Snapshot nativeSnapshot;
+        nativeSnapshot.authoritative = true;
+        nativeSnapshot.requested = true;
+        nativeSnapshot.wfp = "retained";
+        nativeSnapshot.dns = "modified";
+        window.showNativeSnapshot(nativeSnapshot);
+        require(window.nativeStatusLabel_->text().contains("Retained") && window.nativeStatusLabel_->text().contains("Modified")
+                && window.nativeStatusLabel_->text().contains("Yes"), "native requested and protection states remain distinct");
+        nativeSnapshot.authoritative = false;
+        window.showNativeSnapshot(nativeSnapshot);
+        require(window.nativeStatusLabel_->text().contains("Unknown") && window.nativeOwnerBlocked_,
+                "unavailable IPC is unknown, never absence");
+        require(!window.runServiceCommand({"service", "update"}, "fixture") && !window.coreUpdatePrerequisite(),
+                "native unknown ownership blocks service mutation");
+        window.requestShutdown();
+        require(!window.quitRequested_, "unknown native cleanup cancels exit");
+        const int nativeRequests = requests;
+        window.poll();
+        require(requests == nativeRequests && starts == 4, "native display seam creates no polling or packet commands");
 
         const int before = requests;
         window.coreUpdateCommand_ = true;

@@ -4,6 +4,7 @@
 #include "CoreUpdater.h"
 #include "ProfileStore.h"
 #include "DevelopmentCore.h"
+#include "NativeIKEv2Session.h"
 
 #include <QElapsedTimer>
 #include <QJsonObject>
@@ -51,6 +52,9 @@ private:
     void refreshProfiles();
     ProfileConnectionInfo profileInfo(int row) const;
     bool activeProxyMode() const;
+    bool packetProfile(int row) const;
+    void showNativeSnapshot(const NativeIKEv2Session::Snapshot &snapshot);
+    QString nativeUnavailableReason() const;
     void addProfile();
     void importProfile();
     void removeProfile();
@@ -108,6 +112,8 @@ private:
     CoreUpdater updater_{this};
     QListWidget *profileList_ = nullptr;
     QLabel *connectionLabel_ = nullptr;
+    QLabel *nativeStatusLabel_ = nullptr;
+    bool nativeOwnerBlocked_ = false;
     QLabel *trafficLabel_ = nullptr;
     QLabel *sessionStatsLabel_ = nullptr;
     QLabel *coreVersionLabel_ = nullptr;
