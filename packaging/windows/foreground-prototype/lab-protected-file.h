@@ -11,6 +11,7 @@ struct Record { Id installation{}, generation{}; unsigned counter = 0; };
 bool encode(const Record&, Bytes&);
 bool decode(const unsigned char*, size_t, Record&);
 bool advance(Record&, const Id&, const Id&);
+bool advanceOnce(Record&, const Id&, const Id&);
 bool safeMetadata(const BY_HANDLE_FILE_INFORMATION&, bool directory);
 bool sameIdentity(const BY_HANDLE_FILE_INFORMATION&, const BY_HANDLE_FILE_INFORMATION&);
 bool safeCaseFlags(bool queried, DWORD flags);
@@ -25,14 +26,20 @@ public:
     Directory(const Directory&) = delete;
     Directory& operator=(const Directory&) = delete;
     bool pin();
+    bool pinAck();
+    bool readAckManifest(std::vector<unsigned char>&);
+    bool acknowledgeOnce(const Id&, const Id&);
     bool create(const Id&, const Id&);
     bool acknowledge(const Id&, const Id&);
 private:
     std::vector<HANDLE> pins;
+    std::vector<HANDLE> manifestPins;
     std::wstring path;
     size_t authority = 0;
+    bool ackMode = false;
     HANDLE anchorPin = INVALID_HANDLE_VALUE;
-    bool operate(const Id&, const Id&, bool);
+    bool pinInternal(bool ack);
+    bool operate(const Id&, const Id&, bool, bool once = false);
 };
 #ifdef LAB_PROTECTED_FILE_TESTING
 enum class Failure { None, ShortWrite, Flush };

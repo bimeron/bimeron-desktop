@@ -26,6 +26,7 @@ bool advance(Record& r, const Id& i, const Id& g) {
     Bytes b; if (!encode(r,b) || r.installation!=i || r.generation!=g || r.counter>=1024) return false;
     ++r.counter; return true;
 }
+bool advanceOnce(Record& r,const Id& i,const Id& g) { return r.counter==0 && advance(r,i,g); }
 static bool trusted(PSID sid) {
     if (!sid || !IsValidSid(sid)) return false;
     PSID ti=nullptr;
@@ -73,7 +74,7 @@ static bool secure(HANDLE h, bool directory, BY_HANDLE_FILE_INFORMATION& info, b
     DWORD e=GetSecurityInfo(h,SE_FILE_OBJECT,OWNER_SECURITY_INFORMATION|DACL_SECURITY_INFORMATION,nullptr,nullptr,nullptr,nullptr,&sd);
     bool ok=e==ERROR_SUCCESS && safeDescriptor(sd); if(sd) LocalFree(sd); return ok;
 }
-Directory::~Directory() { for(HANDLE h:pins) CloseHandle(h); if(anchorPin!=INVALID_HANDLE_VALUE) CloseHandle(anchorPin); }
+Directory::~Directory() { for(HANDLE h:manifestPins) CloseHandle(h); for(HANDLE h:pins) CloseHandle(h); if(anchorPin!=INVALID_HANDLE_VALUE) CloseHandle(anchorPin); }
 // Accept only canonical volume paths with ordinary, nonempty components.
 static bool validPath(const std::wstring& p) {
     if (p.size()<50 || p.compare(0,11,L"\\\\?\\Volume{")!=0) return false;
@@ -104,21 +105,23 @@ static bool volumePaths(const std::wstring& known,const std::wstring& image,std:
     module=std::wstring(volume)+image.substr(3);
     return validPath(anchor) && validPath(module);
 }
-bool Directory::pin() {
+bool Directory::pin() { return pinInternal(false); }
+bool Directory::pinAck() { return pinInternal(true); }
+bool Directory::pinInternal(bool ack) {
     if (!pins.empty() || !path.empty() || anchorPin!=INVALID_HANDLE_VALUE) return false;
     wchar_t image[32768]; DWORD length=GetModuleFileNameW(nullptr,image,32768);
     if (!length || length>=32768) return false;
     PWSTR known=nullptr;
     if(FAILED(SHGetKnownFolderPath(FOLDERID_ProgramFiles,0,nullptr,&known))) return false;
     std::wstring anchor, module;
-    bool valid=volumePaths(known,std::wstring(image,length),anchor,module);
+    bool valid=volumePaths(known,ack ? std::wstring(known)+L"\\BimeronProtectedAckLab\\fixture" : std::wstring(image,length),anchor,module);
     CoTaskMemFree(known);
-    if(!valid || !contained(anchor,module)) return false;
+    if(!valid || (!ack && !contained(anchor,module))) return false;
     anchorPin=CreateFileW(anchor.c_str(),FILE_READ_ATTRIBUTES|READ_CONTROL,FILE_SHARE_READ,nullptr,OPEN_EXISTING,
         FILE_FLAG_BACKUP_SEMANTICS|FILE_FLAG_OPEN_REPARSE_POINT,nullptr);
     BY_HANDLE_FILE_INFORMATION knownInfo{};
     if(anchorPin==INVALID_HANDLE_VALUE || !secure(anchorPin,true,knownInfo)) return false;
-    std::wstring candidate=module.substr(0,module.find_last_of(L'\\'))+L"\\LABProtectedFiles";
+    std::wstring candidate=ack ? anchor+L"\\BimeronProtectedAckLab\\LABProtectedFiles" : module.substr(0,module.find_last_of(L'\\'))+L"\\LABProtectedFiles";
     if(!contained(anchor,candidate)) return false;
     size_t end=candidate.find(L"}\\")+2;
     for (;;) {
@@ -135,7 +138,7 @@ bool Directory::pin() {
         end=candidate.find(L'\\',end+1); if(end==std::wstring::npos) end=candidate.size();
     }
     if(!authority) return false;
-    path=candidate+L"\\pending.bin"; return true;
+    path=candidate+L"\\pending.bin"; ackMode=ack; return true;
 }
 static bool writeRecord(HANDLE h,const Record& r, unsigned failure) {
     Bytes b; if(!encode(r,b)) return false;
@@ -152,7 +155,7 @@ static bool writeRecord(HANDLE h,const Record& r, unsigned failure) {
 #endif
     return FlushFileBuffers(h)!=FALSE;
 }
-bool Directory::operate(const Id& installation,const Id& generation,bool createNew) {
+bool Directory::operate(const Id& installation,const Id& generation,bool createNew,bool once) {
     Record r{installation,generation,0}; Bytes check;
     if(path.empty() || !encode(r,check)) return false;
     BY_HANDLE_FILE_INFORMATION knownInfo{}, traversalInfo{};
@@ -172,7 +175,7 @@ bool Directory::operate(const Id& installation,const Id& generation,bool createN
     if(ok && !createNew) {
         unsigned char bytes[49]; DWORD read=0;
         ok=before.nFileSizeHigh==0 && before.nFileSizeLow==48 && ReadFile(h,bytes,sizeof(bytes),&read,nullptr) &&
-            decode(bytes,read,r) && advance(r,installation,generation);
+            decode(bytes,read,r) && (once ? advanceOnce(r,installation,generation) : advance(r,installation,generation));
     }
     ok=ok && secure(h,false,after) && sameIdentity(before,after);
     if(ok) ok=writeRecord(h,r,0);
@@ -180,6 +183,27 @@ bool Directory::operate(const Id& installation,const Id& generation,bool createN
 }
 bool Directory::create(const Id& i,const Id& g) { return operate(i,g,true); }
 bool Directory::acknowledge(const Id& i,const Id& g) { return operate(i,g,false); }
+bool Directory::acknowledgeOnce(const Id& i,const Id& g) { return ackMode && operate(i,g,false,true); }
+bool Directory::readAckManifest(std::vector<unsigned char>& bytes) {
+    if(!ackMode || path.empty() || authority==0 || authority>=pins.size()) return false;
+    BY_HANDLE_FILE_INFORMATION a{},b{};
+    if(!secure(anchorPin,true,a) || !secure(pins[authority],true,b) || !sameIdentity(a,b)) return false;
+    for(size_t n=0;n<pins.size();++n) { BY_HANDLE_FILE_INFORMATION i{}; if(!secure(pins[n],true,i,n>=authority)) return false; }
+    const std::wstring manifest=path.substr(0,path.find_last_of(L'\\'))+L"\\run.manifest";
+    HANDLE h=CreateFileW(manifest.c_str(),GENERIC_READ|READ_CONTROL,FILE_SHARE_READ,nullptr,OPEN_EXISTING,
+        FILE_FLAG_OPEN_REPARSE_POINT,nullptr);
+    if(h==INVALID_HANDLE_VALUE) return false;
+    BY_HANDLE_FILE_INFORMATION before{},after{};
+    bool ok=secure(h,false,before) && before.nFileSizeHigh==0 && before.nFileSizeLow>=176 && before.nFileSizeLow<=65536;
+    if(ok) {
+        bytes.resize(before.nFileSizeLow); DWORD read=0;
+        ok=ReadFile(h,bytes.data(),static_cast<DWORD>(bytes.size()),&read,nullptr) && read==bytes.size() &&
+            secure(h,false,after) && sameIdentity(before,after);
+    }
+    // Retain this immutable read-sharing-only pin until the operation completes.
+    if(ok) manifestPins.push_back(h); else CloseHandle(h);
+    return ok;
+}
 #ifdef LAB_PROTECTED_FILE_TESTING
 bool testWrite(HANDLE h,const Record& r,Failure f) { return writeRecord(h,r,static_cast<unsigned>(f)); }
 #endif

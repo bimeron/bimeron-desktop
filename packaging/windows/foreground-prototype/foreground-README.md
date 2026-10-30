@@ -625,3 +625,125 @@ GUI, MSI/export changes. No elevation, ACL repair, registry/network mutation,
 VM, guest harness, package/release build, benchmark or profiling occurred.
 Linux and full product/package checks are inapplicable to this disconnected
 Windows-only correction. Guest acceptance and production integration remain open.
+
+### Protected ACK access-only fixture
+
+The specification and acceptance criteria are in `docs/ikev2-profiles.md` under
+"Protected ACK access-only MSI specification and acceptance". This is a separate
+access experiment. It does not replace the existing pending-file guest harness,
+its frozen bundles or retained guest state. Existing prospective exports still
+fail unconditionally. `Directory::pin()` and the original counter range keep their
+behavior; `pinAck()` resolves only native Program Files\BimeronProtectedAckLab\LABProtectedFiles,
+and `acknowledgeOnce()` accepts only counter zero. No caller-selected path exists.
+
+Configure the standalone project in a new ignored build directory using installed
+MSVC and an explicitly supplied cached WiX 3 directory:
+
+```powershell
+cmake -S packaging/windows/foreground-prototype -B build/foreground-ack-x64 -G "Visual Studio 18 2026" -A x64 -DFOREGROUND_LAB_PROTECTED_ACK=ON -DWIX_TOOL_DIR=<cached-WiX-directory>
+cmake --build build/foreground-ack-x64 --config Release --target foreground-lab-protected-ack
+ctest --test-dir build/foreground-ack-x64 -C Release -R foreground-lab-protected-ack --output-on-failure
+```
+
+Repeat in a separate directory with `-A ARM64`; select an installed VS instance
+with ARM64 support if needed. On x64 run only its `foreground-lab-protected-ack-readonly`
+test. The option defaults OFF, the target is not ALL, and there are no install or
+production CPack rules. Product/upgrade GUIDs are cached per variant/build directory;
+WiX generates a new package GUID on linking. Freeze bytes after review preparation;
+a rebuild invalidates the bundle and requires new external hash verification.
+
+`lab-protected-ack-check.py <Release-directory> <x64|arm64>` opens actual databases
+read-only, checks exact zero-resource tables/schema/sequences and summary identity,
+embedded Binary SHA-256, PE machine, five exports, no delay imports, SYSTEM32 load
+flags, static CRT and explicit direct DLL/API allowlists. It reuses the existing
+trace table validator without changing that validator. Nineteen negative database
+models per variant reject extra resources/actions and altered callback conditions
+or sequences. The manifest is generated only after this inspection and MSI build.
+No installer session is opened. Direct imports do not prove absence of dynamic
+loading; static CRT imports include loading, process termination, command-line and
+environment APIs, but fixture sources do not use these for callback authority or
+diagnostic dumps. The DLL's own MSI imports contain no install/action APIs.
+
+The canonical `run.manifest` is binary, bounded to 65,536 bytes, with no padding:
+
+- Offset 0: eight ASCII bytes `BLACK001`.
+- Offsets 8 and 24: nonzero 16-byte installation and generation IDs (opaque bytes).
+- Offsets 40 and 44: little-endian uint32 architecture (1 x64, 2 ARM64) and compiled
+  variant (0 Success, 1 CommitFail, 2 PostFinalizeFail).
+- Offsets 48 and 64: nonzero product and package GUIDs in Windows memory byte order.
+- Offsets 80, 112 and 144: SHA-256 of the externally pinned original MSI, Binary
+  DLL and the remaining canonical database projection, respectively.
+- Offset 176 onward: the exact actual table/sequence expectations. In the fixed
+  `COLUMNS` order in the checker, encode table name, uint32 row count, sorted rows,
+  uint32 field count per row, then every field. Strings are uint32 byte length
+  followed by UTF-16LE without terminator. Binary Data is lowercase SHA-256 text.
+  Append summary template, package GUID and decimal flags as the same strings.
+
+IDs are deterministically unique to each fresh package GUID (UUIDv5 installation
+and generation domains); they are public labels, never credentials. The native
+x64 test compares the actual C++ database projection byte-for-byte with Python's
+manifest, checks GUID/Binary header consistency and malformed manifests. It opens
+only an MSIDBOPEN_READONLY database, never an installation session. Additional
+actual OS tests select the process token with no thread token, then the actual
+impersonation token by token ID, and refuse an anonymous thread token without
+process fallback. Owned ignored temporary I/O writes/flushes counters zero and one,
+refuses CREATE_NEW on existing state and refuses the shared exact-zero transition
+on reread counter one. These are not native protected-path positive observations.
+The unchanged protected-file harness separately labels ACL/stale-ID/identity and
+injected short-write/flush failures as models.
+
+Preflight reads and pins the protected manifest/ancestors, compares its effective
+active database projection, product/package identity and Binary digest, and rejects
+transforms, PATCH, mutation properties, maintenance and disabled rollback. Deferred
+independently rereads the protected manifest and creates a flushed 48-byte Pending
+record with its IDs and counter zero. Commit and Rollback never touch records.
+PostFinalize independently rereads the manifest, uses thread-token precedence
+(process fallback only ERROR_NO_TOKEN), rejects nonelevated/restricted tokens,
+rechecks active database and actual protected file access, then increments only
+matching counter zero to one and flushes. PostFinalizeFail returns 1603 before ACK.
+Any failure or existing record is retained; there is no automatic retry, deletion,
+repair, Clean state or settlement. The manifest read handle prevents write/delete
+sharing until that callback's operation ends. No callback derives IDs or paths
+from MSI properties. MSI hash is an external source expectation only; callbacks do
+not self-attest original MSI bytes. Diagnostics contain only bounded callback,
+result, access-only and initiatingClientUnknown fields.
+
+Review preparation freezes all six MSIs/DLLs, six manifests, eighteen actual GUIDs,
+source SHA/source hashes, table/import reports and verbose unsuppressed ICE/test
+logs under `build/protected-ack-review/`. Its `guest-x64-success/` directory contains
+one Success MSI, the exact `run.manifest`, and an effects/permission record. This
+is READY GUEST REVIEW BUNDLE, with permission not granted. No provisioning or
+execution belongs to preparation. Parent review must externally pin the original
+MSI and manifest bytes, then separately obtain permission for a fresh disposable
+VM lab directory and state. Never reuse or modify BimeronProtectedFileLab.
+
+Proposed effects, only after that separate permission: provision the two new ACK
+lab directories with trusted owner and protected SYSTEM/Administrators DACLs;
+copy only the matching manifest to LABProtectedFiles\run.manifest; place the pinned
+MSI in a new review-owned guest input directory; verify both hashes; invoke that
+one Success MSI once with a separately reviewed fixed log path. The engine runs
+its five fixed callbacks and may create pending.bin at counter zero and write it
+once to counter one. Retain the manifest, pending record and MSI log on success
+or failure. No retry, uninstall, repair, cleanup or failure-variant run is included.
+MSI's own engine logging/cache/registration effects must be reviewed by the parent;
+zero installed resources does not mean the engine performs no system writes.
+
+Remaining runtime questions are availability of the active effective database and
+summary information in these exact callbacks, token/write behavior after Finalize,
+actual callback order and trusted-engine extraction/loading of Preflight code.
+Offline results do not resolve these boundaries or establish production authority,
+client identity, participating-host exclusion, outer completion or power-loss
+durability. Production approval stays denied. ARM64 runtime, Linux, GUI/product
+matrix, benchmarking and profiling are inapplicable to this isolated Windows lab.
+
+Offline result (2026-10-30): x64 MSVC 19.51 Insiders and ARM64 MSVC 19.51
+BuildTools / SDK 10.0.26100 compiled all three variants and the native test with
+/W4 /WX. The initially auto-selected Insiders ARM64 configuration was unavailable;
+explicit installed BuildTools selection resolved it without installation. Six
+cached WiX builds completed normal unsuppressed verbose ICE without warning/error
+diagnostics. x64 focused CTest passed 4/4 (unchanged protected-access/file plus
+ACK read-only/native); ARM64 host ACK read-only passed 1/1. Each architecture's
+three actual MSI inspections passed 57 negative database models. Default configure
+omits the ACK project entirely. Diff/security review confirmed fixed paths, unchanged
+old fail-closed exports, no production registration and no record cleanup path.
+Host protected positive and all MSI callback execution remain untested by design.

@@ -670,3 +670,34 @@ guest provisioning/execution. Preparation-only edits need no executable rebuild.
 [the guest acceptance criteria](../packaging/windows/foreground-prototype/lab-protected-file-guest-README.md).
 Rebuild and rehash after primitive changes; native success requires separate
 permission and a disposable Windows VM.
+
+### Isolated protected ACK MSI access fixture
+
+The standalone foreground project adds default-OFF FOREGROUND_LAB_PROTECTED_ACK
+and explicit `foreground-lab-protected-ack`, excluded from ALL and installation.
+It produces three compiled Success/CommitFail/PostFinalizeFail Binary DLL/MSI pairs
+per Windows architecture using explicitly supplied cached WiX 3, with normal
+unsuppressed ICE. Empty Component and FeatureComponents tables use EnsureTable;
+there are no installed resources or production CPack changes. Its only protected
+path is native Program Files\BimeronProtectedAckLab\LABProtectedFiles, separate
+from all earlier guest state. The original pending-file pin/counter behavior and
+fail-closed exports remain unchanged.
+
+See the foreground README for exact configure/build/CTest commands, canonical
+post-build protected manifest encoding, external MSI hash pinning, offline coverage,
+frozen review-bundle paths and proposed guest effects. The x64 native test opens
+actual MSI databases read-only and exercises token precedence and owned temporary
+record I/O; it never opens an installer session. ARM64 is compile/static-check only.
+No MSI actions, host protected writes, elevation, VM operation or release are part
+of this build flow. A review bundle grants no guest permission or production trust.
+Linux, performance and full production package checks are inapplicable to this
+disconnected Windows-only target. Supported release packaging is unchanged.
+
+Protected ACK offline evidence: all six x64/ARM64 /W4 /WX DLL/MSI variants built;
+normal verbose ICE passed without warning/error diagnostics. x64 focused CTest
+passed 4/4; ARM64 host read-only checks passed 1/1, with 57 database negative models
+per architecture. C++ read-only MSI projection matched the generated manifest;
+actual token precedence/error refusal and owned temporary record I/O passed.
+No host MSI action or guest execution occurred. Review and runtime limitations,
+source/artifact evidence and the permission-not-granted bundle are in the foreground
+README and ignored build/protected-ack-review state.

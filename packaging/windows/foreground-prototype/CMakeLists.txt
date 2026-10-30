@@ -129,3 +129,59 @@ if(FOREGROUND_LAB_PROTECTED_FILE)
   add_test(NAME foreground-lab-protected-file COMMAND lab-protected-file-test)
   set_tests_properties(foreground-lab-protected-file PROPERTIES TIMEOUT 30)
 endif()
+
+# Access-only ACK experiment. Explicit offline target, never installed or shipped.
+option(FOREGROUND_LAB_PROTECTED_ACK "Enable isolated protected ACK MSI fixtures" OFF)
+if(FOREGROUND_LAB_PROTECTED_ACK)
+  if(NOT WIX_TOOL_DIR)
+    message(FATAL_ERROR "ACK lab requires explicitly supplied cached WiX 3 tools")
+  endif()
+  set(ack_outputs)
+  foreach(variant Success CommitFail PostFinalizeFail)
+    if(variant STREQUAL "Success")
+      set(point 0)
+    elseif(variant STREQUAL "CommitFail")
+      set(point 1)
+    else()
+      set(point 2)
+    endif()
+    add_library(lab-protected-ack-${variant} SHARED EXCLUDE_FROM_ALL lab-protected-ack.cpp lab-protected-file.cpp)
+    target_compile_features(lab-protected-ack-${variant} PRIVATE cxx_std_17)
+    target_compile_options(lab-protected-ack-${variant} PRIVATE /W4 /WX)
+    target_compile_definitions(lab-protected-ack-${variant} PRIVATE LAB_FAILPOINT=${point})
+    target_link_libraries(lab-protected-ack-${variant} PRIVATE advapi32 msi bcrypt ole32 shell32)
+    target_link_options(lab-protected-ack-${variant} PRIVATE /DEPENDENTLOADFLAG:0x800)
+    foreach(kind PRODUCT UPGRADE)
+      if(NOT ACK_${variant}_${kind})
+        execute_process(COMMAND "${Python3_EXECUTABLE}" -c "import uuid; print(str(uuid.uuid4()).upper())"
+          OUTPUT_VARIABLE guid OUTPUT_STRIP_TRAILING_WHITESPACE COMMAND_ERROR_IS_FATAL ANY)
+        set(ACK_${variant}_${kind} "${guid}" CACHE INTERNAL "Immutable ACK lab identity")
+      endif()
+      set(LAB_${kind} "${ACK_${variant}_${kind}}")
+    endforeach()
+    set(LAB_DLL "$<TARGET_FILE:lab-protected-ack-${variant}>")
+    configure_file(lab-protected-ack.wxs.in lab-protected-ack-${variant}.configured.wxs @ONLY)
+    file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/lab-protected-ack-${variant}.wxs"
+      INPUT "${CMAKE_CURRENT_BINARY_DIR}/lab-protected-ack-${variant}.configured.wxs")
+    set(output "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/lab-protected-ack-${variant}.msi")
+    add_custom_command(OUTPUT "${output}"
+      COMMAND "${WIX_TOOL_DIR}/candle.exe" -nologo -out "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/lab-protected-ack-${variant}.wixobj"
+        "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/lab-protected-ack-${variant}.wxs"
+      COMMAND "${WIX_TOOL_DIR}/light.exe" -nologo -v -out "${output}"
+        "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/lab-protected-ack-${variant}.wixobj"
+      DEPENDS lab-protected-ack-${variant} "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/lab-protected-ack-${variant}.wxs" VERBATIM)
+    list(APPEND ack_outputs "${output}")
+  endforeach()
+  add_executable(lab-protected-ack-test EXCLUDE_FROM_ALL lab-protected-ack-test.cpp lab-protected-file.cpp)
+  target_compile_features(lab-protected-ack-test PRIVATE cxx_std_17)
+  target_compile_options(lab-protected-ack-test PRIVATE /W4 /WX)
+  target_compile_definitions(lab-protected-ack-test PRIVATE LAB_PROTECTED_FILE_TESTING)
+  target_link_libraries(lab-protected-ack-test PRIVATE advapi32 ole32 shell32 msi bcrypt)
+  add_custom_target(foreground-lab-protected-ack DEPENDS ${ack_outputs} lab-protected-ack-test)
+  add_test(NAME foreground-lab-protected-ack-native COMMAND lab-protected-ack-test
+    "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/lab-protected-ack-Success.run.manifest"
+    "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/lab-protected-ack-Success.msi")
+  set_tests_properties(foreground-lab-protected-ack-native PROPERTIES DEPENDS foreground-lab-protected-ack-readonly TIMEOUT 30)
+  add_test(NAME foreground-lab-protected-ack-readonly COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/lab-protected-ack-check.py" "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>" "${WIX_ARCH}")
+endif()
