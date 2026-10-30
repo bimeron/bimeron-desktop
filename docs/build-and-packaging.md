@@ -749,3 +749,17 @@ snapshot gates are unchanged. See the foreground README for evidence limits.
 
 The isolated protected ACK Success fixture from a6d93adc was observed once in the disposable x64 VM on 2026-10-30: exit 0, all four successful callbacks, retained Pending counter 1, and no diagnostic snapshot. See the prototype README's Native x64 protected ACK Success observation for exact artifact hashes and limits. This is access evidence only; production packaging, enrollment and ARM64 runtime remain unavailable.
 The two frozen x64 protected ACK failure variants were subsequently observed once each in the disposable VM: CommitFail rolled back with Pending counter 0; PostFinalizeFail failed after successful Finalize without rollback and retained counter 0. The prototype README records the acceptance and evidence limits; no production packaging behavior changed.
+
+### Bounded offline ACK checkpoint build
+
+The separate default-OFF FOREGROUND_LAB_PROTECTED_ACK_CHECKPOINT option exposes
+only explicit foreground-lab-protected-ack-checkpoint on x64, outside ALL/install
+and production packaging. It reuses the protected ACK source/sequence with fresh
+identities and variant 3. See the foreground README acceptance for exact 80-byte
+checkpoint encoding, fixed 60-second fail-closed wait and unconditional pre-ACK
+PostFinalize refusal. This is partial offline fixture preparation; no runner,
+termination or VM implementation belongs here. Existing ACK/trace contracts and
+supported release packaging remain unchanged. Shared code requires existing six
+ACK static checks, focused x64 regressions and ARM64 compilation; the checkpoint
+constructor refuses ARM64. Use cached WiX and unsuppressed ICE, freezing all new
+review evidence in a fresh ignored build directory. No guest-ready bundle claim.

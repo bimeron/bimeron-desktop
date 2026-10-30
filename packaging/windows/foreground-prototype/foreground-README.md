@@ -1124,3 +1124,42 @@ No process was discovered or terminated for this comparison. No failure variant,
 retry, uninstall or cleanup was run. Private summary, receipt, log and result are
 retained under ignored build/vm-lab-evidence-20261030. Production/enrollment and
 crash authority remain unavailable; no new wrapper requirement is inferred.
+
+
+### Bounded checkpoint-only ACK variant acceptance
+
+This accepted offline chunk adds default-OFF FOREGROUND_LAB_PROTECTED_ACK_CHECKPOINT,
+explicit foreground-lab-protected-ack-checkpoint, x64 only, excluded from ALL,
+installation and production. Its fresh Checkpoint identities and compiled variant 3
+reuse the ACK source, exact WiX sequence, protected run.manifest/pins and 48-byte
+Pending format. The three existing ACK variants and trace contracts are unchanged.
+Identity contract decisions remain pending; original same-user interactive initiating
+client requirements and continuous exclusion are not weakened or established.
+
+After Deferred create(i,g) returns success (including Pending write/flush), write
+and flush fixed checkpoint.bin through narrowly named Directory::writeAckCheckpoint.
+Use the diagnostic writer's CREATE_NEW, protected SYSTEM/Administrators DACL,
+exclusive sharing, reparse/link/disk/identity and before/after revalidation checks.
+The exact 80 bytes are ASCII BLCP, little-endian uint32 version 1, 16-byte
+installation ID, 16-byte generation ID, SHA-256 of the complete pinned manifest,
+little-endian uint32 code 1 meaning only Pending create returned success, and four
+zero reserved bytes. No PID, token, commands, authority or release handshake.
+Only then perform compiled non-alertable SleepEx(60000,FALSE), require return zero,
+and return ERROR_INSTALL_FAILURE. Create/checkpoint/write/flush/wait failure or
+exception fails closed, retaining all residue. No delete, cleanup or retry.
+
+Most importantly, Checkpoint PostFinalize unconditionally returns failure before
+any ACK path, including unexpected server continuation. Commit/Rollback remain
+nonmutating; there is no event, file or property release mechanism. Tests use the
+existing test-only compile hook for bounded wait models, never a real 60-second
+sleep, and check ordering, short write/flush/checkpoint/wait failure, exceptions
+and zero ACK through every callback/continuation path. Constructor is 64-bit x64
+only; no ARM64 checkpoint support is claimed.
+
+Build the new DLL/MSI /W4 /WX with cached WiX and unsuppressed ICE, inspect actual
+tables/Binary/identities/exports/imports/sequence and zero extra resources. Recheck
+six existing ACK MSIs and focused x64 regressions; compile shared code for ARM64.
+Freeze fresh ignored source/hash/MSI/DLL/manifest/GUID/log/effect evidence as a
+partial offline fixture, not a guest-ready runner. Parent owns VM work; no runner,
+termination, host MSI actions, native production or existing bundle/state changes.
+Linux, benchmarks, profiling and release matrix are inapplicable.
