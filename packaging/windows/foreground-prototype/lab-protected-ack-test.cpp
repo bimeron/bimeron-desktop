@@ -44,6 +44,65 @@ static void resourceQueryNegatives() {
     CHECK(DeleteFileW(path.c_str())!=FALSE);
     std::puts("NATIVE owned MSI database: missing table and nonempty Component/FeatureComponents/File refused; no installer action");
 }
+static void projectionNegatives(const wchar_t* source,const Buffer& expected) {
+    for(const auto name:{L"#_BaselineCost",L"#_BaselineData",L"#_BaselineFile",L"#_FolderCache",
+        L"#_MsiRedirectedFile",L"#_PatchCache",L"CostAdjuster",L"_Property",L"__MsiPatchMedia"}) {
+        CHECK(classifyOwner(name,MSICONDITION_FALSE)==Owner::Exclude);
+        for(const auto state:{MSICONDITION_TRUE,MSICONDITION_NONE,MSICONDITION_ERROR})
+            CHECK(classifyOwner(name,state)==Owner::Refuse);
+    }
+    for(const auto name:{L"Unknown",L"costadjuster",L"_Tables",L"_Columns",L"_Streams",L"_Storages"})
+        for(const auto state:{MSICONDITION_FALSE,MSICONDITION_TRUE,MSICONDITION_NONE,MSICONDITION_ERROR})
+            CHECK(classifyOwner(name,state)==Owner::Refuse);
+    CHECK(classifyOwner(L"Property",MSICONDITION_TRUE)==Owner::Keep);
+    for(const auto state:{MSICONDITION_FALSE,MSICONDITION_NONE,MSICONDITION_ERROR})
+        CHECK(classifyOwner(L"Property",state)==Owner::Refuse);
+    const wchar_t* mutations[]={nullptr,
+        L"CREATE TABLE `CostAdjuster` (`Name` CHAR(72) NOT NULL TEMPORARY PRIMARY KEY `Name`) HOLD",
+        L"CREATE TABLE `UnknownTemporary` (`Name` CHAR(72) NOT NULL TEMPORARY PRIMARY KEY `Name`) HOLD",
+        L"CREATE TABLE `UnknownPersistent` (`Name` CHAR(72) NOT NULL PRIMARY KEY `Name`)",
+        L"CREATE TABLE `CostAdjuster` (`Name` CHAR(72) NOT NULL PRIMARY KEY `Name`)",
+        L"DROP TABLE `Component`",
+        L"ALTER TABLE `Property` ADD `Unexpected` CHAR(20)"};
+    for(unsigned k=0;k<sizeof(mutations)/sizeof(mutations[0]);++k) {
+        std::wstring path=std::wstring(source)+L".owned-"+std::to_wstring(GetCurrentProcessId())+L"-"+std::to_wstring(k)+L".msi";
+        CHECK(CopyFileW(source,path.c_str(),TRUE)!=FALSE);
+        {
+            Msi db; CHECK(MsiOpenDatabaseW(path.c_str(),reinterpret_cast<LPCWSTR>(MSIDBOPEN_TRANSACT),&db.h)==ERROR_SUCCESS);
+            if(mutations[k]) execute(db.h,mutations[k]);
+            Buffer actual; Diagnostic d;
+            const bool ok=databaseHandle(db.h,actual,&d,&expected);
+            if(k<=1) { CHECK(ok && actual==expected); CHECK(!snapshotSelected(0,d)); }
+            else if(k<=4) CHECK(!ok && d.stage==43);
+            else CHECK(!ok && d.stage==41);
+            if(k==1 || k==2 || k==4) {
+                const wchar_t* owner=k==2 ? L"UnknownTemporary" : L"CostAdjuster";
+                const auto persistence=MsiDatabaseIsTablePersistentW(db.h,owner);
+                CHECK(persistence==(k==4 ? MSICONDITION_TRUE : MSICONDITION_FALSE));
+                bool exclude=false; Diagnostic policy;
+                CHECK(projectOwner(db.h,owner,exclude,&policy)==(k==1));
+                CHECK(exclude==(k==1));
+                // Some engines omit temporary columns from _Columns. Inspect actual
+                // rows when present and test the same owner guard above regardless.
+                Msi view; CHECK(MsiDatabaseOpenViewW(db.h,L"SELECT `Table` FROM `_Columns`",&view.h)==ERROR_SUCCESS);
+                CHECK(MsiViewExecute(view.h,0)==ERROR_SUCCESS);
+                unsigned visible=0;
+                for(;;) {
+                    Msi row; UINT e=MsiViewFetch(view.h,&row.h); if(e==ERROR_NO_MORE_ITEMS) break;
+                    CHECK(e==ERROR_SUCCESS); std::wstring name; CHECK(field(row.h,1,name));
+                    if(name==owner) ++visible;
+                }
+                Buffer columns; Diagnostic columnPolicy;
+                CHECK(rows(db.h,L"_Columns",L"`Table`,`Number`,`Name`,`Type`",4,columns,&columnPolicy)==(k==1 || visible==0));
+                if(k!=1 && visible) CHECK(columnPolicy.stage==43);
+                std::printf("NATIVE _Columns owner case=%u visible=%u\n",k,visible);
+            }
+            CHECK(MsiDatabaseCommit(db.h)==ERROR_SUCCESS);
+        }
+        CHECK(DeleteFileW(path.c_str())!=FALSE);
+    }
+    std::puts("NATIVE owned MSI projection: baseline and temporary CostAdjuster exact; unknown/persisted collision/missing/schema negatives refused; classifier NONE/ERROR models");
+}
 int wmain(int argc,wchar_t** argv) {
     CHECK(argc==3);
     CHECK(labFreshEligibility(L"",INSTALLSTATE_UNKNOWN,true));
@@ -85,6 +144,7 @@ int wmain(int argc,wchar_t** argv) {
     Buffer projection; CHECK(databaseHandle(databaseFile.h,projection));
     CHECK(projection.size()==manifestBytes.size()-176 && std::equal(projection.begin(),projection.end(),manifestBytes.begin()+176));
     CHECK(headerDatabase(databaseFile.h,manifestBytes));
+    projectionNegatives(argv[2],projection);
     auto changed=projection; changed[0]^=1; Buffer differing; Diagnostic category;
     CHECK(!databaseHandle(databaseFile.h,differing,&category,&changed));
     CHECK(category.stage==41 && category.detail==1);

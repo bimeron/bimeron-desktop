@@ -70,13 +70,39 @@ bool collectTables(MSIHANDLE db,Buffer& out) {
 bool snapshotSelected(unsigned point,const Diagnostic& d,unsigned failpoint=LAB_FAILPOINT) {
     return failpoint==0 && point==0 && d.stage==41 && d.detail==1;
 }
-bool rows(MSIHANDLE db,const wchar_t* table,const wchar_t* columns,unsigned count,Buffer& out) {
+enum class Owner { Keep, Exclude, Refuse };
+Owner classifyOwner(const std::wstring& name,MSICONDITION persistence) {
+    for(const auto metadata:{L"#_BaselineCost",L"#_BaselineData",L"#_BaselineFile",L"#_FolderCache",
+        L"#_MsiRedirectedFile",L"#_PatchCache",L"CostAdjuster",L"_Property",L"__MsiPatchMedia"})
+        if(name==metadata) return persistence==MSICONDITION_FALSE ? Owner::Exclude : Owner::Refuse;
+    for(const auto canonical:{L"AdminExecuteSequence",L"AdminUISequence",L"AdvtExecuteSequence",L"Binary",
+        L"Component",L"CustomAction",L"Directory",L"Feature",L"FeatureComponents",L"File",
+        L"InstallExecuteSequence",L"InstallUISequence",L"Media",L"Property",L"_Validation"})
+        if(name==canonical && persistence==MSICONDITION_TRUE) return Owner::Keep;
+    return Owner::Refuse;
+}
+// Used only for catalog row owners, never for the virtual catalog itself.
+bool projectOwner(MSIHANDLE db,const std::wstring& name,bool& exclude,Diagnostic* diagnostic) {
+    const auto persistence=MsiDatabaseIsTablePersistentW(db,name.c_str());
+    const auto owner=classifyOwner(name,persistence);
+    exclude=owner==Owner::Exclude;
+    if(owner!=Owner::Refuse) return true;
+    if(diagnostic) refused(*diagnostic,persistence==MSICONDITION_ERROR ? 42u : 43u,0,static_cast<DWORD>(persistence));
+    return false;
+}
+bool rows(MSIHANDLE db,const wchar_t* table,const wchar_t* columns,unsigned count,Buffer& out,Diagnostic* diagnostic=nullptr) {
     std::wstring sql=L"SELECT "; sql+=columns; sql+=L" FROM `"; sql+=table; sql+=L"`";
     Msi view; if(MsiDatabaseOpenViewW(db,sql.c_str(),&view.h)!=ERROR_SUCCESS || MsiViewExecute(view.h,0)!=ERROR_SUCCESS) return false;
-    std::vector<std::vector<std::wstring>> values; size_t total=0;
+    std::vector<std::vector<std::wstring>> values; size_t total=0,seen=0;
+    const bool catalog=std::wstring(table)==L"_Tables" || std::wstring(table)==L"_Columns";
     for(;;) {
         Msi record; UINT e=MsiViewFetch(view.h,&record.h); if(e==ERROR_NO_MORE_ITEMS) break;
-        if(e!=ERROR_SUCCESS || values.size()>=4096) return false;
+        if(e!=ERROR_SUCCESS || ++seen>4096) return false;
+        if(catalog) {
+            std::wstring owner; bool exclude=false;
+            if(!field(record.h,1,owner) || !projectOwner(db,owner,exclude,diagnostic)) return false;
+            if(exclude) continue;
+        }
         std::vector<std::wstring> row;
         for(unsigned n=1;n<=count;++n) {
             std::wstring value;
@@ -117,7 +143,7 @@ bool databaseHandle(MSIHANDLE db,Buffer& out,Diagnostic* diagnostic=nullptr,cons
     unsigned category=0;
     for(const auto& t:tables) {
         ++category;
-        if(!rows(db,t.name,t.columns,t.count,out)) {
+        if(!rows(db,t.name,t.columns,t.count,out,diagnostic)) {
             if(diagnostic) refused(*diagnostic,40,category);
             return false;
         }

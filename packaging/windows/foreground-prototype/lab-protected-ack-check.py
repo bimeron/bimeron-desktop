@@ -248,6 +248,11 @@ def main():
                 try: validate(bad,digest,variant,arch,ids)
                 except AssertionError: negatives+=1
                 else: raise AssertionError('accepted callback mutation')
+        # Runtime metadata exceptions must never broaden the source MSI allowlist.
+        bad=copy.deepcopy(tables); bad['_Tables'].append(['CostAdjuster'])
+        try: validate(bad,digest,variant,arch,ids)
+        except AssertionError: pass
+        else: raise AssertionError('accepted persisted runtime metadata collision')
         logical=canonical(tables)
         installation=uuid.uuid5(uuid.UUID(ids['packageCode'].strip('{}')),'installation').bytes
         generation=uuid.uuid5(uuid.UUID(ids['packageCode'].strip('{}')),'generation').bytes

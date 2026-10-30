@@ -870,3 +870,48 @@ Freeze new ignored evidence with identities/hashes/manifests/source/build logs;
 never overwrite older bundles. Independent review and parent VM execution remain
 separate gates. No host MSI action, protected write, production authority, release,
 benchmark or profiling belongs to this disconnected Windows-only correction.
+
+### Runtime metadata correction offline evidence
+
+The accepted correction is implemented only at catalog row-owner projection.
+Stages 42 (persistence query ERROR) and 43 (owner/persistence policy refusal),
+with raw persistence enum in api, are distinct from stage 40 query/encoding failure
+and stage 41 byte mismatch. No names or values enter MSI messages. Successful
+projection does not select a snapshot; the original Success Preflight 41/1 trigger
+and its protected CREATE_NEW writer remain unchanged.
+
+Fresh build directories are build/ack-projection-x64 and build/ack-projection-arm64.
+Use the configure command above with these directories, explicit VS 18 BuildTools,
+cached WiX, and FOREGROUND_LAB_PROTECTED_ACK=ON. The x64 configure also enables
+FOREGROUND_LAB_PROTECTED_FILE and FOREGROUND_LAB_PROTECTED_ACCESS; build those two
+explicit targets alongside foreground-lab-protected-ack. Run x64 CTest with
+-R 'foreground-lab-protected-(ack|file|access)' and ARM64 with
+-R '^foreground-lab-protected-ack-readonly$'. No ARM64 executable runs on x64.
+
+Both architectures compiled /W4 /WX; all six cached-WiX MSIs passed normal verbose
+unsuppressed ICE without warning/error diagnostics. x64 focused CTest passed 4/4;
+ARM64 host read-only MSI/Binary/PE/import checks passed 1/1. Each architecture
+retains 57 database negative models plus three source CostAdjuster collision
+negatives. Native owned copies verified baseline byte identity, temporary
+CostAdjuster normalization, unknown temporary/persistent and persisted CostAdjuster
+refusal, missing Component and changed Property schema refusal. The actual
+_Columns catalog exposed zero temporary owner rows and one persistent CostAdjuster
+row; the latter exercised refusal directly through rows(). The shared guard's
+exclusion and NONE/ERROR states are checked separately without claiming native
+visibility of temporary columns. Existing token, resource, freshness, counter and
+snapshot checks passed. Protected native-path positive remained unavailable.
+
+Diff/security review found no changes outside the specified projection and tests,
+no broader source allowlist, production integration, record cleanup or caller
+identity claim. No performance-sensitive path changed; benchmark/profiling, Linux
+and full product package matrix are inapplicable to this standalone Windows lab.
+No host MSI actions, protected writes, VM, push, release or production acceptance
+occurred. The only prior runtime evidence is the parent's Windows 10 engine
+5.00.10011 observation; these new bytes and ARM64 runtime remain untested.
+
+New immutable review material is frozen under build/ack-projection-review, with
+six MSI/DLL pairs, six manifests, eighteen GUIDs, actual table/import reports,
+source archive/hashes, build/configure/test logs and SHA256SUMS.txt. Its
+ guest-x64-success directory is a READY DIAGNOSTIC REVIEW BUNDLE only: independent
+review and a separately authorized parent VM run remain required. Prior bundles
+are preserved. The artifact index carries exact source commit and hashes.

@@ -735,3 +735,14 @@ New x64/ARM64 cached-WiX builds and immutable review evidence are required; no
 host MSI actions or protected writes are authorized. Windows 10 engine 5.00.10011
 is the sole parent runtime observation; ARM64 runtime and production authority
 remain unproved. Supported release packaging is unchanged.
+
+ACK runtime metadata correction offline result: fresh build/ack-projection-x64 and
+arm64 compiled /W4 /WX and linked six cached-WiX MSIs with unsuppressed ICE.
+x64 focused CTest passed 4/4; ARM64 read-only checks passed 1/1, never executing
+ARM64 code. Owned MSI copies verified exact baseline/temporary metadata projection
+and unknown/persisted collision/missing/schema refusal. Source allowlists and
+manifest encoding remain strict. Stages 42/43 distinguish persistence query/policy
+refusal from mismatch. New ignored build/ack-projection-review freezes source,
+identities, hashes, manifests and logs for independent review and parent VM work;
+it grants no guest permission or production authority. Existing admission and
+snapshot gates are unchanged. See the foreground README for evidence limits.
