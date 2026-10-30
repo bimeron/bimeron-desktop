@@ -208,3 +208,18 @@ Expected completion supports the stream alone being sufficient for this fixture;
 product state -1 remains consistent with the zero-resource experiment and is not
 full product installation acceptance. Later failure establishes only the earlier
 phases that actually passed. Session-0 evidence does not establish interactive UAC.
+
+### One-shot FeatureComponents discriminator
+
+Permit one parent-operated full-server `/i /qn /norestart` run of
+`feature-components.msi`, SHA-256
+`4438582783be142a9eceae71bf9f53bfdc124747eacd27f938f6c626bd739447`.
+Require the pinned hash, the reviewed zero-resource structure and lab ProductCode
+state -1 immediately before launch. Record a fresh unique private log and result;
+stop after the case without automatic retry or another variant. Expected completion
+requires exit 0, successful Initialize/Finalize and the same four success callbacks
+as the passing control, with product state -1. A pass establishes sufficiency of
+this database transformation for the fixture, not an internal engine root cause:
+normal database commit can also change table/string metadata and serialization.
+No explicit Component stream is created by this variant. Preserve the no-resource
+contract; interactive UAC and production/native acceptance remain outside this test.
