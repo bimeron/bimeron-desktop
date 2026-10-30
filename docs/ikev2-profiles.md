@@ -276,3 +276,29 @@ pins. Until those requirements are implemented and independently checked, no
 MSI is suitable for guest execution. Offline tests must distinguish actual OS
 observations from injected failure models; no installation, registry, network,
 service, credential, elevation or guest action is authorized by this amendment.
+
+## Bounded offline UI controller binding acceptance
+
+Bind an externally supplied concrete NativeIKEv2Session privately to MainWindow,
+using QObject-context connections and QPointer lifetime guards, including its initial
+snapshot. Production must not construct, discover, launch or provision a controller
+until a protected approval provider exists. No runtime setting can enable native
+Connect, Preview, Apply or Remove. The daemon-observed nativeSession flag remains
+separate from the bound foreground controller.
+
+Controller signals must update the native status label and tray through connected,
+stopping, retained/modified and unknown states with statistics unavailable. Packet
+status replies, profile selection and tray rebuilding must preserve that display
+and its sticky block. Controller disappearance becomes unknown and cannot prove
+cleanup or absence. Switching, service mutation, update, restart, autostart and
+reconnect remain blocked. Close-to-tray sends no command; explicit Quit cancels
+with the existing localized explanation, without native stop/close orchestration.
+
+Acceptance uses the real controller with existing offline hooks and actual changed
+signals, including initial state and destruction. Unbound packet and SSH fixtures
+must retain their behavior without constructing or discovering a native controller.
+Run focused offscreen baseline and post-change tests, all three existing CTest
+executables on Windows x64/Linux amd64, and four GUI compilations where available.
+Report ARM64 runtime and EN/RU 100/150 percent presentation evidence honestly;
+compilation or fixture generation alone is not visual or native activation proof.
+No timer changes, benchmark, packaging, enrollment, network mutation or release.
