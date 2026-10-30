@@ -31,6 +31,15 @@ int main() {
     require(!decode(overflow.data(),48,out)); require(b[40]==0 && b[41]==4 && b[42]==0 && b[43]==0);
     r.counter=1025; require(!encode(r,b)); r.counter=0;
     require(acl(L"O:BAD:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FR;;;BU)"));
+    const wchar_t* ti=L"S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464";
+    std::wstring trusted=L"O:"; trusted+=ti; trusted+=L"D:P(A;;FA;;;"; trusted+=ti; trusted+=L")";
+    require(acl(trusted.c_str()));
+    require(!acl(L"O:S-1-5-80-1D:P(A;;FA;;;SY)"));
+    require(!acl(L"O:BAD:P(A;;FA;;;S-1-5-80-1)"));
+    const std::wstring root=L"\\\\?\\Volume{01234567-0123-0123-0123-0123456789ab}\\Program Files";
+    require(contained(root,root+L"\\Lab\\test.exe"));
+    require(isAnchor(root,root) && !isAnchor(root.substr(0,root.find(L"Program Files")-1),root) && !isAnchor(root+L"\\Lab",root));
+    for(const auto& child : {root,root+L"x\\test.exe",root+L"\\..\\test.exe",root+L"\\.\\test.exe",root+L"\\\\test.exe",root+L"\\test.exe:stream",std::wstring(L"relative\\test.exe")}) require(!contained(root,child));
     require(!acl(L"O:BUD:P(A;;FA;;;BA)"));
     require(!acl(L"O:BAD:(A;;FA;;;BA)"));
     require(!acl(L"O:BAD:PNO_ACCESS_CONTROL"));

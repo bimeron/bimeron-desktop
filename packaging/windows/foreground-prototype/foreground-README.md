@@ -571,3 +571,24 @@ The existing token-source/unconditionally failing callback regression also passe
 x64 CTest foreground-lab-protected-(file|access) completed 2/2. Source review
 found no production registration or callback changes. Protected positive evidence
 and actual filesystem substitution attacks remain unavailable on this host.
+
+### Program Files anchor follow-up
+
+The disconnected fixture now anchors authority at the native Program Files known
+folder, retaining metadata/traversal pins above it and protected descriptor checks
+at and below it. Exact TrustedInstaller, SYSTEM and Administrators SIDs are trusted;
+other service SIDs are not. Both paths must resolve to the same local fixed-drive
+volume GUID and the harness must be strictly below the anchor. No ACL or owner
+repair is performed. MSVC x64 and ARM64 /W4 /WX builds passed; x64 CTest passed
+1/1. The host harness is outside Program Files, so native protected positive and
+real attack cases were unavailable. ARM64 execution was not performed.
+
+A guest harness exceeds this anchor-only implementation: no guest-ready bundle or
+manifest is claimed. A separate reviewed implementation must provide a default-disabled
+fixed guest mode, requiring an explicit fixed flag, with a hash-pinned manifest and
+fixed harness destination under native Program Files\\BimeronProtectedFileLab. Its
+review must enumerate creation of LABProtectedFiles and pending.bin, create and
+acknowledge operations, negative fixtures and retained failure residue. Normal tests
+must never invoke that mode. Parent authorization for those guest file effects,
+provisioning and execution remains necessary; no guest operation occurred here.
+MSI exports continue to fail unconditionally and no production integration is added.

@@ -1,6 +1,7 @@
 #include "lab-protected-file.h"
 #include <aclapi.h>
 #include <sddl.h>
+#include <shlobj.h>
 #include <algorithm>
 namespace labfile {
 static bool nonzero(const Id& id) { return std::any_of(id.begin(), id.end(), [](unsigned char b) { return b != 0; }); }
@@ -26,7 +27,11 @@ bool advance(Record& r, const Id& i, const Id& g) {
     ++r.counter; return true;
 }
 static bool trusted(PSID sid) {
-    return sid && IsValidSid(sid) && (IsWellKnownSid(sid,WinLocalSystemSid) || IsWellKnownSid(sid,WinBuiltinAdministratorsSid));
+    if (!sid || !IsValidSid(sid)) return false;
+    PSID ti=nullptr;
+    if (!ConvertStringSidToSidW(L"S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464",&ti)) return false;
+    bool ok=IsWellKnownSid(sid,WinLocalSystemSid) || IsWellKnownSid(sid,WinBuiltinAdministratorsSid) || EqualSid(sid,ti);
+    LocalFree(ti); return ok;
 }
 bool safeDescriptor(PSECURITY_DESCRIPTOR sd) {
     PSID owner=nullptr; PACL acl=nullptr; BOOL present=FALSE, ignored=FALSE;
@@ -54,40 +59,67 @@ bool safeMetadata(const BY_HANDLE_FILE_INFORMATION& info, bool directory) {
 bool sameIdentity(const BY_HANDLE_FILE_INFORMATION& a, const BY_HANDLE_FILE_INFORMATION& b) {
     return a.dwVolumeSerialNumber==b.dwVolumeSerialNumber && a.nFileIndexHigh==b.nFileIndexHigh && a.nFileIndexLow==b.nFileIndexLow;
 }
-static bool secure(HANDLE h, bool directory, BY_HANDLE_FILE_INFORMATION& info) {
+static bool secure(HANDLE h, bool directory, BY_HANDLE_FILE_INFORMATION& info, bool authority=true) {
     if (GetFileType(h)!=FILE_TYPE_DISK || !GetFileInformationByHandle(h,&info) ||
         !safeMetadata(info,directory)) return false;
+    if (!authority) return true;
     PSECURITY_DESCRIPTOR sd=nullptr;
     DWORD e=GetSecurityInfo(h,SE_FILE_OBJECT,OWNER_SECURITY_INFORMATION|DACL_SECURITY_INFORMATION,nullptr,nullptr,nullptr,nullptr,&sd);
     bool ok=e==ERROR_SUCCESS && safeDescriptor(sd); if(sd) LocalFree(sd); return ok;
 }
 Directory::~Directory() { for(HANDLE h:pins) CloseHandle(h); }
+// Accept only canonical volume paths with ordinary, nonempty components.
+static bool validPath(const std::wstring& p) {
+    if (p.size()<50 || p.compare(0,11,L"\\\\?\\Volume{")!=0) return false;
+    size_t root=p.find(L"}\\"); if(root==std::wstring::npos) return false;
+    size_t pos=root+2;
+    while(pos<p.size()) {
+        size_t end=p.find(L'\\',pos); if(end==std::wstring::npos) end=p.size();
+        std::wstring part=p.substr(pos,end-pos);
+        if(part.empty() || part==L"." || part==L".." || part.find(L':')!=std::wstring::npos || part.back()==L'.' || part.back()==L' ') return false;
+        pos=end+1;
+    }
+    return p.back()!=L'\\';
+}
+bool contained(const std::wstring& root,const std::wstring& child) {
+    return validPath(root) && validPath(child) && child.size()>root.size()+1 &&
+        child[root.size()]==L'\\' && CompareStringOrdinal(root.c_str(),static_cast<int>(root.size()),child.c_str(),static_cast<int>(root.size()),TRUE)==CSTR_EQUAL;
+}
+bool isAnchor(const std::wstring& component,const std::wstring& anchor) {
+    return CompareStringOrdinal(component.c_str(),-1,anchor.c_str(),-1,TRUE)==CSTR_EQUAL;
+}
+static bool volumePath(const std::wstring& source,std::wstring& result) {
+    if(source.size()<4 || source[1]!=L':' || source[2]!=L'\\' || GetDriveTypeW(source.substr(0,3).c_str())!=DRIVE_FIXED) return false;
+    wchar_t volume[MAX_PATH];
+    if(!GetVolumeNameForVolumeMountPointW(source.substr(0,3).c_str(),volume,MAX_PATH)) return false;
+    result=std::wstring(volume)+source.substr(3); return validPath(result);
+}
 bool Directory::pin() {
     if (!pins.empty() || !path.empty()) return false;
     wchar_t image[32768]; DWORD length=GetModuleFileNameW(nullptr,image,32768);
     if (!length || length>=32768) return false;
-    std::wstring candidate(image,length);
-    if (candidate.size()<4 || candidate[1]!=L':' || candidate[2]!=L'\\' ||
-        GetDriveTypeW(candidate.substr(0,3).c_str())!=DRIVE_FIXED) return false;
-    wchar_t volume[MAX_PATH];
-    if(!GetVolumeNameForVolumeMountPointW(candidate.substr(0,3).c_str(),volume,MAX_PATH)) return false;
-    const std::wstring root(volume);
-    candidate=root+candidate.substr(3);
-    candidate.resize(candidate.find_last_of(L'\\'));
-    candidate+=L"\\LABProtectedFiles";
-    // Root first, then every component. No component may be renamed or rewritten
-    // while later components are opened and validated.
-    size_t end=root.size();
+    PWSTR known=nullptr;
+    if(FAILED(SHGetKnownFolderPath(FOLDERID_ProgramFiles,0,nullptr,&known))) return false;
+    std::wstring anchor, module;
+    bool valid=volumePath(known,anchor) && volumePath(std::wstring(image,length),module);
+    CoTaskMemFree(known);
+    if(!valid || !contained(anchor,module)) return false;
+    std::wstring candidate=module.substr(0,module.find_last_of(L'\\'))+L"\\LABProtectedFiles";
+    if(!contained(anchor,candidate)) return false;
+    size_t end=candidate.find(L"}\\")+2;
     for (;;) {
         std::wstring component=candidate.substr(0,end);
         HANDLE h=CreateFileW(component.c_str(),FILE_READ_ATTRIBUTES|READ_CONTROL,FILE_SHARE_READ,nullptr,OPEN_EXISTING,
             FILE_FLAG_BACKUP_SEMANTICS|FILE_FLAG_OPEN_REPARSE_POINT,nullptr);
         if(h==INVALID_HANDLE_VALUE) return false;
-        pins.push_back(h); BY_HANDLE_FILE_INFORMATION info{};
-        if(!secure(h,true,info)) return false;
+        pins.push_back(h);
+        if(isAnchor(component,anchor)) authority=pins.size()-1;
+        BY_HANDLE_FILE_INFORMATION info{};
+        if(!secure(h,true,info,authority!=0)) return false;
         if(end==candidate.size()) break;
         end=candidate.find(L'\\',end+1); if(end==std::wstring::npos) end=candidate.size();
     }
+    if(!authority) return false;
     path=candidate+L"\\pending.bin"; return true;
 }
 static bool writeRecord(HANDLE h,const Record& r, unsigned failure) {
@@ -108,7 +140,7 @@ static bool writeRecord(HANDLE h,const Record& r, unsigned failure) {
 bool Directory::operate(const Id& installation,const Id& generation,bool createNew) {
     Record r{installation,generation,0}; Bytes check;
     if(path.empty() || !encode(r,check)) return false;
-    for(HANDLE pin:pins) { BY_HANDLE_FILE_INFORMATION i{}; if(!secure(pin,true,i)) return false; }
+    for(size_t n=0;n<pins.size();++n) { BY_HANDLE_FILE_INFORMATION i{}; if(!secure(pins[n],true,i,n>=authority)) return false; }
     PSECURITY_DESCRIPTOR descriptor=nullptr;
     if(createNew && !ConvertStringSecurityDescriptorToSecurityDescriptorW(
         L"D:P(A;;FA;;;SY)(A;;FA;;;BA)",SDDL_REVISION_1,&descriptor,nullptr)) return false;

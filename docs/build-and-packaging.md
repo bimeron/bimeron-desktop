@@ -627,3 +627,11 @@ the host. Codec/ACL/identity models and owned temporary write/flush checks do no
 establish protected storage or installer trust. See the fixture README for the
 exact limits. Linux/performance/package checks are inapplicable to this isolated
 Windows-only option; no release artifacts were generated.
+
+The standalone pending-file follow-up uses the native Program Files known folder
+as its authority boundary and exact TrustedInstaller SID in addition to SYSTEM and
+Administrators. It retains root-to-leaf traversal pins and revalidates descriptors
+from that boundary. x64/ARM64 /W4 /WX compilation and x64 offline CTest passed;
+protected native positive was unavailable on the host. No guest bundle or guest
+execution is authorized by this result. See the prototype README for the minimal
+separate guest-mode plan. Supported packaging and MSI exports are unchanged.

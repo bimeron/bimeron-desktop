@@ -334,15 +334,18 @@ This batch permits only a disconnected pending-file primitive, not MSI authority
 The standalone default-off FOREGROUND_LAB_PROTECTED_FILE target has no install
 rules. The only native directory is LABProtectedFiles beside the harness image;
 no command line, environment or arbitrary path is accepted. It must already exist.
-Before CREATE_NEW of pending.bin, pin every component from the local drive root
-through that directory with read sharing only, OPEN_REPARSE_POINT, and directory
-handles retained for the operation lifetime. Reject nonlocal/UNC/device paths,
-reparse components, untrusted owners, null DACLs, unknown ACE types, and any
-untrusted mutation rights (including delete-child, owner and DACL rights).
-All components require protected DACLs; this deliberately strict policy may make
-the host build directory unavailable. Do not change host ownership to pass it.
-Trust is limited to SYSTEM and Administrators, as in the existing foreground
-fixture. File opens deny all sharing and check disk type, identity, single link,
+The harness must be strictly below the native Program Files known folder returned
+by SHGetKnownFolderPath. Resolve both local fixed-drive paths once to the same
+volume GUID, reject malformed, relative, stream, dot and sibling-prefix paths,
+and retain read-sharing-only non-reparse disk directory handles from the volume
+root through LABProtectedFiles. Ancestors above Program Files are traversal and
+metadata pins only; Program Files and every descendant require protected non-null
+DACLs and trusted ownership. Trust is exactly SYSTEM, Administrators and the
+TrustedInstaller SID S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464;
+other service SIDs remain untrusted. Reject unknown ACEs and untrusted mutation
+rights. Record the Program Files pin index and apply the same boundary on every
+operation. Do not repair ACLs or ownership, or accept an alternative anchor.
+File opens deny all sharing and check disk type, identity, single link,
 non-directory/non-reparse attributes, owner and protected DACL before I/O.
 
 The exact 48-byte record is ASCII BLPF, version byte 1, pending byte 1, two zero

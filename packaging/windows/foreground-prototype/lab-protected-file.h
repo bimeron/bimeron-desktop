@@ -14,6 +14,8 @@ bool advance(Record&, const Id&, const Id&);
 bool safeMetadata(const BY_HANDLE_FILE_INFORMATION&, bool directory);
 bool sameIdentity(const BY_HANDLE_FILE_INFORMATION&, const BY_HANDLE_FILE_INFORMATION&);
 bool safeDescriptor(PSECURITY_DESCRIPTOR);
+bool contained(const std::wstring&, const std::wstring&);
+bool isAnchor(const std::wstring&, const std::wstring&);
 class Directory {
 public:
     Directory() = default;
@@ -26,6 +28,7 @@ public:
 private:
     std::vector<HANDLE> pins;
     std::wstring path;
+    size_t authority = 0;
     bool operate(const Id&, const Id&, bool);
 };
 #ifdef LAB_PROTECTED_FILE_TESTING
