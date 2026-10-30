@@ -521,3 +521,17 @@ retry, uninstall or reboot occurred. These results are Task Scheduler-launched
 InteractiveToken Limited/Highest observations. Human UAC consent was not tested;
 authenticated human/initiating-client identity and protected-journal access remain
 unproved. Raw logs and task plans stay in private ignored evidence.
+
+### Protected access observation (incomplete; no guest package)
+
+The default-off `FOREGROUND_LAB_PROTECTED_ACCESS` option adds only the explicit
+`foreground-lab-protected-access` target to this standalone project. Its DLL
+observes the current effective token source (thread first, process only on
+`ERROR_NO_TOKEN`); both prospective callbacks always fail. The native test
+observes process and impersonation token selection and the failure gate. It does
+not exercise filesystem access or simulate flush, ACL, stale generation, or
+input substitution. No MSI template or guest bundle is provided: protected
+file ancestry, pinned handles, isolated mutex, records, external package pin,
+and actual client-process correlation remain unimplemented. This fixture makes
+no client identity or authority claim. Do not execute it in a guest or use it
+for installation. The existing trace and production exports are unchanged.

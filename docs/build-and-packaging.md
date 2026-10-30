@@ -600,3 +600,12 @@ are in the prototype README. These fresh bytes remain runtime-untested pending
 independent review and a parent-operated VM run. No host MSI actions, production
 integration or release matrix were performed; Linux, performance and profiling
 are inapplicable to this disconnected Windows fixture.
+
+### Offline protected access observation
+
+The separate standalone foreground prototype offers the default-off
+`FOREGROUND_LAB_PROTECTED_ACCESS` option and explicit
+`foreground-lab-protected-access` target. It is a fail-closed token-source
+observation only, with no install rule or distributable MSI. See the prototype
+README for its missing security and guest-execution gates. It does not alter
+supported build or packaging flows.

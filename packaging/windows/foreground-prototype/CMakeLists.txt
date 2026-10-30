@@ -94,3 +94,17 @@ if(FOREGROUND_LAB_TRACE)
   add_test(NAME foreground-lab-static COMMAND "${Python3_EXECUTABLE}"
     "${CMAKE_CURRENT_SOURCE_DIR}/lab-trace-check.py" "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>" "${WIX_ARCH}")
 endif()
+
+# Fail-closed access observation; no MSI, install rule, or default build target.
+option(FOREGROUND_LAB_PROTECTED_ACCESS "Enable offline protected access observation" OFF)
+if(FOREGROUND_LAB_PROTECTED_ACCESS)
+  add_library(lab-protected-access SHARED EXCLUDE_FROM_ALL lab-protected-access.cpp)
+  target_compile_features(lab-protected-access PRIVATE cxx_std_17)
+  target_compile_options(lab-protected-access PRIVATE /W4 /WX)
+  target_link_libraries(lab-protected-access PRIVATE advapi32)
+  target_link_options(lab-protected-access PRIVATE /DEPENDENTLOADFLAG:0x800)
+  add_executable(lab-protected-access-test EXCLUDE_FROM_ALL lab-protected-access-test.cpp)
+  target_link_libraries(lab-protected-access-test PRIVATE lab-protected-access advapi32)
+  add_custom_target(foreground-lab-protected-access DEPENDS lab-protected-access-test)
+  add_test(NAME foreground-lab-protected-access COMMAND lab-protected-access-test)
+endif()
