@@ -196,3 +196,15 @@ stop responses and asserts retained verified capabilities for preactivation and
 activated sessions. Registered CTest passed 3/3 on both Windows x64 Release with
 explicit Qt 6.8.3 offscreen and Linux amd64 after this fixture was added. These
 results remain offline-only and do not establish native installation acceptance.
+
+The optional `BIMERON_IKEV2_CORE` profile validation fixtures subsequently passed
+on Windows x64 with a validate-only CLI built from the exact Core `66d84d8f`
+Git archive (tree `33dcda328133a36b0f103b4a0599a09e20afce4d`). Its SHA-256 is
+`34c43e7b4e5a14737cbc9c5f105a92cad8ff2f0eb4a5b5634c70f2e45a78ac39`.
+Build inputs: Go 1.26.9, CGO disabled, readonly modules, trimpath and buildvcs=false;
+Version records the complete source SHA with an archive suffix. Native
+`vcs.revision` is absent and `modified=false` is a default, not clean-VCS evidence.
+This artifact was used only for static validation, never authenticated foreground
+execution, service installation or release approval. Earlier outstanding-validation
+statements above retain their historical scope; this closes the profile CLI fixture
+check only, not artifact approval or live integration.
