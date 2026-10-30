@@ -181,3 +181,11 @@ those checks remain outstanding. The newly added foreground transport was not
 registered in the tested targets and is not covered by these results. Protected
 handshake, elevated launch, MSI transactions and live native networking remain
 separate acceptance gates. No final executable approval or release is implied.
+
+After registering the native sources and applying controller fix `ab2cd7c8`,
+integrated source `9f82f97` built successfully on Linux amd64 under WSL Ubuntu
+with its supported system Qt. CTest passed all three targets: developer-mode,
+core-update and profile-vless. These runs include the registered native transport
+and controller offline fixtures, not a protected Windows handshake or native VPN.
+The supported system Qt remains eligible for Linux testing; Windows offscreen
+clipboard evidence above is specific to the inspected Qt 6.8.3 platform plugin.
