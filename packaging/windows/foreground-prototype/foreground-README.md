@@ -344,3 +344,31 @@ missing Component table. Prior ICE success was not runtime validation. No instal
 or VM repeat was performed; causality and callbacks remain unproved. No benchmark
 or profiling applies to this disconnected offline fixture. Production enrollment
 remains fail closed. Independent review precedes any parent-led VM repeat.
+
+## CostInitialize discrimination experiment specification
+
+This isolated x64 lab experiment compares four separately hashed copies of the
+frozen e583169 Success MSI (SHA-256
+`0c73788944a2d520628e7dd619df2eb507821021fd76cef4dd879851586d0dbf`):
+unchanged, an explicit zero-length encoded Component compound stream only, an
+empty persistent FeatureComponents logical table only, and both changes. The
+source bytes must remain unchanged. This is a discrimination experiment, not a
+candidate fix or enrollment. No dummy component or resource is authorized.
+
+Acceptance before any guest execution: inspect actual compound storage and MSI
+logical data for all four copies, prove only the intended differences, zero
+Component rows, unchanged Component primary key/schema, no new component or
+resource, and distinct pinned hashes. Reject wrong case/hash and unrecognized
+inputs. The guest probe has four fixed cases and bounded numeric statuses and
+sanitized hashes only; no arbitrary path, command, package selection, account or
+environment output. Its only installer session calls are MsiOpenPackageEx and
+MsiDoActionW for CostInitialize, followed by handle closure. No installation,
+other standard action, custom action, callback, registration, payload, network,
+registry or service operation is authorized. Establish from authoritative API
+semantics that this isolation is guaranteed before execution; otherwise stop.
+Independent review and a disposable x64 VM operated by the parent are mandatory.
+Never run MSI actions on the host. Keep the tool outside production CMake/CPack,
+with no dependencies or generated files committed. If a valid zero-length stream
+cannot be represented or verified, report the limitation instead of inventing a fix.
+Linux, ARM64, benchmark, profiling and release matrix are inapplicable to this
+standalone discrimination fixture.

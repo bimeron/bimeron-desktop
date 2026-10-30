@@ -555,3 +555,10 @@ its prior strict allowlist and negative checks remain in force. The earlier ICE
 pass did not establish runtime behavior. The first Success VM attempt failed at
 InstallInitialize after error 2205 for the missing table; causality remains a
 hypothesis pending independent review and a parent-led repeat.
+
+## CostInitialize discrimination experiment (specification only)
+
+The separate foreground lab specifies four frozen-MSI costing cases and strict
+isolation and offline verification gates in its README. This is not a release
+package, product change, or authorization to run MSI actions on the host. Guest
+execution requires independent review and proof of the documented isolation gate.
