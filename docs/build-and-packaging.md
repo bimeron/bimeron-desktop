@@ -763,3 +763,12 @@ supported release packaging remain unchanged. Shared code requires existing six
 ACK static checks, focused x64 regressions and ARM64 compilation; the checkpoint
 constructor refuses ARM64. Use cached WiX and unsuppressed ICE, freezing all new
 review evidence in a fresh ignored build directory. No guest-ready bundle claim.
+
+Checkpoint offline result: fresh x64 checkpoint plus three existing ACK pairs and
+three ARM64 ACK regression pairs compiled /W4 /WX and linked cached WiX with
+unsuppressed ICE. x64 focused checks passed 6/6; ARM64 read-only checks passed 1/1,
+with no ARM64 execution. Explicit ARM64 checkpoint configure refuses; default
+options stay OFF. The fresh build/ack-checkpoint-review bundle is partial offline
+evidence only, without a runner or VM execution. See the foreground README for
+commands, fixed encoding, model/native evidence separation and review limits.
+Supported production packaging remains unchanged.

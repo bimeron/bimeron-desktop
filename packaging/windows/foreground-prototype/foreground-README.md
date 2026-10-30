@@ -1163,3 +1163,47 @@ Freeze fresh ignored source/hash/MSI/DLL/manifest/GUID/log/effect evidence as a
 partial offline fixture, not a guest-ready runner. Parent owns VM work; no runner,
 termination, host MSI actions, native production or existing bundle/state changes.
 Linux, benchmarks, profiling and release matrix are inapplicable.
+
+### Checkpoint partial offline fixture evidence
+
+Specification commit 1e3936c precedes implementation on dba44bc385e4bdab6db04005617a4278277612bd.
+Configure a fresh ignored build directory with the existing VS 18 x64 command,
+explicit cached WIX_TOOL_DIR and -DFOREGROUND_LAB_PROTECTED_ACK_CHECKPOINT=ON.
+Build --config Release --target foreground-lab-protected-ack-checkpoint, then run
+CTest -C Release -R foreground-lab-protected-ack-checkpoint --output-on-failure.
+The original ACK option is independent and need not be enabled. The checkpoint
+checker invocation is lab-protected-ack-check.py <Release-directory> x64 Checkpoint.
+Only this mode permits the observed SleepEx import; existing API allowlists stay
+unchanged. Variant 3 extends only the manifest's compiled-variant field.
+
+Fresh build/ack-checkpoint-x64 produced four x64 DLL/MSI pairs; shared-source
+regression build/ack-checkpoint-regression-arm64 produced the original three ARM64
+pairs and compiled their harness plus the protected-file primitive/harness.
+All used /W4 /WX and cached WiX with normal verbose unsuppressed ICE, without
+warning/error diagnostics. x64 focused ACK/checkpoint/file/access CTest passed 6/6;
+ARM64 host read-only ACK checks passed 1/1 (no ARM64 execution). Actual tables,
+Binary hashes, identities, sequence, empty resources, exports, architecture and
+imports passed, including 57 existing negative models per architecture and 19
+checkpoint negatives plus persisted-metadata collision refusals. Default configure
+keeps both ACK options OFF; explicit ARM64 checkpoint configuration refuses.
+
+The model seam checks ordered create-success, checkpoint-success then wait,
+each failure and each exception, without a real 60-second sleep. Owned ignored
+native file I/O round-trips the exact 80-byte checkpoint, observes 79-byte short
+write residue and 80-byte injected flush-failure residue, and checks CREATE_NEW
+collision. These are models/owned I/O, not protected positive or callback evidence.
+Checkpoint PostFinalize refuses before storage/token checks even after modeled
+Commit/Rollback continuation; its ACK call path is compiled out. Commit/Rollback
+remain nonmutating. Stages 62/63 identify checkpoint/wait refusal; stage 70/detail 3
+is the planned failure, and stage 90 exceptions. No runtime switch controls them.
+An initial test signed-comparison warning was corrected before final passing builds.
+
+New build/ack-checkpoint-review contains frozen source, seven MSI/DLL pairs and
+manifests, identities/hashes, table/import reports, build/test logs and effect list.
+It is PARTIAL OFFLINE FIXTURE ONLY, with no guest-ready runner or termination
+implementation. Existing bundles and states were untouched. Diff/security review
+found no production/runner changes, cleanup route, release handshake or initiating
+client claim. Host protected positive, actual MSI callbacks/wait behavior and VM
+execution remain untested; parent owns VM work. No host MSI actions, protected
+writes, termination, push, watch, merge or release occurred. Linux/product matrix,
+benchmarks and profiling are inapplicable to this isolated Windows fixture.

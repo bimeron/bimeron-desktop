@@ -134,7 +134,7 @@ API_IMPORTS = {'ADVAPI32.DLL': ['ConvertStringSecurityDescriptorToSecurityDescri
                   'WriteConsoleW',
                   'WriteFile']}
 
-def pe_check(path, arch, actions, allowed_imports):
+def pe_check(path, arch, actions, allowed_imports, checkpoint=False):
     b = path.read_bytes(); pe = struct.unpack_from('<I', b, 60)[0]
     assert b[pe:pe+4] == b'PE\0\0'
     assert struct.unpack_from('<H', b, pe+4)[0] == {'x64':0x8664, 'arm64':0xaa64}[arch]
@@ -180,7 +180,11 @@ def pe_check(path, arch, actions, allowed_imports):
         api_imports[dll] = sorted(entries); o += 20
     assert set(imports) <= allowed_imports
     assert set(api_imports) == set(API_IMPORTS)
-    for dll, entries in api_imports.items(): assert set(entries) <= set(API_IMPORTS[dll]), (dll,entries)
+    for dll, entries in api_imports.items():
+        allowed=set(API_IMPORTS[dll])
+        if checkpoint and dll=='KERNEL32.DLL': allowed.add('SleepEx')
+        assert set(entries) <= allowed, (dll,entries)
+    if checkpoint: assert arch=='x64' and 'SleepEx' in api_imports['KERNEL32.DLL']
     path.with_suffix('.imports.json').write_text(json.dumps(api_imports,indent=2)+'\n')
     print('fixed system DLL/API imports; no delay imports:', imports)
     return hashlib.sha256(b).hexdigest()
@@ -224,9 +228,11 @@ def main():
     folder,arch=Path(sys.argv[1]).resolve(),sys.argv[2]
     cache=dict(line.split('=',1) for line in (folder.parent/'CMakeCache.txt').read_text().splitlines() if ':INTERNAL=' in line)
     evidence={}; seen=set()
-    for point,variant in enumerate(['Success','CommitFail','PostFinalizeFail']):
+    variants=[(3,'Checkpoint')] if len(sys.argv)==4 and sys.argv[3]=='Checkpoint' else list(enumerate(['Success','CommitFail','PostFinalizeFail']))
+    assert len(sys.argv)==3 or (len(sys.argv)==4 and sys.argv[3]=='Checkpoint' and arch=='x64')
+    for point,variant in variants:
         path=folder/f'lab-protected-ack-{variant}.msi'; dll=path.with_suffix('.dll')
-        digest=pe_check(dll,arch,actions=ACTIONS,allowed_imports=IMPORTS)
+        digest=pe_check(dll,arch,actions=ACTIONS,allowed_imports=IMPORTS,checkpoint=point==3)
         db=W.UINT(); t.check(t.msi.MsiOpenDatabaseW(str(path),None,C.byref(db)))
         try:
             tables={name:t.rows(db,name,columns) for name,columns in COLUMNS.items()}
@@ -267,6 +273,6 @@ def main():
         evidence[variant]=dict(msi=str(path),dll=str(dll),msiSHA256=msi_hash.hex(),dllSHA256=digest,
             manifest=str(destination),manifestSHA256=hashlib.sha256(manifest).hexdigest(),manifestBytes=len(manifest),
             installationId=installation.hex(),generationId=generation.hex(),negativeCases=negatives,**ids)
-    (folder/'lab-protected-ack-evidence.json').write_text(json.dumps(evidence,indent=2)+'\n')
-    print(json.dumps(evidence,indent=2)); print('PASS: actual read-only MSI tables/Binary/PE and 57 negative models; manifests generated after MSI linking')
+    (folder/('lab-protected-ack-checkpoint-evidence.json' if len(sys.argv)==4 else 'lab-protected-ack-evidence.json')).write_text(json.dumps(evidence,indent=2)+'\n')
+    print(json.dumps(evidence,indent=2)); print(f'PASS: actual read-only MSI tables/Binary/PE and {19*len(variants)} negative models; manifests generated after MSI linking')
 if __name__=='__main__': main()

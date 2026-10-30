@@ -163,19 +163,34 @@ bool Directory::revalidate() {
     for(size_t n=0;n<pins.size();++n) { BY_HANDLE_FILE_INFORMATION i{}; if(!secure(pins[n],true,i,n>=authority)) return false; }
     return true;
 }
-static bool writeDiagnostic(HANDLE h,const std::vector<unsigned char>& bytes) {
+static bool writeDiagnostic(HANDLE h,const std::vector<unsigned char>& bytes,unsigned failure=0) {
     if(bytes.empty() || bytes.size()>65536) return false;
     DWORD written=0;
-    return WriteFile(h,bytes.data(),static_cast<DWORD>(bytes.size()),&written,nullptr) &&
-        written==bytes.size() && FlushFileBuffers(h);
+    DWORD count=static_cast<DWORD>(bytes.size());
+#ifdef LAB_PROTECTED_FILE_TESTING
+    if(failure==1) --count;
+#else
+    (void)failure;
+#endif
+    if(!WriteFile(h,bytes.data(),count,&written,nullptr) || written!=bytes.size()) return false;
+#ifdef LAB_PROTECTED_FILE_TESTING
+    if(failure==2) return false;
+#endif
+    return FlushFileBuffers(h)!=FALSE;
 }
 bool Directory::writeAckTablesDiagnostic(const std::vector<unsigned char>& bytes) {
+    return writeAckObservation(bytes,false);
+}
+bool Directory::writeAckCheckpoint(const std::vector<unsigned char>& bytes) {
+    return bytes.size()==80 && writeAckObservation(bytes,true);
+}
+bool Directory::writeAckObservation(const std::vector<unsigned char>& bytes,bool checkpoint) {
     if(!ackMode || path.empty() || bytes.empty() || bytes.size()>65536 || !revalidate()) return false;
     PSECURITY_DESCRIPTOR descriptor=nullptr;
     if(!ConvertStringSecurityDescriptorToSecurityDescriptorW(
         L"D:P(A;;FA;;;SY)(A;;FA;;;BA)",SDDL_REVISION_1,&descriptor,nullptr)) return false;
     SECURITY_ATTRIBUTES attributes{sizeof(SECURITY_ATTRIBUTES),descriptor,FALSE};
-    const auto leaf=path.substr(0,path.find_last_of(L'\\'))+L"\\active-tables.txt";
+    const auto leaf=path.substr(0,path.find_last_of(L'\\'))+(checkpoint ? L"\\checkpoint.bin" : L"\\active-tables.txt");
     HANDLE h=CreateFileW(leaf.c_str(),GENERIC_READ|GENERIC_WRITE|READ_CONTROL,0,&attributes,
         CREATE_NEW,FILE_FLAG_OPEN_REPARSE_POINT|FILE_FLAG_WRITE_THROUGH,nullptr);
     LocalFree(descriptor);
@@ -232,7 +247,7 @@ bool Directory::readAckManifest(std::vector<unsigned char>& bytes) {
     return ok;
 }
 #ifdef LAB_PROTECTED_FILE_TESTING
-bool testDiagnosticWrite(HANDLE h,const std::vector<unsigned char>& bytes) { return writeDiagnostic(h,bytes); }
+bool testDiagnosticWrite(HANDLE h,const std::vector<unsigned char>& bytes,Failure f) { return writeDiagnostic(h,bytes,static_cast<unsigned>(f)); }
 bool testWrite(HANDLE h,const Record& r,Failure f) { return writeRecord(h,r,static_cast<unsigned>(f)); }
 #endif
 }

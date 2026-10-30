@@ -10,6 +10,9 @@
 #ifndef LAB_FAILPOINT
 #define LAB_FAILPOINT 0
 #endif
+#if LAB_FAILPOINT==3 && !defined(_M_X64)
+#error Checkpoint fixture is x64 only
+#endif
 namespace {
 using Buffer=std::vector<unsigned char>;
 struct Diagnostic { unsigned stage=0, detail=0; DWORD status=0; unsigned snapshotStatus=0; };
@@ -257,7 +260,35 @@ bool logical(MSIHANDLE h,const Buffer& b,Diagnostic& d) {
     if(actual!=expected) return refused(d,41,19);
     return fresh(h,b,d);
 }
+#if LAB_FAILPOINT==3 || defined(LAB_PROTECTED_FILE_TESTING)
+bool checkpointBytes(const Buffer& manifest,const labfile::Id& i,const labfile::Id& g,Buffer& out) {
+    labfile::Bytes pending;
+    if(!labfile::encode({i,g,0},pending) || manifest.size()<=176 || manifest.size()>65536) return false;
+    out={'B','L','C','P'}; number(out,1);
+    out.insert(out.end(),i.begin(),i.end()); out.insert(out.end(),g.begin(),g.end());
+    unsigned char digest[32]{};
+    if(BCryptHash(BCRYPT_SHA256_ALG_HANDLE,nullptr,0,const_cast<PUCHAR>(manifest.data()),
+        static_cast<ULONG>(manifest.size()),digest,32)<0) return false;
+    out.insert(out.end(),digest,digest+32); number(out,1); number(out,0);
+    return out.size()==80;
+}
+// Narrow sequencing seam; test-only lambdas replace I/O/wait, never runtime inputs.
+template<class Create,class Write,class Wait>
+UINT checkpointDeferred(Create create,Write write,Wait wait,Diagnostic& d) noexcept {
+    try {
+        if(!create()) { refused(d,60); return ERROR_INSTALL_FAILURE; }
+        if(!write()) { refused(d,62); return ERROR_INSTALL_FAILURE; }
+        if(!wait()) { refused(d,63); return ERROR_INSTALL_FAILURE; }
+        refused(d,70,3);
+    } catch(...) { refused(d,90); }
+    return ERROR_INSTALL_FAILURE;
+}
+#endif
 UINT action(MSIHANDLE h,unsigned point,Diagnostic& d) {
+#if LAB_FAILPOINT==3
+    // Unconditional, before storage/token/database and every possible ACK path.
+    if(point==4) { refused(d,70,3); return ERROR_INSTALL_FAILURE; }
+#endif
     if(point==3) {
         if(LAB_FAILPOINT==1) { refused(d,70,1); return ERROR_INSTALL_FAILURE; }
         return ERROR_SUCCESS;
@@ -281,12 +312,25 @@ UINT action(MSIHANDLE h,unsigned point,Diagnostic& d) {
         }
         return ERROR_INSTALL_FAILURE;
     }
-    if(point==2) { if(dir.create(i,g)) return ERROR_SUCCESS; refused(d,60); return ERROR_INSTALL_FAILURE; }
+    if(point==2) {
+#if LAB_FAILPOINT==3
+        return checkpointDeferred([&]{return dir.create(i,g);},[&]{
+            Buffer checkpoint; return checkpointBytes(b,i,g,checkpoint) && dir.writeAckCheckpoint(checkpoint);
+        },[]{return SleepEx(60000,FALSE)==0;},d);
+#else
+        if(dir.create(i,g)) return ERROR_SUCCESS;
+        refused(d,60); return ERROR_INSTALL_FAILURE;
+#endif
+    }
+#if LAB_FAILPOINT==3
+    refused(d,70,3); return ERROR_INSTALL_FAILURE;
+#else
     if(LAB_FAILPOINT==2) { refused(d,70); return ERROR_INSTALL_FAILURE; }
     if(!effectiveToken()) { refused(d,50); return ERROR_INSTALL_FAILURE; }
     if(!logical(h,b,d)) return ERROR_INSTALL_FAILURE;
     if(dir.acknowledgeOnce(i,g)) return ERROR_SUCCESS;
     refused(d,61); return ERROR_INSTALL_FAILURE;
+#endif
 }
 UINT safe(MSIHANDLE h,unsigned point) noexcept {
     UINT result=ERROR_INSTALL_FAILURE; Diagnostic d;

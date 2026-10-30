@@ -103,6 +103,33 @@ static void projectionNegatives(const wchar_t* source,const Buffer& expected) {
     }
     std::puts("NATIVE owned MSI projection: baseline and temporary CostAdjuster exact; unknown/persisted collision/missing/schema negatives refused; classifier NONE/ERROR models");
 }
+static void checkpointModels(const Buffer& manifest,const labfile::Id& i,const labfile::Id& g) {
+    Buffer bytes; CHECK(checkpointBytes(manifest,i,g,bytes));
+    CHECK(bytes.size()==80 && std::memcmp(bytes.data(),"BLCP\x01\0\0\0",8)==0);
+    CHECK(std::equal(i.begin(),i.end(),bytes.begin()+8) && std::equal(g.begin(),g.end(),bytes.begin()+24));
+    unsigned char digest[32]{};
+    CHECK(BCryptHash(BCRYPT_SHA256_ALG_HANDLE,nullptr,0,const_cast<PUCHAR>(manifest.data()),static_cast<ULONG>(manifest.size()),digest,32)>=0);
+    CHECK(std::equal(digest,digest+32,bytes.begin()+40));
+    CHECK(bytes[72]==1 && std::all_of(bytes.begin()+73,bytes.end(),[](unsigned char c){return c==0;}));
+    CHECK(!checkpointBytes(Buffer{},i,g,bytes));
+    for(unsigned failure=0;failure<7;++failure) {
+        unsigned order=0; Diagnostic d;
+        auto create=[&]{CHECK(order++==0); if(failure==4) throw 1; return failure!=1;};
+        auto write=[&]{CHECK(order++==1); if(failure==5) throw 1; return failure!=2;};
+        auto wait=[&]{CHECK(order++==2); if(failure==6) throw 1; return failure!=3;};
+        CHECK(checkpointDeferred(create,write,wait,d)==ERROR_INSTALL_FAILURE);
+        CHECK(order==(failure==1 || failure==4 ? 1u : failure==2 || failure==5 ? 2u : 3u));
+        CHECK(d.stage==(failure>=4 ? 90u : failure==1 ? 60u : failure==2 ? 62u : failure==3 ? 63u : 70u));
+    }
+#if LAB_FAILPOINT==3
+    for(unsigned point:{4u,3u,1u,4u}) {
+        Diagnostic d;
+        CHECK(action(0,point,d)==static_cast<UINT>(point==4 ? ERROR_INSTALL_FAILURE : ERROR_SUCCESS));
+        CHECK(d.stage==(point==4 ? 70u : 0u));
+    }
+    std::puts("MODEL Checkpoint: ordered Pending-success/checkpoint-flush/wait, failures/exceptions; unconditional PostFinalize refusal even after Commit/Rollback continuation; ACK path compiled out");
+#endif
+}
 int wmain(int argc,wchar_t** argv) {
     CHECK(argc==3);
     CHECK(labFreshEligibility(L"",INSTALLSTATE_UNKNOWN,true));
@@ -115,7 +142,7 @@ int wmain(int argc,wchar_t** argv) {
     CHECK(!refused(first,31,2,87)); CHECK(!refused(first,40,3,5));
     CHECK(first.stage==31 && first.detail==2 && first.status==87);
     Diagnostic trigger; refused(trigger,41,1,87);
-    CHECK(snapshotSelected(0,trigger));
+    CHECK(snapshotSelected(0,trigger,0));
     CHECK(!snapshotSelected(1,trigger) && !snapshotSelected(4,trigger));
     CHECK(!snapshotSelected(0,trigger,1) && !snapshotSelected(0,trigger,2));
     Diagnostic success,other; refused(other,41,2);
@@ -130,6 +157,7 @@ int wmain(int argc,wchar_t** argv) {
     Buffer manifestBytes((std::istreambuf_iterator<char>(input)),std::istreambuf_iterator<char>());
     labfile::Id installation{},generation{};
     CHECK(validManifest(manifestBytes,installation,generation));
+    checkpointModels(manifestBytes,installation,generation);
     CHECK(!validManifest(Buffer(175),installation,generation));
     CHECK(!validManifest(Buffer(65537),installation,generation));
     for(size_t n:{size_t(0),size_t(40),size_t(44),size_t(144),size_t(176)}) {
@@ -178,7 +206,23 @@ int wmain(int argc,wchar_t** argv) {
     CHECK(h!=INVALID_HANDLE_VALUE);
     HANDLE existing=CreateFileW(path.c_str(),GENERIC_READ|GENERIC_WRITE,0,nullptr,CREATE_NEW,FILE_ATTRIBUTE_NORMAL,nullptr);
     CHECK(existing==INVALID_HANDLE_VALUE && (GetLastError()==ERROR_FILE_EXISTS || GetLastError()==ERROR_SHARING_VIOLATION));
+    Buffer checkpoint; CHECK(checkpointBytes(manifestBytes,installation,generation,checkpoint));
+    CHECK(labfile::testDiagnosticWrite(h,checkpoint));
+    LARGE_INTEGER rewind{}; CHECK(SetFilePointerEx(h,rewind,nullptr,FILE_BEGIN));
+    Buffer checkpointRead(80); DWORD checkpointCount=0;
+    CHECK(ReadFile(h,checkpointRead.data(),80,&checkpointCount,nullptr) && checkpointCount==80 && checkpointRead==checkpoint);
+    CHECK(SetFilePointerEx(h,rewind,nullptr,FILE_BEGIN));
+    CHECK(SetEndOfFile(h));
+    labfile::Directory unpinned;
+    CHECK(!unpinned.writeAckCheckpoint(checkpoint));
+    CHECK(!unpinned.writeAckCheckpoint(Buffer(79)));
     Buffer diagnostic{'t','a','b','l','e','s','\n'};
+    CHECK(!labfile::testDiagnosticWrite(h,Buffer(80,1),labfile::Failure::ShortWrite));
+    LARGE_INTEGER partial{}; CHECK(GetFileSizeEx(h,&partial) && partial.QuadPart==79);
+    CHECK(SetFilePointerEx(h,rewind,nullptr,FILE_BEGIN));
+    CHECK(!labfile::testDiagnosticWrite(h,Buffer(80,1),labfile::Failure::Flush));
+    CHECK(GetFileSizeEx(h,&partial) && partial.QuadPart==80);
+    LARGE_INTEGER reset{}; CHECK(SetFilePointerEx(h,reset,nullptr,FILE_BEGIN));
     CHECK(labfile::testDiagnosticWrite(h,diagnostic));
     LARGE_INTEGER start{}; CHECK(SetFilePointerEx(h,start,nullptr,FILE_BEGIN));
     Buffer rereadDiagnostic(diagnostic.size()); DWORD diagnosticRead=0;
