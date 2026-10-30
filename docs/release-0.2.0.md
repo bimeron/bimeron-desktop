@@ -55,3 +55,14 @@ Desktop by selecting this Core candidate.
 No performance-sensitive product change is planned, so new benchmarks/profiling
 are inapplicable unless an actual regression requires investigation. No build,
 package or runtime result is claimed by this acceptance document.
+
+## Windows deployment architecture correction
+
+Before rebuilding the rejected ARM64 candidate, require deployment to query the
+selected target Qt installation explicitly, even when windeployqt runs from the
+x64 host installation. Disable its compiler-runtime copy: the existing CMake
+runtime install rule supplies the target MSVC redistributables. Acceptance is an
+inspection of every packaged EXE/DLL: x64 MSI contains x64 PE files and ARM64 MSI
+contains ARM64 PE files, including Qt plugins and vcruntime140_1.dll. Remove only
+stale generated deployment files before rebuilding; preserve other packages and
+all parked work. No GUI behavior or dependency version changes are intended.
