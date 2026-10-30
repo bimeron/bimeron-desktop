@@ -11,6 +11,13 @@
 #define LAB_FAILPOINT 0
 #endif
 namespace {
+struct ScopedToken {
+    HANDLE value = nullptr;
+    ScopedToken() = default;
+    ScopedToken(const ScopedToken&) = delete;
+    ScopedToken& operator=(const ScopedToken&) = delete;
+    ~ScopedToken() { if (value) CloseHandle(value); }
+};
 void incomplete(MSIHANDLE install, const wchar_t* callback, UINT intended, DWORD status) noexcept {
     wchar_t text[384]{};
     if (swprintf_s(text, L"BIMERON_LAB_TRACE_V1 {\"schema\":1,\"callback\":\"%s\",\"evidence\":\"incomplete\",\"status\":%lu,\"initiatingClient\":\"Unknown\",\"intendedReturn\":%u}", callback, status, intended) <= 0) return;
@@ -46,7 +53,9 @@ UINT observe(MSIHANDLE install, const wchar_t* callback, int point) {
     if (!GetProcessTimes(GetCurrentProcess(), &created, &exit, &kernel, &user)) o.failed(GetLastError());
     DWORD processSession = 0;
     if (!ProcessIdToSessionId(GetCurrentProcessId(), &processSession)) o.failed(GetLastError());
-    HANDLE token = nullptr; DWORD source = 1;
+    ScopedToken tokenOwner;
+    HANDLE& token = tokenOwner.value;
+    DWORD source = 1;
     if (!OpenThreadToken(GetCurrentThread(), TOKEN_QUERY, TRUE, &token)) {
         DWORD e = GetLastError(); source = 0;
         if (e != ERROR_NO_TOKEN) o.failed(e);
@@ -89,7 +98,6 @@ UINT observe(MSIHANDLE install, const wchar_t* callback, int point) {
             if (!IsValidSid(s) || !*GetSidSubAuthorityCount(s)) o.failed(ERROR_INVALID_SID);
             else integrity = *GetSidSubAuthority(s, *GetSidSubAuthorityCount(s)-1);
         }
-        CloseHandle(token);
     }
     wchar_t message[1536]{};
     int n = swprintf_s(message, L"BIMERON_LAB_TRACE_V1 {\"schema\":1,\"callback\":\"%s\",\"utc\":\"%04u-%02u-%02uT%02u:%02u:%02u.%03uZ\",\"pid\":%lu,\"tid\":%lu,\"processCreated\":\"%08lx%08lx\",\"processSession\":%lu,\"tokenSource\":%lu,\"tokenType\":%u,\"impersonation\":%d,\"elevated\":%lu,\"elevationType\":%u,\"integrityRID\":%lu,\"tokenSession\":%lu,\"adminEnabled\":%lu,\"adminDenyOnly\":%lu,\"restricted\":%lu,\"sidSHA256\":\"%s\",\"logonId\":\"%08lx%08lx\",\"status\":%lu,\"evidence\":\"%s\",\"initiatingClient\":\"Unknown\",\"intendedReturn\":%u}",
