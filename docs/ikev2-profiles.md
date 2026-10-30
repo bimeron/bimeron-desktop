@@ -482,3 +482,22 @@ twelve artifact hashes, eighteen GUIDs and exact manifest outputs/logs in ignore
 build state. A READY GUEST REVIEW BUNDLE contains one Success MSI and matching
 canonical protected manifest with enumerated effects; it grants no permission.
 ARM64 runtime, Linux, performance and the production matrix are inapplicable.
+
+### ACK zero-resource freshness and diagnostics follow-up
+
+Before another candidate run, the disconnected lab may accept only empty REMOVE
+or exact uppercase ALL, and only after its protected manifest, active package
+header/Binary, exact canonical database and explicit zero Component,
+FeatureComponents and File rows are validated. Query the OS product state for
+the manifest ProductCode and require UNKNOWN (-1), retaining all other freshness
+and rollback-enabled checks. This is lab-only eligibility, not authenticated
+caller intent: always report removeOriginUnknown=1 and initiatingClientUnknown=1.
+
+Each callback must report a bounded first-failure stage and numeric detail/status:
+directory pin, manifest read/format, header, zero-resource query, canonical query
+or first differing category, freshness predicate, rollback Boolean, effective
+token, record create or acknowledgment. Never print property values, account
+names, environment or arbitrary errors. Preserve all prior frozen artifacts and
+guest residue. Offline tests must cover exact ALL versus lowercase/other values,
+nonfresh product state, nonzero resources and first-stage preservation. Any new
+bytes require static review before the next VM run; enrollment stays disabled.
