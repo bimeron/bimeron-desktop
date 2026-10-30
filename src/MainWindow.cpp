@@ -1551,16 +1551,14 @@ void MainWindow::toggleConnection() {
     if (controlBlocked() || !helloReady_ || statusNeeded_ || !operation_.isEmpty() || nativeSession_) return;
     const int row = profileList_->currentItem() && profileList_->currentItem()->isSelected()
         ? profileList_->currentRow() : -1;
-    if (row >= 0 && profileInfo(row).backend == ProfileConnectionInfo::Backend::NativeIKEv2) return;
+    if (state_ == "unknown" || state_ == "stopping") return;
     autoConnectAttempted_ = true;
     const bool active = sessionActive_ || state_ == "connected" || state_ == "connecting"
-        || state_ == "reconnecting" || state_ == "stopping";
+        || state_ == "reconnecting";
     if (active) {
-        if (state_ == "stopping") return;
-        if (row >= 0 && profiles_[row].id != activeProfileId_) {
-            if (!profileInfo(row).connectable || cleanupBlocked_) return;
+        pendingStartPath_.clear();
+        if (row >= 0 && profiles_[row].id != activeProfileId_ && packetProfile(row) && !cleanupBlocked_)
             pendingStartPath_ = profiles_[row].path;
-        }
         operation_ = "stop";
         clearSSHAuthentication();
         stopRequested_ = true;
@@ -2061,7 +2059,8 @@ void MainWindow::updateConnectionButton() {
         if (nativeSelected) nativeStatusLabel_->setText(nativeUnavailableReason());
     }
     connectButton_->setToolTip(nativeSelected ? nativeUnavailableReason() : QString{});
-    const bool switchProfile = active && selected && profiles_[row].id != activeProfileId_;
+    const bool switchProfile = active && selected && profiles_[row].id != activeProfileId_
+        && packetProfile(row) && !cleanupBlocked_;
     connectButton_->setText(!operation_.isEmpty() ? tr("Please wait…")
         : state_ == "stopping" ? tr("Disconnecting…")
         : active && !switchProfile ? tr("Disconnect") : tr("Connect"));
@@ -2072,8 +2071,8 @@ void MainWindow::updateConnectionButton() {
         connectButton_->style()->polish(connectButton_);
     }
     connectButton_->setEnabled(helloReady_ && !statusNeeded_ && !controlBlocked() && !nativeSession_
-        && operation_.isEmpty() && state_ != "stopping"
-        && !nativeSelected && ((active && !switchProfile) || (selected && canActivateProfile(row))));
+        && operation_.isEmpty() && state_ != "stopping" && state_ != "unknown"
+        && ((active && !switchProfile) || (selected && canActivateProfile(row))));
     if (trayMenu_) {
         for (auto *action : trayMenu_->actions())
             if (action->data().isValid()) action->setEnabled(canActivateProfile(action->data().toInt()));

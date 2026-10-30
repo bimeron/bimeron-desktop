@@ -442,6 +442,8 @@
   "Native IKEv2 unavailable": "Нативный IKEv2 недоступен",
   "Native IKEv2 connect, preview, apply and remove are unavailable. Final Core artifact approval, protected installation and MSI safety evidence, and Windows enrollment are pending. Native capabilities and owner/protection absence have not been verified. Statistics are unavailable. Automatic connection and reconnection are disabled.": "Подключение, просмотр плана, применение и удаление нативного IKEv2 недоступны. Ожидаются одобрение итогового файла Core, защищённая установка, подтверждение безопасности MSI и настройка регистрации Windows. Возможности нативного режима и отсутствие владельца и защиты не подтверждены. Статистика недоступна. Автоматическое подключение и переподключение отключены.",
   "Native IKEv2 protection requested: %1. WFP: %2. DNS: %3. Cleanup and owner closure require authoritative confirmation. Statistics are unavailable.": "Запрошена защита нативного IKEv2: %1. WFP: %2. DNS: %3. Очистка и закрытие владельца требуют достоверного подтверждения. Статистика недоступна.",
+  "Yes": "Да",
+  "No": "Нет",
   "Active": "Активна",
   "Retained": "Сохранена",
   "Modified": "Изменена",

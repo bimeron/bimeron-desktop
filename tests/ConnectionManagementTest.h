@@ -10,6 +10,11 @@
 #include <QSystemTrayIcon>
 #include <QTranslator>
 
+// Compile the application translator itself; never invoke its renamed entry point.
+#define main bimeronApplicationEntryForTranslationTest
+#include "../src/main.cpp"
+#undef main
+
 // Uses only temporary profiles/settings, a private pipe/socket and this test's
 // validate subcommand. Never reaches a system endpoint or privileged helper.
 struct ConnectionManagementTest {
@@ -668,6 +673,56 @@ struct ConnectionManagementTest {
         window.completeSynchronization();
         require(!window.coreUpdateAwaitingResult_ && window.reconnectResultProfileId_.isEmpty() && starts == 4,
                 "native never restored by packet updater");
+        // Selection must not strand the authoritative packet session. Neither an
+        // unsupported packet profile nor native selection is a switch target.
+        holdStop = false;
+        for (const int selectedRow : {0, nativeRow}) {
+            for (const QString activeState : {QStringLiteral("connected"), QStringLiteral("connecting"), QStringLiteral("reconnecting")}) {
+                status = {{"State", activeState}, {"Session", QJsonObject{
+                    {"id", "packet-selection"}, {"active", true}, {"profile_id", window.profiles_[1].id}, {"mode", "proxy"}}}};
+                request("status");
+                window.profileList_->setCurrentRow(selectedRow);
+                window.updateConnectionButton();
+                require(window.connectButton_->isEnabled() && window.connectButton_->text() == "Disconnect",
+                        "unavailable selection must allow authoritative packet disconnect");
+                const int previousStops = stops;
+                window.connectButton_->click();
+                require(!window.connectButton_->isEnabled(), "pending packet stop disables duplicate action");
+                window.toggleConnection();
+                require(waitFor([&] { return stops == previousStops + 1 && synchronized() && window.operation_.isEmpty(); }),
+                        "unavailable selection sends exactly one packet stop");
+                require(starts == 4 && window.pendingStartPath_.isEmpty() && !window.nativeSession_,
+                        "disconnect never starts native or switches backend");
+            }
+        }
+        for (const QString blockedState : {QStringLiteral("stopping"), QStringLiteral("unknown")}) {
+            status = {{"State", blockedState}, {"Session", QJsonObject{{"id", "packet-selection"}, {"active", true}}}};
+            request("status");
+            const int previousStops = stops;
+            require(!window.connectButton_->isEnabled(), "ambiguous or stopping state disables disconnect");
+            window.toggleConnection();
+            require(stops == previousStops && window.operation_.isEmpty(), "blocked state cannot duplicate stop");
+        }
+        status = {{"State", "disconnected"}};
+        window.retryAt_ = 0;
+        window.poll();
+        require(waitFor(synchronized), "unknown state resynchronizes before polling test");
+
+        // Prove the update guard independently, before the permanent native block.
+        require(!window.nativeOwnerBlocked_ && synchronized(), "polling fixture has no native owner block");
+        window.nextStatus_ = 0;
+        const int liveBefore = requests;
+        window.poll();
+        require(waitFor([&] { return requests > liveBefore && synchronized(); }), "regular polling is live before update");
+        window.nextStatus_ = 0;
+        const int suspendedBefore = requests;
+        window.coreUpdateCommand_ = true;
+        window.poll();
+        require(requests == suspendedBefore && !window.core_.busy(), "service update alone suspends polling");
+        window.coreUpdateCommand_ = false;
+        window.poll();
+        require(waitFor([&] { return requests > suspendedBefore && synchronized(); }), "regular polling resumes after update");
+
         NativeIKEv2Session::Snapshot nativeSnapshot;
         nativeSnapshot.authoritative = true;
         nativeSnapshot.requested = true;
@@ -676,6 +731,17 @@ struct ConnectionManagementTest {
         window.showNativeSnapshot(nativeSnapshot);
         require(window.nativeStatusLabel_->text().contains("Retained") && window.nativeStatusLabel_->text().contains("Modified")
                 && window.nativeStatusLabel_->text().contains("Yes"), "native requested and protection states remain distinct");
+        JsonTranslator applicationTranslator;
+        require(applicationTranslator.load(QFileInfo(QString::fromUtf8(__FILE__)).dir().filePath("../assets/translations/ru.json")),
+                "load actual application Russian translator");
+        QCoreApplication::installTranslator(&applicationTranslator);
+        for (const bool requested : {true, false}) {
+            nativeSnapshot.requested = requested;
+            window.showNativeSnapshot(nativeSnapshot);
+            require(window.nativeStatusLabel_->text().contains(QString::fromUtf8(requested ? "защита нативного IKEv2: Да." : "защита нативного IKEv2: Нет.")),
+                    "application translator renders requested true and false in Russian");
+        }
+        QCoreApplication::removeTranslator(&applicationTranslator);
         nativeSnapshot.authoritative = false;
         window.showNativeSnapshot(nativeSnapshot);
         require(window.nativeStatusLabel_->text().contains("Unknown") && window.nativeOwnerBlocked_,
@@ -688,11 +754,6 @@ struct ConnectionManagementTest {
         window.poll();
         require(requests == nativeRequests && starts == 4, "native display seam creates no polling or packet commands");
 
-        const int before = requests;
-        window.coreUpdateCommand_ = true;
-        window.poll();
-        require(requests == before, "service update must suspend regular polling");
-        window.coreUpdateCommand_ = false;
         window.connectionFailure("hello", CoreClient::Failure::AccessDenied, "Access to Core was denied");
         require(window.connectionLabel_->text() == "Access to Core was denied", "access denial must be distinct");
         window.connectionFailure("hello", CoreClient::Failure::Incompatible, "incompatible");
