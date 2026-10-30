@@ -72,3 +72,45 @@ vcruntime140_1.dll compatibility file. Actual dependency inspection of every
 staged ARM64 EXE/DLL finds no import of it. Exclude that unused compatibility
 file from ARM64 installation; retain it for x64. ARM64 runtime acceptance requires
 vcruntime140.dll and architecture-correct remaining runtime files.
+
+## Local candidate evidence (2026-10-30)
+
+The four-package flow passed after correcting Windows target-Qt deployment.
+The first ARM64 MSI was rejected by independent payload review and is superseded.
+The correction passes target Qt paths to host windeployqt, omits its runtime copy,
+and excludes the unused x64 compatibility runtime from ARM64. Packaging now
+rejects mismatched PE machines before CPack. The check accepted both corrected
+stages and rejected an x64 GUI deliberately supplied as an ARM64 stage fixture.
+Actual cabinet extraction confirms all 67 Windows payload files match staging
+and every PE has its intended architecture. Both DEBs' eight-file payloads match
+staging, permissions and ELF architectures. Dependency simulation passed on
+Ubuntu 24.04.4; Ubuntu 25.04 was not tested.
+
+Windows amd64 and Linux amd64 CTest passed 3/3. Candidate-backed protocol/profile
+validation passed on each (1/1). Windows tests passed again after deployment
+changes. Windows ARM64 compiled and packaged; Linux arm64 cross-compiled and
+packaged. Native Linux arm64 hosted checks and ARM64 runtime remain pending.
+English/Russian offscreen previews at 100%/150% were inspected; native tray and
+installed UI checks are not established by those previews.
+
+Frozen local package SHA-256:
+
+| Package | SHA-256 |
+|---|---|
+| Windows amd64 MSI | `6f11d7b240ccd78843d676c9ee489d9f924d685254d8a7e8b431930a89e987fd` |
+| Windows ARM64 MSI | `db2c925afe2ec39fcf142002427a014d61880ec364bcb60982005de7cbf36ccb` |
+| Linux amd64 DEB | `3bb9e970097ef7f48e26edfd7be887f885d32f50017e8e7a7c6dbf71df4e2d72` |
+| Linux arm64 DEB | `cdf844ff4308b4cea36f682a660732b539287e6eff98151c78f824d604a85642` |
+
+Evidence is retained in ignored `build/package-all-final.log`,
+`build/package-audit-corrected/` and the test logs. Prior rejected artifacts'
+review remains in `build/package-audit/`; its rejection must not be interpreted
+as the corrected candidate's result. New benchmarks are inapplicable to this
+packaging-only correction.
+
+Not ready for publication: production Core manifest signature and exact signed
+GUI verification, native hosted Linux arm64 checks, installed upgrade/smoke
+checks, final artifact review and publication approval remain open. The VM
+currently has an unpublished Desktop 0.2.0 and a running independent Core service;
+ordinary upgrade testing must preserve those service/profile settings and all
+parked lab directories. No installer action was performed during inventory.
