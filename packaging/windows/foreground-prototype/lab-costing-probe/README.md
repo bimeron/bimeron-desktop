@@ -180,3 +180,17 @@ Preflight -> DeferredBegin -> Commit -> PostFinalize success observations, witho
 executed rollback. Any later failure is recorded separately. Combined success does
 not identify which structural addition matters and grants no production/native
 installation or enrollment approval.
+
+### Observed one-shot result (2026-10-30)
+
+The authorized Windows 10 STD VM ran the pinned `both.msi` through native x64
+`msiexec /i /qn /norestart` from an elevated, noninteractive PowerShell Direct
+session. Exit code was 0. Server CostInitialize, InstallInitialize and
+InstallFinalize succeeded. Observed callbacks were Preflight, DeferredBegin,
+Commit and PostFinalize, each with complete status-0 records and intended return 0;
+no rollback callback executed. Product state was -1 both before and after.
+Consequently this is a positive server-costing/callback discriminator, not the
+specified full lab success with registered product state. No uninstall or retry
+followed. The combined change does not identify which empty-table/stream addition
+is necessary. Interactive UAC, initiating-client authentication and production
+transaction safety remain unproved. Raw logs remain in ignored private lab evidence.
