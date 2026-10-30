@@ -15,7 +15,7 @@ static void resourceQueryNegatives() {
     path+=L"\\ack-resource-query-"+std::to_wstring(GetCurrentProcessId())+L".msi";
     CHECK(GetFileAttributesW(path.c_str())==INVALID_FILE_ATTRIBUTES && GetLastError()==ERROR_FILE_NOT_FOUND);
     {
-        Msi db; CHECK(MsiOpenDatabaseW(path.c_str(),MSIDBOPEN_CREATE,&db.h)==ERROR_SUCCESS);
+        Msi db; CHECK(MsiOpenDatabaseW(path.c_str(),reinterpret_cast<LPCWSTR>(MSIDBOPEN_CREATE),&db.h)==ERROR_SUCCESS);
         execute(db.h,L"CREATE TABLE `Component` (`Component` CHAR(72) NOT NULL PRIMARY KEY `Component`)");
         execute(db.h,L"CREATE TABLE `FeatureComponents` (`Feature_` CHAR(38) NOT NULL, `Component_` CHAR(72) NOT NULL PRIMARY KEY `Feature_`, `Component_`)");
         // File deliberately absent: native query failure must not mean empty.
