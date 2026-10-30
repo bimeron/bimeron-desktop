@@ -1441,3 +1441,69 @@ guest command. Never overwrite older bundles. Parent alone reviews/provisions/ru
 a VM; no guest execution is authorized here. Preserve all isolated state and stop
 orchestration on timeout or ambiguity, including possible late MSI server work.
 No Clean, authenticated initiator, production, full matrix or performance claims.
+
+### Checkpoint commitment runner implementation and offline evidence
+
+Specification cf12d14 precedes the operational implementation. The separate runner
+now launches only the frozen Checkpoint client via CreateProcessW and retains that
+actual returned handle (never a Process.Handle/PID reopen). One gate publishes the
+immutable Committed/Cancelled decision; the same worker directly invokes the sole
+TerminateProcess adapter. Its final clock read is strict <300000 ms. Observer wait
+uses the same worker clock's remaining budget; scheduling latency is unbounded.
+API return and same-handle SIGNALED death are separate fields. Timeout never joins,
+stops or disposes the worker. Pins and actual handle survive late launch and wait.
+Even completed client death leaves serverQuiescence, initiatingClient and clean
+Unknown, and possibleLateOperation true: MSI server work may continue independently.
+
+The exact four-parameter entry point has no case/path/property/test-mode selector.
+It requires native x64, literal lab acknowledgment, positive Hyper-V classification,
+independent expected runner/manifest/MSI hashes, compiled frozen MSI/manifest hashes,
+fixed native System32 msiexec and fixed /i /qn /norestart /L*V. Protected Program
+Files paths are mapped once to volume-GUID paths. Retained root-to-leaf handles
+reject reparse points, nondisk files, extra links and unknown/nonzero directory case
+flags. At/below Program Files require trusted owner, protected DACL and no untrusted
+mutation grants. A separate known-folder pin matches the traversal anchor identity.
+System executable ancestry is metadata-pinned, relying on the fixed native system
+location; no system ACL repair or new system DACL-protection requirement is imposed.
+The parent must provision protected files as well as directories before invocation.
+No existing Pending/checkpoint may be present; no state is overwritten or deleted.
+The only runner-created file is a fresh uniquely named verbose MSI log in the client
+root, reserved CREATE_NEW and retained through worker completion. JSON stdout names
+that log and records the observed decision, raw identity and uncertainty fields.
+CreateProcess inherits the invoking shell's authority; the runner never elevates.
+
+PS 5.1.19041.6456 and PS 7.6.9 each passed 106 managed assertions plus AST closed
+surface/forbidden-operation checks, compiling the exact native declarations without
+calling them. Tests run the actual worker with deterministic fake-handle barriers:
+late launch/cancel wins, validation/cancel race, commit wins, exact final expiry,
+postcommit modeled API entry at 900000 ms, early exit/query/identity refusal,
+manifest/record negatives, API false/exception, unconfirmed death and one retained
+handle call only. A real owned temporary read pin additionally blocks a write open
+through cancellation/late launch and is released only at worker completion. Native
+struct layout is checked without native calls. The original hard-deadline scheduling
+counterexample remains a superseded-contract assertion, not an active requirement.
+No real executable launch, process termination, MSI session or VM action occurred.
+
+Frozen input verification passed: pinned reconciled index, all 65 inventory entries,
+66 SHA256SUMS entries, 180 exact ZIP/source-hash/Git-blob matches and seven actual
+manifest/MSI/DLL/projection bindings. The previous P2 source-inventory mismatch is
+closed by exact immutable-byte reconciliation, without changing any frozen input.
+No MSI/DLL rebuild occurred; carried-forward source/table/import/build/ICE evidence
+is copied intact. Fresh ignored build/ack-checkpoint-runner-ready-review-cf12d14 is
+READY FOR REVIEW only, with immutable inputs, new committed source archive, hashes
+computed from those same ZIP bytes, test logs, effects and exact proposed guest
+command. Source/archive equality is verified after the implementation commit.
+Old blocker and checkpoint bundles remain untouched. Parent independent review and
+separately authorized provisioning/execution remain outstanding; this is no runtime
+or production acceptance. Preserve the isolated VM and every old/new state on any
+ambiguity or timeout; do not start another case, uninstall, retry or cleanup.
+
+Focused offline checks and git diff --check are the CI-equivalent checks for this
+runner-only change. Diff review found no PID reopen/discovery, host targeting,
+queued termination, retry, state cleanup or original Run-Lab/ACK/context/CMake edits.
+Native path/ACL/query availability, actual msiexec launch/checkpoint timing and
+client/server behavior remain untested pending parent VM work. Windows ARM64 and
+both Linux targets cannot execute this native-x64-only disconnected runner and no
+product build input changed, so the full product/package matrix is inapplicable.
+No performance-sensitive product path changed; benchmark/profiling and release
+work are inapplicable. No push/watch, production authority or Clean claim.

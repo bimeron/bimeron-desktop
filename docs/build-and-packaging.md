@@ -815,3 +815,14 @@ interop compilation precede a new ignored READY FOR REVIEW bundle. Parent VM
 execution, retained protected state and possible late server work are separate
 review gates. This disconnected Windows x64 runner changes no supported release
 build or package flow; product matrix, benchmarks and profiling are inapplicable.
+
+Checkpoint commitment runner offline result: PS 5.1 and 7 each passed 106 managed
+assertions and AST checks with exact interop compiled only, no native API calls or
+real process/MSI execution. Frozen index/inventory/sums, 180 immutable source ZIP
+entries and seven MSI/DLL/manifest bindings verified. The separate native-x64-only
+runner and exact committed source evidence are frozen under ignored
+build/ack-checkpoint-runner-ready-review-cf12d14, READY FOR REVIEW only. See the
+foreground README for path/pin/decision semantics, exact effects and untested VM
+boundaries. Historical hard API-entry deadline evidence remains superseded, not
+deleted. No MSI rebuild, original Run-Lab/ACK/context/CMake change or release flow
+change occurred; all protected/isolated state and late-server uncertainty remain.
