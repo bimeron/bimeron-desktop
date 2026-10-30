@@ -4,6 +4,36 @@
 #include <iterator>
 static void require(bool ok,int line) { if(!ok) { std::printf("FAIL %d error=%lu\n",line,GetLastError()); std::exit(1); } }
 #define CHECK(b) require((b),__LINE__)
+static void execute(MSIHANDLE db,const wchar_t* sql) {
+    Msi view;
+    CHECK(MsiDatabaseOpenViewW(db,sql,&view.h)==ERROR_SUCCESS);
+    CHECK(MsiViewExecute(view.h,0)==ERROR_SUCCESS);
+}
+static void resourceQueryNegatives() {
+    wchar_t image[32768]; DWORD n=GetModuleFileNameW(nullptr,image,32768); CHECK(n && n<32768);
+    std::wstring path(image,n); path.resize(path.find_last_of(L'\\'));
+    path+=L"\\ack-resource-query-"+std::to_wstring(GetCurrentProcessId())+L".msi";
+    CHECK(GetFileAttributesW(path.c_str())==INVALID_FILE_ATTRIBUTES && GetLastError()==ERROR_FILE_NOT_FOUND);
+    {
+        Msi db; CHECK(MsiOpenDatabaseW(path.c_str(),MSIDBOPEN_CREATE,&db.h)==ERROR_SUCCESS);
+        execute(db.h,L"CREATE TABLE `Component` (`Component` CHAR(72) NOT NULL PRIMARY KEY `Component`)");
+        execute(db.h,L"CREATE TABLE `FeatureComponents` (`Feature_` CHAR(38) NOT NULL, `Component_` CHAR(72) NOT NULL PRIMARY KEY `Feature_`, `Component_`)");
+        // File deliberately absent: native query failure must not mean empty.
+        CHECK(!zeroResources(db.h));
+        execute(db.h,L"CREATE TABLE `File` (`File` CHAR(72) NOT NULL PRIMARY KEY `File`)");
+        CHECK(zeroResources(db.h));
+        execute(db.h,L"INSERT INTO `Component` (`Component`) VALUES ('Unexpected')");
+        CHECK(!zeroResources(db.h));
+        execute(db.h,L"DELETE FROM `Component`");
+        execute(db.h,L"INSERT INTO `FeatureComponents` (`Feature_`,`Component_`) VALUES ('Unexpected','Unexpected')");
+        CHECK(!zeroResources(db.h));
+        execute(db.h,L"DELETE FROM `FeatureComponents`");
+        execute(db.h,L"INSERT INTO `File` (`File`) VALUES ('Unexpected')");
+        CHECK(!zeroResources(db.h));
+    }
+    CHECK(DeleteFileW(path.c_str())!=FALSE);
+    std::puts("NATIVE owned MSI database: missing table and nonempty Component/FeatureComponents/File refused; no installer action");
+}
 int wmain(int argc,wchar_t** argv) {
     CHECK(argc==3);
     CHECK(labFreshEligibility(L"",INSTALLSTATE_UNKNOWN,true));
@@ -15,6 +45,7 @@ int wmain(int argc,wchar_t** argv) {
     Diagnostic first;
     CHECK(!refused(first,31,2,87)); CHECK(!refused(first,40,3,5));
     CHECK(first.stage==31 && first.detail==2 && first.status==87);
+    resourceQueryNegatives();
     std::ifstream input(argv[1],std::ios::binary);
     Buffer manifestBytes((std::istreambuf_iterator<char>(input)),std::istreambuf_iterator<char>());
     labfile::Id installation{},generation{};
