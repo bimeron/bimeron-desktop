@@ -85,7 +85,13 @@ struct NativeIKEv2SessionTest {
             Fixture f; f.launch(); f.controller.failed("hello",T::Failure::Unavailable);
             if (stop) f.controller.stop(); else f.controller.cancelExchange();
             f.controller.poll(); f.deliver(f.reply());
-            if (stop) { check(f.calls.back().command=="stop","stop before pipe queued"); f.deliver(f.reply()); }
+            if (stop) {
+                check(f.calls.back().command=="stop","stop before pipe queued");
+                auto stopped=f.reply(); stopped.remove("core"); stopped.remove("capabilities");
+                f.deliver(stopped);
+                check(f.controller.snapshot().ikev2.value("supported")==true,
+                    "preactivation stop without hello metadata preserves verified capabilities");
+            }
             for (const auto &c:f.calls) check(!c.fields.contains("accept_revision"),"cancel before pipe never activates");
             check(f.controller.closeOwner(),"validated never-activated owner may close");
         }
@@ -101,7 +107,12 @@ struct NativeIKEv2SessionTest {
         for (bool requested : {false,true}) {
             Fixture f; f.discover(); f.controller.poll(); f.deliver(f.sessionReply("connected",requested));
             check(f.controller.snapshot().requested==requested && !f.controller.closeOwner(),"connected owner cannot close");
-            check(f.controller.stop(),"stop native session"); f.deliver(f.sessionReply("disconnected",requested));
+            check(f.controller.stop(),"stop native session");
+            auto stopped=f.sessionReply("disconnected",requested);
+            stopped.remove("core"); stopped.remove("capabilities");
+            f.deliver(stopped);
+            check(f.controller.snapshot().ikev2.value("supported")==true,
+                "Core stop response omits hello metadata without erasing verified capabilities");
             check(f.controller.closeOwner(),"Core terminal cleanup permits close with protection on or off");
         }
         for (const auto &field : {"wfp","dns"}) for (const auto &value : {"retained","modified","unknown"}) {
