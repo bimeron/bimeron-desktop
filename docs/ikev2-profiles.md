@@ -664,3 +664,20 @@ is unchanged because this is one mode in the same existing target and build flow
 No review finding remains within this bounded change; native context coverage,
 loading trust and production/ARM64 runtime acceptance remain open. GUI/Linux,
 release matrix, benchmarks and profiling are inapplicable; no release is prepared.
+
+### Context observer VM acceptance
+
+Run immutable 24ea7958 x64 EXE and adjacent DLL from a fresh protected native
+Program Files lab directory. Hash both inputs before execution. Observe Session 0
+through existing administrative PowerShell Direct, then the logged-on interactive
+user through separate demand-only InteractiveToken Limited and Highest tasks.
+The parent may use fixed lab PowerShell capture scripts, with no arbitrary input,
+to save bounded stdout/exit status. This is temporary test orchestration, not an
+installed product launcher. Give that user read/execute access to immutable inputs
+and write access only to a separate output directory. Verify actual active user
+SID/session immediately before RunEx; no password, S4U or logon fallback.
+No MSI, native activation, protected-record writes or token modification is involved.
+Keep task execution unlimited/no forced termination, but bound parent observation
+to 60 seconds. Timeout preserves task/evidence and stops later cases. Remove only
+each exact task after confirmed terminal state. Report local context eligibility,
+not human UAC consent, intended-user causality or protected-object access.
