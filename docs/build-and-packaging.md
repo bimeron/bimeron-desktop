@@ -801,3 +801,17 @@ No MSI is built. This observation has no production caller or install rule.
 The original MSI PE checker still permits only its historical three imports;
 new MSI preparation would require a separately scoped secur32 allowlist review.
 Supported production packaging, checkpoint, trace, runner and package pins are unchanged.
+
+### Checkpoint client commitment-deadline runner
+
+The accepted foreground README resolution supersedes the refusal-only runner
+contract while retaining its historical hard-deadline witness. The separate runner
+uses a 300-second monotonic commitment deadline and one Eligible/Cancelled/Committed
+gate; API entry/return/death and observer latency are unbounded after commitment.
+Only the owned retained launch handle can receive one direct TerminateProcess call.
+Frozen reconciled checkpoint MSI/DLL/manifest bytes are reused without rebuilding;
+Run-Lab and the three-variant contract remain unchanged. Offline PS 5.1/7 mocks and
+interop compilation precede a new ignored READY FOR REVIEW bundle. Parent VM
+execution, retained protected state and possible late server work are separate
+review gates. This disconnected Windows x64 runner changes no supported release
+build or package flow; product matrix, benchmarks and profiling are inapplicable.

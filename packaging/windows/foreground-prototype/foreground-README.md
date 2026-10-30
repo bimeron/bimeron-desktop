@@ -1383,3 +1383,61 @@ actual MSI callbacks, designated-user/continuity enforcement, protected opens an
 preload trust remain unproved. No VM-ready or guest-ready bundle exists.
 No VM, MSI, push, watch, GUI/Linux matrix, benchmark/profile or release was run:
 this Windows-only disconnected fixture changes no product or performance path.
+
+### Accepted checkpoint commitment-deadline runner specification
+
+This accepted resolution supersedes only the operational blocker contract in
+2df51d7/50e8115; their hard API-entry deadline witness and evidence remain valid
+historical records. The 300-second monotonic budget begins before worker dispatch
+and limits commitment to coordinate termination of the owned launched client.
+It does not bound API entry, return, process death, or observer scheduling latency.
+Preemption after commitment may delay the direct API call arbitrarily.
+
+Implement only Run-CheckpointLab.ps1 and its offline test, independently of Run-Lab.
+One gate protects Eligible/Cancelled/Committed and immutable observer snapshots.
+After frozen pins, exact checkpoint/Pending, selected retained-handle identity and
+alive checks, the worker enters that gate and commits only if still Eligible and
+the final monotonic time is strictly before expiry. Publish Committed before
+unlocking. The same worker then directly calls TerminateProcess at most once on
+that retained handle: no queued callback, timer, retry, delay or alternate target.
+Queries, launches, waits and termination stay outside the tiny decision gate.
+Observer timeout under the same gate permanently cancels Eligible; Committed
+reports TerminationDecisionInFlight, possibleLateOperation true and unknown
+latency. It must never report cancellation/no-future-call for a committed worker.
+Retain actual launch handle and all pins through operation completion, including
+late launch after cancellation (which must never terminate). Capture PID and raw
+FILETIME immediately from the actual launch handle; requery that same handle
+before commitment. Missing access/query, early exit or mismatch forbids killing.
+API success is asynchronous and distinct from same-handle SIGNALED death; errors
+or unconfirmed death never retry. Client death cannot establish server quiescence.
+
+The closed guest contract is native x64, explicit exact DisposableWindowsVM and
+positive Microsoft Hyper-V classification; fixed native System32 msiexec and
+fixed /i /qn /norestart /L*V arguments, without arbitrary path/case/properties.
+Native Program Files/BimeronCheckpointClientLab holds the exact runner, reviewed
+lab-protected-ack-Checkpoint.msi and run.manifest. Independent expected runner,
+manifest and MSI pins are mandatory; manifest/MSI also have compiled frozen pins.
+Parent provisions native Program Files/BimeronProtectedAckLab/LABProtectedFiles
+with the same manifest. Runner validates and retains protected ancestors/files,
+never repairs ACLs, archives or deletes state. Fresh pending.bin/checkpoint.bin
+absence and UNKNOWN product state precede launch. Parse the bounded binary
+manifest separately from the original three-variant JSON contract; require exact
+frozen public IDs, architecture 1, variant 3, GUIDs, MSI/DLL/projection hashes.
+Require exact 80-byte BLCP/version/IDs/whole-manifest SHA/code 1/reserved zero and
+48-byte BLPF/version/Pending/IDs/counter zero/reserved zero before commitment.
+All source/artifact checks of reconciled index
+6ddb8fe82ad514fd0613637e2186513705290580ae885bb1faf13e503108e966 carry
+forward by unchanged bytes. No MSI rebuild or original runner edits.
+
+Offline PS 5.1/7 tests extract/compile exact interop but never invoke native APIs
+or launch/terminate real processes or MSI. Deterministic mocks exercise cancel
+wins, commit wins, exact expiry, accepted postcommit preemption, late launch,
+early exit, bad checkpoint/IDs/manifest/identity, API error, unconfirmed death,
+pin lifetime and exactly one same-retained-handle call. Preserve the original
+hard-deadline witness as a superseded-contract regression. Freeze a new ignored
+READY FOR REVIEW bundle with unchanged MSI/DLL/manifest, committed source archive
+and hashes from those same immutable bytes, test logs, effects and exact proposed
+guest command. Never overwrite older bundles. Parent alone reviews/provisions/runs
+a VM; no guest execution is authorized here. Preserve all isolated state and stop
+orchestration on timeout or ambiguity, including possible late MSI server work.
+No Clean, authenticated initiator, production, full matrix or performance claims.
