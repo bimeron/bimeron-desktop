@@ -748,3 +748,4 @@ it grants no guest permission or production authority. Existing admission and
 snapshot gates are unchanged. See the foreground README for evidence limits.
 
 The isolated protected ACK Success fixture from a6d93adc was observed once in the disposable x64 VM on 2026-10-30: exit 0, all four successful callbacks, retained Pending counter 1, and no diagnostic snapshot. See the prototype README's Native x64 protected ACK Success observation for exact artifact hashes and limits. This is access evidence only; production packaging, enrollment and ARM64 runtime remain unavailable.
+The two frozen x64 protected ACK failure variants were subsequently observed once each in the disposable VM: CommitFail rolled back with Pending counter 0; PostFinalizeFail failed after successful Finalize without rollback and retained counter 0. The prototype README records the acceptance and evidence limits; no production packaging behavior changed.

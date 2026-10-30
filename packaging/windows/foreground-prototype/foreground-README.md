@@ -967,3 +967,32 @@ wrong order/state, missing evidence or timeout stops subsequent execution.
 PostFinalizeFail occurs before token/projection/ACK and cannot prove those gates.
 The frozen inventory supplies exact hashes and identities. This remains access-only
 lab evidence, with no Clean, real-resource rollback, client authority or ARM64 claim.
+
+### Protected ACK failure observations (2026-10-30)
+
+The parent executed each accepted frozen x64 a6d93adc failure variant once in the
+same authorized disposable VM context, CommitFail first and PostFinalizeFail only
+after the first result met acceptance. Exact input hashes/identities are retained
+in build/ack-projection-review/artifact-index.json. Guest hashes and ProductState -1
+were checked immediately before launch. Previous ACK directories were archived
+intact to the fixed sibling suffixes success-a6d93adc and CommitFail-a6d93adc;
+file bytes and file/directory security descriptors were compared after each move.
+
+CommitFail returned 1603 with callbacks 0/2/3/1: callback 3 reported stage 70,
+detail 1; others reported zero result/stage/detail/API. InstallFinalize failed,
+rollback callback executed, and PostFinalize did not. Its retained canonical
+Pending has matching manifest IDs and counter 0.
+
+PostFinalizeFail returned 1603 with callbacks 0/2/3/4: callback 4 reported stage 70,
+detail 0; others reported zero result/stage/detail/API. The log records successful
+InstallFinalize before callback 4 and no rollback callback. Its retained canonical
+Pending has matching manifest IDs and counter 0. This injected failure precedes
+token/projection/acknowledgment checks; it does not independently exercise them.
+
+Both final ProductState values were -1. Both manifests and the separate standalone
+protected-file Pending record remained unchanged. Logs, results and copied records
+are retained privately under build/vm-lab-evidence-20261030/ack-a6d93adc-*.
+No retries, uninstall, repair, deletion or cleanup occurred. These zero-resource
+observations establish callback/failure ordering and retained Pending only, not
+resource restoration, crash/power-loss durability, initiating-client authority,
+Clean settlement, production exclusion or ARM64 runtime acceptance.
