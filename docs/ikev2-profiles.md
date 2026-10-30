@@ -189,3 +189,10 @@ core-update and profile-vless. These runs include the registered native transpor
 and controller offline fixtures, not a protected Windows handshake or native VPN.
 The supported system Qt remains eligible for Linux testing; Windows offscreen
 clipboard evidence above is specific to the inspected Qt 6.8.3 platform plugin.
+
+Controller re-review closed the delayed-discovery and legitimate terminal-cleanup
+findings at `9f82f97`. Follow-up fixture `a9c1f35` removes hello-only metadata from
+stop responses and asserts retained verified capabilities for preactivation and
+activated sessions. Registered CTest passed 3/3 on both Windows x64 Release with
+explicit Qt 6.8.3 offscreen and Linux amd64 after this fixture was added. These
+results remain offline-only and do not establish native installation acceptance.
