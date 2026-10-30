@@ -114,3 +114,23 @@ checks, final artifact review and publication approval remain open. The VM
 currently has an unpublished Desktop 0.2.0 and a running independent Core service;
 ordinary upgrade testing must preserve those service/profile settings and all
 parked lab directories. No installer action was performed during inventory.
+
+## Signed Core verification (2026-10-30)
+
+The user manually signed the frozen candidate with the existing DPAPI-protected
+production key after agent-side automatic approval rejected signing. No private
+key was exposed to the agent. The signed manifest is byte-identical to the frozen
+unsigned manifest (SHA-256
+`a3d53efbe49c9bc1c76627d6dda1c0b187bad3ab481073cfb8c6c3ea4e57f5c1`).
+Detached signature SHA-256:
+`7f395a2d1e42aa99aad1213d8654dc057c2da28c2910c154da144fba2f4e4dff`.
+
+The release build's `core-update-test --verify-release` passed for all four
+actual ZIPs using the configured production key, tag `v0.3.0-beta.2`, GUI `0.2.0`,
+IPC 1 and profile format 1. This verifies signature, target selection and archive
+extraction; it is not an installed service-update or rollback observation.
+The earlier missing-signature blocker is closed. The exact PR head `183125e`
+passed hosted Windows x64/ARM64 and native Linux amd64/arm64 CI (push and PR runs).
+Windows ARM64 remains compile-only. Installation/upgrade smoke checks, final
+review and separate publication approval remain open. No tag or release was
+published.
