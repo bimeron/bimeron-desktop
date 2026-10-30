@@ -784,3 +784,8 @@ README specifies the scheduling witness and explicit safe-API blocker fallback.
 Offline PS 5.1/7 tests and a fresh ignored blocker-only evidence bundle are required;
 this is not a guest-ready implementation and must not trigger parent MSI execution.
 Frozen checkpoint inputs, supported packaging and existing runners stay unchanged.
+The strict-deadline blocker witness passed offline on PS 5.1 and 7.6.9. The new
+ignored build/ack-checkpoint-runner-blocked-review contains unchanged frozen
+checkpoint inputs and refusal-only source/evidence, pending independent review.
+Operational interruption acceptance is unimplemented; this bundle must not be
+used to authorize parent MSI execution. No build/package flow changed.

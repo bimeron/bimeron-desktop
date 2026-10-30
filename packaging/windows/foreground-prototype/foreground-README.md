@@ -1291,3 +1291,27 @@ persistent execution policy. Linux/ARM64/product package matrix and benchmarks
 are inapplicable to this refusal-only standalone Windows runner. A runnable
 interrupting worker remains blocked unless an independently reviewed mechanism
 satisfies the original deadline condition; this specification relaxes none of it.
+
+### Checkpoint runner blocker evidence
+
+Specification commit 2df51d7 precedes the refusal-only implementation. Offline
+lab-checkpoint-runner-test.ps1 passed on Windows PowerShell 5.1.19041.6456 and
+PowerShell 7.6.9. It checks the refusal entry point/unused inputs and managed
+controls, and reproduces a scheduling gap from a final 299999 ms check to a
+simulated call at 300001 ms. No native interop is invoked. Fake pin retention
+is only witness state, not an implemented worker ownership test.
+
+The runnable interruption implementation and its operational acceptance suite
+(retained actual launch handle, bounded binary parsing, fixed path pins,
+freshness, late launch/early exit, actual worker pin lifetimes and same-handle
+death confirmation) remain unimplemented due to the strict deadline blocker.
+Do not interpret passing blocker checks as passing those requested tests.
+
+New ignored build/ack-checkpoint-runner-blocked-review freezes unchanged inputs
+from the verified reconciled index, current source, test logs, hash inventory,
+effects and a refusal-only exact guest command. Status: BLOCKED, pending independent
+review, NOT guest-ready; parent VM/MSI execution must not follow this bundle.
+The runner does not read or mutate any protected path, state, ACL, log or package.
+Diff review found no launch/termination/native import or cleanup path, production
+change, authority relaxation or package hash rewrite. No benchmark/profile or
+production matrix is relevant to this refusal-only Windows lab entry point.
