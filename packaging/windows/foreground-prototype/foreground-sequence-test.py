@@ -26,7 +26,16 @@ def validate(root, architecture):
     gate = product.find("w:InstallExecuteSequence/w:Custom", NS)
     assert gate.get("Action") == action.get("Id")
     assert gate.get("Before") == "InstallInitialize" and gate.text == "1"
-    assert product.find("w:MajorUpgrade", NS).get("Schedule") == "afterInstallInitialize"
+    assert product.find("w:MajorUpgrade", NS).get("Schedule") == "afterInstallExecute"
+    actions = product.findall("w:CustomAction", NS)
+    assert len(actions) == 2
+    post = actions[1]
+    assert post.attrib == {"Id": "ForegroundPostFinalizeGate", "BinaryKey": binary.get("Id"),
+                           "DllEntry": "ForegroundPostFinalize", "Execute": "immediate", "Return": "check"}
+    gates = product.findall("w:InstallExecuteSequence/w:Custom", NS)
+    assert len(gates) == 2
+    assert gates[1].attrib == {"Action": "ForegroundPostFinalizeGate", "After": "InstallFinalize"}
+    assert gates[1].text == "1"
     assert not product.findall(".//w:File", NS)  # Binary is not installed helper.
     assert not product.findall(".//w:MoveFile", NS)
 

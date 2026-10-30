@@ -49,7 +49,8 @@ int wmain(int argc, wchar_t** argv) {
             std::pair{L"O:BAG:BAD:P(A;;GA;;;WD)", false},
             std::pair{L"O:BAG:BAD:P(A;;0x00000001;;;BU)", false},
             std::pair{L"O:BAG:BAD:P(A;;RC;;;BU)", true},
-            std::pair{L"O:BAG:BAD:NO_ACCESS_CONTROL", false}}) {
+            std::pair{L"O:BAG:BAD:NO_ACCESS_CONTROL", false},
+            std::pair{L"O:BAG:BA", false}}) {
             PSECURITY_DESCRIPTOR sd = nullptr;
             if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(fixture.first,
                   SDDL_REVISION_1, &sd, nullptr)) {
@@ -70,6 +71,8 @@ int wmain(int argc, wchar_t** argv) {
         check(GetAce(acl, 0, &ace), "fixture ACE");
         static_cast<ACE_HEADER*>(ace)->AceType = SYSTEM_AUDIT_ACE_TYPE;
         check(!foreground::safeMutexDescriptor(unknown), "unknown effective ACE accepted");
+        check(!foreground::safeJournalDescriptor(unknown), "unknown journal ACE accepted");
+        check(!foreground::safeJournalDescriptor(nullptr), "unreadable journal descriptor accepted");
         LocalFree(unknown);
         std::wstring name = L"Local\\Bimeron.Foreground.Prototype." +
                             std::to_wstring(GetCurrentProcessId()) + L"." +
@@ -105,7 +108,80 @@ int wmain(int argc, wchar_t** argv) {
         auto journal = directory / L"journal";
         const std::string metadata = "installation=0123456789abcdef0123456789abcdef\n"
             "prior-policy={schema:1,opaque-test-bytes}\nrollback=fixture-image-identity\n";
-        for (bool rollback : {false, true}) {
+        foreground::SettlementFixture evidence;
+        evidence.callback = foreground::Callback::PostFinalize;
+        evidence.pendingGeneration = evidence.observedGeneration = 42;
+        evidence.pending = evidence.inventory = evidence.outerCompletion = true;
+        evidence.protection = evidence.quiescent = evidence.flushed = evidence.hostAlive = true;
+        auto& t = evidence.effective;
+        t.observed = t.interactive = t.elevated = t.enabledAdmin = t.impersonationAdequate = true;
+        t.restricted = false; t.integrity = SECURITY_MANDATORY_HIGH_RID;
+        t.session = 1; t.sid = L"S-1-5-21-1"; t.logon.LowPart = 7;
+        evidence.initiating = t;
+        auto filtered = t; filtered.elevated = false;
+        using TR = foreground::ThreadTokenResult;
+        check(!foreground::eligibleContextFixture(
+            foreground::effectiveTokenFixture(TR::Present, filtered, t), t), "process overrode filtered thread");
+        check(!foreground::eligibleContextFixture(
+            foreground::effectiveTokenFixture(TR::Error, {}, t), t), "thread error fell back to process");
+        check(foreground::eligibleContextFixture(
+            foreground::effectiveTokenFixture(TR::NoToken, {}, t), t), "no-token process fallback");
+        check(foreground::settledFixture(evidence), "bounded fixture should settle");
+        check(!foreground::settledFixture({}), "default evidence settled");
+        for (auto callback : {foreground::Callback::Missing, foreground::Callback::Commit,
+                              foreground::Callback::Rollback}) {
+            auto bad = evidence; bad.callback = callback;
+            check(!foreground::settledFixture(bad), "callback settled pending");
+        }
+        for (bool foreground::SettlementFixture::* field : {
+                &foreground::SettlementFixture::pending, &foreground::SettlementFixture::inventory,
+                &foreground::SettlementFixture::outerCompletion, &foreground::SettlementFixture::protection,
+                &foreground::SettlementFixture::quiescent, &foreground::SettlementFixture::flushed,
+                &foreground::SettlementFixture::hostAlive}) {
+            auto bad = evidence; bad.*field = false;
+            check(!foreground::settledFixture(bad), "missing settlement primitive accepted");
+        }
+        for (int n = 0; n < 10; ++n) {
+            auto bad = evidence;
+            switch (n) {
+            case 0: bad.effective.elevated = false; break;
+            case 1: bad.effective.enabledAdmin = false; break;
+            case 2: bad.effective.restricted = true; break;
+            case 3: bad.effective.integrity = SECURITY_MANDATORY_MEDIUM_RID; break;
+            case 4: bad.effective.session = 0; break;
+            case 5: bad.effective.sid = L"S-1-5-18"; break;
+            case 6: bad.effective.logon.LowPart++; break;
+            case 7: bad.effective.impersonationAdequate = false; break;
+            case 8: bad.effective.interactive = false; break;
+            case 9: bad.observedGeneration++; break;
+            }
+            check(!foreground::settledFixture(bad), "unsafe context/generation accepted");
+        }
+        check(foreground::verifyInitiatingClient() == foreground::ClientCorrelation::Unknown,
+              "invented initiating-client proof");
+        for (auto text : {L"O:BAG:BAD:P(A;;KA;;;BA)",
+                          L"O:BAG:BAD:P(A;;KW;;;BU)",
+                          L"O:BAG:BAD:P(A;;GW;;;BU)",
+                          L"O:BAG:BAD:P(A;;GA;;;WD)",
+                          L"O:BAG:BAD:P(A;;0x00000020;;;BU)",
+                          L"O:BAG:BAD:P(A;;SD;;;BU)",
+                          L"O:BAG:BAD:P(A;;WD;;;BU)",
+                          L"O:BAG:BAD:P(A;;WO;;;BU)",
+                          L"O:BAG:BAD:P(A;ID;KW;;;BU)",
+                          L"O:BAG:BAD:NO_ACCESS_CONTROL",
+                          L"O:BAG:BA",
+                          L"O:BAG:BAD:(A;;KA;;;BA)",
+                          L"O:BUG:BAD:P(A;;KA;;;BA)"}) {
+            PSECURITY_DESCRIPTOR descriptor = nullptr;
+            check(ConvertStringSecurityDescriptorToSecurityDescriptorW(text, SDDL_REVISION_1,
+                  &descriptor, nullptr), "journal descriptor fixture");
+            bool safe = foreground::safeJournalDescriptor(descriptor);
+            check(safe == (std::wstring(text) == L"O:BAG:BAD:P(A;;KA;;;BA)"), "journal descriptor decision");
+            check(!foreground::journalAccessFixture(descriptor, nullptr, true, true), "invalid token access");
+            check(!foreground::journalAccessFixture(descriptor, nullptr, false, true), "wrong view access");
+            LocalFree(descriptor);
+        }
+        for (int attempt = 0; attempt < 2; ++attempt) {
             foreground::Worker worker(mutex, journal.wstring(), metadata);
             check(worker.begin(), "worker begin");
             check(!worker.begin(), "duplicate admission accepted");
@@ -123,19 +199,23 @@ int wmain(int argc, wchar_t** argv) {
             input.close();
             check(bytes == "foreground-prototype-pending-v1\n" + metadata,
                   "rollback metadata changed");
-            check(!worker.settle(rollback, false), "incomplete settlement accepted");
+            check(!worker.settleFixture({}), "incomplete settlement accepted");
+            auto commitCallback = evidence;
+            commitCallback.callback = foreground::Callback::Commit;
+            check(!worker.settleFixture(commitCallback) && std::filesystem::exists(journal),
+                  "commit callback erased pending journal");
             check(probe(name.c_str()) == 0, "released before completed settlement");
             HANDLE shared = CreateFileW(journal.c_str(), GENERIC_READ, FILE_SHARE_READ,
                 nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
             check(shared != INVALID_HANDLE_VALUE, "sharing fixture");
-            check(!worker.settle(rollback, true), "sharing violation accepted");
+            check(!worker.settleFixture(evidence), "sharing violation accepted");
             check(probe(name.c_str()) == 0, "sharing violation released guard");
             CloseHandle(shared);
             bool settled = false;
-            std::thread callback([&] { settled = worker.settle(rollback, true); });
+            std::thread callback([&] { settled = worker.settleFixture(evidence); });
             callback.join();
             check(settled && owner == worker.ownerThread(), "settlement thread changed");
-            check(!worker.settle(rollback, true), "duplicate settlement accepted");
+            check(!worker.settleFixture(evidence), "duplicate settlement accepted");
             check(!std::filesystem::exists(journal), "settled journal retained");
             check(probe(name.c_str()) == 3, "mutex not released after settlement");
         }
@@ -182,6 +262,8 @@ int wmain(int argc, wchar_t** argv) {
         using Action = UINT (__stdcall*)(UINT_PTR);
         auto action = reinterpret_cast<Action>(GetProcAddress(dll, "ForegroundPrototype"));
         check(action && action(0) == ERROR_INSTALL_FAILURE, "production gate open");
+        auto post = reinterpret_cast<Action>(GetProcAddress(dll, "ForegroundPostFinalize"));
+        check(post && post(0) == ERROR_INSTALL_FAILURE, "post-Finalize production gate open");
         std::cout << "PASS: security, worker thread/process exclusion, nested refusal, "
                      "journal/settlement/teardown, abandonment, hard MSI gate\n";
         return 0;

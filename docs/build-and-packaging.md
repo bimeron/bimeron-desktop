@@ -500,3 +500,24 @@ or change the bundled Core. This build registration alone does not establish
 integrated profile-test coverage. Protected executable/peer authentication,
 same-user elevation, architecture-specific final executable approvals, MSI
 transaction safety and live native networking remain separate acceptance gates.
+
+## Bounded elevated-client prototype follow-up
+
+The standalone foreground prototype now targets the accepted 2183b74 offline
+contract. Its owned README records acceptance and evidence limits before code.
+It remains outside production CMake/CPack; all MSI exports fail closed. No registry
+reader/writer, enrollment, helper or Core admission change is authorized. Linked
+MSI/table and token-descriptor fixture evidence is separate from actual initiating
+MSI client correlation, outer completion, protected journal durability and VM gates.
+
+Follow-up offline evidence: MSVC x64/ARM64 standalone compilation and cached WiX 3
+candle/light linking completed. x64 CTest passed 3/3; ARM64 host-side WiX/MSI/PE
+checks passed 2/2 (no ARM64 execution). ICE emitted ICE71 for the empty Media table;
+it was not suppressed. Read-only table reports live in each build's
+`Release/fixture.tables.json`, beside `fixture.msi`. The completion boolean was
+removed; only bounded PostFinalize fixture evidence can acknowledge a temporary
+journal. Commit callbacks cannot settle. Current-client correlation remains
+Unknown; the current-token reader and privileged positive AccessCheck are not
+actual MSI callback proof. Both MSI exports always refuse. Core does not read
+this fixture journal, so durable host exclusion and native enrollment remain
+unimplemented. See the owned README for commands and remaining VM gates.

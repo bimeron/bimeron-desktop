@@ -22,10 +22,41 @@ public:
     Worker(HANDLE mutex, std::wstring journal, std::string rollbackMetadata);
     ~Worker();
     bool begin();
-    bool settle(bool rollback, bool completed);
+    bool settleFixture(const struct SettlementFixture& evidence);
     DWORD ownerThread() const;
 private:
     struct State;
     std::unique_ptr<State> state;
 };
+}
+
+namespace foreground {
+// Offline observations only. No value of these types authorizes enrollment.
+struct TokenFixture {
+    bool observed = false, interactive = false, elevated = false;
+    bool enabledAdmin = false, restricted = true, impersonationAdequate = false;
+    DWORD integrity = 0, session = 0;
+    std::wstring sid;
+    LUID logon{};
+};
+enum class ThreadTokenResult { Present, NoToken, Error };
+FG_API TokenFixture effectiveTokenFixture(ThreadTokenResult threadResult,
+                                        const TokenFixture& thread, const TokenFixture& process);
+FG_API bool eligibleContextFixture(const TokenFixture& effective, const TokenFixture& initiating);
+FG_API bool safeJournalDescriptor(PSECURITY_DESCRIPTOR descriptor);
+FG_API bool journalAccessFixture(PSECURITY_DESCRIPTOR descriptor, HANDLE token,
+                                bool native64View, bool safeAncestors);
+// Reads only the current effective token, never discovers/guesses an MSI client.
+FG_API bool readEffectiveToken(TokenFixture& result);
+enum class ClientCorrelation { Unknown };
+FG_API ClientCorrelation verifyInitiatingClient();
+enum class Callback { Missing, Commit, Rollback, PostFinalize };
+struct SettlementFixture {
+    Callback callback = Callback::Missing;
+    TokenFixture effective, initiating;
+    unsigned long long pendingGeneration = 0, observedGeneration = 0;
+    bool pending = false, inventory = false, outerCompletion = false;
+    bool protection = false, quiescent = false, flushed = false, hostAlive = false;
+};
+FG_API bool settledFixture(const SettlementFixture& evidence);
 }
