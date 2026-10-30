@@ -316,3 +316,18 @@ configured lab identity; these are inert local fixtures, never release artifacts
   }
 }
 ```
+
+## Accepted Component-table correction (2026-10-30)
+
+The first Success VM attempt returned 1603 at InstallInitialize immediately after
+error 2205 for the missing Component table. The frozen MSI lacks that table;
+its absence is a strong hypothesis, not a proven cause. Add a schema-correct,
+physically present, empty Component table using WiX EnsureTable. Do not add a
+component, payload, registry, service, or change callbacks, sequencing or runner.
+Acceptance: inspect all six actual Component columns and their schema, require
+zero rows, preserve every existing strict gate and 42 negative cases, and reject
+missing, malformed and nonempty tables. The frozen old MSI must fail specifically
+for the missing table. Rebuild all three variants in fresh x64 and ARM64 directories
+with cached WiX and unsuppressed ICE; run x64 tests and ARM64 host checks. Record
+fresh identities, hashes and provenance. ICE success alone is not runtime proof;
+independent review and a parent-led VM repeat remain necessary.
