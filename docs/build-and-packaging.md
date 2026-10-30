@@ -709,3 +709,14 @@ provenance or production authority. The standalone import checker must explicitl
 allow the new MSI API entry after inspecting the linked image. Fresh source builds,
 read-only checks, manifests and review are required; never overwrite frozen inputs.
 Supported production packaging and original fail-closed exports remain unchanged.
+
+ACK expanded offline verification follow-up: after the new native resource-query
+negative test's Unicode sentinel and owned-database commit corrections, the parent
+rebuilt its x64 harness and the previously unbuilt base fixture targets. The full
+configured x64 standalone CTest set passed 7/7, including missing/nonempty resource
+queries without installer actions. The revised test target also compiled for
+ARM64; ARM64 actual read-only ACK checks passed 1/1. These later test-only source
+changes do not change the frozen source-a1ab617 MSI/DLL behavior bytes. Initial
+unbuilt-target and test-build/cleanup failures were resolved before this pass;
+none was skipped to report success. Frozen Success artifact review and a new VM
+run remain separate gates. No product runtime or release matrix is established.
