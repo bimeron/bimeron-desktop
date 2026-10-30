@@ -2,8 +2,12 @@
 
 ## Status and implementation gate
 
-This is the accepted stage 8 specification, not implemented support or runtime
-evidence. Desktop baseline: `82943b87a36acfe6ab041902ea02bad917579691`.
+This is the accepted stage 8 specification. Partial offline implementation covers
+profile handling, authenticated transport, lifecycle fixtures and guarded UI routing.
+Production native connection, provisioning and owner discovery remain unavailable;
+the installer prototype remains fail-closed and outside production packaging.
+Recorded offline checks do not establish protected-install or native runtime support.
+Historical planning Desktop baseline: `82943b87a36acfe6ab041902ea02bad917579691`.
 Core baseline: `v0.3.0-beta.1`, revision
 `9f527efe0a4959786084675f1ff795edb8a0d910`. The annotated tag resolves to that
 commit. At planning time its release-by-tag API returned 404. The actual Desktop
