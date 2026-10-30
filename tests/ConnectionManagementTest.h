@@ -732,6 +732,20 @@ struct ConnectionManagementTest {
         window.poll();
         require(waitFor([&] { return requests > suspendedBefore && synchronized(); }), "regular polling resumes after update");
 
+        const int beforeUpdateRefresh = requests;
+        window.refreshCoreAfterUpdate();
+        require(waitFor([&] { return requests > beforeUpdateRefresh && synchronized(); }),
+                "unbound update refresh still synchronizes the packet backend");
+        if (!window.developmentStatus_) window.developmentPage()->setParent(&window);
+        const quint64 beforeDevelopmentChange = window.connectionGeneration_;
+        window.development_->select("relative-invalid-core");
+        require(window.connectionGeneration_ > beforeDevelopmentChange
+                && window.connectionLabel_->text() == "Core unavailable"
+                && window.developmentStatus_->text() == window.development_->status()
+                && !window.development_->busy() && window.development_->failed(),
+                "unbound Development failure still resets packet state and updates controls");
+        window.core_.setEndpoint(server.serverName());
+
         window.connectionFailure("hello", CoreClient::Failure::AccessDenied, "Access to Core was denied");
         require(window.connectionLabel_->text() == "Access to Core was denied", "access denial must be distinct");
         window.connectionFailure("hello", CoreClient::Failure::Incompatible, "incompatible");
@@ -740,7 +754,44 @@ struct ConnectionManagementTest {
         auto nativeFixture = std::make_unique<NativeIKEv2SessionTest::Fixture>();
         nativeFixture->discover();
         nativeFixture->observe(nativeFixture->sessionReply("connected", true));
+        bool queuedRefreshDelivered = false, queuedDevelopmentDelivered = false;
+        const auto queueLegacyCallbacks = [&] {
+            queuedRefreshDelivered = queuedDevelopmentDelivered = false;
+            QTimer::singleShot(0, &window, [&] {
+                window.refreshCoreAfterUpdate();
+                queuedRefreshDelivered = true;
+            });
+            QTimer::singleShot(0, &window, [&] {
+                emit window.development_->changed();
+                queuedDevelopmentDelivered = true;
+            });
+        };
+        const auto checkLegacyCallbacks = [&] {
+            const QString presentation = window.connectionLabel_->text();
+            const quint64 generation = window.connectionGeneration_;
+            const int previousRequests = requests;
+            const auto previousCalls = nativeFixture ? nativeFixture->calls.size() : 0;
+            if (!window.trayMenu_) window.trayMenu_ = new QMenu(&window);
+            window.rebuildTrayMenu();
+            const QString trayStatus = window.trayStatusAction_->text();
+            window.developmentStatus_->setText("stale development status");
+            require(waitFor([&] { return queuedRefreshDelivered && queuedDevelopmentDelivered; }),
+                    "queued legacy callbacks delivered after native authority transition");
+            require(window.nativeOwnerBlocked_ && window.connectionLabel_->text() == presentation
+                    && window.nativeStatusLabel_->text() == presentation
+                    && window.trayStatusAction_->text() == trayStatus
+                    && window.connectionGeneration_ == generation,
+                    "queued legacy callbacks preserve native presentation tray and authority");
+            require(!window.core_.busy() && requests == previousRequests
+                    && (!nativeFixture || nativeFixture->calls.size() == previousCalls),
+                    "queued legacy callbacks send no daemon hello or native activation");
+            require(window.developmentStatus_->text() == window.development_->status()
+                    && window.developmentStopOrphan_->isHidden() == !window.development_->orphanAvailable(),
+                    "native authority preserves Development status and cleanup controls");
+        };
+        queueLegacyCallbacks();
         window.bindNativeController(&nativeFixture->controller);
+        checkLegacyCallbacks();
         require(window.nativeOwnerBlocked_ && !window.nativeSession_
                 && window.nativeStatusLabel_->text().contains("Active"),
                 "initial real controller snapshot binds independently of daemon flag");
@@ -777,7 +828,9 @@ struct ConnectionManagementTest {
         window.trayMenu_->actions().last()->trigger();
         require(!window.quitRequested_ && nativeFixture->calls.size() == nativeCalls,
                 "close and tray quit never stop or close native owner");
+        queueLegacyCallbacks();
         nativeFixture.reset();
+        checkLegacyCallbacks();
         require(!window.nativeController_ && window.nativeOwnerBlocked_
                 && window.nativeStatusLabel_->text().contains("Unknown"),
                 "controller destruction leaves guarded sticky unknown");

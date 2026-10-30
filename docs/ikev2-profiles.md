@@ -303,6 +303,16 @@ Report ARM64 runtime and EN/RU 100/150 percent presentation evidence honestly;
 compilation or fixture generation alone is not visual or native activation proof.
 No timer changes, benchmark, packaging, enrollment, network mutation or release.
 
+Queued-callback acceptance refinement: callbacks queued before real-controller
+binding must recheck the sticky native authority boundary when delivered.
+Post-update refresh and Development changed delivery must preserve native
+presentation, tray state and the block, send no daemon hello and cause no native
+activation, including after controller destruction leaves Unknown. Development
+status and orphan-cleanup controls must still refresh. Unbound packet update
+refresh and Development notification behavior must remain unchanged. Reproduce
+with queued callbacks before the fix, then rerun focused offline tests and all
+four GUI compilations. No timer or performance behavior is changed.
+
 Offline UI binding evidence (2026-10-30): based on parent `e5f00d3`, acceptance
 was committed before implementation. Windows x64 Qt 6.8.3 and Linux amd64 Qt 6.4.2
 passed all three existing CTest executables with the offscreen platform and optional
@@ -327,6 +337,25 @@ so these images do not establish readable text, clipping or visual acceptance.
 Native-platform presentation and real tray/close behavior remain manual acceptance
 gates. This is partial offline GUI integration, not native activation, protected
 installation, enrollment, live networking or release acceptance.
+
+Queued-callback fix evidence (2026-10-30), isolated baseline `3cf0f89`:
+acceptance above was recorded before the fix. The Windows x64 reproducer failed
+before production edits with "queued legacy callbacks preserve native presentation
+tray and authority". The fix checks the sticky native block inside both shared
+callback handlers; Development status and orphan-cleanup controls still refresh.
+Queued callbacks across real-controller binding and destruction now preserve the
+native labels, tray status and connection generation, with no daemon request or
+native activation. Explicit unbound update refresh and invalid Development
+selection checks retain packet synchronization and failure presentation.
+
+Final Windows x64 (Qt 6.8.3) and Linux amd64 (Qt 6.4.2) CTest passed 3/3 each,
+including developer-mode-test --visual-check, with explicit offscreen and optional
+Core variables cleared. All four GUI targets compiled; Windows/Linux ARM64 were
+compile-only. Review covered every refreshCoreAfterUpdate/updateDevelopment caller
+and sibling hello/invalidation authority paths; no additional finding remains in
+this fix scope. No transport, controller, pins, packaging or timer changes; no
+benchmark/profiling or release applies. EN/RU glyph/layout and native tray visual
+acceptance remain open as recorded above.
 
 ### Disconnected pending-file fixture acceptance (bounded batch)
 

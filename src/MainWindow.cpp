@@ -2601,6 +2601,7 @@ void MainWindow::finishServiceCommand(int exitCode, const QString &details) {
 }
 
 void MainWindow::refreshCoreAfterUpdate() {
+    if (nativeOwnerBlocked_) return;
     if (core_.busy()) QTimer::singleShot(250, this, &MainWindow::refreshCoreAfterUpdate);
     else { invalidateConnection(); core_.request("hello"); }
 }
@@ -2819,6 +2820,14 @@ QWidget *MainWindow::developmentPage() {
 }
 
 void MainWindow::updateDevelopment() {
+    if (developmentStatus_) {
+        developmentStatus_->setText(development_->status()
+            + (development_->local() ? "\n" + QDir::toNativeSeparators(development_->path()) : QString{}));
+        developmentApply_->setEnabled(!development_->busy());
+        developmentStopOrphan_->setVisible(development_->orphanAvailable());
+        developmentStopOrphan_->setEnabled(!development_->busy());
+    }
+    if (nativeOwnerBlocked_) return;
     autoConnectAttempted_ = true;
     invalidateConnection();
     activeProfileId_.clear();
@@ -2830,13 +2839,6 @@ void MainWindow::updateDevelopment() {
     state_ = "unknown";
     connectionLabel_->setText(blocked ? tr("Core unavailable") : tr("Connecting to core…"));
     updateConnectionButton();
-    if (developmentStatus_) {
-        developmentStatus_->setText(development_->status()
-            + (development_->local() ? "\n" + QDir::toNativeSeparators(development_->path()) : QString{}));
-        developmentApply_->setEnabled(!development_->busy());
-        developmentStopOrphan_->setVisible(development_->orphanAvailable());
-        developmentStopOrphan_->setEnabled(!development_->busy());
-    }
     const bool system = !blocked && !development_->local();
     for (auto *button : {serviceInstallButton_, serviceStartButton_, serviceStopButton_, serviceUpdateButton_, serviceUninstallButton_, serviceRecoveryButton_})
         button->setEnabled(system);
