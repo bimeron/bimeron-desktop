@@ -10,6 +10,8 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 function Initialize-CheckpointLab {
+ $ErrorActionPreference="Stop"
+ Set-StrictMode -Version Latest
  Add-Type -TypeDefinition @"
 using System;
 using System.IO;
@@ -204,14 +206,14 @@ public static class CheckpointNative {
    }
  }
 }
-public enum CheckpointPinRole { TraversalOnly, LabProtected, TrustedOS, InternalSystemImagePin }
+public enum CheckpointPinRole { TraversalOnly, LabProtected, TrustedOS, InternalSystemImagePin, OSContent }
 public sealed class CheckpointPin : IDisposable {
  public readonly SafeFileHandle Handle;public readonly string BoundPath;readonly CheckpointNative.Info identity;readonly bool directory;readonly CheckpointPinRole role;
  public CheckpointPin(string path,bool dir,CheckpointPinRole selected):this(path,dir,selected,false){}
  public static CheckpointPin SystemImage(){return new CheckpointPin(CheckpointNative.VolumePath(CheckpointNative.SystemExe()),false,CheckpointPinRole.InternalSystemImagePin,true);}
  public static CheckpointPin LogAlias(string path){return new CheckpointPin(path,false,CheckpointPinRole.LabProtected,false,true);}
  private CheckpointPin(string path,bool dir,CheckpointPinRole selected,bool fixedSystemImage,bool log=false){
-  if(selected<CheckpointPinRole.TraversalOnly || selected>CheckpointPinRole.InternalSystemImagePin || (selected==CheckpointPinRole.InternalSystemImagePin && !fixedSystemImage))throw new IOException("Internal fixed image role required");
+  if(selected<CheckpointPinRole.TraversalOnly || selected>CheckpointPinRole.OSContent || (selected==CheckpointPinRole.InternalSystemImagePin && !fixedSystemImage))throw new IOException("Internal fixed image role required");
   directory=dir;role=selected;BoundPath=path;
   Handle=CheckpointNative.CreateFileW(path,log?0x20000u:((dir?0x80u:0x80000000u)|0x20000u),log?3u:1u,IntPtr.Zero,3,0x02200000,IntPtr.Zero);
   if(Handle.IsInvalid){int error=Marshal.GetLastWin32Error();Handle.Dispose();throw new System.ComponentModel.Win32Exception(error);}
@@ -241,23 +243,30 @@ public sealed class CheckpointOperation : IDisposable {
  public readonly string RunnerPath,LogPath;
  CheckpointPin Keep(CheckpointPin pin){pins.Add(pin);checks.Add(pin);return pin;}
  CheckpointPin Add(string path,bool directory,CheckpointPinRole role){var pin=new CheckpointPin(path,directory,role);pins.Add(pin);checks.Add(pin);return pin;}
- void Chain(string path,string anchor,CheckpointPinRole role=CheckpointPinRole.LabProtected){int end=path.IndexOf("}\\",StringComparison.Ordinal)+2;if(end<3)throw new IOException("Volume path required");bool authority=false;
-  while(true){string part=path.Substring(0,end);if(part==anchor)authority=true;Add(part,true,authority?role:CheckpointPinRole.TraversalOnly);if(end==path.Length)break;end=path.IndexOf('\\',end+1);if(end<0)end=path.Length;}
+ public static CheckpointPinRole ChainRole(string part,string anchor,string ownedRoot){
+  if(part==anchor)return CheckpointPinRole.TrustedOS;
+  if(ownedRoot!=null && (part==ownedRoot || part.StartsWith(ownedRoot+"\\",StringComparison.Ordinal)))return CheckpointPinRole.LabProtected;
+  if(ownedRoot==null && part.StartsWith(anchor+"\\",StringComparison.Ordinal))return CheckpointPinRole.OSContent;
+  if(anchor.StartsWith(part.EndsWith("\\",StringComparison.Ordinal)?part:part+"\\",StringComparison.Ordinal))return CheckpointPinRole.TraversalOnly;
+  throw new IOException("Unclassified chain component");
+ }
+ void Chain(string path,string anchor,string ownedRoot){int end=path.IndexOf("}\\",StringComparison.Ordinal)+2;if(end<3)throw new IOException("Volume path required");bool authority=false;
+  while(true){string part=path.Substring(0,end);if(part==anchor)authority=true;var role=ChainRole(part,anchor,ownedRoot);try{Add(part,true,role);}catch(Exception error){throw new IOException("Fixed chain pin refused: "+part+" role="+role,error);}if(end==path.Length)break;end=path.IndexOf('\\',end+1);if(end<0)end=path.Length;}
   if(!authority)throw new IOException("Anchor missing");
  }
  public CheckpointOperation(string runner,string expectedRunner,string expectedManifest,string expectedMsi){try{
-  known=CheckpointNative.ProgramFiles();RunnerPath=known+"\\BimeronCheckpointClientLab\\Run-CheckpointLab.ps1";
+  known=CheckpointNative.ProgramFiles();RunnerPath=known+"\\BimeronCheckpointClientLabBoundary\\Run-CheckpointLab.ps1";
   if(runner!=RunnerPath || expectedManifest.ToLowerInvariant()!=CheckpointFormat.ManifestHash || expectedMsi.ToLowerInvariant()!=CheckpointFormat.MsiHash)throw new IOException("Fixed input pins refused");
-  anchor=CheckpointNative.VolumePath(known);dosRoot=known+"\\BimeronCheckpointClientLab";root=anchor+"\\BimeronCheckpointClientLab";state=anchor+"\\BimeronProtectedAckLab\\LABProtectedFiles";
+  anchor=CheckpointNative.VolumePath(known);dosRoot=known+"\\BimeronCheckpointClientLabBoundary";root=anchor+"\\BimeronCheckpointClientLabBoundary";state=anchor+"\\BimeronProtectedAckLab\\LABProtectedFiles";
   LogPath=dosRoot+"\\checkpoint-"+Guid.NewGuid().ToString("N")+".log";
-  var independent=Add(anchor,true,CheckpointPinRole.LabProtected);anchorPin=independent;Chain(root,anchor);Chain(state,anchor);
+  var independent=Add(anchor,true,CheckpointPinRole.TrustedOS);anchorPin=independent;Chain(root,anchor,root);Chain(state,anchor,anchor+"\\BimeronProtectedAckLab");
   // The independently opened known folder must be the traversal anchor object.
   bool matched=false;foreach(var pin in checks)if(!Object.ReferenceEquals(pin,independent) && pin.Same(independent))matched=true;if(!matched)throw new IOException("Known folder mismatch");
   var self=Add(root+"\\Run-CheckpointLab.ps1",false,CheckpointPinRole.LabProtected);if(CheckpointFormat.Hash(self.Read(1048576))!=expectedRunner.ToLowerInvariant())throw new IOException("Runner digest refused");
   manifest=Add(root+"\\run.manifest",false,CheckpointPinRole.LabProtected);CheckpointFormat.Manifest(manifest.Read(65536));
   var protectedManifest=Add(state+"\\run.manifest",false,CheckpointPinRole.LabProtected);CheckpointFormat.Manifest(protectedManifest.Read(65536));
   msi=Add(root+"\\lab-protected-ack-Checkpoint.msi",false,CheckpointPinRole.LabProtected);if(CheckpointFormat.Hash(msi.Read(16777216))!=CheckpointFormat.MsiHash)throw new IOException("MSI digest refused");
-  exe=CheckpointNative.SystemExe();var image=Keep(CheckpointPin.SystemImage());string systemDirectory=image.BoundPath.Substring(0,image.BoundPath.LastIndexOf('\\'));Chain(systemDirectory,systemDirectory.Substring(0,systemDirectory.LastIndexOf('\\')),CheckpointPinRole.TrustedOS);
+  exe=CheckpointNative.SystemExe();var image=Keep(CheckpointPin.SystemImage());string systemDirectory=image.BoundPath.Substring(0,image.BoundPath.LastIndexOf('\\'));Chain(systemDirectory,CheckpointNative.VolumePath(Environment.SystemDirectory),null);
   Fresh();
  }catch{Dispose();throw;}}
  static void Absent(string path){using(var h=CheckpointNative.CreateFileW(path,0x80,7,IntPtr.Zero,3,0x02200000,IntPtr.Zero)){
@@ -269,7 +278,7 @@ public sealed class CheckpointOperation : IDisposable {
   // Reserve the GUID name without data read/write demand; logger sharing remains compatible.
   var logPin=CheckpointNative.CreateFileW(log,0,3,IntPtr.Zero,1,0x00200000,IntPtr.Zero);
   if(logPin.IsInvalid){logPin.Dispose();throw new IOException("Fresh log reservation failed");}pins.Add(logPin);
-  var dosAnchor=Add(known,true,CheckpointPinRole.LabProtected);
+  var dosAnchor=Add(known,true,CheckpointPinRole.TrustedOS);
   var dosMsi=Add(dosRoot+"\\lab-protected-ack-Checkpoint.msi",false,CheckpointPinRole.LabProtected);
   var dosLog=Keep(CheckpointPin.LogAlias(LogPath));
   if(!dosAnchor.Same(anchorPin) || !dosMsi.Same(msi))throw new IOException("DOS anchor/MSI mismatch");

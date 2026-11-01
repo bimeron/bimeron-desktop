@@ -104,10 +104,10 @@ try {
   Assert ((Get-Acl -LiteralPath (Join-Path $temp 'ready.record')).AreAccessRulesProtected)
  }finally{foreach($owner in $recordState.Owners){$owner.Dispose()}}
  $descriptor=ConvertTo-ObservationTaskSddl 'O:SYG:SYD:P(A;;GA;;;SY)(A;;GA;;;BA)'
- $config="ObservationHost002`nc260f52f`n98004df32700cc1dc24c1a75183533e8ca81143ac50f8188379cee94c315c94c`n$('a'*64)`n$('b'*64)`n$descriptor`n$descriptor`n"
+ $config="ObservationHost002`nboundary-v1`nf773983c67c06e79ff422350d64324fa9a1e6ca6b3e1bd7b326e5a02d68765cc`n$('a'*64)`n$('b'*64)`n$descriptor`n$descriptor`n"
  $bytes=[Text.Encoding]::UTF8.GetBytes($config)
- $parsed=Read-ObservationFixedConfig $bytes (Get-ObservationHash $bytes);Assert ($parsed.Experiment -ceq 'c260f52f')
- foreach($bad in @($config.Replace('002','003'),$config.Replace('98004','f700b'),($config+"`n"),$config.Replace("`n","`r`n"))) {
+ $parsed=Read-ObservationFixedConfig $bytes (Get-ObservationHash $bytes);Assert ($parsed.Experiment -ceq 'boundary-v1')
+ foreach($bad in @($config.Replace('002','003'),$config.Replace('f7739','f700b'),($config+"`n"),$config.Replace("`n","`r`n"))) {
   $badBytes=[Text.Encoding]::UTF8.GetBytes($bad)
   $refused=$false;try{Read-ObservationFixedConfig $badBytes (Get-ObservationHash $badBytes)|Out-Null}catch{$refused=$true};Assert $refused
  }
@@ -171,7 +171,7 @@ param($LabOnlyAllow,$ExpectedRunnerSha256,$ExpectedManifestSha256,$ExpectedMsiSh
 $probe.Calls++
 if($PID -ne $probe.ExpectedPid -or [runspace]::DefaultRunspace.InstanceId -ne $probe.ExpectedRunspace -or
  $LabOnlyAllow -cne 'DisposableWindowsVM' -or
- $ExpectedRunnerSha256 -cne '98004df32700cc1dc24c1a75183533e8ca81143ac50f8188379cee94c315c94c' -or
+ $ExpectedRunnerSha256 -cne 'f773983c67c06e79ff422350d64324fa9a1e6ca6b3e1bd7b326e5a02d68765cc' -or
  $ExpectedManifestSha256 -cne '0972de05644b5ac2a5210be9ad35efb596545dc1634a051b052f2dc0f4695330' -or
  $ExpectedMsiSha256 -cne '860949118c7ac1ed93376e91576735ee7de2a67f924f0be323c172cf272c355a'){$probe.CallbackFailed=$true}
 'fixture-success'
@@ -263,3 +263,79 @@ foreach($failReturnSink in @($false,$true)) {
  Assert ([object]::ReferenceEquals($retained,$returnState.Owners[0]))
 }
 "PASS: $count assertions including durable-return adapter ordering and sink-failure retention."
+
+# Exact experimental action acceptance; XML hashes are recomputed for semantic negatives.
+$root='C:\Program Files\BimeronCheckpointObservationBoundary'
+$image='C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
+$hostPath="$root\Checkpoint-ObservationHost.ps1"
+$xml=@"
+<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task"><Triggers/><Principals><Principal id="System"><UserId>S-1-5-18</UserId><LogonType>ServiceAccount</LogonType><RunLevel>HighestAvailable</RunLevel></Principal></Principals><Settings><MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy><DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries><StopIfGoingOnBatteries>false</StopIfGoingOnBatteries><AllowHardTerminate>false</AllowHardTerminate><StartWhenAvailable>false</StartWhenAvailable><RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable><IdleSettings><StopOnIdleEnd>false</StopOnIdleEnd><RestartOnIdle>false</RestartOnIdle></IdleSettings><AllowStartOnDemand>true</AllowStartOnDemand><Enabled>true</Enabled><Hidden>false</Hidden><RunOnlyIfIdle>false</RunOnlyIfIdle><WakeToRun>false</WakeToRun><ExecutionTimeLimit>PT0S</ExecutionTimeLimit><Priority>7</Priority></Settings><Actions Context="System"><Exec><Command>C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe</Command><Arguments>-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File &quot;$root\Checkpoint-ObservationHost.ps1&quot;</Arguments><WorkingDirectory>$root</WorkingDirectory></Exec></Actions></Task>
+"@
+Assert-ObservationTaskXml $xml (Get-ObservationHash ([Text.Encoding]::UTF8.GetBytes($xml))) $image $hostPath $root
+$count++
+foreach($args in @('-NoLogo -NoProfile -NonInteractive -File',
+ '-NoLogo -NoProfile -NonInteractive -ExecutionPolicy RemoteSigned -File',
+ '-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command',
+ '-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File -Extra')){
+ $bad=$xml.Replace('-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File',$args)
+ $refused=$false;try{Assert-ObservationTaskXml $bad (Get-ObservationHash ([Text.Encoding]::UTF8.GetBytes($bad))) $image $hostPath $root}catch{$refused=$true};Assert $refused
+}
+$bad=$xml.Replace('Checkpoint-ObservationHost.ps1','arbitrary.ps1')
+$refused=$false;try{Assert-ObservationTaskXml $bad (Get-ObservationHash ([Text.Encoding]::UTF8.GetBytes($bad))) $image "$root\arbitrary.ps1" $root}catch{$refused=$true};Assert $refused
+Assert-ObservationExecutionPolicy Undefined Undefined
+$count++
+foreach($policy in @('Restricted','AllSigned','RemoteSigned','Unrestricted','Bypass','Default','', 'undefined')){
+ foreach($scope in @('MachinePolicy','UserPolicy')){
+  $m='Undefined';$u='Undefined';if($scope -ceq 'MachinePolicy'){$m=$policy}else{$u=$policy}
+  $refused=$false;try{Assert-ObservationExecutionPolicy $m $u}catch{$refused=$true};Assert $refused
+ }
+}
+foreach($file in @('ObservationHost-Native.ps1','Checkpoint-ObservationHost.ps1')){
+ $source=[IO.File]::ReadAllText((Join-Path $PSScriptRoot $file))
+ Assert ($source -notmatch '(?i)Set-ExecutionPolicy|Set-ItemProperty|New-ItemProperty|RegistryKey|gpupdate')
+}
+"PASS: $count final assertions including exact process-only action and configured GPO refusal."
+
+
+# Inject only native adapters into the exact production chain helper. No native pins.
+$chainAst=[Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot 'ObservationHost-Native.ps1'),[ref]$null,[ref]$null)
+$chainFn=$chainAst.Find({param($n)$n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -ceq 'Open-ObservationProtectedChain'},$true)
+$injected=$chainFn.Extent.Text.Replace('Open-ObservationProtectedChain','Open-InjectedBoundaryChain').Replace('[CheckpointNative]::VolumePath($Path)','$Path').Replace('[CheckpointNative]::VolumePath($Anchor)','$Anchor').Replace('(Get-ObservationVolumePath $Path)','$Path').Replace('(Get-ObservationVolumePath $Anchor)','$Anchor').Replace('New-ObservationChainPin $part (-not $leaf -or $Directory.IsPresent) $role','New-InjectedBoundaryPin $part $role')
+. ([scriptblock]::Create($injected))
+function New-InjectedBoundaryPin($Part,$Role){
+ $script:boundaryCalls.Add($Role) | Out-Null
+ if($script:boundaryFailure -ceq 'constructor'){[void][int]::Parse('fail')}
+ if($script:boundaryFailure -ceq 'descriptor' -and $Role -eq [CheckpointPinRole]::TrustedOS){
+  [CheckpointNative]::ValidateDescriptor((New-Object Security.AccessControl.RawSecurityDescriptor 'O:SYG:SYD:(A;;FW;;;BU)'),[CheckpointPinRole]::TrustedOS)
+ }
+ [pscustomobject]@{Path=$Part;Role=$Role}
+}
+$volume='\\?\Volume{fixture}\';$anchor=$volume+'Program Files'
+foreach($failure in @('none','constructor','descriptor')){
+ $script:boundaryCalls=New-Object Collections.ArrayList;$script:boundaryFailure=$failure
+ $held=New-Object object;$owned=New-Object Collections.ArrayList;[void]$owned.Add($held)
+ $savedPreference=$ErrorActionPreference;$ErrorActionPreference='Continue';$caught=$false
+ try{Open-InjectedBoundaryChain ($anchor+'\BimeronCheckpointClientLabBoundary\leaf') $anchor $owned | Out-Null}catch{$caught=$true;Assert ($_.Exception.Message -match $(if($failure -ceq 'constructor'){'role=TraversalOnly'}else{'role=TrustedOS'}))}
+ finally{$ErrorActionPreference=$savedPreference}
+ Assert ([object]::ReferenceEquals($held,$owned[0]))
+ if($failure -ceq 'none'){
+  Assert (-not $caught)
+  Assert (($script:boundaryCalls -join ',') -ceq 'TraversalOnly,TrustedOS,LabProtected,LabProtected')
+  Assert ($owned.Count -eq 5)
+ }else{Assert $caught;$expected=if($failure -ceq 'constructor'){1}else{2};Assert ($script:boundaryCalls.Count -eq $expected);Assert ($owned.Count -eq $expected)}
+}
+"PASS: $count assertions including injected first-boundary constructor/descriptor failure under Continue; owners retained."
+# Protected binary staging uses the actual sink implementation on an owned temp fixture.
+$stageFixture=Join-Path ([IO.Path]::GetTempPath()) ('boundary-stage-'+[guid]::NewGuid().ToString('N'))
+[ObservationDurableSink]::NewDirectory($stageFixture)
+$stagePath=Join-Path $stageFixture 'payload.bin'
+$stageWriter=New-Object ObservationDurableSink $stagePath
+try {
+ $stageWriter.Write([byte[]](0,255,13,10,128))
+ Assert ((Get-Acl -LiteralPath $stagePath).AreAccessRulesProtected)
+ $reader=[IO.FileStream]::new($stagePath,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::ReadWrite)
+ try{$actual=New-Object byte[] 5;Assert ($reader.Read($actual,0,5) -eq 5);Assert ([Convert]::ToBase64String($actual) -ceq 'AP8NCoA=')}finally{$reader.Dispose()}
+ $refused=$false;try{$unexpected=New-Object ObservationDurableSink $stagePath}catch{$refused=$true};Assert $refused
+ $refused=$false;try{[ObservationDurableSink]::NewDirectory($stageFixture)}catch{$refused=$true};Assert $refused
+}finally{$stageWriter.Dispose()} # Only the inert owned test writer, never production owners.
+"PASS: $count assertions including exact binary CREATE_NEW staging and existing-directory refusal; fixture retained."

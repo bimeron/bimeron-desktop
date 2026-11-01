@@ -2344,3 +2344,197 @@ New exact LF source SHA-256 pins (earlier pins above are historical):
 The host embeds the new support digest. Parent orchestration v2 and its old frozen
 bundle are deliberately untouched; freeze new support/host/config/source hashes
 and obtain independent exact-code review before any parent provisioning/start.
+
+
+Process-only observation action amendment (2026-11-01, offline acceptance):
+The exact hash-approved experimental Task Scheduler Windows PowerShell action
+must use `-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File
+"C:\Program Files\BimeronCheckpointObservation-c260f52f\Checkpoint-ObservationHost.ps1"`.
+Require MachinePolicy and UserPolicy both exactly Undefined before provisioning;
+refuse every configured value, including Bypass. Default Restricted with undefined
+scopes is allowed only because this child action explicitly sets process policy.
+No Set-ExecutionPolicy, registry/GPO/global setting or parent remoting policy change
+is permitted. Reject missing/changed/extra arguments and arbitrary host paths even
+with recomputed XML hashes. Preserve all other pins, settings, source selection,
+protected state, one-shot dispatch and 300-second bound. Freeze v7 separately,
+support first, embedded host digest second, then parent/test pins, task XML and
+seven-line config002 hashes; preserve every earlier bundle. Native mode must not
+execute during this amendment. Offline PS5.1/7 host, parent and adapter suites plus
+DryRun are required. Product packaging/runtime behavior is unchanged.
+
+Reported v6 preparation boundary: effective Restricted, all five scopes Undefined
+including MachinePolicy/UserPolicy (no configured policy). HostRoot absent, Client
+exists. Stopped before host-root creation, archive, staging, task/MSI/runner launch.
+Earlier read-only bootstrap, retained pins/inventory/process queries and local
+native-evidence/sink/remoting preparation may already have occurred. Session 86808
+and all references remain parent-owned and retained; no cleanup or liveness query
+is authorized here. Earlier lost outcome remains Unknown. This is supplied context,
+not a fresh guest observation or evidence of quiescence.
+
+Amendment validation: PS5.1/7 each pass 320 host assertions (295 preserved),
+parent/adapters and DryRun; checkpoint 159+34+21 and Run-Lab 47 negatives pass.
+No native mode, Task APIs, VM, credentials, MSI or real runner launch.
+Independent review and native admission remain pending. Product matrix and
+performance checks are inapplicable; supported packaging is unchanged.
+New exact LF source pins:
+
+- `ObservationHost-Native.ps1`: `e970502dbdd95c5162c84afb0df1093beebb537d353751c66cdf2c9371bb3347`
+- `Checkpoint-ObservationHost.ps1`: `9b37fea468f91ca18718c5845c711b774c38a22435eaacff02f76dfd1d9a585b`
+- `lab-observation-host-test.ps1`: `a63a073b1173f1ab71253e1230acca76fd198a346af7676925502322c33e34ed`
+
+Ignored frozen candidate: `build/stage8-parent-orchestration-20261101-v7`;
+see SPEC.md, REVIEW.md, COMMANDS.md and SHA256SUMS.txt for pins and config recipe.
+Actual task XML/config hashes require future verified Scheduler readback; no
+guest task/config was created during offline validation. No commit or push.
+
+
+### Explicit authority boundary correction specification (2026-11-01, offline only)
+
+Supersedes earlier frozen-runner source-selection instructions for this correction.
+Volume prefixes strictly above independently resolved Program Files/SystemDirectory
+anchors are TraversalOnly: metadata, reparse, case and retained identity checks,
+without descriptor authority. Exact anchors are TrustedOS, retaining safe trusted
+owner and present non-null DACL validation; inheritance is allowed. TrustedInstaller
+already belongs to the unchanged trusted SID set for both OS and lab descriptors.
+Only the three fixed owned lab trees are LabProtected, with protected DACLs and
+single-link leaves. System image descendant pins use a distinct OSContent role,
+with the same safe OS descriptor policy, never lab ownership or anchor authority.
+No length comparison selects authority, mutation mask relaxation or ACL repair.
+Retain independent known-folder DOS/GUID identity and mapping checks. Original
+runner anchor pins and Chain must obey the same roles. Failure reports only the
+bounded fixed path/role, never descriptor/SID/environment/account dumps.
+
+Each security helper establishes local Stop and strict semantics even under a
+Continue caller; injected constructor and descriptor failures must stop at the
+first boundary, retain existing owners and make no later calls. Offline PS5.1/7
+checks cover traversal, exact anchor, owned roots, safe TI/inherited OS descriptors,
+unsafe ACE/null/callback/unprotected lab refusal. No real operation constructor,
+launch, Program Files mutation, Task, MSI, VM, credentials, retry or owner disposal.
+Freeze exact normalized LF UTF-8 runner bytes in fresh ignored
+build/lab-boundary-review, record raw byte and normalized hashes plus Git diff,
+then update support runner pins, embedded support digest and tests in that order.
+No circular digest and no MSI/DLL/manifest rebuild; preserve all v7 bundles.
+Native Move Access denied remains unresolved, client hostroot onlyclient-before
+and all sessions remain retained (reported context, not a fresh observation).
+Native preparation remains prohibited pending independent review.
+
+
+Authority boundary correction offline evidence (2026-11-01): specification above
+preceded implementation. Runner Chain uses component equality and explicit owned
+roots; exact Program Files and DOS anchor pins use TrustedOS. Host shares that
+selector, retains independent DOS/GUID known-folder identity, and uses local Stop
+and strict mode in each support helper. OSContent distinguishes safe OS descendant
+checks from exact anchor authority; it does not relax descriptor/mutation policy.
+Existing trusted SIDs, single-link lab checks and retention behavior are unchanged.
+
+PS5.1/7 each pass checkpoint 159 worker + 41 policy/role + 21 alias assertions,
+and host 334 assertions with both existing mutants detected. Constructor injection
+fails at traversal; descriptor injection fails at exact OS anchor under Continue,
+without later calls or removal of retained owners. git diff --check passes.
+Review corrected diagnostic wrapping to preserve native Win32 exceptions used by
+checkpoint absence polling. No performance-sensitive path or product build/package
+change: benchmarks/profiling and four-target release matrix are inapplicable.
+
+Final source candidate is build/lab-boundary-review/final; PROVENANCE.json records
+HEAD blob, exact checkout and frozen normalized LF UTF-8 byte hashes. SOURCE.diff
+records the uncommitted changes; this is not claimed to be committed source.
+The top-level runner copy is a superseded intermediate candidate, never deploy it.
+Final runner SHA-256: 461997fda2094cdd08dcc28ff82917a16350266773959ca36147b38353cebc06.
+Fresh host import/config/invocation pins use that final runner. Support is frozen
+before the embedded host digest. Earlier archive-only runner instructions and
+hashes are historical and superseded solely for this candidate.
+
+No native preparation is authorized: reported Move Access denied is unresolved,
+client hostroot onlyclient-before and all sessions remain retained. Parent source
+reader/remote Stop correction and parent/config/XML pins require separate review.
+No VM, Task, MSI, real operation constructor/launch, credentials, build, commit or
+push occurred. No native positive or guest survival evidence is claimed.
+
+
+### Fresh fixed boundary attempt (2026-11-01, specification only)
+
+Reported v7 preparation continued after ACL errors because remote fail-fast was
+missing. The old `BimeronCheckpointObservation-c260f52f` host root contains only
+`client-before680`; the old client root remains. Session 86808, all handles and
+all other references remain retained. No task or MSI ran. Native Move AccessDenied
+cause remains UNKNOWN; this layout choice neither diagnoses Move nor bypasses ACLs.
+Explicit authority roles and parent fail-fast corrections are implemented but
+pending independent review; no native positive evidence is implied.
+
+For experiment `boundary-v1` only, supersede archive-before-staging with these
+new fixed paths beneath independently resolved native Program Files:
+
+- Client root: `BimeronCheckpointClientLabBoundary`.
+- Host root: `BimeronCheckpointObservationBoundary`.
+- Exact Scheduler task: `\BimeronLab\CheckpointObservationBoundary`.
+
+No caller-configurable path, alternate suffix or fallback is permitted. The parent
+adopts this routine reversible lab layout choice under existing broad user
+authority, without a new permission request. This specification does not execute
+or approve an unreviewed candidate. Inventory old evidence read-only; preserve
+ALL old roots, partial files, bundles, pins, sessions, handles and references
+byte-for-byte. Do not archive, move, rename, delete, repair or dispose them. The
+native parent path for this attempt must contain no archive calls and must not
+modify old guest inputs. Source provenance comes from independently approved
+local frozen inputs, never from rewriting old guest state.
+
+Acceptance before native admission:
+
+1. Freeze and independently review the exact runner/host/support/parent and tests
+   for this fixed layout, including both pending corrections. Every source change
+   requires a fresh runner hash and host import/config/invocation pins; freeze
+   support before embedding its digest in the host, then freeze host, parent,
+   exact task XML and immutable config/manifest bindings. Keep all older pins
+   historical and untouched. Require focused PS5.1/7 role/fail-fast/host/parent
+   checks and DryRun; inject failures under Continue and prove no later mutation,
+   archive, dispatch or release of retained references.
+2. Prove both new roots and the exact task freshly absent; uncertainty or any
+   existing object refuses. Stage only the newly reviewed frozen runner, host,
+   support, unchanged checkpoint MSI and immutable manifest with protected
+   CREATE_NEW semantics and strict hash/identity/descriptor pins. No reuse,
+   overwrite, ACL repair or retry, including after partial preparation. MSI/DLL
+   bytes and protected ACK state paths stay unchanged; require fresh Pending and
+   checkpoint absence and UNKNOWN product state under the existing gates.
+3. Preserve every prior role and fail-fast gate: TraversalOnly above exact OS
+   anchors, TrustedOS safe descriptors at exact anchors, OSContent only for OS
+   descendants, and LabProtected for the explicitly owned trees. Retain independent
+   DOS/GUID known-folder identity, alias/mapping, single-link lab, descriptor and
+   retained-handle checks. No permissive OS-anchor or lab descriptor fallback.
+4. Admit at most one bounded native attempt of the same reviewed zero-resource
+   checkpoint experiment, with no additional resource or network installation.
+   Require the persistent same-process/same-runspace host, independently verified
+   bound Ready, one exact bound dispatch and CREATE_NEW invocation intent before
+   direct invocation. Keep the process-only action policy and all prior identity,
+   task/config, stream capture, commitment and retention gates. Parent observation
+   is bounded to 300 seconds; timeout, return or ambiguity proves neither server
+   completion nor quiescence. Preserve all references and evidence on every outcome;
+   no host stop, retry, cleanup or recovery is introduced.
+
+This addendum changes documentation only: no code, VM, credentials, Task/MSI
+operation, commit or push. Native survival and protected admission remain unproved.
+Product behavior and final MSI/DEB artifacts are unchanged; the four-target product
+build/package matrix and benchmarks/profiling are inapplicable to this spec-only
+layout choice. Fresh exact-source review remains the next gate.
+
+
+Boundary-v1 integrated offline candidate (2026-11-01): fixed new client/host/task
+names and experiment binding are implemented. Parent candidate and test adapters
+are in ignored `build/boundary-v1-review`. Guest source selection and archive
+functions/calls are removed. Only local frozen inputs are staged, with pinned
+MSI/DLL/manifest and protected atomic CREATE_NEW file/directory creation; old roots
+are inventoried read-only. The existing new-dispatch pending-file publication
+remains atomic; it never moves old evidence. Protected ACK paths stay unchanged.
+Constructor/descriptor wrappers retain their original inner failures. The parent
+receives failed jobs before transport fallback, writes bounded allowlisted durable
+diagnostics, and keeps phase/context/HResult and sanitized original inner message.
+PS5.1/7 each pass checkpoint 159+41+21, host 339 (334 preserved, two mutants),
+parent offline/adapters/fail-fast and DryRun. Actual preparation/chain body faults
+under Continue/strict Off prove first-error termination and retained prior owners.
+Binary staging and existing-directory refusal use actual owned temp fixtures.
+See that candidate's PROVENANCE.json, SHA256SUMS.txt, COMMANDS.md and REVIEW.md.
+Independent exact-source/security review and guest task/config readback remain
+required; no native positive, VM, credentials, Task/MSI or real runner operation,
+commit, push or release is claimed. Session 86808 and earlier references/bundles
+remain untouched. Supported packaging is unchanged; the product four-target
+build/package matrix and performance profiling are inapplicable to this lab-only
+Windows script change.

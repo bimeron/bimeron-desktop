@@ -37,6 +37,14 @@ public static class CheckpointTests {
  static void Reject(Action action){bool rejected=false;try{action();}catch{rejected=true;}Assert(rejected,"Expected rejection");}
  public static string Models(){
   int before=checks;var lab=CheckpointPinRole.LabProtected;var os=CheckpointPinRole.TrustedOS;var image=CheckpointPinRole.InternalSystemImagePin;
+  string volume="\\\\?\\Volume{fixture}\\",anchor=volume+"Program Files",owned=anchor+"\\BimeronCheckpointClientLabBoundary";
+  Assert(CheckpointOperation.ChainRole(volume,anchor,owned)==CheckpointPinRole.TraversalOnly,"Volume traversal");
+  Assert(CheckpointOperation.ChainRole(anchor,anchor,owned)==os,"Exact OS anchor");
+  Assert(CheckpointOperation.ChainRole(owned,anchor,owned)==lab,"Owned lab root");
+  Assert(CheckpointOperation.ChainRole(owned+"\\leaf",anchor,owned)==lab,"Owned lab descendant");
+  Reject(delegate{CheckpointOperation.ChainRole(anchor+"\\Unowned",anchor,owned);});
+  Reject(delegate{CheckpointOperation.ChainRole(owned+"Extra",anchor,owned);});
+  Assert(CheckpointOperation.ChainRole(anchor+"\\image",anchor,null)==CheckpointPinRole.OSContent,"OS content distinct from anchor");
   var info=new CheckpointNative.Info();
   foreach(uint links in new uint[]{0,1,2,3}){info.Links=links;var value=info;
    if(links==1)CheckpointPin.Metadata(value,false,lab,0);else Reject(delegate{CheckpointPin.Metadata(value,false,lab,0);});

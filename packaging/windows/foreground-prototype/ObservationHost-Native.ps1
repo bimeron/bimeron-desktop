@@ -2,12 +2,16 @@
 # Experiment-only support. Dot-source only; never launches a process or constructs an operation.
 function Get-ObservationHash {
  param([byte[]]$Bytes)
+ $ErrorActionPreference="Stop"
+ Set-StrictMode -Version Latest
  $sha=[Security.Cryptography.SHA256]::Create()
  try { ([BitConverter]::ToString($sha.ComputeHash($Bytes))).Replace('-','').ToLowerInvariant() } finally {$sha.Dispose()}
 }
 function Import-ObservationPinTypes {
  param([byte[]]$FrozenRunner)
- if ((Get-ObservationHash $FrozenRunner) -cne '98004df32700cc1dc24c1a75183533e8ca81143ac50f8188379cee94c315c94c') {throw 'Frozen runner hash refused'}
+ $ErrorActionPreference="Stop"
+ Set-StrictMode -Version Latest
+ if ((Get-ObservationHash $FrozenRunner) -cne 'f773983c67c06e79ff422350d64324fa9a1e6ca6b3e1bd7b326e5a02d68765cc') {throw 'Frozen runner hash refused'}
  $text=(New-Object Text.UTF8Encoding($false,$true)).GetString($FrozenRunner)
  $tokens=$null; $errors=$null
  $ast=[Management.Automation.Language.Parser]::ParseInput($text,[ref]$tokens,[ref]$errors)
@@ -18,24 +22,49 @@ function Import-ObservationPinTypes {
  . ([scriptblock]::Create($functions[0].Extent.Text))
  Initialize-CheckpointLab
 }
+function Get-ObservationVolumePath {
+ param([string]$Path)
+ Set-StrictMode -Version Latest
+ $ErrorActionPreference='Stop'
+ [CheckpointNative]::VolumePath($Path)
+}
+function New-ObservationChainPin {
+ param([string]$Path,[bool]$Directory,$Role)
+ Set-StrictMode -Version Latest
+ $ErrorActionPreference='Stop'
+ [CheckpointPin]::new($Path,$Directory,$Role)
+}
 function Open-ObservationProtectedChain {
  param([string]$Path,[string]$Anchor,$Owners,[switch]$Directory,[switch]$TrustedOS)
- $pathVolume=[CheckpointNative]::VolumePath($Path)
- $anchorVolume=[CheckpointNative]::VolumePath($Anchor)
+ $ErrorActionPreference="Stop"
+ Set-StrictMode -Version Latest
+ $pathVolume=(Get-ObservationVolumePath $Path)
+ $anchorVolume=(Get-ObservationVolumePath $Anchor)
  if(-not ($pathVolume -ceq $anchorVolume -or $pathVolume.StartsWith($anchorVolume+'\',[StringComparison]::Ordinal))) {throw 'Outside fixed anchor'}
  $end=$pathVolume.IndexOf('}\',[StringComparison]::Ordinal)+2
  if($end -lt 3) {throw 'Volume path required'}
  while($true) {
   $part=$pathVolume.Substring(0,$end)
   $leaf=$end -eq $pathVolume.Length
-  $role=if($TrustedOS){[CheckpointPinRole]::TrustedOS}elseif($part -ceq $anchorVolume -or $part.StartsWith($anchorVolume+'\',[StringComparison]::Ordinal)){[CheckpointPinRole]::LabProtected}else{[CheckpointPinRole]::TrustedOS}
-  $pin=[CheckpointPin]::new($part,(-not $leaf -or $Directory.IsPresent),$role)
+  $owned=$null
+  if(-not $TrustedOS){
+   foreach($name in @('BimeronCheckpointClientLabBoundary','BimeronProtectedAckLab','BimeronCheckpointObservationBoundary')){
+    $candidate=$anchorVolume+'\'+$name
+    if($pathVolume -ceq $candidate -or $pathVolume.StartsWith($candidate+'\',[StringComparison]::Ordinal)){$owned=$candidate;break}
+   }
+   if($null -eq $owned){throw 'Fixed owned lab root required'}
+  }
+  $role=[CheckpointOperation]::ChainRole($part,$anchorVolume,$owned)
+  try {$pin=New-ObservationChainPin $part (-not $leaf -or $Directory.IsPresent) $role}
+  catch {throw [InvalidOperationException]::new(('Fixed chain pin refused: '+$part+' role='+$role),$_.Exception)}
   [void]$Owners.Add($pin)
   if($leaf){return $pin}
   $end=$pathVolume.IndexOf('\',$end+1); if($end -lt 0){$end=$pathVolume.Length}
  }
 }
 function Initialize-ObservationSinkType {
+ $ErrorActionPreference="Stop"
+ Set-StrictMode -Version Latest
  if('ObservationDurableSink' -as [type]) {return}
  Add-Type -TypeDefinition @"
 using System;
@@ -53,6 +82,17 @@ public sealed class ObservationDurableSink : IDisposable {
  [DllImport("kernel32.dll", CharSet=CharSet.Unicode, ExactSpelling=true, SetLastError=true)]
  static extern SafeFileHandle CreateFileW(string path,uint access,uint share,ref SecurityAttributes security,uint disposition,uint flags,IntPtr template);
  [DllImport("kernel32.dll", ExactSpelling=true)] static extern IntPtr LocalFree(IntPtr memory);
+ [DllImport("kernel32.dll", CharSet=CharSet.Unicode, ExactSpelling=true, SetLastError=true)]
+ static extern bool CreateDirectoryW(string path,ref SecurityAttributes security);
+ public static void NewDirectory(string path) {
+  IntPtr descriptor=IntPtr.Zero;
+  try {
+   uint size;
+   if(!ConvertStringSecurityDescriptorToSecurityDescriptorW("O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)",1,out descriptor,out size))throw new Win32Exception(Marshal.GetLastWin32Error());
+   var security=new SecurityAttributes {Length=Marshal.SizeOf(typeof(SecurityAttributes)),Descriptor=descriptor,InheritHandle=0};
+   if(!CreateDirectoryW(path,ref security))throw new Win32Exception(Marshal.GetLastWin32Error(),"Protected directory CREATE_NEW failed");
+  }finally{if(descriptor!=IntPtr.Zero)LocalFree(descriptor);}
+ }
  readonly FileStream stream;
  public ObservationDurableSink(string path) {
   IntPtr descriptor=IntPtr.Zero; SafeFileHandle handle=null;
@@ -73,6 +113,11 @@ public sealed class ObservationDurableSink : IDisposable {
    // Failed creation/wrapping never deletes or reopens a pathname.
   }
  }
+ public void Write(byte[] bytes) {
+  stream.Position=0;stream.Write(bytes,0,bytes.Length);stream.Flush(true);
+  stream.Position=0;var actual=new byte[bytes.Length];int n=stream.Read(actual,0,actual.Length);
+  if(n!=bytes.Length || stream.Length!=bytes.Length || Convert.ToBase64String(actual)!=Convert.ToBase64String(bytes))throw new IOException("Protected readback failed");
+ }
  public void Append(string frame) {
   byte[] bytes=new UTF8Encoding(false,true).GetBytes(frame);
   long start=stream.Length;stream.Position=start;stream.Write(bytes,0,bytes.Length);stream.Flush(true);
@@ -88,6 +133,8 @@ public sealed class ObservationDurableSink : IDisposable {
 }
 function Open-ObservationSinks {
  param([string]$Root,$Owners)
+ $ErrorActionPreference="Stop"
+ Set-StrictMode -Version Latest
  Initialize-ObservationSinkType
  $sinks=@{}
  # Retain partially prepared writers on any failure, too.
@@ -101,16 +148,27 @@ function Open-ObservationSinks {
 }
 function Read-ObservationFixedConfig {
  param([byte[]]$Bytes,[string]$ExpectedHash)
+ $ErrorActionPreference="Stop"
+ Set-StrictMode -Version Latest
  if((Get-ObservationHash $Bytes) -cne $ExpectedHash){throw 'Config digest refused'}
  # Canonical line format deliberately excludes JSON duplicate-key/coercion ambiguity.
  $value=(New-Object Text.UTF8Encoding($false,$true)).GetString($Bytes)
  $lines=$value.Split("`n")
- if($lines.Count -ne 8 -or $lines[7] -cne '' -or $lines[0] -cne 'ObservationHost002' -or $lines[1] -cne 'c260f52f' -or $lines[2] -cne '98004df32700cc1dc24c1a75183533e8ca81143ac50f8188379cee94c315c94c' -or $lines[3] -cnotmatch '^[0-9a-f]{64}$' -or $lines[4] -cnotmatch '^[0-9a-f]{64}$') {throw 'Fixed config schema refused'}
+ if($lines.Count -ne 8 -or $lines[7] -cne '' -or $lines[0] -cne 'ObservationHost002' -or $lines[1] -cne 'boundary-v1' -or $lines[2] -cne 'f773983c67c06e79ff422350d64324fa9a1e6ca6b3e1bd7b326e5a02d68765cc' -or $lines[3] -cnotmatch '^[0-9a-f]{64}$' -or $lines[4] -cnotmatch '^[0-9a-f]{64}$') {throw 'Fixed config schema refused'}
  foreach($index in @(5,6)){if((ConvertTo-ObservationTaskSddl $lines[$index]) -cne $lines[$index]){throw 'Canonical descriptor required'}}
  [pscustomobject]@{FolderSddl=$lines[5];TaskSddl=$lines[6];Experiment=$lines[1];RunnerHash=$lines[2];HostHash=$lines[3];TaskXmlHash=$lines[4]}
 }
+function Assert-ObservationExecutionPolicy {
+ param([string]$MachinePolicy,[string]$UserPolicy)
+ $ErrorActionPreference="Stop"
+ Set-StrictMode -Version Latest
+ if($MachinePolicy -cne 'Undefined' -or $UserPolicy -cne 'Undefined'){throw 'Configured execution policy refused'}
+}
 function Assert-ObservationTaskXml {
  param([string]$Xml,[string]$ExpectedHash,[string]$Image,[string]$HostPath,[string]$Root)
+ $ErrorActionPreference="Stop"
+ Set-StrictMode -Version Latest
+ if($Root -cne (Join-Path ([Environment]::GetFolderPath([Environment+SpecialFolder]::ProgramFiles)) 'BimeronCheckpointObservationBoundary') -or $HostPath -cne (Join-Path $Root 'Checkpoint-ObservationHost.ps1')){throw 'Fixed task host path required'}
  if((Get-ObservationHash ([Text.Encoding]::UTF8.GetBytes($Xml))) -cne $ExpectedHash){throw 'Exact task XML refused'}
  $doc=New-Object Xml.XmlDocument; $doc.XmlResolver=$null
  if($Xml -match '<!DOCTYPE'){throw 'DTD refused'}
@@ -122,7 +180,7 @@ function Assert-ObservationTaskXml {
  't:Settings/t:AllowHardTerminate'='false';'t:Settings/t:StopIfGoingOnBatteries'='false';
  't:Settings/t:DisallowStartIfOnBatteries'='false';'t:Settings/t:RunOnlyIfIdle'='false';
  't:Settings/t:IdleSettings/t:StopOnIdleEnd'='false';'t:Settings/t:IdleSettings/t:RestartOnIdle'='false';
- 't:Actions/t:Exec/t:Command'=$Image;'t:Actions/t:Exec/t:Arguments'=('-NoLogo -NoProfile -NonInteractive -File "'+$HostPath+'"');
+ 't:Actions/t:Exec/t:Command'=$Image;'t:Actions/t:Exec/t:Arguments'=('-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "'+$HostPath+'"');
  't:Actions/t:Exec/t:WorkingDirectory'=$Root
  }
  foreach($key in $checks.Keys){$nodes=$doc.SelectNodes('/t:Task/'+$key,$ns);if($nodes.Count -ne 1 -or $nodes[0].InnerText -cne $checks[$key]){throw ('Task setting refused: '+$key)}}
@@ -130,6 +188,8 @@ function Assert-ObservationTaskXml {
  if($doc.SelectNodes('/t:Task/t:Actions/*',$ns).Count -ne 1 -or $doc.SelectNodes('/t:Task/t:Principals/*',$ns).Count -ne 1){throw 'Task cardinality refused'}
 }
 function Get-ObservationProcessIdentity {
+ $ErrorActionPreference="Stop"
+ Set-StrictMode -Version Latest
  $process=[Diagnostics.Process]::GetCurrentProcess()
  $identity=[Security.Principal.WindowsIdentity]::GetCurrent()
  try {
@@ -146,6 +206,8 @@ function Get-ObservationProcessIdentity {
 }
 function Write-ObservationConsumedIntent {
  param($State,[string]$Root,[string]$Record)
+ $ErrorActionPreference="Stop"
+ Set-StrictMode -Version Latest
  Read-ObservationRecord $Record Dispatch $State.Binding
  if($State.Dispatched){throw 'Dispatch already consumed'}
  Initialize-ObservationSinkType
@@ -157,6 +219,8 @@ function Write-ObservationConsumedIntent {
 }
 
 function Initialize-ObservationIdentityType {
+ $ErrorActionPreference="Stop"
+ Set-StrictMode -Version Latest
  if('ObservationToken' -as [type]){return}
  Add-Type -TypeDefinition @"
 using System;
@@ -178,11 +242,15 @@ public static class ObservationToken {
 }
 function ConvertTo-ObservationTaskSddl {
  param([string]$Sddl)
+ $ErrorActionPreference="Stop"
+ Set-StrictMode -Version Latest
  $sd=New-Object Security.AccessControl.RawSecurityDescriptor $Sddl
  $sd.GetSddlForm([Security.AccessControl.AccessControlSections]14)
 }
 function Assert-ObservationTaskDescriptors {
  param($Folder,$Task,$Config)
+ $ErrorActionPreference="Stop"
+ Set-StrictMode -Version Latest
  $folderSddl=$Folder.GetSecurityDescriptor(7)
  $taskSddl=$Task.GetSecurityDescriptor(7)
  Assert-ObservationTaskSecurity $folderSddl
@@ -192,6 +260,8 @@ function Assert-ObservationTaskDescriptors {
 }
 function Assert-ObservationTaskSecurity {
  param([string]$Sddl)
+ $ErrorActionPreference="Stop"
+ Set-StrictMode -Version Latest
  $sd=New-Object Security.AccessControl.RawSecurityDescriptor $Sddl
  # Task mutation rights differ from file rights: permit no untrusted allow ACE.
  if($sd.Owner.Value -cnotin @('S-1-5-18','S-1-5-32-544') -or $null -eq $sd.DiscretionaryAcl -or
@@ -204,16 +274,20 @@ function Assert-ObservationTaskSecurity {
 }
 function Open-ObservationRegisteredTask {
  param($State,$Config,[string]$Image,[string]$HostPath,[string]$Root)
+ $ErrorActionPreference="Stop"
+ Set-StrictMode -Version Latest
  $service=New-Object -ComObject 'Schedule.Service';[void]$State.Owners.Add($service);$service.Connect()
  $folder=$service.GetFolder('\BimeronLab');[void]$State.Owners.Add($folder)
- $task=$folder.GetTask('CheckpointObservation-c260f52f');[void]$State.Owners.Add($task)
- if($task.Name -cne 'CheckpointObservation-c260f52f' -or $task.Path -cne '\BimeronLab\CheckpointObservation-c260f52f'){throw 'Task identity refused'}
+ $task=$folder.GetTask('CheckpointObservationBoundary');[void]$State.Owners.Add($task)
+ if($task.Name -cne 'CheckpointObservationBoundary' -or $task.Path -cne '\BimeronLab\CheckpointObservationBoundary'){throw 'Task identity refused'}
  Assert-ObservationTaskDescriptors $folder $task $Config
  Assert-ObservationTaskXml $task.Xml $Config.TaskXmlHash $Image $HostPath $Root
  return [pscustomobject]@{Folder=$folder;Task=$task}
 }
 function Get-ObservationVerifiedIdentity {
  param($State,[string]$Image,$ImagePin)
+ $ErrorActionPreference="Stop"
+ Set-StrictMode -Version Latest
  Initialize-ObservationIdentityType
  $process=[Diagnostics.Process]::GetCurrentProcess();[void]$State.Owners.Add($process)
  # Force a retained process handle before reading creation time and image.
@@ -229,24 +303,33 @@ function Get-ObservationVerifiedIdentity {
 }
 function New-ObservationRecord {
  param($State,[string]$Path,[string]$Kind)
+ $ErrorActionPreference="Stop"
+ Set-StrictMode -Version Latest
  Initialize-ObservationSinkType
  $sink=New-Object ObservationDurableSink $Path
  [void]$State.Owners.Add($sink)
  $sink.Append($Kind+"`t"+$State.Binding+"`n")
- $pin=[CheckpointPin]::LogAlias([CheckpointNative]::VolumePath($Path))
+ $pin=[CheckpointPin]::LogAlias((Get-ObservationVolumePath $Path))
  [void]$State.Owners.Add($pin)
 }
 function Start-ObservationHost {
  param($State,[string]$HostPath)
+ $ErrorActionPreference="Stop"
+ Set-StrictMode -Version Latest
  # Bootstrap only exact hash-verified initializer bytes. No runner top level executes.
  $known=[Environment]::GetFolderPath([Environment+SpecialFolder]::ProgramFiles)
- $runner=Join-Path $known 'BimeronCheckpointClientLab\Run-CheckpointLab.ps1'
+ $runner=Join-Path $known 'BimeronCheckpointClientLabBoundary\Run-CheckpointLab.ps1'
  Import-ObservationPinTypes ([IO.File]::ReadAllBytes($runner))
  if([CheckpointNative]::ProgramFiles() -cne $known){throw 'Known folder mismatch'}
  $anchor=[CheckpointNative]::VolumePath($known)
- $root=Join-Path $known 'BimeronCheckpointObservation-c260f52f'
+ $root=Join-Path $known 'BimeronCheckpointObservationBoundary'
  if($HostPath -cne (Join-Path $root 'Checkpoint-ObservationHost.ps1')){throw 'Fixed host path required'}
+ $independent=[CheckpointPin]::new($known,$true,[CheckpointPinRole]::TrustedOS)
+ [void]$State.Owners.Add($independent)
  $rootPin=Open-ObservationProtectedChain $root $known $State.Owners -Directory
+ $matched=$false
+ foreach($owner in $State.Owners){if($owner -is [CheckpointPin] -and $owner.BoundPath -ceq $anchor -and $owner.Same($independent)){$matched=$true}}
+ if(-not $matched){throw 'Known folder anchor identity refused'}
  foreach($name in @('ready.record','dispatch.record','invocation.intent')){
   $probe=[CheckpointNative]::CreateFileW([CheckpointNative]::VolumePath((Join-Path $root $name)),0x80,7,[IntPtr]::Zero,3,0x02200000,[IntPtr]::Zero)
   $errorCode=[Runtime.InteropServices.Marshal]::GetLastWin32Error()
@@ -276,7 +359,7 @@ function Start-ObservationHost {
  $xml=(New-Object Text.UTF8Encoding($false,$true)).GetString($pins['task.xml'].Read(65536))
  Assert-ObservationTaskXml $xml $config.TaskXmlHash $image $HostPath $root
  $registered=Open-ObservationRegisteredTask $State $config $image $HostPath $root
- $State.Binding='c260f52f:'+$config.HostHash+':'+$supportHash+':'+$configHash+':'+$identity.Pid+':'+$identity.CreationUtcFileTime
+ $State.Binding='boundary-v1:'+$config.HostHash+':'+$supportHash+':'+$configHash+':'+$identity.Pid+':'+$identity.CreationUtcFileTime
  $sinks=@{}
  $runnerContext=New-ObservationRunnerContext $runner $sinks
  $prepare={param($s)

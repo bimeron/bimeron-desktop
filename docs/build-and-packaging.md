@@ -1125,3 +1125,126 @@ independent review. No Program Files write, Task/MSI/VM action, real runner
 construction/launch, release or supported build/package flow change occurred.
 The four-product matrix and performance checks are inapplicable to this isolated
 Windows script correction; SYSTEM/task/guest survival remain unproved.
+
+
+Process-only observation action amendment (2026-11-01, offline acceptance):
+The exact hash-approved experimental Task Scheduler Windows PowerShell action
+must use `-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File
+"C:\Program Files\BimeronCheckpointObservation-c260f52f\Checkpoint-ObservationHost.ps1"`.
+Require MachinePolicy and UserPolicy both exactly Undefined before provisioning;
+refuse every configured value, including Bypass. Default Restricted with undefined
+scopes is allowed only because this child action explicitly sets process policy.
+No Set-ExecutionPolicy, registry/GPO/global setting or parent remoting policy change
+is permitted. Reject missing/changed/extra arguments and arbitrary host paths even
+with recomputed XML hashes. Preserve all other pins, settings, source selection,
+protected state, one-shot dispatch and 300-second bound. Freeze v7 separately,
+support first, embedded host digest second, then parent/test pins, task XML and
+seven-line config002 hashes; preserve every earlier bundle. Native mode must not
+execute during this amendment. Offline PS5.1/7 host, parent and adapter suites plus
+DryRun are required. Product packaging/runtime behavior is unchanged.
+
+Reported v6 preparation boundary: effective Restricted, all five scopes Undefined
+including MachinePolicy/UserPolicy (no configured policy). HostRoot absent, Client
+exists. Stopped before host-root creation, archive, staging, task/MSI/runner launch.
+Earlier read-only bootstrap, retained pins/inventory/process queries and local
+native-evidence/sink/remoting preparation may already have occurred. Session 86808
+and all references remain parent-owned and retained; no cleanup or liveness query
+is authorized here. Earlier lost outcome remains Unknown. This is supplied context,
+not a fresh guest observation or evidence of quiescence.
+
+Amendment validation: PS5.1/7 each pass 320 host assertions (295 preserved),
+parent/adapters and DryRun; checkpoint 159+34+21 and Run-Lab 47 negatives pass.
+No native mode, Task APIs, VM, credentials, MSI or real runner launch.
+Independent review and native admission remain pending. Product matrix and
+performance checks are inapplicable; supported packaging is unchanged.
+New exact LF source pins:
+
+- `ObservationHost-Native.ps1`: `e970502dbdd95c5162c84afb0df1093beebb537d353751c66cdf2c9371bb3347`
+- `Checkpoint-ObservationHost.ps1`: `9b37fea468f91ca18718c5845c711b774c38a22435eaacff02f76dfd1d9a585b`
+- `lab-observation-host-test.ps1`: `a63a073b1173f1ab71253e1230acca76fd198a346af7676925502322c33e34ed`
+
+Ignored frozen candidate: `build/stage8-parent-orchestration-20261101-v7`;
+see SPEC.md, REVIEW.md, COMMANDS.md and SHA256SUMS.txt for pins and config recipe.
+Actual task XML/config hashes require future verified Scheduler readback; no
+guest task/config was created during offline validation. No commit or push.
+
+
+Authority boundary correction offline evidence (2026-11-01): foreground README specification
+preceded implementation. Runner Chain uses component equality and explicit owned
+roots; exact Program Files and DOS anchor pins use TrustedOS. Host shares that
+selector, retains independent DOS/GUID known-folder identity, and uses local Stop
+and strict mode in each support helper. OSContent distinguishes safe OS descendant
+checks from exact anchor authority; it does not relax descriptor/mutation policy.
+Existing trusted SIDs, single-link lab checks and retention behavior are unchanged.
+
+PS5.1/7 each pass checkpoint 159 worker + 41 policy/role + 21 alias assertions,
+and host 334 assertions with both existing mutants detected. Constructor injection
+fails at traversal; descriptor injection fails at exact OS anchor under Continue,
+without later calls or removal of retained owners. git diff --check passes.
+Review corrected diagnostic wrapping to preserve native Win32 exceptions used by
+checkpoint absence polling. No performance-sensitive path or product build/package
+change: benchmarks/profiling and four-target release matrix are inapplicable.
+
+Final source candidate is build/lab-boundary-review/final; PROVENANCE.json records
+HEAD blob, exact checkout and frozen normalized LF UTF-8 byte hashes. SOURCE.diff
+records the uncommitted changes; this is not claimed to be committed source.
+The top-level runner copy is a superseded intermediate candidate, never deploy it.
+Final runner SHA-256: 461997fda2094cdd08dcc28ff82917a16350266773959ca36147b38353cebc06.
+Fresh host import/config/invocation pins use that final runner. Support is frozen
+before the embedded host digest. Earlier archive-only runner instructions and
+hashes are historical and superseded solely for this candidate.
+
+No native preparation is authorized: reported Move Access denied is unresolved,
+client hostroot onlyclient-before and all sessions remain retained. Parent source
+reader/remote Stop correction and parent/config/XML pins require separate review.
+No VM, Task, MSI, real operation constructor/launch, credentials, build, commit or
+push occurred. No native positive or guest survival evidence is claimed.
+
+
+### Fresh fixed checkpoint boundary layout (specification only, 2026-11-01)
+
+For `boundary-v1`, the [foreground acceptance addendum](../packaging/windows/foreground-prototype/foreground-README.md#fresh-fixed-boundary-attempt-2026-11-01-specification-only)
+supersedes archive-before-staging only for newly absent native Program Files roots
+`BimeronCheckpointClientLabBoundary`, `BimeronCheckpointObservationBoundary` and
+exact task `\BimeronLab\CheckpointObservationBoundary`. No configurable fallback,
+reuse, overwrite or retry. Inventory old evidence read-only and preserve every old
+root/partial state, frozen pin, session and reference; the native parent performs
+no archive calls. Use independently reviewed local frozen inputs and protected
+CREATE_NEW staging with fresh exact runner/host/support/parent/config/XML pins.
+MSI/DLL and protected ACK paths remain unchanged; fresh Pending/checkpoint absence,
+immutable manifest and UNKNOWN product gates still apply.
+
+Reported v7 ACL-error continuation lacked remote fail-fast; explicit roles and
+parent fail-fast corrections await review. Old host root contains only
+`client-before680`, client root remains, and session 86808/all handles are retained.
+No task/MSI ran; Move AccessDenied remains UNKNOWN. This is no ACL bypass or native
+success claim. All prior role/fail-fast gates and same-process host/Ready/one-shot
+dispatch/300-second observation/retention acceptance remain mandatory. The parent
+adopts the routine layout choice under existing authority without a new permission
+request; fresh freeze and independent review precede native admission. No code,
+VM, credentials, commit or push belongs to this docs-only change. Product behavior
+and MSI/DEB packaging stay unchanged; product matrix and performance checks are
+inapplicable. Native admission/survival risks remain unresolved.
+
+
+Boundary-v1 integrated offline candidate (2026-11-01): fixed new client/host/task
+names and experiment binding are implemented. Parent candidate and test adapters
+are in ignored `build/boundary-v1-review`. Guest source selection and archive
+functions/calls are removed. Only local frozen inputs are staged, with pinned
+MSI/DLL/manifest and protected atomic CREATE_NEW file/directory creation; old roots
+are inventoried read-only. The existing new-dispatch pending-file publication
+remains atomic; it never moves old evidence. Protected ACK paths stay unchanged.
+Constructor/descriptor wrappers retain their original inner failures. The parent
+receives failed jobs before transport fallback, writes bounded allowlisted durable
+diagnostics, and keeps phase/context/HResult and sanitized original inner message.
+PS5.1/7 each pass checkpoint 159+41+21, host 339 (334 preserved, two mutants),
+parent offline/adapters/fail-fast and DryRun. Actual preparation/chain body faults
+under Continue/strict Off prove first-error termination and retained prior owners.
+Binary staging and existing-directory refusal use actual owned temp fixtures.
+See that candidate's PROVENANCE.json, SHA256SUMS.txt, COMMANDS.md and REVIEW.md.
+Independent exact-source/security review and guest task/config readback remain
+required; no native positive, VM, credentials, Task/MSI or real runner operation,
+commit, push or release is claimed. Session 86808 and earlier references/bundles
+remain untouched. Supported packaging is unchanged; the product four-target
+build/package matrix and performance profiling are inapplicable to this lab-only
+Windows script change.
