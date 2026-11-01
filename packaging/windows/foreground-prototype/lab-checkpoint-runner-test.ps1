@@ -37,7 +37,7 @@ public static class CheckpointTests {
  static void Reject(Action action){bool rejected=false;try{action();}catch{rejected=true;}Assert(rejected,"Expected rejection");}
  public static string Models(){
   int before=checks;var lab=CheckpointPinRole.LabProtected;var os=CheckpointPinRole.TrustedOS;var image=CheckpointPinRole.InternalSystemImagePin;
-  string volume="\\\\?\\Volume{fixture}\\",anchor=volume+"Program Files",owned=anchor+"\\BimeronCheckpointClientLabBoundary";
+  string volume="\\\\?\\Volume{fixture}\\",anchor=volume+"Program Files",owned=anchor+"\\BimeronCheckpointClientLabBoundaryXml";
   Assert(CheckpointOperation.ChainRole(volume,anchor,owned)==CheckpointPinRole.TraversalOnly,"Volume traversal");
   Assert(CheckpointOperation.ChainRole(anchor,anchor,owned)==os,"Exact OS anchor");
   Assert(CheckpointOperation.ChainRole(owned,anchor,owned)==lab,"Owned lab root");

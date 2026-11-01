@@ -256,9 +256,9 @@ public sealed class CheckpointOperation : IDisposable {
   if(!authority)throw new IOException("Anchor missing");
  }
  public CheckpointOperation(string runner,string expectedRunner,string expectedManifest,string expectedMsi){try{
-  known=CheckpointNative.ProgramFiles();RunnerPath=known+"\\BimeronCheckpointClientLabBoundary\\Run-CheckpointLab.ps1";
+  known=CheckpointNative.ProgramFiles();RunnerPath=known+"\\BimeronCheckpointClientLabBoundaryXml\\Run-CheckpointLab.ps1";
   if(runner!=RunnerPath || expectedManifest.ToLowerInvariant()!=CheckpointFormat.ManifestHash || expectedMsi.ToLowerInvariant()!=CheckpointFormat.MsiHash)throw new IOException("Fixed input pins refused");
-  anchor=CheckpointNative.VolumePath(known);dosRoot=known+"\\BimeronCheckpointClientLabBoundary";root=anchor+"\\BimeronCheckpointClientLabBoundary";state=anchor+"\\BimeronProtectedAckLab\\LABProtectedFiles";
+  anchor=CheckpointNative.VolumePath(known);dosRoot=known+"\\BimeronCheckpointClientLabBoundaryXml";root=anchor+"\\BimeronCheckpointClientLabBoundaryXml";state=anchor+"\\BimeronProtectedAckLab\\LABProtectedFiles";
   LogPath=dosRoot+"\\checkpoint-"+Guid.NewGuid().ToString("N")+".log";
   var independent=Add(anchor,true,CheckpointPinRole.TrustedOS);anchorPin=independent;Chain(root,anchor,root);Chain(state,anchor,anchor+"\\BimeronProtectedAckLab");
   // The independently opened known folder must be the traversal anchor object.

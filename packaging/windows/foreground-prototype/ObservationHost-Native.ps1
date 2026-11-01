@@ -11,7 +11,7 @@ function Import-ObservationPinTypes {
  param([byte[]]$FrozenRunner)
  $ErrorActionPreference="Stop"
  Set-StrictMode -Version Latest
- if ((Get-ObservationHash $FrozenRunner) -cne 'a777da0494ba7bf475236865828d3e000ce4c3b0e3661e3e8642cd8dac615752') {throw 'Frozen runner hash refused'}
+ if ((Get-ObservationHash $FrozenRunner) -cne '4e60cab47b730cda2e724af15d68cf1558464c231b5e13b4cf026b762af0387c') {throw 'Frozen runner hash refused'}
  $text=(New-Object Text.UTF8Encoding($false,$true)).GetString($FrozenRunner)
  $tokens=$null; $errors=$null
  $ast=[Management.Automation.Language.Parser]::ParseInput($text,[ref]$tokens,[ref]$errors)
@@ -48,7 +48,7 @@ function Open-ObservationProtectedChain {
   $leaf=$end -eq $pathVolume.Length
   $owned=[NullString]::Value
   if(-not $TrustedOS){
-   foreach($name in @('BimeronCheckpointClientLabBoundary','BimeronProtectedAckLab','BimeronCheckpointObservationBoundary')){
+   foreach($name in @('BimeronCheckpointClientLabBoundaryXml','BimeronProtectedAckLab','BimeronCheckpointObservationBoundaryXml')){
     $candidate=$anchorVolume+'\'+$name
     if($pathVolume -ceq $candidate -or $pathVolume.StartsWith($candidate+'\',[StringComparison]::Ordinal)){$owned=$candidate;break}
    }
@@ -154,7 +154,7 @@ function Read-ObservationFixedConfig {
  # Canonical line format deliberately excludes JSON duplicate-key/coercion ambiguity.
  $value=(New-Object Text.UTF8Encoding($false,$true)).GetString($Bytes)
  $lines=$value.Split("`n")
- if($lines.Count -ne 8 -or $lines[7] -cne '' -or $lines[0] -cne 'ObservationHost002' -or $lines[1] -cne 'boundary-v1' -or $lines[2] -cne 'a777da0494ba7bf475236865828d3e000ce4c3b0e3661e3e8642cd8dac615752' -or $lines[3] -cnotmatch '^[0-9a-f]{64}$' -or $lines[4] -cnotmatch '^[0-9a-f]{64}$') {throw 'Fixed config schema refused'}
+ if($lines.Count -ne 8 -or $lines[7] -cne '' -or $lines[0] -cne 'ObservationHost002' -or $lines[1] -cne 'boundary-xml-v1' -or $lines[2] -cne '4e60cab47b730cda2e724af15d68cf1558464c231b5e13b4cf026b762af0387c' -or $lines[3] -cnotmatch '^[0-9a-f]{64}$' -or $lines[4] -cnotmatch '^[0-9a-f]{64}$') {throw 'Fixed config schema refused'}
  foreach($index in @(5,6)){if((ConvertTo-ObservationTaskSddl $lines[$index]) -cne $lines[$index]){throw 'Canonical descriptor required'}}
  [pscustomobject]@{FolderSddl=$lines[5];TaskSddl=$lines[6];Experiment=$lines[1];RunnerHash=$lines[2];HostHash=$lines[3];TaskXmlHash=$lines[4]}
 }
@@ -164,18 +164,38 @@ function Assert-ObservationExecutionPolicy {
  Set-StrictMode -Version Latest
  if($MachinePolicy -cne 'Undefined' -or $UserPolicy -cne 'Undefined'){throw 'Configured execution policy refused'}
 }
+function Assert-ObservationSystemIdentity {
+ param([string]$UserId)
+ $ErrorActionPreference="Stop"
+ Set-StrictMode -Version Latest
+ if([string]::IsNullOrWhiteSpace($UserId)){throw 'Task SYSTEM identity required'}
+ if($UserId -cmatch '^S-1-'){$sid=New-Object Security.Principal.SecurityIdentifier $UserId}
+ else {$account=New-Object Security.Principal.NTAccount $UserId;$sid=$account.Translate([Security.Principal.SecurityIdentifier])}
+ if($sid.Value -cne 'S-1-5-18'){throw 'Task SYSTEM identity refused'}
+}
+function Assert-ObservationTaskPrincipal {
+ param($Task)
+ $ErrorActionPreference="Stop"
+ Set-StrictMode -Version Latest
+ # Read actual COM principal independently of XML and its exact-byte hash.
+ $definition=$Task.Definition
+ $principal=$definition.Principal
+ Assert-ObservationSystemIdentity $principal.UserId
+ if($null -eq $principal.LogonType -or $principal.LogonType -ne 5){throw 'Task COM service-account logon required'}
+ if($null -eq $principal.RunLevel -or $principal.RunLevel -ne 1){throw 'Task COM highest run level required'}
+}
 function Assert-ObservationTaskXml {
  param([string]$Xml,[string]$ExpectedHash,[string]$Image,[string]$HostPath,[string]$Root)
  $ErrorActionPreference="Stop"
  Set-StrictMode -Version Latest
- if($Root -cne (Join-Path ([Environment]::GetFolderPath([Environment+SpecialFolder]::ProgramFiles)) 'BimeronCheckpointObservationBoundary') -or $HostPath -cne (Join-Path $Root 'Checkpoint-ObservationHost.ps1')){throw 'Fixed task host path required'}
+ if($Root -cne (Join-Path ([Environment]::GetFolderPath([Environment+SpecialFolder]::ProgramFiles)) 'BimeronCheckpointObservationBoundaryXml') -or $HostPath -cne (Join-Path $Root 'Checkpoint-ObservationHost.ps1')){throw 'Fixed task host path required'}
  if((Get-ObservationHash ([Text.Encoding]::UTF8.GetBytes($Xml))) -cne $ExpectedHash){throw 'Exact task XML refused'}
  $doc=New-Object Xml.XmlDocument; $doc.XmlResolver=$null
  if($Xml -match '<!DOCTYPE'){throw 'DTD refused'}
  $doc.LoadXml($Xml)
  $ns=New-Object Xml.XmlNamespaceManager($doc.NameTable);$ns.AddNamespace('t','http://schemas.microsoft.com/windows/2004/02/mit/task')
  $checks=@{
- 't:Principals/t:Principal/t:UserId'='S-1-5-18';'t:Principals/t:Principal/t:LogonType'='ServiceAccount';
+ 't:Principals/t:Principal/t:RunLevel'='HighestAvailable';
  't:Settings/t:MultipleInstancesPolicy'='IgnoreNew';'t:Settings/t:ExecutionTimeLimit'='PT0S';
  't:Settings/t:AllowHardTerminate'='false';'t:Settings/t:StopIfGoingOnBatteries'='false';
  't:Settings/t:DisallowStartIfOnBatteries'='false';'t:Settings/t:RunOnlyIfIdle'='false';
@@ -183,6 +203,10 @@ function Assert-ObservationTaskXml {
  't:Actions/t:Exec/t:Command'=$Image;'t:Actions/t:Exec/t:Arguments'=('-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "'+$HostPath+'"');
  't:Actions/t:Exec/t:WorkingDirectory'=$Root
  }
+ $users=$doc.SelectNodes('/t:Task/t:Principals/t:Principal/t:UserId',$ns)
+ if($users.Count -ne 1){throw 'Task SYSTEM identity required'}
+ Assert-ObservationSystemIdentity $users[0].InnerText
+ if($doc.SelectNodes('/t:Task/t:Principals/t:Principal/t:LogonType',$ns).Count -ne 0){throw 'XML LogonType must be absent'}
  foreach($key in $checks.Keys){$nodes=$doc.SelectNodes('/t:Task/'+$key,$ns);if($nodes.Count -ne 1 -or $nodes[0].InnerText -cne $checks[$key]){throw ('Task setting refused: '+$key)}}
  foreach($path in @('t:Triggers/*','t:Settings/t:RestartOnFailure','t:Settings/t:DeleteExpiredTaskAfter')){if($doc.SelectNodes('/t:Task/'+$path,$ns).Count){throw 'Task lifecycle refused'}}
  if($doc.SelectNodes('/t:Task/t:Actions/*',$ns).Count -ne 1 -or $doc.SelectNodes('/t:Task/t:Principals/*',$ns).Count -ne 1){throw 'Task cardinality refused'}
@@ -278,8 +302,9 @@ function Open-ObservationRegisteredTask {
  Set-StrictMode -Version Latest
  $service=New-Object -ComObject 'Schedule.Service';[void]$State.Owners.Add($service);$service.Connect()
  $folder=$service.GetFolder('\BimeronLab');[void]$State.Owners.Add($folder)
- $task=$folder.GetTask('CheckpointObservationBoundary');[void]$State.Owners.Add($task)
- if($task.Name -cne 'CheckpointObservationBoundary' -or $task.Path -cne '\BimeronLab\CheckpointObservationBoundary'){throw 'Task identity refused'}
+ $task=$folder.GetTask('CheckpointObservationBoundaryXml');[void]$State.Owners.Add($task)
+ if($task.Name -cne 'CheckpointObservationBoundaryXml' -or $task.Path -cne '\BimeronLab\CheckpointObservationBoundaryXml'){throw 'Task identity refused'}
+ Assert-ObservationTaskPrincipal $task
  Assert-ObservationTaskDescriptors $folder $task $Config
  Assert-ObservationTaskXml $task.Xml $Config.TaskXmlHash $Image $HostPath $Root
  return [pscustomobject]@{Folder=$folder;Task=$task}
@@ -318,11 +343,11 @@ function Start-ObservationHost {
  Set-StrictMode -Version Latest
  # Bootstrap only exact hash-verified initializer bytes. No runner top level executes.
  $known=[Environment]::GetFolderPath([Environment+SpecialFolder]::ProgramFiles)
- $runner=Join-Path $known 'BimeronCheckpointClientLabBoundary\Run-CheckpointLab.ps1'
+ $runner=Join-Path $known 'BimeronCheckpointClientLabBoundaryXml\Run-CheckpointLab.ps1'
  Import-ObservationPinTypes ([IO.File]::ReadAllBytes($runner))
  if([CheckpointNative]::ProgramFiles() -cne $known){throw 'Known folder mismatch'}
  $anchor=[CheckpointNative]::VolumePath($known)
- $root=Join-Path $known 'BimeronCheckpointObservationBoundary'
+ $root=Join-Path $known 'BimeronCheckpointObservationBoundaryXml'
  if($HostPath -cne (Join-Path $root 'Checkpoint-ObservationHost.ps1')){throw 'Fixed host path required'}
  $independent=[CheckpointPin]::new($known,$true,[CheckpointPinRole]::TrustedOS)
  [void]$State.Owners.Add($independent)
@@ -359,7 +384,7 @@ function Start-ObservationHost {
  $xml=(New-Object Text.UTF8Encoding($false,$true)).GetString($pins['task.xml'].Read(65536))
  Assert-ObservationTaskXml $xml $config.TaskXmlHash $image $HostPath $root
  $registered=Open-ObservationRegisteredTask $State $config $image $HostPath $root
- $State.Binding='boundary-v1:'+$config.HostHash+':'+$supportHash+':'+$configHash+':'+$identity.Pid+':'+$identity.CreationUtcFileTime
+ $State.Binding='boundary-xml-v1:'+$config.HostHash+':'+$supportHash+':'+$configHash+':'+$identity.Pid+':'+$identity.CreationUtcFileTime
  $sinks=@{}
  $runnerContext=New-ObservationRunnerContext $runner $sinks
  $prepare={param($s)

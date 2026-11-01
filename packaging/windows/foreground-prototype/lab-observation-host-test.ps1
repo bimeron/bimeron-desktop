@@ -104,10 +104,10 @@ try {
   Assert ((Get-Acl -LiteralPath (Join-Path $temp 'ready.record')).AreAccessRulesProtected)
  }finally{foreach($owner in $recordState.Owners){$owner.Dispose()}}
  $descriptor=ConvertTo-ObservationTaskSddl 'O:SYG:SYD:P(A;;GA;;;SY)(A;;GA;;;BA)'
- $config="ObservationHost002`nboundary-v1`na777da0494ba7bf475236865828d3e000ce4c3b0e3661e3e8642cd8dac615752`n$('a'*64)`n$('b'*64)`n$descriptor`n$descriptor`n"
+ $config="ObservationHost002`nboundary-xml-v1`n4e60cab47b730cda2e724af15d68cf1558464c231b5e13b4cf026b762af0387c`n$('a'*64)`n$('b'*64)`n$descriptor`n$descriptor`n"
  $bytes=[Text.Encoding]::UTF8.GetBytes($config)
- $parsed=Read-ObservationFixedConfig $bytes (Get-ObservationHash $bytes);Assert ($parsed.Experiment -ceq 'boundary-v1')
- foreach($bad in @($config.Replace('002','003'),$config.Replace('a777d','f700b'),($config+"`n"),$config.Replace("`n","`r`n"))) {
+ $parsed=Read-ObservationFixedConfig $bytes (Get-ObservationHash $bytes);Assert ($parsed.Experiment -ceq 'boundary-xml-v1')
+ foreach($bad in @($config.Replace('002','003'),$config.Replace('4e60c','f700b'),($config+"`n"),$config.Replace("`n","`r`n"))) {
   $badBytes=[Text.Encoding]::UTF8.GetBytes($bad)
   $refused=$false;try{Read-ObservationFixedConfig $badBytes (Get-ObservationHash $badBytes)|Out-Null}catch{$refused=$true};Assert $refused
  }
@@ -171,7 +171,7 @@ param($LabOnlyAllow,$ExpectedRunnerSha256,$ExpectedManifestSha256,$ExpectedMsiSh
 $probe.Calls++
 if($PID -ne $probe.ExpectedPid -or [runspace]::DefaultRunspace.InstanceId -ne $probe.ExpectedRunspace -or
  $LabOnlyAllow -cne 'DisposableWindowsVM' -or
- $ExpectedRunnerSha256 -cne 'a777da0494ba7bf475236865828d3e000ce4c3b0e3661e3e8642cd8dac615752' -or
+ $ExpectedRunnerSha256 -cne '4e60cab47b730cda2e724af15d68cf1558464c231b5e13b4cf026b762af0387c' -or
  $ExpectedManifestSha256 -cne '0972de05644b5ac2a5210be9ad35efb596545dc1634a051b052f2dc0f4695330' -or
  $ExpectedMsiSha256 -cne '860949118c7ac1ed93376e91576735ee7de2a67f924f0be323c172cf272c355a'){$probe.CallbackFailed=$true}
 'fixture-success'
@@ -265,11 +265,11 @@ foreach($failReturnSink in @($false,$true)) {
 "PASS: $count assertions including durable-return adapter ordering and sink-failure retention."
 
 # Exact experimental action acceptance; XML hashes are recomputed for semantic negatives.
-$root='C:\Program Files\BimeronCheckpointObservationBoundary'
+$root='C:\Program Files\BimeronCheckpointObservationBoundaryXml'
 $image='C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
 $hostPath="$root\Checkpoint-ObservationHost.ps1"
 $xml=@"
-<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task"><Triggers/><Principals><Principal id="System"><UserId>S-1-5-18</UserId><LogonType>ServiceAccount</LogonType><RunLevel>HighestAvailable</RunLevel></Principal></Principals><Settings><MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy><DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries><StopIfGoingOnBatteries>false</StopIfGoingOnBatteries><AllowHardTerminate>false</AllowHardTerminate><StartWhenAvailable>false</StartWhenAvailable><RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable><IdleSettings><StopOnIdleEnd>false</StopOnIdleEnd><RestartOnIdle>false</RestartOnIdle></IdleSettings><AllowStartOnDemand>true</AllowStartOnDemand><Enabled>true</Enabled><Hidden>false</Hidden><RunOnlyIfIdle>false</RunOnlyIfIdle><WakeToRun>false</WakeToRun><ExecutionTimeLimit>PT0S</ExecutionTimeLimit><Priority>7</Priority></Settings><Actions Context="System"><Exec><Command>C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe</Command><Arguments>-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File &quot;$root\Checkpoint-ObservationHost.ps1&quot;</Arguments><WorkingDirectory>$root</WorkingDirectory></Exec></Actions></Task>
+<Task version="1.3" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task"><Triggers/><Principals><Principal id="System"><UserId>S-1-5-18</UserId><RunLevel>HighestAvailable</RunLevel></Principal></Principals><Settings><MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy><DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries><StopIfGoingOnBatteries>false</StopIfGoingOnBatteries><AllowHardTerminate>false</AllowHardTerminate><StartWhenAvailable>false</StartWhenAvailable><RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable><IdleSettings><StopOnIdleEnd>false</StopOnIdleEnd><RestartOnIdle>false</RestartOnIdle></IdleSettings><AllowStartOnDemand>true</AllowStartOnDemand><Enabled>true</Enabled><Hidden>false</Hidden><RunOnlyIfIdle>false</RunOnlyIfIdle><WakeToRun>false</WakeToRun><ExecutionTimeLimit>PT0S</ExecutionTimeLimit><Priority>7</Priority></Settings><Actions Context="System"><Exec><Command>C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe</Command><Arguments>-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File &quot;$root\Checkpoint-ObservationHost.ps1&quot;</Arguments><WorkingDirectory>$root</WorkingDirectory></Exec></Actions></Task>
 "@
 Assert-ObservationTaskXml $xml (Get-ObservationHash ([Text.Encoding]::UTF8.GetBytes($xml))) $image $hostPath $root
 $count++
@@ -315,7 +315,7 @@ foreach($failure in @('none','constructor','descriptor')){
  $script:boundaryCalls=New-Object Collections.ArrayList;$script:boundaryFailure=$failure
  $held=New-Object object;$owned=New-Object Collections.ArrayList;[void]$owned.Add($held)
  $savedPreference=$ErrorActionPreference;$ErrorActionPreference='Continue';$caught=$false
- try{Open-InjectedBoundaryChain ($anchor+'\BimeronCheckpointClientLabBoundary\leaf') $anchor $owned | Out-Null}catch{$caught=$true;Assert ($_.Exception.Message -match $(if($failure -ceq 'constructor'){'role=TraversalOnly'}else{'role=TrustedOS'}))}
+ try{Open-InjectedBoundaryChain ($anchor+'\BimeronCheckpointClientLabBoundaryXml\leaf') $anchor $owned | Out-Null}catch{$caught=$true;Assert ($_.Exception.Message -match $(if($failure -ceq 'constructor'){'role=TraversalOnly'}else{'role=TrustedOS'}))}
  finally{$ErrorActionPreference=$savedPreference}
  Assert ([object]::ReferenceEquals($held,$owned[0]))
  if($failure -ceq 'none'){
@@ -345,7 +345,7 @@ Assert ([CheckpointOperation]::ChainRole($volume,$anchor,[NullString]::Value) -e
 Assert ([CheckpointOperation]::ChainRole($anchor,$anchor,[NullString]::Value) -eq [CheckpointPinRole]::TrustedOS)
 Assert ([CheckpointOperation]::ChainRole($anchor+'\image',$anchor,[NullString]::Value) -eq [CheckpointPinRole]::OSContent)
 foreach($empty in @('', $null)){
- foreach($part in @($volume,$anchor,($anchor+'\BimeronCheckpointClientLabBoundary'))){
+ foreach($part in @($volume,$anchor,($anchor+'\BimeronCheckpointClientLabBoundaryXml'))){
   $pinCalls=0;$refused=$false
   try{$role=[CheckpointOperation]::ChainRole($part,$anchor,$empty);$pinCalls++;New-ObservationChainPin $part $true $role | Out-Null}catch{$refused=$true}
   Assert $refused;Assert ($pinCalls -eq 0)
@@ -361,8 +361,39 @@ try {
   Assert (($owners.Role -join ',') -ceq $case[1])
  }
  $owners=New-Object Collections.ArrayList
- Open-ObservationProtectedChain ($anchor+'\BimeronCheckpointClientLabBoundary\leaf') $anchor $owners | Out-Null
+ Open-ObservationProtectedChain ($anchor+'\BimeronCheckpointClientLabBoundaryXml\leaf') $anchor $owners | Out-Null
  Assert (($owners.Role -join ',') -ceq 'TraversalOnly,TrustedOS,LabProtected,LabProtected')
  $refused=$false;try{Open-ObservationProtectedChain ($anchor+'\Unowned') $anchor $owners | Out-Null}catch{$refused=$true};Assert $refused
 }finally{${function:Get-ObservationVolumePath}=$savedVolume;${function:New-ObservationChainPin}=$savedPin}
 "PASS: $count assertions including compiled PowerShell null-string binding and actual trusted/owned chain roles."
+
+# COM-shaped principal injection only; no Schedule.Service creation.
+function PrincipalFixture($user,$logon=5,$level=1){
+ [pscustomobject]@{Definition=[pscustomobject]@{Principal=[pscustomobject]@{UserId=$user;LogonType=$logon;RunLevel=$level}}}
+}
+foreach($user in @('S-1-5-18','SYSTEM','NT AUTHORITY\SYSTEM')){
+ Assert-ObservationTaskPrincipal (PrincipalFixture $user);$count++
+ $normalized=$xml.Replace('<UserId>S-1-5-18</UserId>',('<UserId>'+$user+'</UserId>'))
+ Assert-ObservationTaskXml $normalized (Get-ObservationHash ([Text.Encoding]::UTF8.GetBytes($normalized))) $image $hostPath $root;$count++
+}
+foreach($logon in @(0,1,2,3,4,6,7,-1,$null)){
+ $refused=$false;try{Assert-ObservationTaskPrincipal (PrincipalFixture SYSTEM $logon)}catch{$refused=$true};Assert $refused
+}
+foreach($user in @('S-1-5-19','S-1-5-20','S-1-5-32-544','BimeronUnresolvablePrincipalXmlFixture','', ' SYSTEM ')){
+ $refused=$false;try{Assert-ObservationTaskPrincipal (PrincipalFixture $user)}catch{$refused=$true};Assert $refused
+}
+foreach($level in @(0,2,$null)){
+ $refused=$false;try{Assert-ObservationTaskPrincipal (PrincipalFixture SYSTEM 5 $level)}catch{$refused=$true};Assert $refused
+}
+$refused=$false;try{Assert-ObservationTaskPrincipal ([pscustomobject]@{Definition=[pscustomobject]@{Principal=[pscustomobject]@{UserId='SYSTEM'}}})}catch{$refused=$true};Assert $refused
+foreach($token in @('ServiceAccount','S4U','Password','InteractiveToken','InteractiveTokenOrPassword','')){
+ $bad=$xml.Replace('</UserId>',('</UserId><LogonType>'+$token+'</LogonType>'))
+ $refused=$false;try{Assert-ObservationTaskXml $bad (Get-ObservationHash ([Text.Encoding]::UTF8.GetBytes($bad))) $image $hostPath $root}catch{$refused=$true};Assert $refused
+}
+foreach($bad in @($xml.Replace('S-1-5-18','S-1-5-19'),$xml.Replace('HighestAvailable','LeastPrivilege'),$xml.Replace('BoundaryXml','Boundary'))){
+ $refused=$false;try{Assert-ObservationTaskXml $bad (Get-ObservationHash ([Text.Encoding]::UTF8.GetBytes($bad))) $image $hostPath $root}catch{$refused=$true};Assert $refused
+}
+# XML absence is checked with SelectNodes under StrictMode, never missing-property access.
+$doc=[xml]$xml;$ns=[Xml.XmlNamespaceManager]::new($doc.NameTable);$ns.AddNamespace('t','http://schemas.microsoft.com/windows/2004/02/mit/task')
+Assert ($doc.SelectNodes('/t:Task/t:Principals/t:Principal/t:LogonType',$ns).Count -eq 0)
+"PASS: $count assertions including XML omission, resolved SYSTEM identity and independent COM principal refusal."

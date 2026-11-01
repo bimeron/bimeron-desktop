@@ -2566,3 +2566,65 @@ interop/real-chain checks); Run-Lab 47 negatives. git diff --check passed.
 No performance-sensitive or product build/package changes; four-target package
 matrix and benchmarks/profiling are inapplicable. Independent native review and
 positive protected preparation remain outstanding. No commit/push.
+
+
+### Boundary XML schema correction (2026-11-01, accepted offline scope)
+
+Before implementation: replace the invalid XML ServiceAccount token with omitted
+LogonType, canonical authored UserId S-1-5-18 and HighestAvailable. Microsoft
+Task Scheduler schema makes LogonType optional and its enumeration excludes
+ServiceAccount; RegisterTask still uses TASK_LOGON_SERVICE_ACCOUNT (5), empty
+password, and SYSTEM. Both parent and host independently read
+RegisteredTask.Definition.Principal: resolve UserId to exact SID S-1-5-18 and
+require numeric LogonType 5 and RunLevel 1. XML identity also resolves to that SID;
+no name alone grants acceptance. Use SelectNodes to require zero LogonType nodes,
+preserving exact XML UTF-8/config002 pins and all settings/SDDL/image/token/session
+checks. OS-normalized SYSTEM is permitted only after SID resolution.
+
+New fixed roots are Program Files\BimeronCheckpointClientLabBoundaryXml and
+Program Files\BimeronCheckpointObservationBoundaryXml; exact task is
+\BimeronLab\CheckpointObservationBoundaryXml, experiment boundary-xml-v1.
+No arbitrary roots, reuse, overwrite, cleanup or archive. Preserve all prior
+staged roots, probes, pins, bundles, sessions (including 86808) and references.
+ACK state, MSI, DLL and manifest stay byte-identical. Freeze runner -> support ->
+host -> parent in new ignored build/boundary-xml-review from the scheduler-SDDL
+candidate, retaining null interop, handoff, fail-fast, bounded diagnostics, current
+VM identity, GPO/process bypass, seven streams, one dispatch and all gates.
+
+Acceptance: offline schema validation against official XSD if obtainable; reject
+XML ServiceAccount and every other XML LogonType even with recomputed hash;
+accept omitted XML LogonType + resolved SYSTEM SID + COM 5, reject other COM
+logons, non-SYSTEM/unresolvable identities and changed elevation. Both PS5.1/7
+Test-All drivers and focused checkout regressions must pass. Source byte hashes
+and final manifest are generated after final logs. No native mode, VM access,
+Task API, credentials, MSI, real runner construction/launch, commit or push.
+Actual new task XML readback remains unobserved: exact freeze and independent
+review precede native admission; verify readback or stop, never substitute an
+approval claim. Supplied builtin Defrag evidence (SYSTEM, COM5, zero XML
+LogonType, no lab task) is context only, not new lab acceptance.
+
+Primary references:
+- https://learn.microsoft.com/en-us/windows/win32/taskschd/task-scheduler-schema
+- https://learn.microsoft.com/en-us/windows/win32/taskschd/taskschedulerschema-principaltype-complextype
+- https://learn.microsoft.com/en-us/windows/win32/taskschd/taskschedulerschema-logontype-simpletype
+- https://learn.microsoft.com/en-us/windows/win32/taskschd/taskfolder-registertask
+- https://learn.microsoft.com/en-us/windows/win32/taskschd/principal-logontype
+
+Supported MSI/DEB packaging and protected ACK behavior are unchanged. Product
+four-target matrix and benchmarks/profiling are inapplicable to this isolated
+Windows lab script correction; native readback/survival remain review gates.
+
+Specification refinement before code: use Task version 1.3, the fixed version
+of the unmodified official published full XSD. Validate the actual authored XML
+against that schema; retain the exact native readback/config freeze gate.
+
+Offline validation result: both outer Test-All drivers passed, each running ten
+suites under PS5.1 and PS7 (40 suite executions). Focused checkout checkpoint,
+host and Run-Lab suites passed under both shells. Checkpoint 159+41+21; host 393
+assertions with both existing mutants detected; Run-Lab 47 negative checks.
+Unmodified official full XSD accepts authored version-1.3 XML and rejects XML
+ServiceAccount. git diff --check passed. No performance-sensitive/product change;
+benchmarks and four-target product build/package matrix are inapplicable.
+Candidate: build/boundary-xml-review. Actual new lab readback, exact-source
+independent review and native survival remain unfulfilled gates. No native mode,
+VM/Task/MSI operation, credentials, real runner construction/launch, commit/push.
