@@ -244,6 +244,7 @@ public sealed class CheckpointOperation : IDisposable {
  CheckpointPin Keep(CheckpointPin pin){pins.Add(pin);checks.Add(pin);return pin;}
  CheckpointPin Add(string path,bool directory,CheckpointPinRole role){var pin=new CheckpointPin(path,directory,role);pins.Add(pin);checks.Add(pin);return pin;}
  public static CheckpointPinRole ChainRole(string part,string anchor,string ownedRoot){
+  if(ownedRoot==String.Empty)throw new ArgumentException("Empty owned root refused","ownedRoot");
   if(part==anchor)return CheckpointPinRole.TrustedOS;
   if(ownedRoot!=null && (part==ownedRoot || part.StartsWith(ownedRoot+"\\",StringComparison.Ordinal)))return CheckpointPinRole.LabProtected;
   if(ownedRoot==null && part.StartsWith(anchor+"\\",StringComparison.Ordinal))return CheckpointPinRole.OSContent;

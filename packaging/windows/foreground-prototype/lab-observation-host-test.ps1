@@ -104,10 +104,10 @@ try {
   Assert ((Get-Acl -LiteralPath (Join-Path $temp 'ready.record')).AreAccessRulesProtected)
  }finally{foreach($owner in $recordState.Owners){$owner.Dispose()}}
  $descriptor=ConvertTo-ObservationTaskSddl 'O:SYG:SYD:P(A;;GA;;;SY)(A;;GA;;;BA)'
- $config="ObservationHost002`nboundary-v1`nf773983c67c06e79ff422350d64324fa9a1e6ca6b3e1bd7b326e5a02d68765cc`n$('a'*64)`n$('b'*64)`n$descriptor`n$descriptor`n"
+ $config="ObservationHost002`nboundary-v1`na777da0494ba7bf475236865828d3e000ce4c3b0e3661e3e8642cd8dac615752`n$('a'*64)`n$('b'*64)`n$descriptor`n$descriptor`n"
  $bytes=[Text.Encoding]::UTF8.GetBytes($config)
  $parsed=Read-ObservationFixedConfig $bytes (Get-ObservationHash $bytes);Assert ($parsed.Experiment -ceq 'boundary-v1')
- foreach($bad in @($config.Replace('002','003'),$config.Replace('f7739','f700b'),($config+"`n"),$config.Replace("`n","`r`n"))) {
+ foreach($bad in @($config.Replace('002','003'),$config.Replace('a777d','f700b'),($config+"`n"),$config.Replace("`n","`r`n"))) {
   $badBytes=[Text.Encoding]::UTF8.GetBytes($bad)
   $refused=$false;try{Read-ObservationFixedConfig $badBytes (Get-ObservationHash $badBytes)|Out-Null}catch{$refused=$true};Assert $refused
  }
@@ -171,7 +171,7 @@ param($LabOnlyAllow,$ExpectedRunnerSha256,$ExpectedManifestSha256,$ExpectedMsiSh
 $probe.Calls++
 if($PID -ne $probe.ExpectedPid -or [runspace]::DefaultRunspace.InstanceId -ne $probe.ExpectedRunspace -or
  $LabOnlyAllow -cne 'DisposableWindowsVM' -or
- $ExpectedRunnerSha256 -cne 'f773983c67c06e79ff422350d64324fa9a1e6ca6b3e1bd7b326e5a02d68765cc' -or
+ $ExpectedRunnerSha256 -cne 'a777da0494ba7bf475236865828d3e000ce4c3b0e3661e3e8642cd8dac615752' -or
  $ExpectedManifestSha256 -cne '0972de05644b5ac2a5210be9ad35efb596545dc1634a051b052f2dc0f4695330' -or
  $ExpectedMsiSha256 -cne '860949118c7ac1ed93376e91576735ee7de2a67f924f0be323c172cf272c355a'){$probe.CallbackFailed=$true}
 'fixture-success'
@@ -339,3 +339,30 @@ try {
  $refused=$false;try{[ObservationDurableSink]::NewDirectory($stageFixture)}catch{$refused=$true};Assert $refused
 }finally{$stageWriter.Dispose()} # Only the inert owned test writer, never production owners.
 "PASS: $count assertions including exact binary CREATE_NEW staging and existing-directory refusal; fixture retained."
+
+# Real compiled selector and unmodified production chain; only native adapters mocked.
+Assert ([CheckpointOperation]::ChainRole($volume,$anchor,[NullString]::Value) -eq [CheckpointPinRole]::TraversalOnly)
+Assert ([CheckpointOperation]::ChainRole($anchor,$anchor,[NullString]::Value) -eq [CheckpointPinRole]::TrustedOS)
+Assert ([CheckpointOperation]::ChainRole($anchor+'\image',$anchor,[NullString]::Value) -eq [CheckpointPinRole]::OSContent)
+foreach($empty in @('', $null)){
+ foreach($part in @($volume,$anchor,($anchor+'\BimeronCheckpointClientLabBoundary'))){
+  $pinCalls=0;$refused=$false
+  try{$role=[CheckpointOperation]::ChainRole($part,$anchor,$empty);$pinCalls++;New-ObservationChainPin $part $true $role | Out-Null}catch{$refused=$true}
+  Assert $refused;Assert ($pinCalls -eq 0)
+ }
+}
+$savedVolume=${function:Get-ObservationVolumePath};$savedPin=${function:New-ObservationChainPin}
+try {
+ function Get-ObservationVolumePath([string]$Path){$Path}
+ function New-ObservationChainPin($Path,$Directory,$Role){[pscustomobject]@{Path=$Path;Role=$Role}}
+ foreach($case in @(@(($anchor+'\image'),'TraversalOnly,TrustedOS,OSContent'),@($anchor,'TraversalOnly,TrustedOS'))){
+  $owners=New-Object Collections.ArrayList
+  Open-ObservationProtectedChain $case[0] $anchor $owners -TrustedOS | Out-Null
+  Assert (($owners.Role -join ',') -ceq $case[1])
+ }
+ $owners=New-Object Collections.ArrayList
+ Open-ObservationProtectedChain ($anchor+'\BimeronCheckpointClientLabBoundary\leaf') $anchor $owners | Out-Null
+ Assert (($owners.Role -join ',') -ceq 'TraversalOnly,TrustedOS,LabProtected,LabProtected')
+ $refused=$false;try{Open-ObservationProtectedChain ($anchor+'\Unowned') $anchor $owners | Out-Null}catch{$refused=$true};Assert $refused
+}finally{${function:Get-ObservationVolumePath}=$savedVolume;${function:New-ObservationChainPin}=$savedPin}
+"PASS: $count assertions including compiled PowerShell null-string binding and actual trusted/owned chain roles."

@@ -1248,3 +1248,18 @@ commit, push or release is claimed. Session 86808 and earlier references/bundles
 remain untouched. Supported packaging is unchanged; the product four-target
 build/package matrix and performance profiling are inapplicable to this lab-only
 Windows script change.
+
+
+Null owned-root correction: see foreground README acceptance. Explicit NullString
+interop plus empty-string rejection preserve the existing authority and packaging
+policy. Fresh ignored boundary-v1-null-review freeze requires runner -> support ->
+host -> parent pins and both-shell offline checks. No native operation or release;
+product matrix and performance profiling are inapplicable to this lab-only fix.
+
+Offline validation: both outer Test-All drivers passed (seven suites x two engines
+each); final checkout checkpoint, host and Run-Lab negative suites passed in both
+PS5.1/7. Checkpoint 159+41+21; host 358 (339 regressions plus 19 compiled
+interop/real-chain checks); Run-Lab 47 negatives. git diff --check passed.
+No performance-sensitive or product build/package changes; four-target package
+matrix and benchmarks/profiling are inapplicable. Independent native review and
+positive protected preparation remain outstanding. No commit/push.

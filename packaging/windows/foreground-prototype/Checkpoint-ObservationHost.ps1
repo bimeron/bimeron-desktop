@@ -1,6 +1,6 @@
 #requires -Version 5.1
 # Disconnected experiment host. No provisioning or task lifecycle operations.
-$script:ObservationSupportSha256='769c041245f5026f5861af41408baed402d7dca86b32985953939a1cb87162e8'
+$script:ObservationSupportSha256='3056b96e63e33852477bf1d02c3664226f631fa404babea8e55b778e9af04f0e'
 function New-ObservationState {
  param([string]$Binding)
  if ([string]::IsNullOrWhiteSpace($Binding)) { throw 'Binding required' }
@@ -79,7 +79,7 @@ function Invoke-ObservationCapturedRunner {
  $append={param($name,$frame) $Sinks[$name].Append($frame)}
  $status={param($message) $Sinks.status.Append("0`t"+[Text.Encoding]::UTF8.GetByteCount($message)+"`t"+[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($message))+"`n")}
  # Preserve the exact script invocation and runspace. Stream conversion is bounded capture only.
- & $RunnerPath -LabOnlyAllow DisposableWindowsVM -ExpectedRunnerSha256 'f773983c67c06e79ff422350d64324fa9a1e6ca6b3e1bd7b326e5a02d68765cc' -ExpectedManifestSha256 '0972de05644b5ac2a5210be9ad35efb596545dc1634a051b052f2dc0f4695330' -ExpectedMsiSha256 '860949118c7ac1ed93376e91576735ee7de2a67f924f0be323c172cf272c355a' *>&1 | ForEach-Object {
+ & $RunnerPath -LabOnlyAllow DisposableWindowsVM -ExpectedRunnerSha256 'a777da0494ba7bf475236865828d3e000ce4c3b0e3661e3e8642cd8dac615752' -ExpectedManifestSha256 '0972de05644b5ac2a5210be9ad35efb596545dc1634a051b052f2dc0f4695330' -ExpectedMsiSha256 '860949118c7ac1ed93376e91576735ee7de2a67f924f0be323c172cf272c355a' *>&1 | ForEach-Object {
   try {
    $name=if($_ -is [Management.Automation.ErrorRecord]){'error'}elseif($_ -is [Management.Automation.WarningRecord]){'warning'}elseif($_ -is [Management.Automation.VerboseRecord]){'verbose'}elseif($_ -is [Management.Automation.DebugRecord]){'debug'}elseif($_ -is [Management.Automation.InformationRecord]){'information'}else{'success'}
    Write-ObservationFrame $State $name ([string]$_) $append $status

@@ -11,7 +11,7 @@ function Import-ObservationPinTypes {
  param([byte[]]$FrozenRunner)
  $ErrorActionPreference="Stop"
  Set-StrictMode -Version Latest
- if ((Get-ObservationHash $FrozenRunner) -cne 'f773983c67c06e79ff422350d64324fa9a1e6ca6b3e1bd7b326e5a02d68765cc') {throw 'Frozen runner hash refused'}
+ if ((Get-ObservationHash $FrozenRunner) -cne 'a777da0494ba7bf475236865828d3e000ce4c3b0e3661e3e8642cd8dac615752') {throw 'Frozen runner hash refused'}
  $text=(New-Object Text.UTF8Encoding($false,$true)).GetString($FrozenRunner)
  $tokens=$null; $errors=$null
  $ast=[Management.Automation.Language.Parser]::ParseInput($text,[ref]$tokens,[ref]$errors)
@@ -46,13 +46,13 @@ function Open-ObservationProtectedChain {
  while($true) {
   $part=$pathVolume.Substring(0,$end)
   $leaf=$end -eq $pathVolume.Length
-  $owned=$null
+  $owned=[NullString]::Value
   if(-not $TrustedOS){
    foreach($name in @('BimeronCheckpointClientLabBoundary','BimeronProtectedAckLab','BimeronCheckpointObservationBoundary')){
     $candidate=$anchorVolume+'\'+$name
     if($pathVolume -ceq $candidate -or $pathVolume.StartsWith($candidate+'\',[StringComparison]::Ordinal)){$owned=$candidate;break}
    }
-   if($null -eq $owned){throw 'Fixed owned lab root required'}
+   if([object]::ReferenceEquals($owned,[NullString]::Value)){throw 'Fixed owned lab root required'}
   }
   $role=[CheckpointOperation]::ChainRole($part,$anchorVolume,$owned)
   try {$pin=New-ObservationChainPin $part (-not $leaf -or $Directory.IsPresent) $role}
@@ -154,7 +154,7 @@ function Read-ObservationFixedConfig {
  # Canonical line format deliberately excludes JSON duplicate-key/coercion ambiguity.
  $value=(New-Object Text.UTF8Encoding($false,$true)).GetString($Bytes)
  $lines=$value.Split("`n")
- if($lines.Count -ne 8 -or $lines[7] -cne '' -or $lines[0] -cne 'ObservationHost002' -or $lines[1] -cne 'boundary-v1' -or $lines[2] -cne 'f773983c67c06e79ff422350d64324fa9a1e6ca6b3e1bd7b326e5a02d68765cc' -or $lines[3] -cnotmatch '^[0-9a-f]{64}$' -or $lines[4] -cnotmatch '^[0-9a-f]{64}$') {throw 'Fixed config schema refused'}
+ if($lines.Count -ne 8 -or $lines[7] -cne '' -or $lines[0] -cne 'ObservationHost002' -or $lines[1] -cne 'boundary-v1' -or $lines[2] -cne 'a777da0494ba7bf475236865828d3e000ce4c3b0e3661e3e8642cd8dac615752' -or $lines[3] -cnotmatch '^[0-9a-f]{64}$' -or $lines[4] -cnotmatch '^[0-9a-f]{64}$') {throw 'Fixed config schema refused'}
  foreach($index in @(5,6)){if((ConvertTo-ObservationTaskSddl $lines[$index]) -cne $lines[$index]){throw 'Canonical descriptor required'}}
  [pscustomobject]@{FolderSddl=$lines[5];TaskSddl=$lines[6];Experiment=$lines[1];RunnerHash=$lines[2];HostHash=$lines[3];TaskXmlHash=$lines[4]}
 }

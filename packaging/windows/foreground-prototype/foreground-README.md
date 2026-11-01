@@ -2538,3 +2538,31 @@ commit, push or release is claimed. Session 86808 and earlier references/bundles
 remain untouched. Supported packaging is unchanged; the product four-target
 build/package matrix and performance profiling are inapplicable to this lab-only
 Windows script change.
+
+
+### Null owned-root interop correction (2026-11-01)
+
+Specification before implementation: no owned root crosses PowerShell -> C# as
+[NullString]::Value, never $null (the string binder converts it to empty).
+ChainRole must reject empty ownedRoot before classification; C# null remains legal.
+Acceptance: compiled calls in PS5.1 and PS7 prove TraversalOnly for the volume,
+TrustedOS for the exact anchor, OSContent below it, and empty-root refusal before
+any pin. Exercise actual Open-ObservationProtectedChain with only native volume
+and pin adapters mocked; retain strict ordinary owned-root LabProtected roles.
+Preserve anchors, mask, descriptors, source selection, one-shot and 300-second bound.
+Reported native preparation stopped at Bootstrap Croot role LabProtected before
+any fresh root creation, owner count zero. Read-only binding proof reproduced
+$null/empty => LabProtected versus NullString => TraversalOnly on prior bytes.
+This is a binding classification defect, not evidence of an ACL defect. No runner,
+Task or MSI launched. Session 86808 and every prior reference remain untouched.
+Freeze runner, support import/config/invocation pins, support, host embedded support
+pin, then parent and fixtures in a new ignored boundary-v1-null-review bundle.
+Offline acceptance only; no native-mode/VM/credentials/Task/MSI/real operation.
+
+Offline validation: both outer Test-All drivers passed (seven suites x two engines
+each); final checkout checkpoint, host and Run-Lab negative suites passed in both
+PS5.1/7. Checkpoint 159+41+21; host 358 (339 regressions plus 19 compiled
+interop/real-chain checks); Run-Lab 47 negatives. git diff --check passed.
+No performance-sensitive or product build/package changes; four-target package
+matrix and benchmarks/profiling are inapplicable. Independent native review and
+positive protected preparation remain outstanding. No commit/push.
