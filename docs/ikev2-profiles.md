@@ -43,9 +43,16 @@ remains disabled until safe terminal settlement, migration/participating-host
 exclusion and preserved update/rollback are demonstrated. No setup wrapper,
 installed general-purpose helper or automatic administrative recovery is added.
 
-### Trusted invocation procedure (selected specification; review pending)
+<a id="trusted-invocation-procedure-selected-specification-review-pending"></a>
 
-The user selected option 1: permission to revise this specification and obtain
+### Trusted invocation procedure (historical; superseded proposal)
+
+Everything in this subsection records the earlier proposal and lab scope. Its
+procedural authorization, callback settlement and embedded-action lifetime route
+are superseded by the selected proposed Core controller below. Retained future-tense
+requirements describe that historical proposal, not current production approval.
+
+Historical option 1 proposed permission to revise this specification and obtain
 independent review, not permission to enable native enrollment. For enrollment
 and every modification of an enrolled installation, the intended same-user
 interactive user must start the approved native MSI already fully elevated, using
@@ -55,8 +62,8 @@ callbacks. Administrators, SYSTEM and the exact TrustedInstaller SID specified
 below are trusted; a malicious privileged administrator is outside this boundary.
 
 Residual risk: callbacks cannot prove that this procedure was followed or that
-the original initiating process was already fully elevated. Option 1 deliberately
-accepts reliance on correct procedure only after independent review. The revised procedural contract has independent review for the disconnected
+the original initiating process was already fully elevated. That proposal would have relied on correct procedure after independent review;
+it is not the current selected authorization contract. The revised procedural contract has independent review for the disconnected
 observation only, not production acceptance. The original
 `verifyInitiatingClient` remains Unknown; do not rename it Verified. Any future
 implementation is separate work. Ordinary nonenrolled packet installation and
@@ -148,6 +155,280 @@ for rollback. Do not schedule unguarded reboot replacement or kill owners.
 An embedded native MSI action may implement this, but its actual callback/process
 lifetime, journal and nested-uninstall behavior must be demonstrated in a prototype
 before claiming installable native support. No such evidence exists yet.
+
+### Proposed Core installation controller (selected architecture; review pending)
+
+**PROPOSED, review pending; not production approved.** This selects a proposed
+Core-owned narrow installation command applying a protected approved plan. It is
+not an existing Core capability or a setup wrapper/general-purpose installer helper.
+Conditional permission to use an installer as part of another route if otherwise impossible does not relax
+procedural bypass protection. The preceding trusted-invocation procedure and its
+callback settlement/state-record experiments are historical, superseded proposals,
+not current authorization or terminality mechanisms. Their evidence is retained.
+Core `66d84d8f4dcfc6ada625eb11894b19feea51b7ba` requires an independently reviewed
+amendment; it does not already implement this controller contract. No new released
+command, plan schema or authorization interface is specified here.
+
+- **Unenrolled:** trusted, complete observation establishes no native enrollment.
+  Native admission is unavailable; ordinary packet-only installation/start and
+  existing signed updater rollback keep their current behavior. Missing state is
+  not a new global packet admission gate.
+- **Settled:** authenticated durable evidence binds the exact enrolled installation,
+  generation, approved inputs and verified terminal inventory, with no outstanding
+  mutation or rollback work. Only matching participating admissions may proceed,
+  subject to all existing owner/protection checks; settlement alone is no launch
+  authority.
+- **Pending:** a durably published enrollment or enrolled-modification intent
+  excludes new conflicting participating protected admissions before any resource
+  mutation; it does not itself revoke the exact admitted operation described below.
+  It remains pending through commit, rollback, nested removal and possible late
+  server work until trusted terminal settlement for that exact generation.
+- **Unsafe:** contradictory, corrupt, incomplete or unverifiable enrolled evidence,
+  failed reads/security checks or uncertain recovery prevents protected admission.
+  It cannot be interpreted as Unenrolled or cleared by retry, timeout or deletion.
+
+Absence is a distinct successful trusted read result, never an alias for access,
+I/O, decoding, identity, durability or authority errors. Absence alone cannot
+prove Unenrolled after enrollment may have occurred; the reviewed migration and
+authority contract must establish that distinction. No global missing-state gate
+is proposed. Administrative recovery remains explicit, separately specified work.
+
+Admission and publication must share a reviewed serialization boundary so that
+no host passes a Settled check while another starts mutation. Before first
+enrollment or any enrolled mutation, close new participating admissions, establish
+quiescence of existing conflicting work, and durably publish Pending. Mutation
+must not begin unless that publication succeeds and is visible to every relevant
+participant. Failure/crash at any boundary must leave exclusion effective, even
+if the publishing process dies. A preflight snapshot or mutex acquired only for
+that snapshot cannot supply this guarantee. The controller must supply this protected serialization and durability; the lab
+records and existing model do not implement it.
+
+Every operation must bind the same installation ID, a fresh nonreused generation
+and exact operation; every continuation and settlement retains those bindings.
+First enrollment instead binds an explicit trusted no-predecessor baseline: a
+complete authorized Unenrolled observation, inventoried pre-enrollment resources
+and exact rollback baseline, with migration/quiescence obligations satisfied. It
+cannot require a prior Settled generation that does not exist. Subsequent enrolled
+operations bind their exact prior Settled generation/inventory. Neither missing
+records nor a caller assertion supplies the no-predecessor baseline. Bind the
+independently approved MSI bytes/identity, effective database and Binary,
+architecture, Core/GUI
+and external payload digests, protected preload selection, allowed mutation inputs
+and rollback baseline. Revalidate these bindings at the privileged boundary and
+terminal publication; mutable properties or self-reported hashes are insufficient.
+Reject stale, mismatched, replayed or substituted inputs without mutation or
+settlement. Preserve exact prior policy, installation identity and rollback data.
+
+Pending blocks new conflicting admissions, not continuation of the exact already
+admitted installation/generation/operation with its approved inputs, bounded work
+scope and rollback baseline. Such continuation includes bound nested work,
+rollback and service restoration needed to finish that operation while Pending.
+Each privileged continuation must independently verify its membership in that
+still-outstanding admitted work; matching an installation ID alone is insufficient.
+Unrelated work, stale generations, substituted operations and continuations after
+terminal closure must refuse before mutation. This exception grants no new native
+session or unrelated packet start. Its enforceable authorization and revocation
+mechanism remains unresolved; Pending is neither a blanket prohibition of required
+rollback nor general permission to bypass exclusion.
+
+Every host capable of conflicting work must participate: foreground/native owners,
+packet service/start paths where enrollment affects them, signed update helpers,
+installer/repair/uninstall and nested old-product hosts. Migration must inventory
+already installed/running and cached older hosts, prove they honor exclusion or
+are quiescent and cannot resume conflicting work, and refuse enrollment when this
+cannot be established. Merely installing a new reader does not retrofit an old
+host. The migration and update ordering must preserve the existing signed updater's
+verification, replacement and rollback, including service restoration; no proposed
+settle-before-service-restart redesign is accepted. Pending cannot make the very
+rollback needed to reach a safe terminal outcome impossible.
+
+The selected controller sequence is:
+
+1. Authenticate Core/controller and independently approved inputs; copy and pin
+   the exact MSI, payloads, plan and rollback baseline in protected staging outside
+   every tree the operation may replace or remove. Validate effective package,
+   transforms/patch refusal, mutation inputs, migration and old cached packages.
+   Close/drain conflicting participating admissions under the Core exclusion guard.
+2. Core `BeginInstallationTransaction` retains that guard on one owning OS thread
+   through final release. On that thread call `MsiBeginTransaction`; refuse an
+   existing transaction or any failure, never Join an outer transaction. Ownership
+   of this outer transaction establishes membership of the exact invoked operation;
+   independent research found no callback detector proving enclosing-transaction
+   absence. Callback observations cannot replace ownership.
+3. Bind installation, fresh generation, operation, exact inputs and baseline; write,
+   flush and read back protected Pending before the exact synchronous
+   `MsiInstallProduct` call can cause any destructive work. If Begin succeeds but
+   Pending write, flush or readback fails, prohibit Install and attempt
+   `MsiEndTransaction` rollback on the SAME owning thread. Uncertain partial
+   publication or failed/unknown End retains unsafe exclusion; do not infer
+   absence, return to Unenrolled or release the guard. A successful End alone
+   cannot clear uncertain publication; trusted reconciliation remains required.
+4. Call `MsiEndTransaction` on the owning thread with the selected commit or
+   rollback disposition, including rollback after install failure. Require its
+   authoritative completion for the bound transaction, not just an install return,
+   callback, process exit or quiet inventory. Commit and rollback both require
+   independently verified final inventory and durable settlement. Release the
+   exclusion guard last, after settlement is flushed and verified.
+
+`MsiEndTransaction` is authoritative only for the explicitly bounded transaction
+mutation domain, not arbitrary future tasks. Approved packages must be synchronous
+and bounded, with no detached workers, reboot/deferred replacement, chainer or
+out-of-transaction mutation. Enumerate nested old-product removal, rollback/commit,
+services, policy and payload resources; authenticate old cached package identities
+and migration controls before allowing their destructive work. Refuse unsupported
+baselines/routes. No native MSI callback publishes settlement.
+
+An Install failure is not itself terminal evidence. A failed installation followed
+by authoritative successful End rollback, exact verified restoration of its bound
+baseline, complete domain closure and durable verified settlement is a safely
+restored FAILED operation, not a successful install. Failed or unknown End
+(including access denied, install failure or in-progress End results), disabled
+rollback, reboot-required/initiated results, incomplete inventory, outstanding
+work or failed durability remain unresolved and must not settle. An Install
+failure without the full successful rollback evidence remains unresolved. A timeout
+is uncertainty, never permission to terminate workers or infer completion.
+
+After durable Pending, controller death fences NEW conflicting participating work
+even after mutex abandonment; it cannot revoke a standard MSI execution segment
+that has already been authorized. That segment may continue, including nested
+work. Bound rollback/service-restoration authority must survive controller death
+to finish the exact admitted operation. This survival and enforceable domain
+closure are explicit disconnected-model assumptions, not a claimed native MSI
+revocation or surviving authorization capability. Death never supplies settlement;
+uncertain outcomes require explicit separately reviewed recovery. A dead controller's
+held-thread End protocol cannot be assumed to have completed.
+
+Direct enrolled MSI bypass remains a mandatory unresolved production gate. EVERY
+participating independently approved effective package must contain mandatory
+execute-sequence preflight AND a first deferred admission gate before any
+resource mutation. This includes direct enrollment, enrolled install/repair/
+maintenance/uninstall, cached packages and nested old-product removal. Neither
+gate may be skipped through UI routing, sequence conditions or caller-controlled
+properties. Independently approve the exact effective database, Binary DLL,
+sequence/conditions and trusted preload selection before loading actions; self-
+checks after loading cannot establish provenance. Old ungated baselines must
+refuse enrollment/upgrade participation rather than relying on the new package's
+gates. Preserve unchanged direct packet behavior only for trusted Unenrolled state.
+
+Both gates require independently grounded controller/operation authorization,
+with exact package/action and installation/generation/input bindings; every
+privileged destructive continuation must retain those bindings. An authenticated
+local pipe proves its peer PROCESS, not the executing DLL export, action, MSI
+session or effective sequence. Independent approved preload provenance and exact
+effective sequence are therefore required even with peer authentication.
+CustomActionData (CAD) may locate bound data; it is never authority. A public
+property, nonce, claimed PID, action name or matching plan ID is insufficient.
+Native proof tying that approved preload/action/session to the admitted operation,
+transport and cached-old-package support remains unresolved. Outer transaction
+ownership alone neither authorizes direct enrolled execution nor an arbitrary
+outer caller. Conditional permission to use a controller when necessary accepts
+neither procedural bypass nor unenforced enrolled-package gates.
+
+Bound signed-updater rollback/restoration must finish while Pending using narrowly
+verified authorization for the existing operation. It must neither reacquire a
+mutex held by its controller nor require Settled before restarting/restoring the
+bound service. Define a continuation route that also preserves bound rollback/
+restoration authority after controller death, and reject unrelated starts; test it
+before accepting participation. Existing signed verification and
+rollback guarantees remain mandatory.
+
+The Core amendment must cover this ownership/thread lifetime, protected admission
+and durable publication, authenticated destructive-action authorization, migration,
+bound restoration and crash recovery. Native evidence and independent review are
+required before enabling production. This documentation supplies neither.
+
+Minimal disconnected acceptance is an exploratory finite logical-state model,
+with explicit events and assumptions, no production reader/writer or MSI wiring.
+The first model covers enrollment and enrolled modification with commit or exact
+restored rollback, including failed enrollment returning to its bound baseline;
+it excludes successful native-enrollment removal. A later separately reviewed
+extension must define removal terminal inventory, durable enrollment-history and
+authority evidence, exclusion retirement and when Unenrolled may safely be
+reestablished. Successful removal must not be inferred from deleted state or a
+missing record; nested old-product removal within an admitted upgrade remains
+bound work in the first model.
+
+Model terminal events are explicitly assumed evidence with no native producer.
+Each event binds installation ID, admitted generation, exact operation and inputs,
+expected and observed terminal inventory (commit or restored baseline), and the
+complete outstanding-work domain, requiring no outstanding mutation, rollback,
+nested or delayed work. The model assumes enforceable closure against future
+continuation for that domain; it does not derive closure from finite observations.
+Reject missing/mismatched bindings, wrong inventory, outstanding work and replayed
+terminal events without settlement. Reject late continuations after assumed
+terminal closure, as well as unrelated/stale continuations while Pending. These
+are conditional model assertions, not evidence that a real host can enforce them.
+
+Cover trusted no-predecessor first enrollment and rejection of a fabricated or
+unknown baseline; Unenrolled packet behavior; pending-before-mutation ordering;
+competing new admission versus exact bound continuation; bound rollback/service
+restoration while Pending; crash/failed publication at each boundary; read errors
+versus absence; stale/replay and input mismatch; old-host nonparticipation; commit
+and restored rollback; late server work; and rejection of callback/exit/ACK/
+checkpoint-only settlement. Assert that no conflicting new admission overlaps
+mutation and no uncertain outcome becomes Settled. Model passes support exploration
+only, not acceptance of this proposal or production terminality.
+
+#### Smallest disconnected controller implementation acceptance
+
+Keep the reviewed enrollment model unchanged: its terminal events still assume
+closure, durability and migration, with no native producer. Add only a disconnected
+controller model with injected MSI calls, protected-store/inventory outcomes and an
+owning-thread guard; no real MSI, registry, service, native settlement callback or
+released CLI/schema. Reuse the logical bindings above rather than duplicating the
+generic enrollment model.
+
+Acceptance must assert ordered authentication/staging, guard acquisition, Begin
+(no existing transaction/Join), Pending write/flush/readback before the exact
+Install call, End commit or rollback, inventory, durable settlement and release
+last. Exercise wrong-thread entry/continuation/End/release and exceptions. Require:
+
+- Both mandatory gates for every participating effective package, including direct
+  and quiet/UI-skipped routes, maintenance, cached and nested old removal; reject
+  skipped/conditioned/property-bypassed gates and old ungated baselines.
+- Forged peer process, action/export/session claims and CAD/property/nonce/plan
+  substitutions refuse. A valid pipe peer with unapproved preload/Binary/sequence
+  still refuses; injected approved provenance is an assumption, not native proof.
+- Begin success followed separately by Pending write, flush and readback failure
+  never calls Install; attempts End rollback on the same thread. Partial/uncertain
+  publication and failed/unknown End retain unsafe exclusion without absence
+  inference or guard release.
+- Successful commit and failed Install plus successful End rollback, exact baseline,
+  complete domain closure and durable settlement have distinct outcomes: successful
+  operation versus safely restored failed operation. Failed/unknown End (access
+  denied, install failure, in progress), rollback disabled, reboot, incomplete or
+  mismatched inventory and durability failures never settle.
+- Death after authorization permits the already-authorized MSI segment to survive
+  while Pending fences NEW work. Model surviving bound rollback/restoration
+  authority explicitly, without inventing native revocation or automatic settlement.
+  Bound signed restore avoids mutex reacquisition and settle-first deadlock.
+- Reject stale/substituted continuation, unrelated new work, outstanding/out-of-domain
+  work and callback/exit-only settlement; preserve Unenrolled packet compatibility.
+
+Keep successful authorization, surviving restoration authority, durability and
+closure explicitly assumed; disconnected passes provide no native proof.
+Successful enrolled removal remains a separate specification/acceptance extension.
+
+Native acceptance separately requires immutable approved inputs, real protected
+publication/read durability and security, competing participating hosts, migration
+from old/cached hosts, nested upgrade/rollback, crash/interruption and late-server
+observations, plus independently verified terminal inventory, enforceable closure
+of the bounded mutation domain and signed updater rollback preservation. Record
+actual unavailable/error outcomes and architecture limits. Independent specification review, Core amendment and review of concrete
+evidence precede production approval; model passes or a single MSI run cannot
+satisfy these gates. This docs-only proposal changes no build or packaging flow.
+
+Current parent checkpoint VM experiment outcome is **UNKNOWN**. The old client
+root was moved to `prelaunch-c260f52f`. Review found nested inventory records
+without individual file hashes, so equality across that move is unproved. Exact
+`85930a2` runner/MSI/manifest guest hashes and protected ACLs were separately
+verified after staging.
+One Invoke-Command AsJob was dispatched, but parent collection failed because
+Tee-Object combined incompatible LiteralPath and Append, and the host exited.
+No result was captured; immediate read-only observation found no MSI logs or
+Pending/checkpoint. That absence proves neither nonexecution nor terminality.
+VM orchestration is stopped; this record authorizes no retry or VM access and
+claims no successful launch, interruption, rollback or settlement.
 
 ## Core prerequisite and security acceptance
 
@@ -256,8 +537,8 @@ This specification does not change packaging or authorize release.
 ## Offline implementation evidence
 
 The following dated results and earlier fixture acceptance records are historical
-evidence with their original scope. They do not implement or approve the selected
-[trusted invocation procedure](#trusted-invocation-procedure-selected-specification-review-pending).
+evidence with their original scope. They do not implement or approve the
+[historical trusted invocation procedure](#trusted-invocation-procedure-historical-superseded-proposal).
 
 Windows x64 Release tests used VS 18 2026 BuildTools and Qt 6.8.3 with the
 explicit offscreen platform (no native-platform fallback). Baseline
@@ -560,8 +841,8 @@ explicit foreground-lab-protected-ack-checkpoint, x64 only, excluded from ALL,
 installation and production. Its fresh Checkpoint identities and compiled variant 3
 reuse the ACK source, exact WiX sequence, protected run.manifest/pins and 48-byte
 Pending format. The three existing ACK variants and trace contracts are unchanged.
-The trusted invocation procedure is selected with independent specification review
-pending; this checkpoint establishes neither its runtime binding nor continuous
+Historically the trusted invocation procedure was selected for specification review;
+it is superseded by the proposed Core controller above; this checkpoint establishes neither its runtime binding nor continuous
 exclusion. Production remains disabled.
 
 After Deferred create(i,g) returns success (including Pending write/flush), write
@@ -717,8 +998,9 @@ The accepted bounded batch is specified in the foreground README under
 reviewed selected-token/LSA observer without protected access or authority. The
 original trace schema, MSI sequence and zero-resource contract remain unchanged.
 New immutable evidence and independent review precede parent-only VM observation;
-option 1 remains procedural same-user invocation, with no original-client
-attestation or silent continuity proof. Incomplete/early-failure results are valid
+Historical option 1 relied on procedural same-user invocation without original-
+client attestation or continuity proof; it is superseded by the
+[proposed Core controller](#proposed-core-installation-controller-selected-architecture-review-pending). Incomplete/early-failure results are valid
 unavailable evidence. Production enrollment remains disabled.
 
 Callback context trace offline evidence is recorded in the foreground README.
@@ -730,5 +1012,6 @@ Ignored build/trace-context-review-751426d freezes source from Git before eviden
 append, with consistent archive/source hashes, artifacts/18 GUIDs and logs/effects.
 This is NOT VM-READY; independent review precedes parent-only Success observations.
 No MSI actions/protected opens/writes/network/VM or production change occurred.
-Incomplete/early failure remains unavailable evidence. Option 1 remains procedural
-same-user invocation, without original-client attestation or continuity proof.
+Incomplete/early failure remains unavailable evidence. Historical option 1 relied
+on procedural same-user invocation without original-client attestation or continuity
+proof; it is superseded by the [proposed Core controller](#proposed-core-installation-controller-selected-architecture-review-pending).

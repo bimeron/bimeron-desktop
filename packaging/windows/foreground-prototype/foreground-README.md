@@ -1962,3 +1962,342 @@ Focused PS checks and diff --check are CI-equivalent. Product matrix (Windows x6
 ARM64 and both Linux targets), benchmarks and profiling are inapplicable: this is a
 disconnected native-x64-only lab runner and no product/build/package input changed.
 No Core/product/MSI rebuild, full matrix, push/watch or release occurred.
+
+### Resume experiment observation (2026-11-01)
+
+Independent review of `31a238c` and `85930a2` found no blocking issue within the
+bounded DOS-alias runner delta. PS 5.1 and PS 7 each repeated 159 worker/format,
+34 policy and 21 alias assertions; archive/inventory checks matched committed
+sources and frozen artifact pins. This does not establish native execution.
+
+The parent accessed the disposable Windows 10 STD VM and confirmed no active MSI
+process, no Pending/checkpoint and matching prepared MSI/manifest hashes. The
+existing client root was moved intact to
+`BimeronCheckpointClientLab-prelaunch-c260f52f`; the before/after comparison matched, but later review found nested inventory
+records with missing individual file hashes. It does not prove file-byte equality
+across the move. This also does not establish archive corruption. The reviewed runner and unchanged MSI/manifest were
+staged with protected SYSTEM/Administrators ACLs and verified guest hashes.
+
+One remote asynchronous invocation was dispatched. The parent collector then
+failed because its `Tee-Object` call combined unsupported `-LiteralPath` and
+`-Append` parameters, and the collector process exited. No runner result was
+captured. Subsequent read-only observation found no new client log, Pending or
+checkpoint and no MSI process. This does not prove whether the runner constructor
+or launch path ran, explain a refusal, or establish terminal server quiescence.
+The experiment outcome is unavailable, not a successful interruption or a repeat
+of MSI error 1314. No retry, process termination, uninstall or cleanup followed.
+
+Private evidence is retained under ignored `build/vm-resume-20261101-112745`
+(preparation, staged hashes/SDDL and read-only aftermath) and
+`build/stage8-resume-tests-20261101` (repeated offline checks). All guest inputs and
+the archive remain preserved. A corrected collector needs independent review and
+a fresh explicit experiment specification before another invocation; these
+observations grant no Clean, enrollment or release approval.
+
+### Next resume experiment: persistent capture host (specification; review pending)
+
+Prepare exactly one new, independently reviewed observation of the unchanged
+DOS-alias runner; the lost AsJob/child-PowerShell result remains unavailable.
+Nested arrays in the old inventory omitted child hashes: old byte equality is
+unproved, without evidence of corruption. Preserve that evidence and every old
+archive. This specification is for parent review before implementation. Existing
+broad user VM authorization applies after independent review; no new permission
+request is required. No VM operation is part of this documentation change.
+
+Before staging, read-only inventory the old archive, current client root and
+protected lab state. Emit a flat ordinal-path-sorted list with exactly one record
+per object, including root/directories, relative path, kind, length, file SHA-256
+and owner/group/DACL SDDL; directory hashes are explicitly inapplicable. Reject
+array-valued fields, missing file hashes, duplicate paths, reparse points,
+unreadable objects or enumeration errors. Record current identities and absence
+checks separately; new hashes cannot reconstruct missing historical evidence.
+Refuse dispatch on unresolved prior activity or failed existing freshness gates;
+absence of msiexec alone does not establish prior completion/server quiescence.
+Archive the current prepared root under a fresh same-Program-Files-parent
+BimeronCheckpointClientLab-prelaunch-c260f52f suffix, extending uniquely if needed,
+with no replacement, merge or overwrite. Compare complete flat inventories before
+and after the move, retaining both. On any mismatch/error stop and preserve the
+resulting state; do not repair, undo or retry. Then stage only reviewed fixed bytes
+with existing protected ACLs and hash checks; never modify the old archive.
+
+Minimal candidate: one uniquely named, demand-only native Windows Task Scheduler
+task, using a fixed native System32 Windows PowerShell host and a separately
+reviewed experiment-only host script in protected ignored evidence. No service,
+general helper, installed dependency, interactive-logon dependency or credentials.
+Use SYSTEM/ServiceAccount explicitly, no triggers/restart policy, IgnoreNew,
+unlimited execution time (PT0S), AllowHardTerminate false and no idle/battery stop
+conditions, expiration/deletion or execution timeout. Read back the exact task XML
+before its one start. These are explicit settings, not defaults; see Microsoft's
+[Task Scheduler settings schema](https://learn.microsoft.com/en-us/windows/win32/taskschd/taskschedulerschema-settings-tasktype-element).
+SYSTEM is the proposed host principal, not authenticated initiating-client proof;
+its compatibility with unchanged runner admission remains a review requirement.
+Scheduler ownership should survive remoting/parent loss; reboot, shutdown, guest
+failure or privileged termination can still destroy pins. No restart/recovery is
+authorized, and these settings do not prove survival by themselves.
+
+The host invokes the exact reviewed Run-CheckpointLab.ps1 in its own PowerShell
+process/runspace, with unchanged fixed arguments and runner SHA-256
+98004df32700cc1dc24c1a75183533e8ca81143ac50f8188379cee94c315c94c;
+reuse the reviewed MSI/manifest pins above. No child PowerShell, remote job,
+separate worker process, edited runner, new termination call or disposal path.
+After invocation or capture failure the host remains resident indefinitely,
+retaining the runspace, loaded static types and sticky ownership; it must also
+remain resident while invocation is in flight. No finally/exit/timeout may release
+runner resources. The runner alone retains its existing termination authority.
+
+Before any dispatch, test actual collector append, flush and exact readback with
+multiple uniquely identified records on the chosen local and guest sinks, using
+PS 5.1-compatible explicit writers, not the failed Tee-Object parameter pairing.
+Reserve fresh no-overwrite evidence paths. Specify separate success-object,
+error, warning, verbose, debug, information/host-message and host-status sinks,
+encoding/framing and sequence numbers; preserve runner JSON as bytes plus a
+separate parsed copy. Flush each boundary and verify readback; status must never
+interpret missing output as success. Host exceptions/capture failures go to an
+independent pre-opened status sink when possible; total sink loss is unavailable
+evidence and must not cause exit, cleanup or another invocation.
+
+Use a durable one-shot protocol: record flushed intent with experiment ID,
+source/artifact hashes, fixed arguments, sinks and task configuration before task
+start. The host writes Ready only after sink tests and self-verification, reporting
+actual image path/hash, PID/creation time, SID, token elevation/integrity, session,
+PowerShell version/bitness and runspace identity. Parent verifies Ready against
+the approved identity/configuration, then writes one protected, flushed dispatch
+record bound to that identity and experiment. Host consumes it at most once,
+flushes invocation intent before entering the runner, and never repeats after an
+ambiguous acknowledgment. A failed/missing handshake authorizes no invocation.
+Record capture/refusal/return separately from runner completion and server state.
+
+Parent observation is at most 300 seconds total for this experiment; this neither
+extends nor changes the runner's own 300-second commitment semantics. Timeout,
+transport loss, error or unresolved result ends parent observation only. Preserve
+host/task/session, pins, inputs, archive, logs and protected state: no kill,
+disposal, task removal, cleanup, retry or recovery. Even confirmed client death
+is not server quiescence or Clean. Later inspection is read-only and separately
+reported, never an automatic second launch.
+
+Before any VM launch, freeze new source/hash/configuration/effects evidence and
+pass offline synthetic acceptance for success, prelaunch refusal, partial/failed
+capture, lost transport before/after dispatch, duplicate start/dispatch and
+unresolved/inflight retention. Verify one invocation maximum, same host PID and
+runspace/static owner, all streams and durable ordering/readback, zero new
+termination/disposal calls, and resident ownership after collector/session loss.
+Use injected fixtures only, no MSI/native runner operation. Independent review
+must resolve exact host lifecycle, sink failure behavior, SYSTEM compatibility,
+Scheduler configuration and how synthetic survival evidence limits native claims;
+any unmet requirement blocks dispatch, not a silent fallback to AsJob. Native
+survival and actual guest identity remain unproved until observed. No product
+enabling, build/package flow, signed packet updates, Core/MSI rebuild, release,
+benchmark or architecture matrix changes belong here.
+
+#### Capture host implementation clarification (offline contract)
+
+Capture means exact emitted PowerShell strings, encoded once with strict UTF-8,
+not original native stdout bytes. Each sink record is ASCII sequence, byte length,
+and base64 UTF-8 payload separated by tabs and terminated by LF. Sequence is global
+across the seven sinks (success/error/warning/verbose/debug/information/status).
+Maximum string payload is 65536 bytes; total capture is 8 MiB. Oversize or failed
+capture is unavailable evidence, never runner cancellation. Parsing JSON is a
+separate read-only consumer after framing, never part of the pipeline callback.
+
+Synthetic acceptance proves control flow and retained references only. It cannot
+prove scheduler survival, native pinning, power-loss durability or SYSTEM admission.
+Ready and dispatch must bind experiment, host/config SHA-256, PID and creation time.
+Partial, duplicate, preexisting and replayed records refuse. Durable invocation
+intent must precede entry; ambiguity never authorizes retry. Every terminal path
+enters indefinite residency; observation ends without releasing the runspace,
+static owners, pins or in-flight ownership. Capture callbacks contain all errors
+and report best effort to an independent preopened status sink.
+
+Native deployment remains blocked until exact task identity/XML/security descriptor
+and protected handle verification are implemented and independently reviewed.
+The proposed fixed task is path `\BimeronLab\`, name
+`CheckpointObservation-c260f52f`, principal SID S-1-5-18, ServiceAccount. Its action
+is native System32 WindowsPowerShell\v1.0\powershell.exe with quoted fixed
+`-NoLogo -NoProfile -NonInteractive -File "<protected host>"` arguments and fixed
+protected experiment working directory. Parent must externally read back image,
+arguments, working directory, task security descriptor and every explicit setting
+above. No task registration/start is implemented here. Parent must verify and
+retain handles for the fixed experiment root, config, dispatch, inputs and all
+ancestors, refusing reparse/alias/hardlink or ambiguous owner/DACL/identity state;
+path-only ACL checks or caller-supplied boolean attestations are insufficient.
+Ready additionally requires independently verified image hash, SID, elevation,
+integrity, session, bitness and runspace, plus append/flush/exact readback tests on
+all preopened sinks. Config must contain exactly those fixed paths, reviewed source,
+manifest/MSI hashes, fixed runner arguments, sink paths, task identity and identity
+bindings; canonical config bytes and host bytes are hashed before Ready.
+
+Offline library is not a deployment adapter. Its injected fixture functions must
+never be supplied from an untrusted configuration. Production entry deliberately
+refuses before Ready/dispatch: the native retained-handle/task/identity verifier
+is not yet implemented. Do not stage or start it. This is an explicit unresolved
+implementation blocker, not permission to substitute path-based checks. Parent
+provisioning and one Task start remain future parent-owned work after exact-code
+review. Old outcome remains unknown: read-only activity checks and unchanged
+runner freshness cannot establish prior completion. Preserve all old state.
+
+#### Native support follow-up (offline, still not deployable)
+
+ObservationHost-Native.ps1 now supplies actual CREATE_NEW write-through read/write
+sinks, Flush(true) and exact same-handle readback; all seven sinks are reserved
+before use and partial preparation retains owners. The existing framing bounds
+apply. Test records use sequence zero; captured records start at one. Independent
+status has its own preopened writer. The scoped runner wrapper merges all six
+PowerShell streams, classifies records and contains capture conversion errors.
+It invokes the script directly with the frozen runner/MSI/manifest arguments;
+no job, child PowerShell, operation constructor or termination is added.
+
+The support library also supplies strict canonical config parsing, exact XML
+hash plus explicit setting checks, one-shot CREATE_NEW invocation intent, process
+identity diagnostics and retained protected ancestor pin opening. Pin types load
+only from runner bytes matching SHA-256
+98004df32700cc1dc24c1a75183533e8ca81143ac50f8188379cee94c315c94c:
+parse the verified source and evaluate only its single Initialize-CheckpointLab
+function definition, then call that initializer. Never dot-source the runner.
+The entire unchanged initializer source must also be used by the eventual runner
+invocation; compatibility of repeated Add-Type remains a review/test gate.
+The checkout runner is not an approved staging source.
+
+Run the bounded checks (no task registration/start or runner invocation):
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File packaging/windows/foreground-prototype/lab-observation-host-test.ps1
+pwsh -NoProfile -File packaging/windows/foreground-prototype/lab-observation-host-test.ps1
+```
+
+Both pass 108 assertions, comprising existing injected flow tests and real owned
+nonprotected temporary sink I/O plus config/hash/schema/XML refusal tests. They
+do not exercise protected native pin positive acceptance, task COM readback,
+elevation/integrity verification or actual SYSTEM runner admission. No infinite
+resident test runs. The temporary fixture alone is disposed/deleted by the test.
+
+Canonical config recipe is strict UTF-8 without BOM, exactly seven LF-terminated
+lines: ObservationHost002, c260f52f, frozen runner hash above, approved host hash,
+approved exact UTF-8 task XML hash (lowercase 64-digit hex), canonical folder SDDL,
+and canonical task SDDL as specified in the correction acceptance below. No extra fields,
+CRLF or duplicate lines are accepted. This config is a library codec, not yet a
+complete deployable configuration. Before any later staging, freeze copies of
+host/support/tests/config/XML and their SHA-256 inventory into a new ignored
+build/observation-host-review-<unique> directory using CREATE_NEW/no-overwrite;
+copy the runner only from the old reviewed archive and verify the exact hash
+above, never from checkout. Preserve all existing archives. This recipe neither
+creates a task nor authorizes dispatch.
+
+Historical stage108 remaining implementation gates (superseded by the wiring below):
+fixed native-known-folder evidence root selection and full wiring, handle-bound
+self image attestation, token elevation/integrity, read-only Task Scheduler COM
+XML/security-descriptor verification, protected Ready/dispatch identity binding,
+and complete preparation/dispatch/residency orchestration. The current task XML
+validator is a component, not a task identity verifier. The process diagnostics
+use path-based image hashing and explicitly report Admission Unavailable.
+Production entry therefore continues unconditional refusal/residency. No Ready,
+deployment or guest-ready claim is made. This follow-up is partial implementation;
+independent review and further implementation remain necessary.
+
+#### Persistent host wiring (offline review candidate)
+
+The entry now calls Start-ObservationHost after checking the embedded support
+SHA-256. All functions precede entry. It selects native Program Files and fixes
+the evidence directory to `BimeronCheckpointObservation-c260f52f`; the host,
+support, `host.config`, `task.xml`, seven `*.frames` sinks, `ready.record`,
+`dispatch.record` and `invocation.intent` are immediate children. No directory
+creation, task registration/start, process launch or runner construction occurs
+in preparation. Missing provisioning refuses and remains resident.
+
+The seven-line version 002 canonical config recipe above applies to this fixed
+path/argument recipe (no configurable code or paths). Freeze support first,
+embed its lowercase SHA-256 in ObservationSupportSha256 in the host, then hash
+the resulting host bytes. Freeze the exact COM RegisteredTask.Xml UTF-8 bytes
+as task.xml and put their hash on config line five. Line four is the frozen host
+hash. Config SHA-256 is included in the handshake. Any edit requires a fresh
+review/freeze; never replace existing evidence or regenerate old archives.
+Provisioning and one demand start belong exclusively to the parent after review.
+
+Preparation loads only the exact frozen initializer AST, retains protected input
+and ancestor pins, verifies artifact hashes, retains current process/token/image
+owners, and requires Desktop PowerShell x64, session zero, effective SYSTEM,
+TokenElevation=1 and integrity RID 16384. Identity includes retained-image hash,
+PID/creation, version and runspace. Task Scheduler COM is read-only: exact fixed
+name/path, XML hash and explicit settings/action are checked, together with
+protected owner/DACL descriptors for task and folder. This conservative policy
+permits task allow ACEs only for SYSTEM and Administrators; a differently
+provisioned descriptor refuses rather than being silently broadened.
+
+Seven CREATE_NEW writers perform two exact-readback tests and retain metadata
+pins. Ready is a CREATE_NEW flushed bound record, after a separate status frame
+containing actual identity JSON. The binding is experiment:hosthash:supporthash:
+confighash:pid:creation. Parent must independently compare identity and hashes
+before creating exactly `Dispatch<TAB><binding><LF>` at dispatch.record, flushing
+and closing its writer. Host opens/pins that file once, refuses partial/foreign
+records, revalidates pins/mapping/task, then CREATE_NEW-flushes invocation.intent
+before direct same-runspace captured invocation. Preexisting records refuse;
+no retry follows ambiguity. Waiting for absent dispatch has no host timeout.
+Parent observation remains bounded to 300 seconds and never stops the host.
+
+PS 5.1 and PS 7 pass 114 offline assertions, including actual owned temporary
+sink I/O, token interop compilation and task descriptor rejection fixtures.
+These tests do not execute production preparation, token queries, Scheduler COM,
+protected pin acceptance, runner initialization/invocation or indefinite residency.
+Independent exact-code review and parent native observation remain mandatory;
+offline evidence does not prove native survival, SYSTEM admission or server
+quiescence. The old outcome remains unknown. No VM/task operations, credentials,
+deployment, release or production task changes are part of this implementation.
+
+Exact frozen guest-input runner hash 98004df3... was separately verified and its
+initializer compiled twice in each fresh PS 5.1/7 process, without executing its
+top level or any native API. Repeated Add-Type compatibility passed. The first
+PS 5.1 command without ExecutionPolicy Bypass was refused by this machine's
+script policy; the corrected offline command with the documented Bypass passed.
+The fixed scheduled action intentionally has no policy override: parent must
+verify the guest's existing execution policy accepts these reviewed scripts;
+this implementation does not change machine policy or the fixed action.
+
+#### Reviewed host correction acceptance (offline only)
+
+Pass the frozen runner path and sinks as an explicit immutable callback context,
+never resolve them through dynamic callback scope. Exercise that exact production
+callback and captured wrapper with an inert script in the same PID/runspace.
+Successful cases require one invocation, exact stream frames and decoded values,
+external callback failure flags and retained residency; negative modes require
+explicit zero/one counts. In-memory invocation-deletion and path-substitution
+mutants must fail the same checks on PS 5.1 and 7.
+
+Config version 002 extends the five original lines with folder and task descriptor
+lines, in that order. Each is the exact canonical owner/group/DACL SDDL returned
+by RawSecurityDescriptor.GetSddlForm(Owner|Group|Access), ASCII and LF terminated.
+Compare both COM descriptors at preparation and immediately before intent; keep
+the strict protected-owner/DACL allowlist policy as well. Freeze reviewed canonical
+descriptors from independent readback, then support hash, embedded host support
+hash, host hash, XML hash and config bytes/hash. No alternate descriptor encoding
+or five-line config fallback is accepted. No Task API or native execution belongs
+to offline checks. Provisioning and native dispatch remain blocked pending fresh
+independent review; the prior VM remains unavailable.
+
+Correction validation: PS 5.1.19041.6456 and PS 7.6.9 each pass 225 final host
+assertions, including exact inert wrapper streams/arguments/PID/runspace, retained
+owners/residency, explicit invocation counts, descriptor readbacks and both
+in-memory mutants. Deletion mutant SHA-256 is
+9a82cc3e6e0b08eb71182957b3a23044360a0ce2604536ef79d880f7cde14981;
+path substitution mutant is
+0ad8812d99910c9a505788b5228318d2857c036922fa55688b02474374586f9d.
+PS 5.1 fixture debug emission uses DebugPreference Continue because -Debug prompts
+in that shell. Checkpoint regression passes 159 worker + 34 policy + 21 alias
+assertions; Run-Lab offline AST/interop/trace/JSON and 47 negatives pass on both.
+All three host scripts parse and embedded support hash matches exact bytes.
+No native APIs, Task API, VM, credentials, MSI actions or real runner construction
+were used by the host suite. The separate existing Run-Lab suite queries its own
+harness handle read-only. Product four-target build/package checks and performance
+benchmarks are inapplicable to this disconnected host-only correction. Review
+found and corrected the SDDL section mask to include group (Owner|Group|Access=14).
+Native/provision dispatch remains blocked until independent exact-code review.
+
+Host return-status follow-up (2026-11-01): the host emits a best-effort durable
+`RunnerReturned; completion and server state unknown` frame after return and
+before residency. Failed status capture preserves retained ownership and marks
+capture unavailable. PS 5.1 and PS 7 each pass 233 assertions, including exact
+return/status/residency ordering, sink-failure retention and both prior mutants.
+Independent review found no remaining scoped code finding. Host SHA-256 is
+`b26240488d1b0014a6d549c4e55729ae87575027fb9824b59e574f2855ab4b30`;
+support remains `b2b52da454427cb73c8a000889f056b2fe2a01b8e5ff6ddff543e2c136aa4711`.
+Earlier hashes/counts above are historical. Freeze these exact bytes before
+preparation; no result here proves protected guest pin acceptance, SYSTEM/task
+admission, actual runner execution, server quiescence or native survival.

@@ -415,8 +415,9 @@ The current bundle pin is not evidence of support for these new protocols.
 
 ## Foreground installer feasibility prototype (not enabled)
 
-Status: the [trusted invocation procedure revision](ikev2-profiles.md#trusted-invocation-procedure-selected-specification-review-pending)
-is selected for independent specification review, not production acceptance.
+Historical status: the trusted-invocation procedure was selected for specification
+review only. It is superseded by the [proposed Core controller](ikev2-profiles.md#proposed-core-installation-controller-selected-architecture-review-pending),
+which remains review pending and not production accepted.
 This docs-only revision changes no supported build, packaging or installer flow.
 
 Specification and acceptance for this isolated prototype: follow stage 8
@@ -918,3 +919,194 @@ c260f52f prepared-root archive precede any future VM staging. Validation-time
 identity is not service-consumption proof; actual guest logger/path behavior and
 MSI root cause remain unproved. No supported package flow, product matrix,
 benchmark/profile, Core/MSI rebuild, guest operation or release changed.
+
+### Exploratory disconnected enrollment model
+
+Run manually from the repository root with standard-library Python (without `-O`):
+
+```powershell
+python packaging/windows/foreground-prototype/enrollment-model-test.py
+```
+
+MODEL/assumed closure evidence: 16,807 original single-seed length-five traces
+pass. Additional depth-five exploration from five reachable seeds (Unenrolled,
+Settled, active admitted work, modification Pending and modified inventory) uses
+32 events and checks 3,008 edges, reaching 28 unique states including six active
+states. Edges include repeats; this is bounded exploration, not exhaustive real
+lifecycle coverage. Focused checks independently require each mutation, rollback,
+service-restoration, nested and late-server continuation to change exact inventory
+while retaining bindings and exclusion. Both enrollment and modification exercise
+all binding-field mismatches, unrelated work, prepublication, post-terminal and
+Unsafe refusal. Closing NEW admissions on uncertainty preserves existing active
+work until explicit drain; Unsafe cannot mutate or admit new work.
+
+Ten in-memory transition source mutants are caught by those same behavioral
+checks: deletion of each of the five handlers, removal of binding/domain/drain/
+Pending gates, and silent active clearing on uncertainty. No invalid-state
+construction is counted as mutation evidence. Normal Python execution passes;
+`python -O` refuses with exit 1 because assertions are required. All results
+assume serialized durable exclusion, complete migration inventory and enforceable
+terminal closure; no native producer supplies these assumptions. The standard-
+library script reads its own transition source for mutation checks, compiles the
+changed functions only in memory and writes only interpreter output; no fixture
+state, CMake/MSI integration, native calls, VM operations or dependencies are added.
+This is finite safety exploration, not production acceptance, a schema/API or
+successful removal support. Native durability, authority, closure, old-host
+participation and signed updater preservation remain unproved. Supported packaging
+is unchanged; the four product targets, benchmarks and profiling are inapplicable
+to this model-only edit.
+
+### Persistent observation host offline implementation (incomplete)
+
+Checkpoint-ObservationHost.ps1 and lab-observation-host-test.ps1 are disconnected
+PS 5.1-compatible offline protocol functions. Run the focused test using
+`powershell -NoProfile -ExecutionPolicy Bypass -File packaging/windows/foreground-prototype/lab-observation-host-test.ps1`
+and the same command with `pwsh -NoProfile -File`. Both passed 77 synthetic
+assertions; no native runner constructor, MSI, process launch or Task operation
+was performed. The production entry remains resident after explicit refusal,
+without Ready or dispatch: native protected retained-handle, task descriptor and
+host identity verification are unresolved implementation blockers. See the
+foreground README clarification. This partial implementation is not guest-ready
+or an accepted durable capture host. No supported packaging/build flow changes;
+product matrix, benchmarks and profiling are inapplicable. Prior outcome remains
+unknown and all existing state must be preserved. Independent exact-code review
+and completion of native verification precede parent-owned provisioning/start.
+
+Persistent observation host native-support follow-up: PS 5.1 and 7 each pass 108
+bounded assertions, including actual owned nonprotected CREATE_NEW/write-through,
+Flush(true)/same-handle readback and duplicate-path refusal. Config/hash/schema
+and task-XML refusal checks accompany unchanged injected protocol regressions.
+ObservationHost-Native.ps1 is a disconnected experiment library; protected native
+positive acceptance, token attestation, task COM/security verification and full
+one-shot host wiring remain incomplete. Production entry still refuses and stays
+resident; no Ready or dispatch is authorized. See the foreground README for the
+canonical config/freeze recipe and exact missing implementation. No Task, MSI,
+runner constructor, VM or release ran. Product build matrix and performance
+checks are inapplicable; supported packaging is unchanged.
+
+Persistent observation host wiring follow-up: the entry now performs fixed-root
+preparation, retained image/process/token identity checks, read-only Scheduler COM
+XML/descriptor verification and protected one-shot Ready/dispatch/intent wiring.
+The foreground README specifies exact paths, five-line config, hash freeze order
+and conservative task ACL policy. PS 5.1/7 pass 114 offline assertions with owned
+temporary sinks and interop compilation only. Native protected preparation,
+SYSTEM admission and scheduler survival remain parent review/observation gates.
+No deployment, task lifecycle operation, runner invocation, product build/package
+flow, architecture matrix or performance benchmark was performed.
+
+
+### Proposed Core installation controller (review pending)
+
+This controller addendum supersedes the historical trusted-invocation selection
+and callback-settlement direction above, without changing supported packaging.
+The selected [proposed architecture](ikev2-profiles.md#proposed-core-installation-controller-selected-architecture-review-pending)
+uses a proposed Core-owned narrow installation command applying a protected
+approved plan; this is not an existing command or a new setup wrapper. Core
+`66d84d8f` needs amendment; production remains disabled.
+No released command/schema or native implementation is approved by this text.
+
+Authenticate and stage pinned inputs outside replaced trees. Core
+BeginInstallationTransaction owns one OS thread and exclusion guard; on that
+thread MsiBeginTransaction must create the outer transaction, refusing existing
+transactions with no Join. Flush bound Pending before exact MsiInstallProduct;
+MsiEndTransaction commit/rollback supplies completion only for the approved bounded
+domain. Verify final inventory and durable settlement, then release the guard last.
+No native settlement callbacks, detached work, reboot/chainer routes or quiet-window
+inference are allowed. Begin success followed by Pending write/flush/readback failure
+prohibits Install and attempts End rollback on the same thread; uncertain partial
+publication or failed/unknown End retains unsafe exclusion without absence
+inference or guard release. Failed Install with successful End rollback, exact
+baseline restoration, complete closure and durable settlement is a safely restored
+failed operation. Failed/unknown End (including access denied, install failure or
+in progress), disabled rollback, reboot or incomplete inventory cannot settle.
+Death after Pending fences NEW participating work; it cannot revoke an already-
+authorized standard MSI segment. Bound rollback/restoration authority must survive
+death as an explicit model assumption, not a proven native capability. Death
+cannot settle; uncertain outcomes need separately reviewed recovery.
+
+Direct enrolled destructive-action bypass, including nested removal, remains an
+unresolved gate: require authenticated controller/action identity and operation-bound
+authorization. EVERY participating approved effective package requires mandatory
+execute-sequence preflight and a first deferred admission gate before mutation,
+including maintenance, cached packages and nested old removal. Neither gate may
+be skipped by UI, conditions or properties; old ungated baselines refuse. Require
+independent approval of exact effective DB/Binary/sequence and trusted preload.
+A local pipe authenticates a process, not a DLL export/action/session; CAD is only
+a locator, never authority. Native action/preload/session proof remains unresolved;
+a public property/nonce is insufficient. Conditional installer
+permission does not approve procedural bypass. Bound signed-updater restoration
+must work while Pending without reacquiring the held mutex or requiring settlement
+first. Unenrolled direct packet MSI and existing signed update/rollback stay unchanged;
+successful enrolled removal remains separate work.
+
+Next acceptance is only the smallest disconnected injected controller model defined
+in the linked specification: thread guard, ordered Pending/install/end/inventory/
+settlement, commit and restored rollback, all MSI/error/reboot/durability/death refusal
+paths, both unskippable gates, forged process/action/CAD, ungated old baselines,
+death with surviving bound rollback, distinct End outcomes and unenrolled
+compatibility. Preserve the existing reviewed
+enrollment model and label its closure/durability/migration assumptions explicitly.
+This addendum authorizes no code, MSI/VM execution, credentials, release or Core edit.
+Product build/package matrix and benchmarks/profiling are inapplicable to this
+specification-only change; native authority, durability and domain closure remain
+production risks requiring separate evidence and independent review.
+
+### Disconnected proposed controller algorithm fixture
+
+Run manually from the repository root:
+
+```powershell
+python packaging/windows/foreground-prototype/controller-model-test.py
+python -O packaging/windows/foreground-prototype/controller-model-test.py
+```
+
+Offline evidence (2026-11-01): normal execution passes; optimized execution
+refuses with exit 1 because assertions are required. The fixture reuses the
+reviewed enrollment model's logical bindings by read-only import, without editing
+it or writing bytecode. Injected call logs check ordered guard lifetime, Pending
+write/flush/readback, both gates, exact Install, distinct End dispositions,
+inventory, settlement durability and release last. Focused negative checks cover
+API errors, callback exceptions, wrong assumed thread tokens, forged claims,
+missing/bypassed gates across direct/quiet/maintenance/cached/nested route labels,
+old-host migration refusal, publication uncertainty, End errors, reboot/rollback
+refusal, incomplete inventory/closure and death with surviving bound continuation.
+Failed Install with successful rollback and complete baseline settlement is a
+safely restored failed operation. Fourteen in-memory deletion/gate mutations are
+caught by the same behavioral checks (the original ten plus four fence/acquisition
+probes); these are not count-only state assertions.
+
+Review refinement and acceptance (2026-11-01): every live controller injected
+boundary must check death before invocation and after callback return, including
+acquisition, inventory/status verification, End and release. A dead controller
+must neither advance nor settle. Acquisition intent must exclude new admission
+before calling the adapter: an exception or ambiguous error may mean the mutex
+was acquired. Only an explicit live-verified `proven-not-acquired` result permits
+Unenrolled refusal without retained exclusion. Release callback death or uncertainty
+retains logical Unsafe exclusion and cannot report successful settlement; this is
+an assumed conservative exclusion obligation, not proof that a released native
+mutex remains held. Already-admitted segment and bound rollback/restoration
+continuation use separate explicitly assumed surviving authority, never the live
+controller call path, and cannot settle or open new admission.
+
+Focused rerun: 119 death cases, 122 failure cases and four acquisition cases pass
+in the expanded boundary oracle, in addition to the existing behavioral checks.
+The successful commit and restored-failure paths each exercise all 29 boundaries
+with dead-before-call, callback death, error return and exception injection. The
+extra cases cover cleanup End, live/surviving continuation authority and an
+acquire-then-throw callback; counters count cases, not individual assertions.
+All 14 behavioral mutants are caught. Normal execution exits 0; `python -O`
+refuses with exit 1. `git diff --check` passes. No product/native behavior or
+packaging flow changed; other host/provisioning work and notes are preserved.
+
+Authorization/preload, protected staging, durable exclusion/publication, migration,
+exact inventory, enforceable domain closure, surviving restoration authority and
+owning-thread identity are explicit MODEL assumptions, with no native evidence
+producer. Thread tokens do not prove Windows thread affinity. Route labels are
+synthetic refusal inputs, not inspected MSI sequences. Death does not revoke an
+already admitted segment or prove End completion; uncertain state retains Unsafe
+exclusion. No native revocation, recovery API, production enablement, Core edit,
+MSI/native/VM operation, credentials, commit or release is implied. The Core
+master checkout remains outside this fixture's authorization. Supported packaging
+is unchanged; the Windows x64/ARM64 and Linux amd64/arm64 product matrix and
+benchmark/profiling are inapplicable to this disconnected algorithm-only change.
+Native authority, durability, fencing and closure remain unresolved review risks.
