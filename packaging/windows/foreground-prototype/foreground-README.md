@@ -2301,3 +2301,46 @@ support remains `b2b52da454427cb73c8a000889f056b2fe2a01b8e5ff6ddff543e2c136aa471
 Earlier hashes/counts above are historical. Freeze these exact bytes before
 preparation; no result here proves protected guest pin acceptance, SYSTEM/task
 admission, actual runner execution, server quiescence or native survival.
+
+
+Host atomic sink correction (2026-11-01): acceptance requires CREATE_NEW with
+an explicit protected descriptor at creation, never an after-create ACL repair or
+weaker LogAlias policy. The shared sink now passes SECURITY_ATTRIBUTES containing
+`O:BAG:BAD:P(A;;FA;;;SY)(A;;FA;;;BA)` to CreateFileW with GENERIC_READ|GENERIC_WRITE,
+FILE_SHARE_READ, CREATE_NEW and FILE_FLAG_WRITE_THROUGH. Owner/group are BA;
+only SYSTEM and Administrators receive full access. Nonprivileged tokens that
+cannot assign this owner fail closed; there is no user-owner fallback. The
+synchronous SafeFileHandle transfers to FileStream only after successful wrapping;
+failed wrapping closes it, and LocalFree always releases the converted descriptor.
+Errors retain created files without pathname deletion/reopening or ACL repair.
+Existing State.Owners and ancestor retention remain unchanged on later failures.
+New-ObservationRecord shares this constructor, including Ready/invocation records.
+No arbitrary-path product API was added.
+
+PS 5.1 and PS 7 each pass 295 assertions (the prior 233 preserved plus 62),
+including both existing behavioral mutants. Actual GUID-owned temporary files
+verify protected DACL, BA owner/group, two explicit full-access SYSTEM/admin ACEs,
+LogAlias admission/revalidation, durable same-handle readback, closed-writer
+CREATE_NEW no-overwrite and New-ObservationRecord pin retention. Descriptor policy
+rejects inherited and permissive Everyone-write models. The test reconstructs LF
+Git-source runner bytes before the unchanged frozen-hash initializer import;
+runner top level and operation constructor never execute. Sharing-aware readers
+are required while the writer is retained. This privileged host token can assign
+BA ownership; this does not establish SYSTEM/task admission, protected ancestors,
+guest survival, storage power-loss behavior or native runner execution. Conversion
+and wrapping failure cleanup were reviewed structurally, not fault-injected.
+No host Program Files writes, Task/MSI/VM actions, real runner constructor/launch,
+credentials, release, commit or push occurred. Product build/package matrix and
+benchmarks/profiling are inapplicable to this disconnected Windows host fix.
+
+New exact LF source SHA-256 pins (earlier pins above are historical):
+
+- `ObservationHost-Native.ps1`: `d01b6de64586a9154d523b92d1b82ac546d8da442b4544d8526256511c208928`
+
+- `Checkpoint-ObservationHost.ps1`: `a47881ce6b809e4a6cad94ca676392583a9c496a745327cd539401b7a3386442`
+
+- `lab-observation-host-test.ps1`: `544875f5eb3c22bdbf6b08421aaf64a423081bcbb6dd80e4fc815fd5eb691f06`
+
+The host embeds the new support digest. Parent orchestration v2 and its old frozen
+bundle are deliberately untouched; freeze new support/host/config/source hashes
+and obtain independent exact-code review before any parent provisioning/start.

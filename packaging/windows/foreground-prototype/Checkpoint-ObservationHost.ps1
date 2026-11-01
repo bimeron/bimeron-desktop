@@ -1,6 +1,6 @@
 #requires -Version 5.1
 # Disconnected experiment host. No provisioning or task lifecycle operations.
-$script:ObservationSupportSha256='b2b52da454427cb73c8a000889f056b2fe2a01b8e5ff6ddff543e2c136aa4711'
+$script:ObservationSupportSha256='d01b6de64586a9154d523b92d1b82ac546d8da442b4544d8526256511c208928'
 function New-ObservationState {
  param([string]$Binding)
  if ([string]::IsNullOrWhiteSpace($Binding)) { throw 'Binding required' }

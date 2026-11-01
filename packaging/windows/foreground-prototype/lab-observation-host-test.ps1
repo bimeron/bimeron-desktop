@@ -49,11 +49,13 @@ Write-ObservationFrame $s success ('x'*65537) {throw 'must not append'} {throw '
 Assert $s.Failed
 "PASS: $count offline assertions; synthetic control flow only; no native operation."
 
-# Owned temporary NONPROTECTED native I/O fixtures; not protected-root acceptance.
+# Owned temporary protected-leaf I/O fixtures; not protected-root acceptance.
 . "$PSScriptRoot/ObservationHost-Native.ps1"
 $temp=Join-Path ([IO.Path]::GetTempPath()) ('observation-host-'+[guid]::NewGuid().ToString('N'))
 [void][IO.Directory]::CreateDirectory($temp)
 $owners=New-Object Collections.ArrayList
+# Reconstruct canonical LF Git-source bytes; the strict frozen hash still gates evaluation.
+Import-ObservationPinTypes ([Text.Encoding]::UTF8.GetBytes([IO.File]::ReadAllText((Join-Path $PSScriptRoot 'Run-CheckpointLab.ps1')).Replace("`r`n","`n")))
 try {
  $sinks=Open-ObservationSinks $temp $owners
  $state=New-ObservationState fixture
@@ -66,8 +68,41 @@ try {
   try {$lines=$reader.ReadToEnd().TrimEnd("`n").Split("`n")}finally{$reader.Dispose()}
   Assert ($lines.Count -eq 3)
   Assert ($lines[2].StartsWith(([string]$state.Sequence)+"`t"))
+  $path=Join-Path $temp ($stream+'.frames')
+  $acl=Get-Acl -LiteralPath $path
+  $raw=New-Object Security.AccessControl.RawSecurityDescriptor ($acl.Sddl)
+  Assert (($raw.ControlFlags -band [Security.AccessControl.ControlFlags]::DiscretionaryAclProtected) -ne 0)
+  Assert ($raw.Owner.Value -ceq 'S-1-5-32-544' -and $raw.Group.Value -ceq 'S-1-5-32-544')
+  Assert ($raw.DiscretionaryAcl.Count -eq 2)
+  foreach($ace in $raw.DiscretionaryAcl){
+   Assert ($ace.AceQualifier -eq [Security.AccessControl.AceQualifier]::AccessAllowed -and $ace.AceFlags -eq 0 -and $ace.AccessMask -eq 0x1f01ff -and $ace.SecurityIdentifier.Value -in @('S-1-5-18','S-1-5-32-544'))
+  }
+  [CheckpointNative]::ValidateDescriptor($raw,[CheckpointPinRole]::LabProtected)
+  $alias=[CheckpointPin]::LogAlias([CheckpointNative]::VolumePath($path))
+  try {$alias.Revalidate();Assert ($null -ne $alias)} finally {$alias.Dispose()}
+  $before=$lines -join "`n"
+  $refused=$false;try{[ObservationDurableSink]::new($path).Dispose()}catch{$refused=$true};Assert $refused
+  $verifyStream=[IO.File]::Open($path,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::ReadWrite)
+  $verify=New-Object IO.StreamReader $verifyStream
+  try {Assert (($verify.ReadToEnd().TrimEnd("`n").Split("`n") -join "`n") -ceq $before)}finally{$verify.Dispose()}
  }
  $refused=$false;try {Open-ObservationSinks $temp $owners | Out-Null}catch{$refused=$true};Assert $refused
+ foreach($sddl in @('O:BAG:BAD:(A;;FA;;;SY)(A;;FA;;;BA)','O:BAG:BAD:P(A;;FA;;;WD)')){
+  $raw=New-Object Security.AccessControl.RawSecurityDescriptor $sddl
+  $refused=$false;try{[CheckpointNative]::ValidateDescriptor($raw,[CheckpointPinRole]::LabProtected)}catch{$refused=$true};Assert $refused
+ }
+ $closedPath=Join-Path $temp 'closed.frames'
+ $closed=[ObservationDurableSink]::new($closedPath)
+ try {$closed.Append("preserved`n")}finally{$closed.Dispose()}
+ $refused=$false;try{[ObservationDurableSink]::new($closedPath).Dispose()}catch{$refused=$true};Assert $refused
+ Assert ([IO.File]::ReadAllText($closedPath) -ceq "preserved`n")
+ $recordState=New-ObservationState fixture
+ try {
+  New-ObservationRecord $recordState (Join-Path $temp 'ready.record') Ready
+  Assert ($recordState.Owners.Count -eq 2)
+  $recordState.Owners[1].Revalidate()
+  Assert ((Get-Acl -LiteralPath (Join-Path $temp 'ready.record')).AreAccessRulesProtected)
+ }finally{foreach($owner in $recordState.Owners){$owner.Dispose()}}
  $descriptor=ConvertTo-ObservationTaskSddl 'O:SYG:SYD:P(A;;GA;;;SY)(A;;GA;;;BA)'
  $config="ObservationHost002`nc260f52f`n98004df32700cc1dc24c1a75183533e8ca81143ac50f8188379cee94c315c94c`n$('a'*64)`n$('b'*64)`n$descriptor`n$descriptor`n"
  $bytes=[Text.Encoding]::UTF8.GetBytes($config)
@@ -86,7 +121,7 @@ try {
  # Only this GUID-named, owned temporary fixture is removed.
  Remove-Item -LiteralPath $temp -Recurse -Force
 }
-"PASS: $count assertions including actual nonprotected CREATE_NEW/Flush(true)/readback; no operation construction or launch."
+"PASS: $count assertions including actual protected-leaf CREATE_NEW/Flush(true)/readback; no operation construction or launch."
 Initialize-ObservationIdentityType
 Assert ($null -ne ('ObservationToken' -as [type]))
 Assert-ObservationTaskSecurity 'O:SYG:SYD:P(A;;GA;;;SY)(A;;GA;;;BA)'

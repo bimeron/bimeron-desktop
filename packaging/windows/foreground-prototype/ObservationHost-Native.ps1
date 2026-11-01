@@ -41,10 +41,37 @@ function Initialize-ObservationSinkType {
 using System;
 using System.IO;
 using System.Text;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
 public sealed class ObservationDurableSink : IDisposable {
+ [StructLayout(LayoutKind.Sequential)]
+ struct SecurityAttributes { public int Length; public IntPtr Descriptor; public int InheritHandle; }
+ [DllImport("advapi32.dll", CharSet=CharSet.Unicode, ExactSpelling=true, SetLastError=true)]
+ [return: MarshalAs(UnmanagedType.Bool)]
+ static extern bool ConvertStringSecurityDescriptorToSecurityDescriptorW(string sddl,uint revision,out IntPtr descriptor,out uint size);
+ [DllImport("kernel32.dll", CharSet=CharSet.Unicode, ExactSpelling=true, SetLastError=true)]
+ static extern SafeFileHandle CreateFileW(string path,uint access,uint share,ref SecurityAttributes security,uint disposition,uint flags,IntPtr template);
+ [DllImport("kernel32.dll", ExactSpelling=true)] static extern IntPtr LocalFree(IntPtr memory);
  readonly FileStream stream;
  public ObservationDurableSink(string path) {
-  stream=new FileStream(path,FileMode.CreateNew,FileAccess.ReadWrite,FileShare.Read,4096,FileOptions.WriteThrough);
+  IntPtr descriptor=IntPtr.Zero; SafeFileHandle handle=null;
+  try {
+   uint size;
+   if(!ConvertStringSecurityDescriptorToSecurityDescriptorW("O:BAG:BAD:P(A;;FA;;;SY)(A;;FA;;;BA)",1,out descriptor,out size))
+    throw new Win32Exception(Marshal.GetLastWin32Error(),"Sink descriptor conversion failed");
+   var security=new SecurityAttributes { Length=Marshal.SizeOf(typeof(SecurityAttributes)),Descriptor=descriptor,InheritHandle=0 };
+   // Atomic CREATE_NEW: no inherited-security window or after-create ACL repair.
+   handle=CreateFileW(path,0xc0000000u,1,ref security,1,0x80000000u,IntPtr.Zero);
+   int error=Marshal.GetLastWin32Error();
+   if(handle.IsInvalid)throw new Win32Exception(error,"Protected sink CREATE_NEW failed");
+   stream=new FileStream(handle,FileAccess.ReadWrite,4096,false);
+   handle=null; // FileStream owns the retained synchronous write-through handle.
+  } finally {
+   if(handle!=null)handle.Dispose();
+   if(descriptor!=IntPtr.Zero)LocalFree(descriptor);
+   // Failed creation/wrapping never deletes or reopens a pathname.
+  }
  }
  public void Append(string frame) {
   byte[] bytes=new UTF8Encoding(false,true).GetBytes(frame);

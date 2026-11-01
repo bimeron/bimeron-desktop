@@ -1110,3 +1110,18 @@ master checkout remains outside this fixture's authorization. Supported packagin
 is unchanged; the Windows x64/ARM64 and Linux amd64/arm64 product matrix and
 benchmark/profiling are inapplicable to this disconnected algorithm-only change.
 Native authority, durability, fencing and closure remain unresolved review risks.
+
+
+Persistent observation host atomic sink correction: the shared sink now uses
+native SECURITY_ATTRIBUTES and CREATE_NEW with explicit protected BA owner/group
+and SYSTEM/admin full-access DACL at creation. SafeFileHandle ownership transfers
+to the retained read/write, share-read, write-through FileStream; no ACL repair,
+path cleanup or weaker pin fallback is used. PS 5.1/7 each pass 295 focused
+assertions, preserving 233 regressions and both mutants, with actual owned temp
+ACL readback/LogAlias, closed-writer no-overwrite and Ready record checks.
+See the foreground README for acceptance, new exact source pins and limitations.
+Parent orchestration v2/frozen bundle remains unchanged pending a new freeze and
+independent review. No Program Files write, Task/MSI/VM action, real runner
+construction/launch, release or supported build/package flow change occurred.
+The four-product matrix and performance checks are inapplicable to this isolated
+Windows script correction; SYSTEM/task/guest survival remain unproved.
