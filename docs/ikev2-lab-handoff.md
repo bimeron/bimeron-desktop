@@ -71,7 +71,16 @@ frozen manifests and logs; rerunning tests in a frozen bundle changes the logs.
 
 The immediate unresolved issue is native Scheduler task-descriptor compatibility.
 A design-only analysis was already running when the user requested this pause.
-Its result should be retained without automatically implementing it.
+That analysis has now completed without edits or native operations. Its deferred
+recommendation is to review a narrowly bounded lab-only amendment accepting the
+exact observed task form together with the exact protected folder form, using
+separate validators and repeated readback. It does not claim that the task itself
+has inheritance protection or that rechecks eliminate validation-to-use races.
+The extra SYSTEM read ACE is redundant with SYSTEM full access; suppressing it
+through registration flags would not establish preservation of descriptor flags.
+No implementation or security-contract acceptance follows from that analysis.
+Any future host/support change requires newly frozen bytes and, under the current
+no-overwrite rules, a fresh variant. Preserve the existing never-run task.
 
 After that issue, the lab still needs exact prepared-readback review and one
 bounded observation. Production work remains: Core-owned installation transaction,
