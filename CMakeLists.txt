@@ -28,6 +28,9 @@ set(BIMERON_DESKTOP_SOURCES
     src/TrustedCore.cpp src/TrustedCore.h
     src/ProfileStore.cpp src/ProfileStore.h
     src/ProfileEditorDialog.cpp src/ProfileEditorDialog.h
+    src/GeoDataDialog.cpp src/GeoDataDialog.h
+    src/GeoDataDownload.cpp src/GeoDataDownload.h
+    src/GeoDataSelection.cpp src/GeoDataSelection.h
 )
 qt_add_executable(bimeron-desktop WIN32 src/main.cpp ${BIMERON_DESKTOP_SOURCES})
 file(GLOB_RECURSE BIMERON_ICON_FILES CONFIGURE_DEPENDS
@@ -89,6 +92,8 @@ endif()
 include(CTest)
 if(BUILD_TESTING)
     add_executable(developer-mode-test tests/DeveloperModeTest.cpp ${BIMERON_DESKTOP_SOURCES})
+    qt_add_resources(developer-mode-test "test-icons"
+        PREFIX "/icons" BASE "${CMAKE_CURRENT_SOURCE_DIR}/assets/icons" FILES ${BIMERON_ICON_FILES})
     target_include_directories(developer-mode-test PRIVATE src)
     target_link_libraries(developer-mode-test PRIVATE Qt6::Widgets Qt6::Network core-update)
     target_compile_definitions(developer-mode-test PRIVATE
@@ -122,9 +127,29 @@ if(BUILD_TESTING)
             BIMERON_LOCAL_UPDATE_TESTING
             BIMERON_CORE_UPDATE_PUBLIC_KEY="${BIMERON_LOCAL_UPDATE_TEST_PUBLIC_KEY}")
     endif()
+    add_executable(geodata-download-test tests/GeoDataDownloadTest.cpp src/GeoDataDownload.cpp src/GeoDataDownload.h)
+    target_include_directories(geodata-download-test PRIVATE src)
+    target_link_libraries(geodata-download-test PRIVATE Qt6::Network)
+    add_test(NAME geodata-download-test COMMAND geodata-download-test)
+    add_executable(geodata-selection-test tests/GeoDataSelectionTest.cpp
+        src/GeoDataSelection.cpp src/GeoDataSelection.h src/ProfileStore.cpp src/ProfileStore.h)
+    target_include_directories(geodata-selection-test PRIVATE src)
+    target_link_libraries(geodata-selection-test PRIVATE Qt6::Network)
+    if(WIN32)
+        target_link_libraries(geodata-selection-test PRIVATE advapi32)
+    endif()
+    add_test(NAME geodata-selection-test COMMAND geodata-selection-test)
     add_executable(profile-vless-test tests/ProfileVlessTest.cpp
         src/ProfileStore.cpp src/ProfileStore.h
-        src/ProfileEditorDialog.cpp src/ProfileEditorDialog.h)
+        src/ProfileEditorDialog.cpp src/ProfileEditorDialog.h
+        src/GeoDataDialog.cpp src/GeoDataDialog.h
+        src/GeoDataDownload.cpp src/GeoDataDownload.h
+        src/GeoDataSelection.cpp src/GeoDataSelection.h)
+    foreach(translation_test IN ITEMS profile-vless-test developer-mode-test)
+        qt_add_resources(${translation_test} "test-translations"
+            PREFIX "/translations" BASE "${CMAKE_CURRENT_SOURCE_DIR}/assets/translations"
+            FILES "${CMAKE_CURRENT_SOURCE_DIR}/assets/translations/ru.json")
+    endforeach()
     target_include_directories(profile-vless-test PRIVATE src)
     target_link_libraries(profile-vless-test PRIVATE Qt6::Widgets Qt6::Network)
     if(WIN32)

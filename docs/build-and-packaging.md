@@ -412,3 +412,57 @@ connection test executable also covers transient SSH challenge UI and private IP
 Protocol URI import tests use `BIMERON_PRESERVATION_CORE` targeting Core
 `v0.3.0-beta.1` revision `9f527efe0a4959786084675f1ff795edb8a0d910`.
 The current bundle pin is not evidence of support for these new protocols.
+
+
+GeoData routing uses a Core-owned CLI document/catalog adapter without a new
+packaged executable or dependency. The current pinned candidate is not evidence
+that this development CLI surface is present; package pins and signed-update
+approval remain unchanged. For local bridge tests set BIMERON_GEODATA_CORE to a
+reviewed build implementing Core docs/DESKTOP_DOCUMENT_API.MD. With
+BIMERON_DEPLOY_QT=OFF on Windows, run CTest with the architecture-matching Qt bin
+on PATH and QT_QPA_PLATFORM_PLUGIN_PATH pointing to its plugins/platforms
+folder. Use QT_QPA_PLATFORM=offscreen for headless profile fixtures and
+QT_QPA_FONTDIR=C:/Windows/Fonts for readable offscreen screenshots. Never run
+ARM64 test executables on an x64 host as native runtime acceptance.
+
+
+The explicit shared GeoData manager adds `GeoDataDialog`, `GeoDataDownload` and
+`GeoDataSelection` to the desktop and profile fixture source lists. It uses the
+existing Qt Network dependency and adds no package payload, executable installer,
+database bundle or release pin. `geodata-download-test` uses injected local fake
+Qt replies (no public download), covering pinning, redirects, bounds, cancellation,
+timeouts and immutable publication. `geodata-selection-test` uses synthetic
+protobufs with `BIMERON_GEODATA_CORE` for shared settings/groups and document
+preparation. The existing developer-mode fixtures check shared profile preparation
+and modal manager geometry through the actual editor action. Use the same explicit
+Qt environment described above for every Windows test invocation.
+
+Native geometry capture: run `developer-mode-test --profile-geometry <absolute-png>`
+with `QT_QPA_PLATFORM=windows` and `QT_SCALE_FACTOR=1`, `1.5` or `2`. Each run waits
+500 ms for the editor and another 500 ms for its manager, captures collapsed and
+expanded Details, and writes size diagnostics. Do not substitute offscreen output
+for native Windows DPI evidence. These checks build applications/tests only; they
+do not authorize packages or installed-service changes.
+
+For isolated captures also pass `--visual-check` to suppress the unrelated CLI
+version probe. `--geometry-theme light|dark` and `--geometry-english` exercise
+appearance/English strings. `QT_SCALE_FACTOR` multiplies the native screen DPR;
+verify the emitted `.databases.json` rather than assuming the requested factor
+is the final DPR. On this host's native 150% screen, factors 2/3, 1 and 4/3
+produced measured DPR 1, 1.5 and 2.
+
+
+GeoData feedback regression captures now also write `.transfer.png`, `.failure.png`
+and `.error-popup.png` beside `--profile-geometry` output. The transfer fixture
+uses the application stylesheet and injected held/HTTP-429 replies, checks the
+painted progress groove against row controls, and exercises keyboard error-popup
+activation plus cancellation/retry without public traffic. The optional manual
+`geodata-download-test --real-probe [--geosite]` makes one bounded real fixed-source
+operation in test storage, prints only phase/codes or verified size/hash/tag and
+removes its candidate; it is never invoked by CTest and publishes/selects nothing.
+
+
+GeoIP bilingual-search fixtures embed the existing ru.json resource in
+profile-vless-test and developer-mode-test. This exercises the same cached
+English/Russian lookup used by the application, without a new dependency or
+installed payload. The application already embeds this catalog.

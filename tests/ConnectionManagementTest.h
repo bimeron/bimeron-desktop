@@ -9,10 +9,461 @@
 #include <QCloseEvent>
 #include <QSystemTrayIcon>
 #include <QTranslator>
+#include "ProfileEditorDialog.h"
+#include "GeoDataSelection.h"
+#include "WindowsTheme.h"
+#include <QLayout>
+#include <QTabWidget>
+#include <QToolButton>
+#include <QTableWidget>
+#include <QAction>
+#include <QScreen>
+#include <QProgressBar>
+#include <QStyleOptionProgressBar>
+#include "GeoDataDialog.h"
+#include "GeoDataDownload.h"
+#include "GeoDataDownloadFixtures.h"
 
 // Uses only temporary profiles/settings, a private pipe/socket and this test's
 // validate subcommand. Never reaches a system endpoint or privileged helper.
 struct ConnectionManagementTest {
+    static void settingsGeoDataChecking() {
+        const QString core = qEnvironmentVariable("BIMERON_GEODATA_CORE");
+        if (core.isEmpty()) return;
+        QTemporaryDir directory;
+        const QString path = directory.filePath("selected.dat");
+        QFile file(path); require(file.open(QIODevice::WriteOnly), "selected database fixture");
+        file.write(QByteArray::fromHex("0a0e0a02727512080a04cb0071001018")); file.close();
+        auto *selection = GeoDataSelection::instance();
+        const auto previous = selection->paths();
+        QString error;
+        require(selection->apply({{"geoip", path}}, core, {}, &error), "select local database");
+        MainWindow window; window.core_.cancel();
+        window.core_.setEndpoint("bimeron-settings-geodata-" + QUuid::createUuid().toString());
+        for (auto *timer : window.findChildren<QTimer *>()) timer->stop();
+        window.validationExecutable_ = core;
+        auto *action = window.findChild<QPushButton *>("settingsGeoData");
+        require(action && !action->text().isEmpty(), "ordinary Settings database action exists");
+        const auto open = [&](bool cached, bool missing) {
+            QTimer::singleShot(0, &window, [&, cached, missing] {
+                auto *manager = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+                require(manager && manager->objectName() == "sharedGeoDataDialog", "Settings opens shared manager");
+                auto *status = manager->findChild<QLabel *>("geoipStatus");
+                auto *bar = manager->findChild<QProgressBar *>("geoipProgress");
+                auto *cancel = manager->findChild<QPushButton *>("geoipCancel");
+                auto *apply = manager->findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Apply);
+                require(!bar->isVisible() && !cancel->isVisible() && !apply->isEnabled(), "passive inspection has no transfer UI or unsafe Apply");
+                require(status->text().startsWith(cached ? "Ready" : "Checking…"), "cached ready or explicit initial checking");
+                if (cached) require(!selection->catalogsBusy(), "cached reopen starts no Core process");
+                require(waitFor([&] { return !selection->catalogsBusy(); }), "passive catalog completes");
+                QApplication::processEvents();
+                require(status->text().startsWith(missing ? "Invalid file" : "Ready"), "passive validation result");
+                require(!bar->isVisible() && !cancel->isVisible(), "passive success and failure hide progress");
+                require(manager->size() == QSize(480, 300), "compact manager dimensions");
+                manager->reject();
+            });
+            action->click();
+        };
+        open(false, false);
+        open(true, false);
+        require(QFile::remove(path), "remove selected database fixture");
+        open(false, true);
+        require(selection->paths().value("geoip") == path, "inspection does not replace shared choices");
+        require(selection->apply(previous, core, {}, &error), "restore test selection");
+    }
+    static void downloadFeedback(const QString &destination = {}) {
+        using GeoDataFixture::metadata;
+        using GeoDataFixture::checksum;
+        GeoDataFixture::Network network;
+        network.responses = {{{}, 200, {}, -1, true}, {{}, 429, {}, -1, false, false, QNetworkReply::UnknownContentError}};
+        GeoDataDownload download(&network);
+        MainWindow parent; parent.core_.cancel();
+        parent.core_.setEndpoint("bimeron-feedback-" + QUuid::createUuid().toString());
+        for (auto *timer : parent.findChildren<QTimer *>()) timer->stop();
+        auto *selection = GeoDataSelection::instance();
+        const auto previous = selection->paths();
+        const QString core = qEnvironmentVariable("BIMERON_GEODATA_CORE");
+        QTemporaryDir directory;
+        const QString manual = directory.filePath("manual-geoip.dat");
+        const QByteArray bytes = QByteArray::fromHex("0a0e0a02727512080a04cb0071001018");
+        if (!core.isEmpty()) {
+            QFile file(manual); require(file.open(QIODevice::WriteOnly) && file.write(bytes) == bytes.size(), "prior manual file"); file.close();
+            QString error; require(selection->apply({{"geoip", manual}}, core, {}, &error), "prior shared selection");
+        }
+        const auto expected = selection->paths();
+        QTimer::singleShot(500, &parent, [&] {
+            auto *manager = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+            require(manager, "feedback manager");
+            auto *get = manager->findChild<QPushButton *>("geoipDownload");
+            auto *choose = manager->findChild<QPushButton *>("geoipChoose");
+            auto *cancel = manager->findChild<QPushButton *>("geoipCancel");
+            auto *bar = manager->findChild<QProgressBar *>("geoipProgress");
+            require(waitFor([&] { return !selection->catalogsBusy(); }), "initial prior validation");
+            get->click(); QApplication::processEvents();
+            require(!get->isVisible() && !choose->isVisible() && cancel->isVisible() && cancel->isEnabled(), "single Cancel replaces transfer actions");
+            require(!bar->isTextVisible() && bar->sizePolicy().horizontalPolicy() == QSizePolicy::Expanding, "full track has no percent reservation");
+            QStyleOptionProgressBar option; option.initFrom(bar); option.rect = bar->rect(); option.textVisible = false;
+            const auto groove = bar->style()->subElementRect(QStyle::SE_ProgressBarGroove, &option, bar);
+            const auto rowRight = cancel->mapTo(manager, cancel->rect().topRight()).x();
+            require(qAbs(bar->mapTo(manager, groove.topRight()).x() - rowRight) <= 1, "painted progress groove aligns with row actions");
+            download.progress("geoip", 50, 100); QApplication::processEvents();
+            if (!destination.isEmpty()) require(manager->grab().save(destination + ".transfer.png"), "transfer screenshot");
+            cancel->click(); require(!download.busy("geoip") && !bar->isVisible() && get->isVisible(), "row cancellation restores actions");
+            get->click(); network.replies.first()->finish();
+            require(waitFor([&] { return !download.busy("geoip"); }), "retry HTTP failure");
+            QApplication::processEvents();
+            auto *help = manager->findChild<QToolButton *>("geoipError");
+            require(help->isVisible() && help->focusPolicy() == Qt::StrongFocus && !help->accessibleName().isEmpty(), "accessible error button");
+            const auto *status = manager->findChild<QLabel *>("geoipStatus");
+            require(help->x() - (status->x() + status->width()) <= 12, "error help sits beside failure status");
+            if (!destination.isEmpty()) require(manager->grab().save(destination + ".failure.png"), "error screenshot");
+            QTimer::singleShot(0, manager, [&] {
+                auto *popup = qobject_cast<QMessageBox *>(QApplication::activeModalWidget());
+                require(popup && popup->textFormat() == Qt::PlainText && popup->informativeText().contains("Phase: metadata")
+                    && popup->informativeText().contains("HTTP 429") && popup->informativeText().contains("Qt network code") && !popup->informativeText().contains("SYNTHETIC_")
+                    && !popup->informativeText().contains("token="), "safe detailed error dialog");
+                if (!destination.isEmpty()) require(popup->grab().save(destination + ".error-popup.png"), "error popup screenshot");
+                popup->accept();
+            });
+            help->setFocus();
+            QKeyEvent space(QEvent::KeyPress, Qt::Key_Space, Qt::NoModifier);
+            QKeyEvent release(QEvent::KeyRelease, Qt::Key_Space, Qt::NoModifier);
+            QApplication::sendEvent(help, &space); QApplication::sendEvent(help, &release);
+            manager->reject();
+        });
+        manageSharedGeoData(&parent, core, QString(), {}, &download);
+        require(selection->paths() == expected, "cancel/failure preserves shared selection");
+        if (!core.isEmpty()) {
+            network.responses = {{metadata()}, {checksum(bytes)}, {bytes}, {{}, 200, {}, -1, true}};
+            QString staged;
+            const auto observer = QObject::connect(&download, &GeoDataDownload::candidateReady, &parent,
+                [&](QString kind, QString path, QString) {
+                staged = path;
+                QTimer::singleShot(0, &parent, [&, kind, path] {
+                    auto *manager = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+                    require(manager && QFile::exists(path), "catalog cancellation owns candidate");
+                    const QString key = GeoDataSelection::catalogKey(core, kind, path);
+                    manager->findChild<QPushButton *>("geoipCancel")->click();
+                    require(!QFile::exists(path) && !download.busy(kind) && !selection->catalogsBusy(), "catalog cancellation stops process and removes candidate");
+                    manager->findChild<QPushButton *>("geoipDownload")->click();
+                    selection->catalogResult(key, {"ru"}, {}); // Late result from canceled validation.
+                    require(download.busy(kind) && manager->findChild<QPushButton *>("geoipCancel")->isVisible(), "stale catalog result cannot alter retry");
+                    manager->findChild<QPushButton *>("geoipCancel")->click();
+                    manager->reject();
+                });
+            });
+            QTimer::singleShot(500, &parent, [&] {
+                auto *manager = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+                require(manager && waitFor([&] { return !selection->catalogsBusy(); }), "prior catalog settles before retry");
+                manager->findChild<QPushButton *>("geoipDownload")->click();
+            });
+            manageSharedGeoData(&parent, core, QString(), {}, &download);
+            QObject::disconnect(observer);
+            require(!staged.isEmpty() && !QFile::exists(staged) && selection->paths() == expected, "catalog cancel preserves previous selection");
+            QFile file(manual); require(file.open(QIODevice::ReadOnly) && file.readAll() == bytes, "cancel/failure preserves manual bytes");
+            QString error; require(selection->apply(previous, core, {}, &error), "restore prior test selection");
+        }
+    }
+    static void sharedGeoDataPreparation() {
+        const QString core = qEnvironmentVariable("BIMERON_GEODATA_CORE");
+        if (core.isEmpty()) return;
+        QTemporaryDir directory; require(directory.isValid(), "shared profile directory");
+        const auto read = [](const QString &path) { QFile f(path); require(f.open(QIODevice::ReadOnly), "read shared profile"); return f.readAll(); };
+        const QString ip = directory.filePath("geoip.dat"), updated = directory.filePath("updated.dat");
+        // One GeoIP group 'ru', CIDR 203.0.113.0/24.
+        const QByteArray bytes = QByteArray::fromHex("0a0e0a02727512080a04cb0071001018");
+        for (const auto &path : {ip, updated}) { QFile f(path); require(f.open(QIODevice::WriteOnly), "write shared database"); f.write(bytes); }
+        const QByteArray source = "[Profile]\nVersion=1\nName=Shared\n[AccessKey]\nType=shadowsocks\nServer=example.invalid\nPort=443\nMethod=aes-256-gcm\nPassword=SYNTHETIC\n[Interface]\nMode=proxy\n[Routing]\nDefault=proxy\n# retained\n[Rule]\nGeoIP=ru\nAction=direct\n# [Rule]\n# GeoSite=missing\n# Action=block\n";
+        const QString first = directory.filePath("first.conf"), second = directory.filePath("second.conf");
+        require(ProfileStore::writeConfig(first, source) && ProfileStore::writeConfig(second, source), "create managed profiles");
+        const QList<Profile> profiles{{ProfileStore::identity(first), "First", first}, {ProfileStore::identity(second), "Second", second}};
+        auto *selection = GeoDataSelection::instance(); const auto previous = selection->paths();
+        QString error;
+        require(selection->apply({{"geoip", ip}}, core, profiles, &error), "apply global GeoIP");
+        require(read(first) == source && read(second) == source, "shared Apply must not rewrite profiles");
+        MainWindow window; window.core_.cancel();
+        window.core_.setEndpoint("bimeron-shared-test-" + QUuid::createUuid().toString());
+        for (auto *timer : window.findChildren<QTimer *>()) timer->stop();
+        window.validationExecutable_ = core;
+        window.capabilities_ = {{"geoip_split", true}, {"geosite_split", true}, {"geodata_schema", "v2ray-protobuf"}, {"proxy", true}};
+        // Exercise the actual modal Raw Save gate, not just preparation after acceptance.
+        for (const bool stale : {false, true}) {
+            QByteArray original = source;
+            original.replace("[Rule]\nGeoIP=ru\nAction=direct\n", "");
+            original += " # [FutureDesktop]\n# Opaque=retained\n";
+            if (stale) original += "[GeoData]\nGeoIPFile=missing-old.dat\n";
+            const QByteArray validDraft = original + "[Rule]\nGeoIP=ru\nAction=direct\n";
+            for (const int action : {0, 1, 2, 3}) {
+                require(ProfileStore::writeConfig(first, original), "reset Raw Save original");
+                window.profiles_ = {profiles.first()};
+                bool visited = false, rejected = false;
+                QTimer::singleShot(0, &window, [&] {
+                    auto *dialog = qobject_cast<ProfileEditorDialog *>(QApplication::activeModalWidget());
+                    require(dialog, "actual editProfile modal"); visited = true;
+                    auto *tabs = dialog->findChild<QTabWidget *>();
+                    tabs->setCurrentIndex(tabs->count() - 1);
+                    auto *raw = dialog->findChild<QPlainTextEdit *>("rawConfig");
+                    QByteArray draft = validDraft;
+                    if (action == 1) draft.replace("GeoIP=ru", "GeoIP=missing");
+                    if (action == 3) draft += "[FutureDesktop]\nOpaque=retained\n";
+                    raw->setPlainText(QString::fromUtf8(draft));
+                    auto *buttons = dialog->findChild<QDialogButtonBox *>();
+                    if (action == 2) {
+                        QTimer::singleShot(0, dialog, [] {
+                            auto *prompt = qobject_cast<QMessageBox *>(QApplication::activeModalWidget());
+                            require(prompt, "Cancel asks to discard unsaved Raw draft");
+                            for (auto *button : prompt->buttons())
+                                if (prompt->buttonRole(button) == QMessageBox::DestructiveRole) { button->click(); return; }
+                            require(false, "discard action exists");
+                        });
+                        buttons->button(QDialogButtonBox::Cancel)->click(); return;
+                    }
+                    QTimer watchdog;
+                    watchdog.setInterval(10);
+                    QObject::connect(&watchdog, &QTimer::timeout, dialog, [&] {
+                        auto *message = qobject_cast<QMessageBox *>(QApplication::activeModalWidget());
+                        if (!message) return;
+                        if (action == 0) fprintf(stderr, "Raw validation: %s\n", qPrintable(message->text()));
+                        require(action == 1 || action == 3, "valid Raw Save must not show validation error");
+                        require(raw->toPlainText().toUtf8() == draft && read(first) == original,
+                            "invalid groups and unknown fields retain Raw draft and original");
+                        rejected = true; message->accept();
+                        QTimer::singleShot(0, dialog, [dialog] { dialog->QDialog::reject(); });
+                    });
+                    watchdog.start();
+                    buttons->button(QDialogButtonBox::Save)->click();
+                });
+                window.editProfile(0);
+                require(visited && ((action != 1 && action != 3) || rejected), "Raw modal regression completed");
+                const auto saved = read(first);
+                if (action == 0) {
+                    require(saved.contains(ip.toUtf8()) && !saved.contains("missing-old.dat")
+                        && saved.contains("GeoIP=ru") && saved.contains("# retained")
+                        && saved.contains(" # [FutureDesktop]\n# Opaque=retained"),
+                        "Raw Save materializes shared selection and preserves opaque content");
+                } else require(saved == original, "invalid Save and Cancel preserve original bytes");
+            }
+        }
+        require(ProfileStore::writeConfig(first, source), "restore preparation profile");
+        require(window.prepareSharedGeoData(first, &error), "prepare first shared profile");
+        require(read(first).contains(ip.toUtf8()) && read(first).contains("# retained") && read(first).contains("# GeoSite=missing"), "materialize only active kinds without losing blocks");
+        require(read(second) == source && ProfileStore::identity(first) == profiles.first().id, "preserve inactive profile bytes and original identity");
+        require(window.prepareSharedGeoData(second, &error) && read(second).contains(ip.toUtf8()), "second profile reuses shared file");
+        const QByteArray secondSaved = read(second);
+        ProfileEditorDialog editor(QString::fromUtf8(read(first)), window.capabilities_, nullptr, {}, core, first);
+        auto *name = editor.findChild<QLineEdit *>("profileName");
+        // The field need not have an object name in older editor layouts.
+        if (!name) for (auto *field : editor.findChildren<QLineEdit *>()) if (field->text() == "Shared") { name = field; break; }
+        require(name, "editor name field"); name->setText("Unsaved unrelated name");
+        require(selection->apply({{"geoip", updated}}, core, profiles, &error), "update shared path");
+        require(name->text() == "Unsaved unrelated name" && read(second) == secondSaved, "global Apply preserves unsaved controls and inactive files");
+        QTimer::singleShot(500, &editor, [&] {
+            auto *manager = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+            require(manager && manager->objectName() == "sharedGeoDataDialog", "shared manager cancellation fixture");
+            require(manager->findChild<QLabel *>("geoipStatus")->text().contains("Ready"), "manual shared candidate becomes Ready");
+            QFile corrupt(updated); require(corrupt.open(QIODevice::WriteOnly), "modify manual candidate"); corrupt.write("invalid"); corrupt.close();
+            QTimer::singleShot(500, manager, [manager] {
+                require(manager->findChild<QLabel *>("geoipStatus")->text() == "Invalid file", "manual mutation invalidates manager Ready");
+                require(!manager->findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Apply)->isEnabled(), "invalid candidate disables Apply");
+                manager->reject();
+            });
+        });
+        editor.findChild<QPushButton *>("manageDatabases")->click();
+        require(selection->paths().value("geoip") == updated && read(second) == secondSaved, "manager Cancel preserves settings and profile bytes");
+        { QFile restore(updated); require(restore.open(QIODevice::WriteOnly), "restore manual candidate"); restore.write(bytes); }
+
+        const auto beforeReadOnly = read(first);
+        const auto permissions = QFile::permissions(first);
+        require(QFile::setPermissions(first, QFileDevice::ReadOwner), "read-only profile fixture");
+        require(!window.prepareSharedGeoData(first, &error) && read(first) == beforeReadOnly, "read-only stale profile blocks preparation without writing");
+        require(QFile::setPermissions(first, permissions), "restore profile permissions");
+        require(window.prepareSharedGeoData(first, &error) && read(first).contains(updated.toUtf8()), "stale references corrected before Start");
+        QByteArray invalid = source; invalid.replace("GeoIP=ru", "GeoIP=missing");
+        require(ProfileStore::writeConfig(first, invalid), "write invalid fixture");
+        require(!window.prepareSharedGeoData(first, &error) && read(first) == invalid, "failed preparation preserves profile bytes");
+        require(ProfileStore::writeConfig(first, "[Profile]\nName=No GeoData\n"), "non GeoData fixture");
+        window.validationExecutable_ = "missing-core";
+        require(window.prepareSharedGeoData(first, &error) && read(first) == "[Profile]\nName=No GeoData\n", "unrelated profile does not require document bridge");
+        editor.QDialog::reject();
+        require(selection->apply(previous, core, {}, &error), "restore shared test settings");
+    }
+    static int profileGeometry(QApplication &app, const QString &destination) {
+        class Translator final : public QTranslator {
+        public:
+            QJsonObject strings;
+            QString translate(const char *, const char *text, const char *, int) const override { return strings.value(QString::fromUtf8(text)).toString(); }
+            bool isEmpty() const override { return strings.isEmpty(); }
+        } translator;
+        QFile translations(QFileInfo(QString::fromUtf8(__FILE__)).dir().filePath("../assets/translations/ru.json"));
+        require(translations.open(QIODevice::ReadOnly), "geometry translations");
+        translator.strings = QJsonDocument::fromJson(translations.readAll()).object();
+        if (!app.arguments().contains("--geometry-english")) app.installTranslator(&translator);
+        const int themeArgument = app.arguments().indexOf("--geometry-theme");
+        if (themeArgument >= 0) QSettings().setValue("app/theme", app.arguments().value(themeArgument + 1));
+        applyThemePalette(app);
+        downloadFeedback(destination);
+        MainWindow window;
+        window.core_.cancel();
+        window.core_.setEndpoint("bimeron-geometry-" + QUuid::createUuid().toString());
+        for (auto *timer : window.findChildren<QTimer *>()) timer->stop();
+        QTemporaryDir directory;
+        require(directory.isValid(), "geometry directory");
+        const QString path = directory.filePath("profile.conf");
+        require(ProfileStore::writeConfig(path, "[Profile]\nVersion=1\nName=Size\n[AccessKey]\nSSConf=ssconf://example.invalid\n[Interface]\nMode=vpn\n"
+            "[Rule]\nGeoIP=cloudflare,private,ru\nAction=direct\n[Rule]\nGeoSite=github,youtube,google\nAction=proxy\n"), "geometry profile");
+        window.profiles_ = {{"geometry", "Size", path}};
+        window.capabilities_ = {{"vpn", true}, {"proxy", true}, {"ip_split", true}, {"domain_split", true}, {"ipv6", true}, {"kill_switch", true},
+            {"geoip_split", true}, {"geosite_split", true}, {"geodata_schema", "v2ray-protobuf"}};
+        window.validationExecutable_ = qEnvironmentVariable("BIMERON_GEODATA_CORE");
+        QJsonArray observations;
+        const auto capture = [&] {
+            auto *dialog = qobject_cast<ProfileEditorDialog *>(QApplication::activeModalWidget());
+            require(dialog, "geometry modal editor");
+            QJsonArray widgets;
+            QList<QWidget *> all{dialog};
+            all.append(dialog->findChildren<QWidget *>());
+            for (auto *widget : all) {
+                const QSize hint = widget->minimumSizeHint();
+                if (widget == dialog || hint.height() > 200 || widget->minimumHeight() > 200 || qobject_cast<QTabWidget *>(widget))
+                    widgets.append(QJsonObject{{"class", widget->metaObject()->className()}, {"name", widget->objectName()},
+                        {"visible", widget->isVisibleTo(dialog)}, {"width", widget->width()}, {"height", widget->height()},
+                        {"minimumWidth", widget->minimumWidth()}, {"minimumHeight", widget->minimumHeight()},
+                        {"hintWidth", hint.width()}, {"hintHeight", hint.height()},
+                        {"layoutMinimumHeight", widget->layout() ? widget->layout()->minimumSize().height() : -1},
+                        {"sizeHintHeight", widget->sizeHint().height()},
+                        {"heightForWidth", widget->heightForWidth(widget->width())},
+                        {"layoutHeightForWidth", widget->layout() ? widget->layout()->totalHeightForWidth(widget->width()) : -1}});
+            }
+            observations.append(QJsonObject{{"width", dialog->width()}, {"height", dialog->height()}, {"dpr", dialog->devicePixelRatioF()}, {"widgets", widgets}});
+            return dialog;
+        };
+        QTimer::singleShot(0, &window, [&] { capture(); });
+        QTimer::singleShot(500, &window, [&] {
+            auto *dialog = capture();
+            auto *tabs = dialog->findChild<QTabWidget *>();
+            require(tabs, "geometry tabs");
+            for (int index = 0; index < tabs->count(); ++index) {
+                if (!tabs->isTabVisible(index) || !tabs->isTabEnabled(index)) continue;
+                tabs->setCurrentIndex(index);
+                QApplication::processEvents();
+                require(dialog->size() == QSize(680, 520), "switching tabs must not grow the dialog");
+            }
+            tabs->setCurrentIndex(0);
+            QApplication::processEvents();
+            require(dialog->grab().save(destination), "geometry screenshot");
+            require(!window.styleSheet().isEmpty() && !QPixmap(":/icons/check.xpm").isNull()
+                && !QPixmap(":/icons/chevron-down.xpm").isNull(), "real application style and embedded picker icons");
+            auto *table = dialog->findChild<QTableWidget *>();
+            if (!window.validationExecutable_.isEmpty()) {
+            require(table && table->rowCount() == 2, "synthetic GeoIP and GeoSite table rows");
+            for (int index = 0; index < tabs->count(); ++index)
+                if (tabs->widget(index)->isAncestorOf(table)) tabs->setCurrentIndex(index);
+            QApplication::processEvents();
+            require(table->isVisible() && dialog->size() == QSize(680, 520), "compact visible routing table");
+            require(dialog->grab().save(destination + ".routing.png"), "styled routing table screenshot");
+            for (int row = 0; row < 2; ++row) {
+                auto *target = qobject_cast<QLineEdit *>(table->cellWidget(row, 2));
+                require(target && !target->actions().isEmpty() && !target->actions().first()->icon().isNull(), "actual destination picker action");
+                const QStringList ids = target->property("groupIds").toString().split(',');
+                require(ids.size() == 3, "manual picker IDs");
+                for (int pass = 0; pass < 2; ++pass) {
+                    QTimer::singleShot(100, dialog, [&, row, pass] {
+                        auto *popup = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+                        require(popup && popup != dialog && popup->parentWidget() == dialog, "actual inherited-style group popup");
+                        auto *list = popup->findChild<QListWidget *>();
+                        auto *search = popup->findChild<QLineEdit *>();
+                        require(list && search && list->count() == (pass == 0 ? 3 : 2)
+                            && list->sizeHintForRow(0) < 48, "compact native group rows");
+                        require(popup->width() == 440 && popup->height() == 420, "compact group popup geometry");
+                        if (row == 0) {
+                            QListWidgetItem *russia = nullptr;
+                            for (int index = 0; index < list->count(); ++index)
+                                if (list->item(index)->data(Qt::UserRole).toString() == "ru") russia = list->item(index);
+                            require(russia, "country search fixture");
+                            require(russia->text().startsWith(QObject::tr("Russia") + " (RU)"), "country follows active translator");
+                            for (const QString &query : {QString("Russia"), QString::fromUtf8("Россия"), QString("RU")}) {
+                                search->setText(query);
+                                require(!russia->isHidden(), "both country languages and code match independently of UI language");
+                            }
+                            search->clear();
+                        }
+                        if (pass == 0) {
+                            require(list->item(0)->checkState() == Qt::Checked, "manual selected group starts checked");
+                            list->setCurrentRow(0); list->setFocus();
+                            QKeyEvent space(QEvent::KeyPress, Qt::Key_Space, Qt::NoModifier);
+                            QApplication::sendEvent(list, &space);
+                            require(list->item(0)->checkState() == Qt::Unchecked, "Space toggles native check state");
+                            search->setText("fixture-no-matching-group");
+                            require(list->item(0)->isHidden() && list->item(1)->checkState() == Qt::Checked, "search preserves hidden selections");
+                            search->clear();
+                        } else {
+                            require(list->item(0)->data(Qt::UserRole).toString() == ids.at(1)
+                                && list->item(1)->data(Qt::UserRole).toString() == ids.at(2)
+                                && list->item(0)->checkState() == Qt::Checked
+                                && list->item(1)->checkState() == Qt::Checked, "reopened picker places checked groups first");
+                        }
+                        QApplication::processEvents();
+                        const QString suffix = row == 0 ? ".groups.png" : ".geosite-groups.png";
+                        if (pass == 0) require(popup->grab().save(destination + suffix), "styled native group popup screenshot");
+                        popup->findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Ok)->click();
+                    });
+                    target->actions().first()->trigger();
+                    require(target->property("groupIds").toString() == ids.mid(1).join(','), "picker acceptance preserves selected IDs");
+                }
+            }
+            }
+            QFile log(destination + ".json");
+            require(log.open(QIODevice::WriteOnly), "geometry log");
+            log.write(QJsonDocument(observations).toJson()); log.close();
+            auto *manage = dialog->findChild<QPushButton *>("manageDatabases");
+            require(manage, "database manager action");
+            QTimer::singleShot(500, dialog, [&] {
+                auto *manager = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+                require(manager && manager->objectName() == "sharedGeoDataDialog", "actual database modal path");
+                require(manager->width() >= 440 && manager->width() <= 540 && manager->height() <= 340,
+                    "database manager must remain compact after native layout events");
+                require(!manager->windowIcon().isNull(), "manager uses real application icon");
+                require(manager->grab().save(destination + ".databases.png"), "database geometry screenshot");
+                if (QApplication::platformName() == "windows") {
+                    const QRect frame = manager->frameGeometry();
+                    require(manager->screen()->grabWindow(0, frame.x(), frame.y(), frame.width(), frame.height())
+                        .save(destination + ".native-frame.png"), "native decorated manager screenshot");
+                }
+                QFile sizes(destination + ".databases.json"); require(sizes.open(QIODevice::WriteOnly), "database geometry log");
+                sizes.write(QJsonDocument(QJsonObject{{"width", manager->width()}, {"height", manager->height()},
+                    {"dpr", manager->devicePixelRatioF()}, {"font", manager->font().family()},
+                    {"pointSize", manager->font().pointSizeF()}, {"nativeTitleBar", !manager->windowFlags().testFlag(Qt::FramelessWindowHint)}}).toJson());
+                auto *details = manager->findChild<QToolButton *>("geodataDetails");
+                require(details && !details->isChecked(), "database details start collapsed");
+                require(details->arrowType() == Qt::NoArrow && !details->icon().isNull() && details->iconSize() == QSize(9, 5), "compact product chevron");
+                details->click(); QApplication::processEvents();
+                require(details->isChecked() && details->arrowType() == Qt::NoArrow, "accessible expanded state retains product icon");
+                require(manager->height() <= 500, "expanded details remain bounded");
+                require(manager->grab().save(destination + ".details.png"), "database details screenshot");
+                QKeyEvent tab(QEvent::KeyPress, Qt::Key_Tab, Qt::NoModifier);
+                QApplication::sendEvent(manager, &tab);
+                require(manager->focusWidget(), "manager keyboard focus remains accessible");
+                QKeyEvent backtab(QEvent::KeyPress, Qt::Key_Backtab, Qt::ShiftModifier);
+                QApplication::sendEvent(manager, &backtab);
+                QKeyEvent escape(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
+                QApplication::sendEvent(manager, &escape);
+                require(manager->result() == QDialog::Rejected, "Escape cancels database manager");
+            });
+            manage->click();
+            dialog->QDialog::reject();
+        });
+        window.show();
+        window.editProfile(0);
+        require(observations.size() == 2, "initial and settled geometry observations");
+        for (const auto &value : observations) {
+            const auto geometry = value.toObject();
+            require(geometry.value("width").toInt() == 680 && geometry.value("height").toInt() == 520,
+                "profile modal must retain 680x520 after queued native layout events");
+        }
+        window.core_.cancel();
+        app.removeTranslator(&translator);
+        return 0;
+    }
     static int preview(QApplication &app, const QString &destination, const QString &language) {
         class Translator final : public QTranslator {
         public:

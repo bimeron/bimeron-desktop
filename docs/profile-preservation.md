@@ -18,8 +18,10 @@ cannot round-trip use Raw config instead. There is no discard-unknown-settings
 confirmation. Raw is authoritative until validation and representability checks
 both succeed. Unsupported protocols do not acquire forms or connection support.
 
-Raw contains secrets and requires an explicit Show/Edit action. Masked previews
-are never used as saved configuration. Validation failure retains the draft.
+The Raw config tab immediately displays the editable source, including credentials.
+Returning to a visual tab validates the draft and checks representability; an
+invalid draft remains in Raw. Save also validates. Masked previews are never used
+as saved configuration. Validation failure retains the draft.
 
 ## Storage and references
 
@@ -75,3 +77,8 @@ Stage 6 adds explicit Trojan, HTTP(S), Naive H2 and MASQUE forms and a separate
 ShadowTLS v3 block for represented compatible explicit profiles. URI sources and
 extended XHTTP remain protected Raw. See [Parameter forms and ShadowTLS](parameter-forms-and-shadowtls.md).
 This does not change the bundled Core or establish runtime interoperability.
+
+
+GeoIP/GeoSite routing and the Core document CLI boundary are described in
+[GeoData routing](geodata-routing.md). The running endpoint capabilities and
+selected validator identity remain separate; no bundle pin changes are implied.
