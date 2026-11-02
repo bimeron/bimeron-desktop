@@ -163,5 +163,5 @@ GeoIP labels follow the application language: for example United States (US) in
 English and its Russian translation in Russian. Codes stay uppercase. Search
 matches English and Russian names and the stable code in either UI language. The ten known service and
 special groups appear before countries within each selection set. Checked groups
-appear first across the entire picker when reopened. GeoSite labels are unchanged. Unknown IDs remain visible,
+appear first across the entire picker when reopened. GeoSite uses a separate compact section picker; see [the trial specification](geosite-picker-trial.md). Unknown IDs remain visible,
 and labels never replace the original IDs in configuration files.

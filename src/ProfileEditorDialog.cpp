@@ -5,6 +5,7 @@
 #include "GeoDataSelection.h"
 #include "GeoDataDialog.h"
 #include "GeoIPLabels.h"
+#include "GeoSitePicker.h"
 #include "CoreDiagnostic.h"
 #include <algorithm>
 #include <QApplication>
@@ -90,9 +91,8 @@ QJsonObject bridgeJson(const QString &executable, const QStringList &args, const
 
 QString groupLabel(const QString &id, bool geoIP = false) {
     if (geoIP) return geoIPLabel(id, true);
-    const QMap<QString, QString> labels{{"ru", QObject::tr("Russia")}, {"by", QObject::tr("Belarus")},
-        {"github", QObject::tr("GitHub")}, {"youtube", QObject::tr("YouTube")}, {"category-ads-all", QObject::tr("Ads")}};
-    return labels.contains(id) ? labels.value(id) + " (" + id + ')' : id;
+    const QString name = geoSiteName(id);
+    return name.isEmpty() ? id : name + " (" + id + ')';
 }
 
 void showGroupSummary(QLineEdit *target, const QString &ids) {
@@ -1738,6 +1738,16 @@ void ProfileEditorDialog::inspectDataset(const QString &kind) {
 
 void ProfileEditorDialog::selectGroups(QLineEdit *target, QComboBox *type) {
     const QString kind = type->currentData() == "GeoIP" ? "geoip" : "geosite";
+    if (kind == "geosite") {
+        QStringList selected = target->property("groupIds").toString().split(',', Qt::SkipEmptyParts);
+        for (auto &id : selected) id = id.trimmed();
+        GeoSitePicker popup(this, datasetGroups_.value(kind), selected, datasetErrors_.value(kind));
+        if (popup.exec() == QDialog::Accepted) {
+            showGroupSummary(target, popup.selectedIds().join(','));
+            refreshRouting();
+        }
+        return;
+    }
     QDialog popup(this);
     popup.setWindowTitle(tr("Choose groups…"));
     popup.resize(440, 420);

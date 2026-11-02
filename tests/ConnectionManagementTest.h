@@ -1,4 +1,5 @@
 #pragma once
+#include "GeoSitePicker.h"
 
 #include <QListWidget>
 #include <QDialogButtonBox>
@@ -370,11 +371,11 @@ struct ConnectionManagementTest {
                     QTimer::singleShot(100, dialog, [&, row, pass] {
                         auto *popup = qobject_cast<QDialog *>(QApplication::activeModalWidget());
                         require(popup && popup != dialog && popup->parentWidget() == dialog, "actual inherited-style group popup");
-                        auto *list = popup->findChild<QListWidget *>();
+                        auto *list = row == 0 ? popup->findChild<QListWidget *>() : popup->findChild<QListWidget *>("geoSiteGroups");
                         auto *search = popup->findChild<QLineEdit *>();
-                        require(list && search && list->count() == (pass == 0 ? 3 : 2)
+                        require(list && search && list->count() == (row == 0 ? (pass == 0 ? 3 : 2) : (pass == 0 ? 5 : 4))
                             && list->sizeHintForRow(0) < 48, "compact native group rows");
-                        require(popup->width() == 440 && popup->height() == 420, "compact group popup geometry");
+                        require(popup->width() == (row == 0 ? 440 : 728) && popup->height() == (row == 0 ? 420 : 473), "compact group popup geometry");
                         if (row == 0) {
                             QListWidgetItem *russia = nullptr;
                             for (int index = 0; index < list->count(); ++index)
@@ -387,7 +388,7 @@ struct ConnectionManagementTest {
                             }
                             search->clear();
                         }
-                        if (pass == 0) {
+                        if (row == 0 && pass == 0) {
                             require(list->item(0)->checkState() == Qt::Checked, "manual selected group starts checked");
                             list->setCurrentRow(0); list->setFocus();
                             QKeyEvent space(QEvent::KeyPress, Qt::Key_Space, Qt::NoModifier);
@@ -396,11 +397,15 @@ struct ConnectionManagementTest {
                             search->setText("fixture-no-matching-group");
                             require(list->item(0)->isHidden() && list->item(1)->checkState() == Qt::Checked, "search preserves hidden selections");
                             search->clear();
-                        } else {
+                        } else if (row == 0) {
                             require(list->item(0)->data(Qt::UserRole).toString() == ids.at(1)
                                 && list->item(1)->data(Qt::UserRole).toString() == ids.at(2)
                                 && list->item(0)->checkState() == Qt::Checked
                                 && list->item(1)->checkState() == Qt::Checked, "reopened picker places checked groups first");
+                        }
+                        if (row == 1 && pass == 0) {
+                            for (int i = 0; i < list->count(); ++i)
+                                if (list->item(i)->data(Qt::UserRole) == ids.first()) list->item(i)->setCheckState(Qt::Unchecked);
                         }
                         QApplication::processEvents();
                         const QString suffix = row == 0 ? ".groups.png" : ".geosite-groups.png";
@@ -411,6 +416,17 @@ struct ConnectionManagementTest {
                     require(target->property("groupIds").toString() == ids.mid(1).join(','), "picker acceptance preserves selected IDs");
                 }
             }
+            }
+            const QString catalogPath = qEnvironmentVariable("BIMERON_GEOSITE_IDS");
+            if (!catalogPath.isEmpty()) {
+                QFile catalogFile(catalogPath); require(catalogFile.open(QIODevice::ReadOnly), "catalog IDs fixture");
+                QStringList catalog;
+                for (const auto &id : QJsonDocument::fromJson(catalogFile.readAll()).array()) catalog.append(id.toString().toLower());
+                GeoSitePicker picker(dialog, catalog, {"category-games-!cn", "youtube"}, {});
+                picker.findChild<QListWidget *>("geoSiteSections")->setCurrentRow(2);
+                picker.show(); QApplication::processEvents();
+                require(picker.grab().save(destination + ".catalog.png"), "native catalog preview");
+                picker.reject();
             }
             QFile log(destination + ".json");
             require(log.open(QIODevice::WriteOnly), "geometry log");

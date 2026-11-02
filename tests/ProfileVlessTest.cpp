@@ -1,5 +1,6 @@
 #include "GeoIPLabels.h"
 #include "ProfileEditorDialog.h"
+#include "GeoSitePicker.h"
 #include <QSettings>
 #include "GeoDataSelection.h"
 #include "ProfileStore.h"
@@ -796,8 +797,8 @@ static void geodataBridgeRegressions(const QString &directory) {
         auto *popup = qobject_cast<QDialog *>(QApplication::activeModalWidget());
         require(popup && popup != &editor);
         auto *search = popup->findChild<QLineEdit *>();
-        auto *list = popup->findChild<QListWidget *>();
-        require(search && list && list->count() == 2);
+        auto *list = popup->findChild<QListWidget *>("geoSiteGroups");
+        require(search && list && list->count() == 3);
         search->setText("YouTube");
         QListWidgetItem *github = nullptr, *youtube = nullptr;
         for (int i = 0; i < list->count(); ++i) {
@@ -822,18 +823,26 @@ static void geodataBridgeRegressions(const QString &directory) {
     target->setProperty("groupIds", "youtube,!unknown");
     QTimer::singleShot(0, [&] {
         auto *popup = qobject_cast<QDialog *>(QApplication::activeModalWidget()); require(popup);
-        auto *list = popup->findChild<QListWidget *>(); require(list && list->count() == 3);
-        require(list->item(0)->data(Qt::UserRole) == "youtube");
-        require(list->item(1)->data(Qt::UserRole) == "!unknown");
-        require(list->item(1)->text().contains("Unavailable"));
-        require(list->item(2)->data(Qt::UserRole) == "github");
-        require(list->sizeHintForRow(0) < 48);
+        auto *list = popup->findChild<QListWidget *>("geoSiteGroups"); require(list);
+        auto *sections = popup->findChild<QListWidget *>("geoSiteSections"); require(sections && sections->count() == 7);
+        QListWidgetItem *youtube = nullptr, *github = nullptr, *unknown = nullptr;
+        for (int i = 0; i < list->count(); ++i) {
+            auto *item = list->item(i);
+            if (item->data(Qt::UserRole) == "youtube") youtube = item;
+            if (item->data(Qt::UserRole) == "github") github = item;
+            if (item->data(Qt::UserRole) == "!unknown") unknown = item;
+        }
+        require(youtube && github && unknown && unknown->text().contains("Unavailable"));
+        sections->setCurrentRow(2);
+        require(!youtube->isHidden() && github->isHidden() && unknown->isHidden());
         auto *search = popup->findChild<QLineEdit *>(); search->setText("github");
-        require(list->item(0)->isHidden() && list->item(0)->checkState() == Qt::Checked);
-        require(list->item(1)->isHidden() && list->item(1)->checkState() == Qt::Checked);
-        list->item(2)->setCheckState(Qt::Checked);
+        require(!github->isHidden() && youtube->isHidden() && youtube->checkState() == Qt::Checked);
+        github->setCheckState(Qt::Checked);
+        require(unknown->checkState() == Qt::Checked);
         search->clear();
-        require(list->item(0)->data(Qt::UserRole) == "youtube");
+        require(!youtube->isHidden() && github->isHidden());
+        sections->setCurrentRow(0);
+        require(!unknown->isHidden());
         popup->findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Ok)->click();
     });
     target->actions().first()->trigger();
@@ -912,6 +921,46 @@ static void geodataBridgeRegressions(const QString &directory) {
 
 int main(int argc, char **argv) {
     QApplication app(argc, argv);
+    {
+        QStringList catalog;
+        const QString catalogPath = qEnvironmentVariable("BIMERON_GEOSITE_IDS");
+        if (!catalogPath.isEmpty()) {
+            QFile file(catalogPath); require(file.open(QIODevice::ReadOnly));
+            for (const auto &id : QJsonDocument::fromJson(file.readAll()).array()) catalog.append(id.toString().toLower());
+            require(catalog.size() == 1561);
+        } else {
+            for (int i = 0; i < 1558; ++i) catalog.append(QString("fixture-%1").arg(i));
+            catalog.append({"category-games-!cn", "github", "youtube"});
+        }
+        QElapsedTimer performance; performance.start();
+        GeoSitePicker picker(nullptr, catalog, {"youtube", "missing-fixture"}, {});
+        const qint64 opening = performance.nsecsElapsed();
+        auto *list = picker.findChild<QListWidget *>("geoSiteGroups");
+        auto *sections = picker.findChild<QListWidget *>("geoSiteSections");
+        auto *search = picker.findChild<QLineEdit *>();
+        require(list && sections && search);
+        require(picker.selectedIds() == QStringList({"youtube", "missing-fixture"}));
+        sections->setCurrentRow(2);
+        performance.restart(); search->setText("github");
+        const qint64 filtering = performance.nsecsElapsed();
+        int matches = 0;
+        for (int i = 0; i < list->count(); ++i) {
+            auto *item = list->item(i);
+            if (item->data(Qt::UserRole).isValid() && !item->isHidden()) {
+                require(item->text().contains("github", Qt::CaseInsensitive));
+                if (item->data(Qt::UserRole) == "github") { item->setCheckState(Qt::Checked); ++matches; }
+            }
+        }
+        require(matches == 1);
+        require(picker.selectedIds() == QStringList({"youtube", "missing-fixture", "github"}));
+        search->clear();
+        for (int i = 0; i < list->count(); ++i)
+            if (list->item(i)->data(Qt::UserRole) == "github") require(list->item(i)->isHidden());
+        require(picker.findChild<QLabel *>("geoSiteSelectionCount")->text().contains('3'));
+        search->setText("fixture-no-matches");
+        picker.reject(); require(picker.result() == QDialog::Rejected);
+        fprintf(stdout, "GeoSite %d IDs: construct %.2f ms, filter %.2f ms\n", int(catalog.size()), opening / 1e6, filtering / 1e6);
+    }
     require(geoIPLabel("us") == "United States (US)");
     require(geoIPLabel("ru") == "Russia (RU)");
     require(geoIPLabel("by") == "Belarus (BY)");
