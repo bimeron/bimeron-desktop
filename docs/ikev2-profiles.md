@@ -2,6 +2,28 @@
 
 ## Status and implementation gate
 
+Step 4 [consumer Windows decision proposal](ikev2-installation-contract.md#step-4-decision-proposal-consumer-windows-lifecycle)
+recommends investigating offline package servicing separated from Core runtime
+ownership/recovery, without mandatory managed policy or a new broker by default.
+This replaces the next-work recommendation below, not accepted security guarantees.
+Threat-scope acceptance, maintenance exclusion and RAS/DNS/WFP recovery evidence
+remain prerequisites; GUI stays off. Steps 2/3 remain historical proposals.
+
+Step 2 follow-up: [unified installation and first GUI contract](ikev2-installation-contract.md)
+is **PROPOSED / REVIEW PENDING**. It reconciles Core/Desktop ownership, semantic
+interfaces, first-connection dependencies and remaining security decisions. It
+does not extend the earlier acceptance below or authorize native enablement.
+
+Step 3 [concrete design decisions](ikev2-installation-contract.md#step-3-concrete-decisions-and-remaining-feasibility-boundaries)
+now fix durable Intent/lease history, atomic participating admission, bounded
+wire/plan encoding and detached exact-pair approval. The selected engineering
+design is not user/security acceptance or native evidence. MSI action/session
+authority, historical-route enforcement and surviving service restoration remain
+specific feasibility blockers; unmanaged first GUI stays disabled. The recommended
+managed-host alternative is a material scope decision, not an adopted prerequisite.
+The Step 3 section supersedes earlier unspecified storage/encoding choices only;
+old evidence and runtime disablement retain their scope.
+
 This is the accepted stage 8 specification. Partial offline implementation covers
 profile handling, authenticated transport, lifecycle fixtures and guarded UI routing.
 Production native connection, provisioning and owner discovery remain unavailable;
@@ -152,11 +174,18 @@ publication, commit and completed rollback. A preflight check is insufficient.
 Validate named-object security; refuse abandoned mutexes, active/unknown markers,
 unsafe paths and incomplete durable journals. Preserve prior policy and identity
 for rollback. Do not schedule unguarded reboot replacement or kill owners.
-An embedded native MSI action may implement this, but its actual callback/process
-lifetime, journal and nested-uninstall behavior must be demonstrated in a prototype
-before claiming installable native support. No such evidence exists yet.
+The historical embedded-action ownership alternative is superseded by the proposed
+Core-owned controller below. MSI actions remain bounded participants, not the
+transaction owner or terminal settlement authority. No production evidence exists yet.
 
 ### Proposed Core installation controller (selected architecture; review pending)
+
+The [Step 2 contract](ikev2-installation-contract.md) adds shared design-only
+interfaces and an ordered first-GUI plan. Core's companion is
+`docs/IKEV2_INSTALLATION_CONTRACT.MD` on its isolated planning branch; its older
+`docs/NATIVE_ENROLLMENT_SPEC.MD` trusted-invocation route is historical. Production
+remains blocked on durable admission, action/preload proof, old-package bypass
+prevention, closure and surviving restoration, including for a fresh-host scope.
 
 **PROPOSED, review pending; not production approved.** This selects a proposed
 Core-owned narrow installation command applying a protected approved plan. It is

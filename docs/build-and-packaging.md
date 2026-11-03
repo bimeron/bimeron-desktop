@@ -415,6 +415,35 @@ The current bundle pin is not evidence of support for these new protocols.
 
 ## Foreground installer feasibility prototype (not enabled)
 
+Step 4 [consumer Windows decision proposal](ikev2-installation-contract.md#step-4-decision-proposal-consumer-windows-lifecycle)
+recommends evaluating offline MSI payload servicing separated from Core runtime
+ownership/recovery. It supersedes the disconnected-codec-first recommendation below.
+No mandatory managed policy, installer restructuring or security-scope change is
+accepted yet. Supported packaging, bundle pins and native disablement are unchanged;
+ordinary-user cached maintenance and recovery-before-deletion are explicit gates.
+
+The [Step 2 unified installation contract](ikev2-installation-contract.md) is a
+review-pending proposal for Core-owned installation, enrollment, participating-host
+admission and terminal settlement. It supplies dependencies and acceptance for
+first Windows amd64 GUI IKEv2 use, not a new supported packaging flow. The current
+bundle pin, fail-closed prototype exports and production disablement stay unchanged.
+Future package integration must prevent old/cached ungated routes, prove protected
+action/preload authority and preserve rollback/service restoration before enablement.
+
+Step 3 [concrete decisions](ikev2-installation-contract.md#step-3-concrete-decisions-and-remaining-feasibility-boundaries)
+select a separate ProgramData authority/WAL and bounded paired wire/plan contract.
+Future artifact approval is detached: freeze final Core/Desktop/DLL/MSI bytes,
+inspect the effective package and evidence, then independently sign approval of
+that exact pair. Do not embed approval into the MSI whose digest it covers, and
+do not substitute the current signed-update manifest for installation authority.
+The proposed `scripts/prepare-installation-approval.py` does not exist yet and is
+not part of supported packaging. Historical-route prevention, action/session
+attestation and surviving restoration remain explicit feasibility blockers; a
+managed-host policy prerequisite requires a separate product/security decision.
+No package pin, command, dependency, installer sequence or supported target changes
+in this documentation stage. Only disconnected codec/history work is recommended
+next, subject to the next authorization; GUI and production MSI integration stay off.
+
 Historical status: the trusted-invocation procedure was selected for specification
 review only. It is superseded by the [proposed Core controller](ikev2-profiles.md#proposed-core-installation-controller-selected-architecture-review-pending),
 which remains review pending and not production accepted.
