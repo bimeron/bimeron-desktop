@@ -1,4 +1,5 @@
 #include "ProfileEditorDialog.h"
+#include "ProfileTextEdit.h"
 #include "HiDpiCheckBox.h"
 #include "HiDpiComboBox.h"
 #include "ProfileStore.h"
@@ -29,6 +30,7 @@
 #include <QFileInfo>
 #include <QFontDatabase>
 #include <QFormLayout>
+#include <QGridLayout>
 #include <QHeaderView>
 #include <QHostAddress>
 #include <QHBoxLayout>
@@ -119,6 +121,8 @@ QMap<QString, QString> visualFields(const QString &text) {
             QString value = line.mid(line.indexOf('=') + 1);
             // buildText adds exactly one separator space; the rest is user data.
             if (value.startsWith(' ')) value.remove(0, 1);
+            QString decoded;
+            if (value.startsWith('"') && ProfileTextEdit::decode(value, &decoded)) value = decoded;
             fields.insert(section + "/" + line.left(line.indexOf('=')).trimmed(), value);
         }
     }
@@ -159,7 +163,10 @@ QString valueFor(const QString &text, const QString &section, const QString &key
         if (trimmed.startsWith('[') && trimmed.endsWith(']')) current = trimmed.mid(1, trimmed.size() - 2);
         else if (current == section) {
             const auto match = QRegularExpression(QString("^%1\\s*=\\s*(.*)$").arg(QRegularExpression::escape(key))).match(trimmed);
-            if (match.hasMatch()) return match.captured(1).trimmed();
+            if (match.hasMatch()) {
+                QString value;
+                return ProfileTextEdit::decode(match.captured(1), &value) ? value : match.captured(1).trimmed();
+            }
         }
     }
     return {};
@@ -293,8 +300,10 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
     method_->addItems({"chacha20-ietf-poly1305", "aes-128-gcm", "aes-192-gcm", "aes-256-gcm", "2022-blake3-aes-128-gcm", "2022-blake3-aes-256-gcm", "2022-blake3-chacha20-poly1305"});
     password_ = new QLineEdit;
     password_->setEchoMode(QLineEdit::Password);
+    password_->setObjectName("password");
     username_ = new QLineEdit;
     sshIdentity_ = new QLineEdit;
+    sshIdentity_->setObjectName("sshIdentity");
     sshKnownHosts_ = new QLineEdit;
     auto *identityRow = new QWidget;
     auto *identityLayout = new QHBoxLayout(identityRow);
@@ -326,11 +335,12 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
     ssPluginOpts_->setEchoMode(QLineEdit::Password);
     ssPluginOpts_->setToolTip(tr("SIP003 options are preserved literally. tls=false enables WSS; obfs-local TLS is camouflage, not verified TLS. Plugins carry TCP only."));
     prefix_ = new QLineEdit;
+    prefix_->setObjectName("prefix");
     mode_ = new HiDpiComboBox;
     if (capabilities.value("vpn").toBool()) mode_->addItem(tr("System VPN"), "vpn");
     if (capabilities.value("proxy").toBool()) mode_->addItem(tr("Local SOCKS5"), "proxy");
     listen_ = new QLineEdit;
-    auto *sourceNotice = new QLabel(tr("Changing the key source or removing configured fields requires Raw config; the document bridge cannot delete fields."));
+    auto *sourceNotice = new QLabel(tr("Changing the key source requires Raw config. Cleared optional fields are removed when saving."));
     sourceNotice->setWordWrap(true);
     sourceNotice->setObjectName("sourceEditRestriction");
     sourceNotice->setVisible(!coreExecutable_.isEmpty());
@@ -615,6 +625,8 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
     auto *parameterLayout = new QVBoxLayout(parameterPage_);
     auto *scroll = new QScrollArea;
     scroll->setWidgetResizable(true);
+    scroll->setFrameShape(QFrame::NoFrame);
+    scroll->viewport()->setAutoFillBackground(false);
     auto *fields = new QWidget;
     auto *form = new QFormLayout(fields);
     trojanNetwork_ = new HiDpiComboBox;
@@ -644,19 +656,78 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
         const QString path = QFileDialog::getOpenFileName(this, tr("CA file"));
         if (!path.isEmpty()) parameters_["CAFile"]->setText(QFileInfo(path).absoluteFilePath());
     });
-    shadowTls_ = new HiDpiCheckBox(tr("Enable ShadowTLS v3"));
+    shadowTls_ = new HiDpiCheckBox(tr("Use ShadowTLS"));
     shadowTls_->setObjectName("shadowTls");
     shadowName_ = new QLineEdit;
     shadowName_->setObjectName("shadowName");
     shadowPassword_ = new QLineEdit;
     shadowPassword_->setObjectName("shadowPassword");
     shadowPassword_->setEchoMode(QLineEdit::Password);
-    form->addRow(shadowTls_);
-    form->addRow(tr("ShadowTLS handshake name"), shadowName_);
-    form->addRow(tr("ShadowTLS password"), shadowPassword_);
-    scroll->setWidget(fields);
+
+    shadowGuidance_ = new QLabel;
+    shadowGuidance_->setObjectName("shadowGuidance");
+    shadowGuidance_->setWordWrap(true);
+    // Keep wrapping text outside the form: Qt 6.4's height-for-width handling
+    // can corrupt its row cache when form rows are hidden.
+    auto *parameterContent = new QWidget;
+    auto *parameterContentLayout = new QVBoxLayout(parameterContent);
+    parameterContentLayout->setContentsMargins(0, 0, 0, 0);
+    parameterContentLayout->addWidget(fields);
+    parameterContent->setAutoFillBackground(false);
+    auto *heading = new QHBoxLayout;
+    auto *title = new QLabel(tr("ShadowTLS v3"));
+    title->setObjectName("sectionTitle");
+    const QString linkColor = palette().color(QPalette::Text).lightness() > 128 ? "#77aef4" : "#1267d6";
+    auto *about = new QLabel("<a href=\"about\" style=\"color:" + linkColor + "\">" + tr("About ShadowTLS") + "</a>");
+    about->setObjectName("shadowAbout");
+    about->setTextInteractionFlags(Qt::LinksAccessibleByMouse | Qt::LinksAccessibleByKeyboard);
+    heading->addWidget(title);
+    heading->addStretch();
+    heading->addWidget(about);
+    parameterContentLayout->addLayout(heading);
+    auto *subtitle = new QLabel(tr("Additional camouflage for the proxy connection."));
+    subtitle->setObjectName("sectionHint");
+    subtitle->setWordWrap(true);
+    parameterContentLayout->addWidget(subtitle);
+    parameterContentLayout->addSpacing(12);
+    parameterContentLayout->addWidget(shadowTls_);
+    auto *wrapperForm = new QGridLayout;
+    wrapperForm->setContentsMargins(0, 0, 0, 0);
+    wrapperForm->setHorizontalSpacing(12);
+    wrapperForm->setVerticalSpacing(6);
+    wrapperForm->setColumnStretch(1, 1);
+    auto *shadowNameLabel = new QLabel(tr("Handshake server name"));
+    shadowNameLabel->setBuddy(shadowName_);
+    wrapperForm->addWidget(shadowNameLabel, 0, 0);
+    wrapperForm->addWidget(shadowName_, 0, 1);
+    auto *nameHint = new QLabel(tr("The external TLS server name configured for ShadowTLS."));
+    nameHint->setObjectName("sectionHint");
+    nameHint->setWordWrap(true);
+    wrapperForm->addWidget(nameHint, 1, 1);
+    wrapperForm->setRowMinimumHeight(2, 10);
+    auto *shadowPasswordLabel = new QLabel(tr("ShadowTLS password"));
+    shadowPasswordLabel->setBuddy(shadowPassword_);
+    wrapperForm->addWidget(shadowPasswordLabel, 3, 0);
+    wrapperForm->addWidget(shadowPassword_, 3, 1);
+    auto *passwordHint = new QLabel(tr("A separate password, independent of the inner proxy."));
+    passwordHint->setObjectName("sectionHint");
+    passwordHint->setWordWrap(true);
+    wrapperForm->addWidget(passwordHint, 4, 1);
+    parameterContentLayout->addLayout(wrapperForm);
+    parameterContentLayout->addSpacing(12);
+    QPalette hintPalette = shadowGuidance_->palette();
+    hintPalette.setColor(QPalette::WindowText, palette().color(QPalette::PlaceholderText));
+    shadowGuidance_->setPalette(hintPalette);
+    parameterContentLayout->addWidget(shadowGuidance_);
+    connect(about, &QLabel::linkActivated, this, [this] {
+        QMessageBox::information(this, tr("About ShadowTLS"), tr("ShadowTLS v3 disguises an encrypted TCP connection. It does not replace inner encryption or server verification. The handshake name and password are independent of the inner proxy settings. Use the public ShadowTLS listener as the profile server and port. Native UDP is not carried; supported inner protocols retain UDP-over-stream."));
+    });
+    parameterContentLayout->addStretch();
+    scroll->setWidget(parameterContent);
+    parameterContent->setAutoFillBackground(false);
+    scroll->viewport()->setAutoFillBackground(false);
     parameterLayout->addWidget(scroll);
-    tabs_->insertTab(tabs_->count() - 1, parameterPage_, tr("Parameters / ShadowTLS"));
+    tabs_->insertTab(tabs_->count() - 1, parameterPage_, tr("Protocol"));
     connect(trojanNetwork_, &QComboBox::currentTextChanged, this, [this] { refreshParameters(); });
     connect(shadowTls_, &QCheckBox::toggled, this, [this] { refreshParameters(); });
     connect(keySource_, &QComboBox::currentIndexChanged, this, [this, browseCa] {
@@ -983,6 +1054,25 @@ void ProfileEditorDialog::refreshParameters() {
         || !ssPlugin_->currentText().isEmpty()))
         && !(source == "ExplicitVLESS" && vlessAlpn_->text().split(',').contains("h3"));
     shadowTls_->setEnabled(compatible || shadowTls_->isChecked());
+    QString guidance;
+    if (!compatible) {
+        if (source == "Explicit" && !ssPlugin_->currentText().isEmpty())
+            guidance = tr("Disable the Shadowsocks plugin to use ShadowTLS.");
+        else if (source == "Explicit")
+            guidance = tr("AES-192-GCM cannot be used with ShadowTLS. Choose a supported cipher.");
+        else if (source == "ExplicitVLESS")
+            guidance = tr("HTTP/3 cannot be used with ShadowTLS. Choose a supported TCP transport.");
+        else
+            guidance = tr("This profile source has no compatible visual ShadowTLS settings. Use protected Raw configuration for supported sources.");
+    } else {
+        guidance = tr("Set the ShadowTLS server address and port on the General tab.");
+    }
+    if (shadowTls_->isChecked() && compatible) {
+        guidance += "\n\n" + ((source == "ExplicitVLESS" || source == "ExplicitTrojan")
+            ? tr("ShadowTLS carries no native UDP. Existing UDP-over-stream remains available.")
+            : tr("In VPN mode, captured DNS uses TCP and other proxy-routed UDP is dropped. Explicit direct routes are unchanged."));
+    }
+    shadowGuidance_->setText(guidance);
     const bool added = source == "ExplicitTrojan" || source == "Explicitnaive" || source == "Explicitmasque"
         || source == "Explicithttp" || source == "Explicithttps";
     tabs_->setTabVisible(tabs_->indexOf(parameterPage_), added || wrapper || shadowTls_->isChecked());
@@ -1085,9 +1175,11 @@ void ProfileEditorDialog::loadText(const QString &text) {
     for (auto it = parameters_.begin(); it != parameters_.end(); ++it)
         it.value()->setText(QStringList{"ExplicitTrojan", "Explicithttp", "Explicithttps", "Explicitnaive", "Explicitmasque"}.contains(source) ? fieldValue("AccessKey", it.key()) : QString());
     trojanNetwork_->setCurrentIndex(trojanNetwork_->findText(fieldValue("AccessKey", "Network")));
-    shadowTls_->setChecked(text.contains("[ShadowTLS]"));
-    shadowName_->setText(fieldValue("ShadowTLS", "ServerName"));
-    shadowPassword_->setText(fieldValue("ShadowTLS", "Password"));
+    const auto shadow = ProfileTextEdit::shadow(text);
+    rawOnly_ = rawOnly_ || !shadow.safe;
+    shadowTls_->setChecked(shadow.enabled);
+    shadowName_->setText(shadow.enabled ? fieldValue("ShadowTLS", "ServerName") : shadow.name);
+    shadowPassword_->setText(shadow.enabled ? fieldValue("ShadowTLS", "Password") : shadow.password);
     password_->setText(fieldValue("AccessKey", "Password"));
     username_->setText(fieldValue("AccessKey", "Username"));
     sshIdentity_->setText(fieldValue("AccessKey", "IdentityFile"));
@@ -1355,7 +1447,7 @@ QString ProfileEditorDialog::buildText() const {
             + "\nPort = " + QString::number(port_->value())
             + "\nMethod = " + method_->currentText()
             + "\nPassword = " + password_->text()
-            + (method_->currentText().startsWith("2022-") && prefix_->text().isEmpty() ? QString() : "\nPrefix = " + prefix_->text())
+            + (prefix_->text().isEmpty() ? QString() : "\nPrefix = " + prefix_->text())
             + (ssPlugin_->currentText().isEmpty() ? QString() : "\nPlugin = " + ssPlugin_->currentText())
             + (ssPluginOpts_->text().isEmpty() ? QString() : "\nPluginOpts = " + ssPluginOpts_->text());
     else if (keySource_->currentData().toString() == "ExplicitVLESS") {
@@ -1395,8 +1487,7 @@ QString ProfileEditorDialog::buildText() const {
         if (!sshIdentity_->text().isEmpty()) accessKey += "\nIdentityFile = " + sshIdentity_->text();
         if (!sshKnownHosts_->text().isEmpty()) accessKey += "\nKnownHostsFile = " + sshKnownHosts_->text();
     }
-    if (shadowTls_->isChecked())
-        accessKey += "\n\n[ShadowTLS]\nServerName = " + shadowName_->text() + "\nPassword = " + shadowPassword_->text();
+    accessKey += "\n\n" + ProfileTextEdit::shadowBlock(shadowTls_->isChecked(), shadowName_->text(), shadowPassword_->text(), "\n");
     QString text = "[Profile]\nVersion = 1\nName = " + name_->text()
         + "\n\n[AccessKey]\n" + accessKey
         + "\n\n[Interface]\nMode = " + mode_->currentData().toString()
@@ -1416,7 +1507,20 @@ QString ProfileEditorDialog::buildText() const {
         text += QString("\n%1[Rule]\n%1%2 = %3\n%1Action = %4\n")
             .arg(prefix, type, type == "CIDR" ? normalizedCidrs(target) : target.trimmed(), static_cast<QComboBox *>(rules_->cellWidget(row, 3))->currentData().toString());
     }
-    return text;
+    QString canonical, section;
+    for (const QString &line : ProfileTextEdit::lines(text)) {
+        const QString h = ProfileTextEdit::header(line);
+        if (!h.isEmpty()) section = h;
+        const int eq = line.indexOf('=');
+        if (eq > 0 && section != "ShadowTLS") {
+            QString key = line.left(eq).trimmed();
+            QString value = line.mid(eq + 1);
+            if (value.startsWith(' ')) value.remove(0, 1);
+            if (value.endsWith('\n')) value.chop(1);
+            if (!value.isEmpty()) canonical += key + " = " + ProfileTextEdit::encode(value) + "\n";
+        } else canonical += line;
+    }
+    return canonical;
 }
 
 void ProfileEditorDialog::assessRepresentation() {
@@ -1474,8 +1578,9 @@ void ProfileEditorDialog::assessRepresentation() {
             const auto equal = line.indexOf('=');
             if (section.isEmpty() || equal < 1) { *valid = false; continue; }
             const QString key = section + "/" + line.left(equal).trimmed();
-            const QString value = line.mid(equal + 1).trimmed();
-            if (result.contains(key) || value.startsWith('"')) *valid = false;
+            QString value;
+            if (!ProfileTextEdit::decode(line.mid(equal + 1), &value)) *valid = false;
+            if (result.contains(key)) *valid = false;
             result.insert(key, value);
         }
         return result;
@@ -1488,8 +1593,10 @@ void ProfileEditorDialog::assessRepresentation() {
         && !ProfileStore::connectionInfo(loadedText_).connectable) valid = false;
     const auto original = tokens(loadedText_, &valid);
     const auto generated = tokens(visualBaseline_, &valid);
-    for (auto it = original.begin(); it != original.end(); ++it)
+    for (auto it = original.begin(); it != original.end(); ++it) {
+        if (it.value().isEmpty() && QStringList{"Profile/Name", "AccessKey/Prefix"}.contains(it.key()) && !generated.contains(it.key())) continue;
         if (!generated.contains(it.key()) || generated.value(it.key()) != it.value()) valid = false;
+    }
     // Omitted settings may only acquire the documented Core default, never the
     // first available GUI/capability choice. Unknown defaults require Raw.
     const QMap<QString, QString> defaults{
@@ -1556,7 +1663,37 @@ QString ProfileEditorDialog::configText() const {
     if (rawOnly_) return loadedText_;
     if (bridgeReady_) return documentText();
     if (buildText() == visualBaseline_) return loadedText_;
-    return buildText();
+    const QString visual = buildText();
+    const auto ruleText = [](const QString &source) {
+        QString result; bool inRule = false;
+        for (const QString &line : ProfileTextEdit::lines(source)) {
+            const QString header = ProfileTextEdit::header(line);
+            if (!header.isEmpty()) inRule = header == "Rule";
+            if (inRule) result += line;
+        }
+        return result;
+    };
+    if (ruleText(visual) != ruleText(visualBaseline_)) {
+        const QString wrapper = ProfileTextEdit::replaceShadow(loadedText_, shadowTls_->isChecked(), shadowName_->text(), shadowPassword_->text());
+        return ProfileTextEdit::copyShadowBlock(visual, wrapper);
+    }
+    QString edited = loadedText_;
+    const auto before = visualFields(visualBaseline_), after = visualFields(visual);
+    for (auto it = before.cbegin(); it != before.cend(); ++it) {
+        if (!it.key().startsWith("ShadowTLS/") && !after.contains(it.key())) {
+            const int slash = it.key().indexOf('/');
+            edited = ProfileTextEdit::field(edited, it.key().left(slash), it.key().mid(slash + 1), {});
+        }
+    }
+    for (auto it = after.cbegin(); it != after.cend(); ++it) {
+        if (it.key().startsWith("ShadowTLS/") || (before.contains(it.key()) && before.value(it.key()) == it.value())) continue;
+        const int slash = it.key().indexOf('/');
+        edited = ProfileTextEdit::field(edited, it.key().left(slash), it.key().mid(slash + 1), it.value());
+    }
+    const auto shadow = ProfileTextEdit::shadow(loadedText_);
+    if (shadow.enabled != shadowTls_->isChecked() || shadow.name != shadowName_->text() || shadow.password != shadowPassword_->text())
+        edited = ProfileTextEdit::replaceShadow(edited, shadowTls_->isChecked(), shadowName_->text(), shadowPassword_->text());
+    return edited;
 }
 
 void ProfileEditorDialog::reject() {
@@ -1598,18 +1735,14 @@ QString ProfileEditorDialog::documentText() const {
     bridgeError_.clear();
     if (cacheKey == cachedVisual_) return cachedDocument_;
     QJsonArray operations;
+    QSet<int> changedRules;
     const auto before = visualFields(visualBaseline_), after = visualFields(visual);
-    for (auto it = before.cbegin(); it != before.cend(); ++it) {
-        if (!after.contains(it.key())) {
-            bridgeError_ = tr("Removing a configured field requires Raw config. The draft has been retained.");
-            return loadedText_;
-        }
-    }
+    QMap<QString, QString> changes;
+    for (auto it = before.cbegin(); it != before.cend(); ++it)
+        if (!after.contains(it.key()) && !it.key().startsWith("ShadowTLS/")) changes.insert(it.key(), {});
     for (auto it = after.cbegin(); it != after.cend(); ++it) {
-        if (before.contains(it.key()) && before.value(it.key()) == it.value()) continue;
-        const int slash = it.key().indexOf('/');
-        operations.append(QJsonObject{{"op", "set_field"}, {"section", it.key().left(slash)},
-                          {"key", it.key().mid(slash + 1)}, {"value", it.value()}});
+        if (it.key().startsWith("ShadowTLS/")) continue;
+        if (!before.contains(it.key()) || before.value(it.key()) != it.value()) changes.insert(it.key(), it.value());
     }
     for (auto it = datasetPaths_.cbegin(); it != datasetPaths_.cend(); ++it) {
         bool used = false;
@@ -1620,7 +1753,7 @@ QString ProfileEditorDialog::documentText() const {
         if (!used || it.value().isEmpty()) continue;
         const QString key = it.key() == "geoip" ? "GeoIPFile" : "GeoSiteFile";
         if (it.value() != (documentFields_.contains("GeoData/" + key) ? documentFields_.value("GeoData/" + key).toString() : valueFor(loadedText_, "GeoData", key)))
-            operations.append(QJsonObject{{"op", "set_field"}, {"section", "GeoData"}, {"key", key}, {"value", it.value()}});
+            changes.insert("GeoData/" + key, it.value());
     }
     QList<int> order;
     QSet<int> retained;
@@ -1636,6 +1769,7 @@ QString ProfileEditorDialog::documentText() const {
         const Rule rule = tableRule(row);
         const QString target = rule.matcher == "CIDR" ? normalizedCidrs(rule.target) : rule.target.trimmed();
         if (rule.index < 0) {
+            changedRules.insert(row);
             operations.append(QJsonObject{{"op", "add"}, {"index", row}, {"matcher", rule.matcher},
                               {"value", target}, {"action", rule.action}, {"enabled", rule.enabled}});
             order.insert(row, -1);
@@ -1650,15 +1784,36 @@ QString ProfileEditorDialog::documentText() const {
         // Do not normalize an untouched imported value.
         if (rule.matcher != old.value("matcher").toString() || rule.target != old.value("value").toString()
             || rule.action != old.value("action").toString())
+            changedRules.insert(row);
+        if (changedRules.contains(row))
             operations.append(QJsonObject{{"op", "set_rule"}, {"index", row}, {"matcher", rule.matcher}, {"value", target}, {"action", rule.action}});
         if (rule.enabled != old.value("enabled").toBool())
             operations.append(QJsonObject{{"op", "toggle"}, {"index", row}, {"enabled", rule.enabled}});
     }
-    if (operations.isEmpty()) return loadedText_;
-    const auto result = document(operations, &bridgeError_);
-    if (!bridgeError_.isEmpty()) return loadedText_;
+    QString edited = loadedText_;
+    if (!operations.isEmpty()) {
+        const auto result = document(operations, &bridgeError_);
+        if (!bridgeError_.isEmpty()) return loadedText_;
+        edited = result.value("profile").toString();
+        int headers = 0;
+        for (const QString &line : ProfileTextEdit::lines(edited))
+            if (ProfileTextEdit::header(line) == "Rule") ++headers;
+        if (!changedRules.isEmpty() && headers != result.value("rules").toArray().size()) {
+            bridgeError_ = tr("Unsafe rule fields require Raw config.");
+            return loadedText_;
+        }
+    }
+    edited = ProfileTextEdit::normalizeRules(edited, changedRules);
+    for (auto it = changes.cbegin(); it != changes.cend(); ++it) {
+        const int slash = it.key().indexOf('/');
+        edited = ProfileTextEdit::field(edited, it.key().left(slash), it.key().mid(slash + 1), it.value());
+    }
+    const auto initialShadow = ProfileTextEdit::shadow(loadedText_);
+    if (initialShadow.enabled != shadowTls_->isChecked() || initialShadow.name != shadowName_->text()
+        || initialShadow.password != shadowPassword_->text())
+        edited = ProfileTextEdit::replaceShadow(edited, shadowTls_->isChecked(), shadowName_->text(), shadowPassword_->text());
     cachedVisual_ = cacheKey;
-    cachedDocument_ = result.value("profile").toString();
+    cachedDocument_ = edited;
     return cachedDocument_;
 }
 
