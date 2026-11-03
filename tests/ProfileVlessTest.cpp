@@ -531,6 +531,21 @@ static void nativeRegressions(const QString &directory) {
     // enabled intent, and declined consent never accepts a replacement for storage.
     const QString base = "[Profile]\nVersion = 1\nName = Native\n[IKEv2]\nWindowsProfile = Corporate\nServerName = vpn.example.invalid\n[Interface]\nMode = vpn\n";
     const QJsonObject caps{{"proxy", true}}; // Packet capabilities do not govern native editing.
+    {
+        const QString packet = "[Profile]\nName = Packet\n[AccessKey]\nSOCKS5 = socks5://localhost:1080\n[Interface]\nMode = proxy\n";
+        ProfileEditorDialog editor(packet, caps, nullptr, [](const QString &, QString *) { return true; });
+        auto *tabs = editor.findChild<QTabWidget *>();
+        auto *raw = editor.findChild<QPlainTextEdit *>("rawConfig");
+        for (const QString &text : {base, packet, base}) {
+            tabs->setCurrentIndex(tabs->count() - 1);
+            raw->setPlainText(text);
+            tabs->setCurrentIndex(0);
+            require(tabs->currentIndex() == 0 && tabs->isTabEnabled(0));
+            require(bool(qobject_cast<QScrollArea *>(tabs->widget(0))) == (text == base));
+            require(editor.findChild<QComboBox *>("nativeAuthMethod")->currentIndex() == 0);
+            require(editor.configText() == text);
+        }
+    }
     for (bool protection : {false, true}) {
         QString input = base;
         if (protection) input.replace("[Interface]", "KillSwitch = true\n[Interface]");

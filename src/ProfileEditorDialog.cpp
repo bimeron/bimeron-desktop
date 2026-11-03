@@ -1567,6 +1567,26 @@ QString ProfileEditorDialog::buildText() const {
 
 void ProfileEditorDialog::assessRepresentation() {
     const QSignalBlocker tabBlocker(tabs_);
+    auto *generalPage = name_->parentWidget();
+    auto *scroll = qobject_cast<QScrollArea *>(tabs_->widget(0));
+    const int currentTab = tabs_->currentIndex();
+    if (native_ && !scroll) {
+        tabs_->removeTab(0);
+        scroll = new QScrollArea;
+        scroll->setWidgetResizable(true);
+        scroll->setFrameShape(QFrame::NoFrame);
+        scroll->setWidget(generalPage);
+        generalPage->setAutoFillBackground(false);
+        scroll->viewport()->setAutoFillBackground(false);
+        scroll->setAutoFillBackground(false);
+        tabs_->insertTab(0, scroll, tr("General"));
+    } else if (!native_ && scroll) {
+        scroll->takeWidget();
+        tabs_->removeTab(0);
+        tabs_->insertTab(0, generalPage, tr("General"));
+        delete scroll;
+    }
+    tabs_->setCurrentIndex(currentTab);
     auto *general = qobject_cast<QFormLayout *>(name_->parentWidget()->layout());
     for (int row = 0; row < general->rowCount(); ++row) general->setRowVisible(row, true);
     for (int i = 1; i < tabs_->count() - 1; ++i) tabs_->setTabVisible(i, true);
@@ -1674,7 +1694,8 @@ void ProfileEditorDialog::assessRepresentation() {
         if (!defaults.contains(it.key()) || defaults.value(it.key()) != it.value()) valid = false;
     }
     rawOnly_ = rawOnly_ || hasUnknownSettings_ || !valid || (!native_ && !parameterError().isEmpty());
-    if (native_ && (windowsProfile_->text().isEmpty() || nativeServerName_->text().isEmpty())) rawOnly_ = true;
+    // Missing native values are editable drafts; selected-Core validation still
+    // guards persistence. Raw-only is reserved for unrepresentable documents.
     const int rawIndex = tabs_->count() - 1;
     for (int i = 0; i < rawIndex; ++i) tabs_->setTabEnabled(i, !rawOnly_);
     tabs_->widget(1)->setEnabled(!rawOnly_ && keySource_->currentData().toString() == "ExplicitVLESS");

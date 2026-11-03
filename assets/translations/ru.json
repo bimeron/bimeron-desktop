@@ -2592,5 +2592,8 @@
   "Preview only. This authentication choice cannot be saved yet.": "Предпросмотр. Этот способ аутентификации пока нельзя сохранить.",
   "Authentication setup is not available in this build. Saved Windows credentials have not been checked.": "Настройка аутентификации в этой сборке недоступна. Сохранённые данные Windows не проверены.",
   "UI draft only: credentials are not saved or sent.": "Черновик интерфейса: учётные данные не сохраняются и не отправляются.",
-  "Review changes…": "Проверить изменения…"
+  "Review changes…": "Проверить изменения…",
+  "Create IKEv2 profile…": "Создать профиль IKEv2…",
+  "Cannot save profile": "Не удалось сохранить профиль",
+  "Only the local configuration will be removed. The Windows VPN profile will remain.": "Будет удалена только локальная конфигурация. Профиль VPN Windows останется."
 }

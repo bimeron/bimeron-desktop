@@ -949,6 +949,105 @@ struct ConnectionManagementTest {
 
     static void run() {
         {
+            QTemporaryDir directory;
+            require(directory.isValid(), "native creation fixture directory");
+            MainWindow window;
+            window.store_ = ProfileStore(directory.filePath("profiles"));
+            window.profiles_.clear();
+            window.validationExecutable_ = QCoreApplication::applicationFilePath();
+            QTimer::singleShot(0, [&] {
+                auto *add = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+                require(add, "native creation Add dialog");
+                auto *action = add->findChild<QPushButton *>("createNativeProfile");
+                require(action && !action->autoDefault(), "distinct native creation action");
+                QTimer::singleShot(0, [&] {
+                    auto *editor = qobject_cast<ProfileEditorDialog *>(QApplication::activeModalWidget());
+                    require(editor, "creation opens existing editor");
+                    require(editor->findChild<QTabWidget *>()->isTabEnabled(0), "empty native draft opens visual form");
+                    require(editor->findChild<QLineEdit *>("windowsProfile")->text().isEmpty()
+                        && editor->findChild<QLineEdit *>("nativeServerName")->text().isEmpty(), "no lab defaults");
+                    editor->reject();
+                });
+                action->click();
+            });
+            window.addProfile();
+            require(window.profiles_.isEmpty() && QDir(directory.path()).entryList(QDir::Files).isEmpty(), "cancel creates no profile");
+            for (int scenario = 0; scenario < 5; ++scenario) {
+                const bool available = scenario != 0;
+                const bool successful = scenario >= 3;
+                const int before = window.profiles_.size();
+                if (scenario == 2) require(QDir().mkdir(directory.filePath("profiles.json")), "index write failure fixture");
+                window.validationExecutable_ = available ? QCoreApplication::applicationFilePath() : directory.filePath("missing-core");
+                bool submitted = false;
+                bool errorShown = false;
+                bool cancelling = false;
+                QTimer timer;
+                QObject::connect(&timer, &QTimer::timeout, [&] {
+                    if (auto *message = qobject_cast<QMessageBox *>(QApplication::activeModalWidget())) {
+                        require(!successful, "successful native creation has no error");
+                        errorShown = true;
+                        bool discarded = false;
+                        for (auto *button : message->buttons()) {
+                            if (message->buttonRole(button) == QMessageBox::DestructiveRole) {
+                                button->click(); discarded = true; break;
+                            }
+                        }
+                        if (!discarded) message->accept();
+                    } else if (auto *editor = qobject_cast<ProfileEditorDialog *>(QApplication::activeModalWidget())) {
+                        if (cancelling) return;
+                        if (submitted) {
+                            require(errorShown && editor->findChild<QLineEdit *>("windowsProfile")->text() == "Fixture", "failed save preserves draft");
+                            cancelling = true;
+                            QTimer::singleShot(0, editor, [editor] { editor->reject(); });
+                        } else {
+                            editor->findChild<QLineEdit *>("profileName")->setText(scenario == 1 ? "fixture-reject" : "Native fixture");
+                            editor->findChild<QLineEdit *>("windowsProfile")->setText("Fixture");
+                            editor->findChild<QLineEdit *>("nativeServerName")->setText("vpn.invalid");
+                            submitted = true;
+                            auto *save = editor->findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Save);
+                            QTimer::singleShot(0, save, &QPushButton::click);
+                        }
+                    }
+                });
+                timer.start(20);
+                window.createNativeProfile();
+                timer.stop();
+                require(window.profiles_.size() == before + (successful ? 1 : 0), "only validated profile registered");
+                require(QDir(directory.filePath("profiles")).entryList({"*.conf"}, QDir::Files).size() == window.profiles_.size(), "failed save leaves no orphan profile");
+                if (scenario == 2) require(QDir().rmdir(directory.filePath("profiles.json")), "remove index failure fixture");
+            }
+            require(window.profiles_[0].path != window.profiles_[1].path, "duplicate display names cannot overwrite another profile");
+            QFile saved(window.profiles_.first().path);
+            require(saved.open(QIODevice::ReadOnly), "created native profile persisted");
+            const QByteArray bytes = saved.readAll();
+            saved.close();
+            require(bytes.contains("WindowsProfile = Fixture") && bytes.contains("ServerName = vpn.invalid"), "native creation round trip");
+            QTimer::singleShot(0, [&] {
+                auto *editor = qobject_cast<ProfileEditorDialog *>(QApplication::activeModalWidget());
+                require(editor && editor->findChild<QLineEdit *>("windowsProfile")->text() == "Fixture", "reopen native profile");
+                editor->findChild<QLineEdit *>("profileName")->setText("Renamed native fixture");
+                editor->findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Save)->click();
+            });
+            window.editProfile(0);
+            require(window.profiles_[0].name == "Renamed native fixture", "native local rename");
+            const QString removedPath = window.profiles_[0].path;
+            for (const bool confirmed : {false, true}) {
+                window.profileList_->setCurrentRow(0, QItemSelectionModel::ClearAndSelect);
+                QTimer::singleShot(0, [&] {
+                    auto *message = qobject_cast<QMessageBox *>(QApplication::activeModalWidget());
+                    require(message && message->text().contains("Windows VPN profile"), "local deletion scope is explicit");
+                    for (auto *button : message->buttons()) {
+                        if (message->buttonRole(button) == (confirmed ? QMessageBox::DestructiveRole : QMessageBox::RejectRole)) {
+                            button->click(); break;
+                        }
+                    }
+                });
+                window.removeProfile();
+                require(QFileInfo::exists(removedPath) != confirmed, "local deletion honors confirmation");
+            }
+            require(window.profiles_.size() == 1 && QFileInfo::exists(window.profiles_[0].path), "other same-name profile retained");
+        }
+        {
             for (const bool reviewable : {false, true}) {
                 for (const QString action : {"create", "remove", "unchanged", "invalid"}) {
                     auto *dialog = ProfileEditorDialog::nativeConfirmation(nullptr, "Fixture", "vpn.invalid", action, reviewable);

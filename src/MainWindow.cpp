@@ -1228,6 +1228,15 @@ void MainWindow::addProfile() {
     layout->addWidget(key);
     layout->addWidget(paste);
     layout->addWidget(sshFiles);
+    auto *native = new QPushButton(tr("Create IKEv2 profile…"));
+    native->setObjectName("createNativeProfile");
+    native->setAutoDefault(false);
+    layout->addWidget(native);
+    bool createNative = false;
+    connect(native, &QPushButton::clicked, &dialog, [&] {
+        createNative = true;
+        dialog.reject();
+    });
     QDialogButtonBox buttons(QDialogButtonBox::Save | QDialogButtonBox::Cancel);
     buttons.button(QDialogButtonBox::Save)->setText(tr("Save"));
     buttons.button(QDialogButtonBox::Cancel)->setText(tr("Cancel"));
@@ -1357,6 +1366,59 @@ void MainWindow::addProfile() {
         refreshProfiles();
         break;
     }
+    if (createNative) createNativeProfile();
+}
+
+void MainWindow::createNativeProfile() {
+    QTemporaryDir directory;
+    if (!directory.isValid()) {
+        QMessageBox::warning(this, tr("Error"), tr("Cannot create a protected import draft directory."));
+        return;
+    }
+    const QString draftPath = directory.filePath("draft.conf");
+    const auto validateDraft = [this, draftPath](const QString &text, QString *error) {
+        if (!ProfileStore::importReferencesSafe(text.toUtf8(), error)
+            || !ProfileStore::writeConfig(draftPath, text.toUtf8(), error)) return false;
+        const bool valid = validateConfig(draftPath, error);
+        if (!QFile::remove(draftPath)) {
+            if (error) *error = tr("Cannot remove the protected validation draft; the original profile was retained.");
+            return false;
+        }
+        return valid;
+    };
+    ProfileEditorDialog editor(QStringLiteral("[Profile]\nName = \n\n[IKEv2]\nWindowsProfile = \nServerName = \nKillSwitch = true\n\n[Interface]\nMode = vpn\n"),
+        capabilities_, this, validateDraft, validationExecutable_, draftPath);
+    while (editor.exec() == QDialog::Accepted) {
+        QString error;
+        const QString text = GeoDataSelection::materialize(editor.configText(), draftPath,
+            validationExecutable_, GeoDataSelection::instance()->paths(), &error, directory.path());
+        if (!error.isEmpty() || !validateDraft(text, &error)
+            || !ProfileStore::writeConfig(draftPath, text.toUtf8(), &error)) {
+            QMessageBox::warning(&editor, tr("Cannot save profile"), error);
+            continue;
+        }
+        const QString path = store_.importConfig(draftPath, &error);
+        QFile::remove(draftPath);
+        if (path.isEmpty()) {
+            QMessageBox::warning(&editor, tr("Cannot save profile"), error);
+            continue;
+        }
+        if (!prepareSharedGeoData(path, &error) || !validateConfig(path, &error)) {
+            QFile::remove(path);
+            QMessageBox::warning(&editor, tr("Cannot save profile"), error);
+            continue;
+        }
+        profiles_.append({ProfileStore::identity(path), ProfileStore::displayName(path), path});
+        if (!store_.save(profiles_, &error)) {
+            profiles_.removeLast();
+            QFile::remove(path);
+            QMessageBox::warning(&editor, tr("Cannot save profile"), error);
+            continue;
+        }
+        refreshProfiles();
+        profileList_->setCurrentRow(profiles_.size() - 1, QItemSelectionModel::ClearAndSelect);
+        return;
+    }
 }
 
 void MainWindow::importProfile() {
@@ -1442,8 +1504,11 @@ void MainWindow::removeProfile() {
         QMessageBox::information(this, tr("Profile in use"), tr("Disconnect the active session first."));
         return;
     }
+    QString question = tr("Delete profile “%1”?").arg(profiles_[row].name);
+    if (profileInfo(row).backend == ProfileConnectionInfo::Backend::NativeIKEv2)
+        question += "\n\n" + tr("Only the local configuration will be removed. The Windows VPN profile will remain.");
     QMessageBox confirmation(QMessageBox::Question, tr("Delete profile"),
-        tr("Delete profile “%1”?").arg(profiles_[row].name), QMessageBox::NoButton, this);
+        question, QMessageBox::NoButton, this);
     auto *confirm = confirmation.addButton(tr("Remove"), QMessageBox::DestructiveRole);
     confirmation.addButton(tr("Cancel"), QMessageBox::RejectRole);
     confirmation.exec();

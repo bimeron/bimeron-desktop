@@ -58,6 +58,7 @@ private:
     void showNativeSnapshot(const NativeIKEv2Session::Snapshot &snapshot);
     QString nativeUnavailableReason() const;
     void addProfile();
+    void createNativeProfile();
     void importProfile();
     void removeProfile();
     void moveProfile(int delta);

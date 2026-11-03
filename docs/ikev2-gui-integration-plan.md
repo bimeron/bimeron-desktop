@@ -2,7 +2,251 @@
 
 Planning snapshot: 2026-11-04. The user subsequently authorized the UI-only stage below. Native enablement remains outside scope.
 
-## Current next stage: native-only UI, before runtime integration
+## Active remaining-work plan for this Desktop thread
+
+Baseline: commit `2632568` (`feat(ikev2): prepare native profile and authentication UI`).
+This section is the current roadmap and takes precedence over the historical UI
+plans below. The user authorized the next bounded implementation stage: D1 local
+creation and D2 contract preparation. Runtime enablement is not implied. The
+initial UI-only stage is complete, not a completed native VPN feature.
+
+### Current implementation increment
+
+The Add profile dialog now offers Create IKEv2 profile, opening the existing
+editor with empty name/profile/server fields and protection requested. Empty
+native fields remain visually editable; unsupported documents retain Raw-only
+preservation. Cancel creates no stored profile. Save validates a protected
+temporary draft with the selected Core, imports it under a fresh UUID, validates
+the final path and registers it only after the index save succeeds. Failures
+return to the same editor. No Windows profile or credentials are created.
+
+Raw backend reclassification now adds/removes native scrolling while preserving
+the existing form. Focused fixtures cover cancel, missing/rejecting validator,
+index-write failure with rollback, duplicate display names with distinct paths,
+save/reopen/rename and local deletion confirmation. The native deletion prompt
+explicitly says the Windows VPN profile remains. Existing import and packet
+editing flows are reused, not replaced. Tests use an offline validator fixture;
+passing them is not native operational or production-artifact acceptance.
+
+Validation for this increment (Windows amd64, 2026-11-04): application and both
+UI test targets built; `developer-mode-test`, `profile-vless-test`,
+`geodata-selection-test` and `geodata-download-test` passed. Both UI suites were
+rerun after the final layout-only correction. Translation JSON and `git diff
+--check` passed. Initial new-test timeouts were caused by reentrant modal-dialog
+handling in the test timer; deferred Save/Cancel clicks fixed the fixture. No
+benchmark applies. Linux/ARM64, packaging and native runtime were not exercised;
+this is local UI acceptance, not a release matrix or release readiness claim.
+
+### D2 handoff: concrete existing contract and required answers
+
+Read-only source check: Core HEAD `498596eabe4ec734cb0bda72059dd74a66c9dc49`;
+`internal/control/server.go` and `internal/systemvpn/profile.go` have no working-tree
+diff in this check. This is schema evidence, not approval of the dirty Core tree
+or an artifact pair. Desktop references: `NativeIKEv2Session.h/.cpp`.
+
+| Existing call or observation | Status and next contract answer |
+| --- | --- |
+| `connectProfile(absolutePath, reviewedSha256)` | Implemented Session entry; production caller absent. Who supplies exact-artifact approval, fresh admission observations and the selected-Core digest? |
+| `previewProfile("Fixture", "vpn.invalid", "apply")` | Implemented Session/Transport scaffolding; gated. Core `ProfilePlan` returns `action`, `windows_profile`, `server_name`, `state_token`, `authentication`, `ipsec`, `ipv6_routes`, `credentials`, `trust`. Confirm which fields must be reviewed and the authority for closing an interrupted provisioning owner. |
+| `confirmPreview(token)` | Existing request fields are `accept_revision`, `plan_token`, and bound `instance`; response token is named `state_token`. Session verifies profile/server/action/token and rejects duplicate confirmation. Confirm stale-preview recovery and partial rollback terminal observations before UI binding. |
+| `stop()` / `closeOwner()` / `cancelExchange()` | Existing separate operations; local cancellation marks unknown and preserves the owner. Confirm evidence sufficient to release the sticky Desktop block, especially discovered owners without a process handle. Pipe/process disappearance alone is insufficient. |
+| Username/password, certificate/card selection | No agreed native credential submission API in this Desktop contract. Need attempt/profile binding, cancel/late-result behavior, storage consent/result, attempt-only support and nonsecret config fields. Generic control `answers` fields do not establish native auth support. |
+
+Offline adapter acceptance after answers: stale token requires a new review;
+cancel before confirmation sends no mutation; IPC loss retains unknown cleanup;
+late auth replies cannot reach another attempt; remember failure cannot claim
+saved credentials; owner-close acceptance cannot alone claim authoritative
+absence. No additional managed host or replacement protocol is proposed.
+
+### Ownership and completion boundary
+
+This thread owns Desktop profile creation/editing, authentication presentation,
+consent, adapters to agreed Core APIs, connection/stop/closure presentation,
+startup rediscovery, tests and Desktop documentation. The main thread coordinates
+Core API/schema changes, Windows credential/EAP/certificate/card implementations,
+installation/admission, protection/recovery and lab evidence. This thread consumes
+those results; it does not duplicate the lab or implement privileged operations.
+No mandatory managed host or new generic backend abstraction is introduced.
+
+Done here means a user can create a supported profile, prepare its Windows side,
+provide supported credentials, explicitly connect/stop and understand unresolved
+cleanup through the existing Desktop interface, backed by accepted Core contracts.
+Unsupported authentication modes remain honestly unavailable. Full product release
+and installer acceptance remain separate. No push, PR, merge, package or release
+is authorized by this planning request.
+
+### D1 — finish the local profile workflow (independent)
+
+Original gap: users had to hand-create/import a `.conf`; a GUI-only build without
+Core opens the import-correction path. A manually supplied lab file is not the
+product creation workflow.
+
+- Add a distinct “Create IKEv2 profile…” action inside the existing Add profile
+  dialog, alongside the current URI workflow. Keep the existing Add key button,
+  default URI behavior and other protocol forms unchanged. The new action opens
+  the current native editor; do not create a second native form or add a wizard.
+- Fields: display name, Windows profile name, server, current native protection
+  request and authentication section. New local profiles do not claim that the
+  Windows profile or credentials exist. Never seed real server/user data by default.
+- Preserve the distinction between Save local configuration and Apply Windows
+  changes. Use existing selected-Core validation and protected atomic profile
+  writes before registering a usable profile. Missing validator must preserve an
+  editable draft and explain why it cannot yet be saved; no fake validation pass.
+- Complete create/cancel/import/edit/reopen/rename/local-delete paths. Local Remove
+  must not remove the Windows profile or credentials. Document that distinction
+  where the destructive action is confirmed, without adding repeated warnings.
+- Preserve the user's immediate Raw display, compact native layout, existing
+  window size and scrolling. Native-to-packet and packet-to-native Raw edits must
+  update visible fields, draft state and scrolling correctly. Keep the packet
+  UI unchanged, including its credentials and GeoData behavior.
+
+Acceptance: all entry points reach the same native editor; cancelling writes
+nothing; valid local save round-trips; invalid/missing validation retains the
+original file and draft; duplicate/colliding names and file errors are explicit.
+Tests must cover reclassification and unsupported fields without data loss.
+
+### D2 — agree the Desktop/Core integration contract (main-thread handoff)
+
+Prepare one small list of request/response examples and unresolved fields from
+actual current APIs. Mark each item implemented, missing, or awaiting acceptance;
+do not design a disconnected replacement protocol.
+
+Required answers before dependent code:
+
+- Exact selected Core/artifact approval and validation/digest source; production
+  admission/owner/protection observations, their freshness and invalidation.
+- Provisioning preview action/profile/server/token, stale-preview handling,
+  apply/remove terminal states, safe errors and cleanup/closure requirements.
+- Credential acquisition/storage API in the interactive user's context, prompt
+  ownership, save consent and whether attempt-only password use is supported.
+- Attempt/profile binding, cancellation, late reply and IPC-loss semantics for
+  authentication; what nonsecret preferences belong in the accepted config schema.
+- Certificate/card capability, eligible identity representation and supported
+  provider UI. No Desktop PIN checking or private-key export.
+- Authority for releasing MainWindow's sticky native block, including discovery
+  of an existing owner without a launched-process handle and unresolved cleanup.
+
+Output: agreed examples plus focused adapter acceptance cases. No production
+activation from a boolean supplied by Desktop or from process/pipe absence alone.
+D1 and offline presentation tests do not wait for lab completion.
+
+### D3 — wire Windows-profile preparation (after its contract)
+
+Reuse `previewProfile`, `confirmPreview` and the existing confirmation surface.
+Bind the exact reviewed profile/server/action and opaque token; reject stale or
+changed drafts and duplicate clicks. Render previewing/applying/success/failure
+separately from VPN connection. A successful local Save is not OS provisioning.
+Explicit Remove targets only the reviewed owned Windows profile; no adoption or
+removal of an unrelated same-name profile. Cancellation before confirmation sends
+no mutation; dismissing a pending operation does not claim rollback. Close the
+provisioning owner only under its accepted terminal/cleanup contract.
+
+Acceptance: unchanged preview, create/remove, conflict, stale token, changed
+selection, user cancel, interrupted apply, partial rollback and IPC loss, using
+existing mocks first. Production actions stay disabled until authority exists.
+
+### D4 — make username/password interaction functional (after auth contract)
+
+Replace the current nonpersistent UI draft with the accepted auth flow. Reuse
+saved Windows credentials without reading/displaying the stored password. Support
+explicit input or a connection-time prompt only as permitted by Core. Remember
+requires separate explicit consent and a confirmed storage result; unchecked must
+not silently persist. If Core requires persistence, show that constraint instead
+of promising a nonexistent attempt-only mode.
+
+Bind prompts and results to the selected profile/server and one attempt. Cancel
+ends that attempt; errors permit explicit retry, not a credential retry loop.
+Changing method/profile clears secrets and invalidates pending input. Credentials
+must not reach `.conf`, QSettings, logs, arguments, screenshots or preview tokens.
+Persist only accepted nonsecret settings; never silently discard an apparently
+saved authentication selection. Reuse safe localized errors, not raw diagnostics.
+
+Acceptance: saved/missing/rejected credentials, remember on/off/failure, cancelled
+prompt, changed profile, duplicate submit, late answer, timeout and IPC loss.
+Use synthetic secrets and assert no persistence/logging or cross-profile reuse.
+
+### D5 — connect foreground lifecycle to MainWindow (after admission contract)
+
+Add the missing production caller and a narrow native action adapter around the
+existing Session/Transport. Do not route native actions through packet CoreClient.
+Discovery is read-only; Connect validates exact bytes, obtains fresh authority,
+launches once and lets Session perform authenticated hello/activation. Buttons,
+double-click, Enter and tray actions must share the same eligibility rules.
+
+Connect → verifying/connecting → authoritative connected; Stop during launch
+suppresses activation, otherwise requests stop → cleanup → owner closure. Never
+translate launch success, a terminal connection state, accepted close or process
+exit alone into proven cleanup. Display connection and protection separately.
+Keep native stats unavailable and automatic connection/reconnection disabled.
+A later explicit attempt needs fresh authority and a fresh controller.
+
+Handle selecting another profile during native work without overwriting native
+state, and selecting native during packet work without breaking packet Stop.
+Prevent conflicting operations through existing controls, without inventing new
+service/installation policy. A blocked action should have one actionable reason.
+
+Acceptance: one activation, queued Stop, identity/revision mismatch, malformed
+reply, event loss/status refresh, timeout/cancel, safe errors, retained protection,
+cleanup failure and no packet fallback. Preserve all current native transport
+identity checks and packet lifecycle/GeoData regressions.
+
+### D6 — reopen, recovery presentation and exit (after closure/recovery contract)
+
+On GUI reopen, discover and attach without replaying activation. Recover current
+state from authoritative status; never infer safety from missing IPC. Show retained,
+unknown and recovery-required states with the accepted user action. Only call an
+existing approved Core recovery operation; no GUI-side WFP/DNS cleanup.
+
+Define close-to-tray versus explicit Quit consistently with existing app behavior.
+If a user requests disconnection and exit, complete Stop/cleanup/close first;
+uncertainty keeps a visible unresolved result. Local UI destruction does not stop
+an owner. Release the native UI block only on the agreed evidence; do not leave
+it permanently latched after proven completion. Provisioning shutdown uses its
+own pending-operation semantics rather than VPN Stop.
+
+Acceptance: restart while connected/stopping, owner loss, stale owner/session,
+GUI loss during auth/provisioning, rejected/lost close reply, observed exit,
+unknown cleanup and returning to packet use after proven completion.
+
+### D7 — certificates and smart cards (separate optional capability stage)
+
+Desktop implements identity selection, summaries and cancellation only after Core
+and server support is agreed. Integrate actual eligible identities and provider
+interaction; distinguish no certificate, unsuitable/expired identity, missing or
+removed card, cancelled PIN UI and authentication failure. Keep secrets out of
+profile storage and never weaken server trust checks. Test with mocks, then use
+separately authorized integration evidence. Do not block delivery of a supported
+password-based first version on unsupported card/certificate functionality.
+
+### D8 — validation, review and handoff for each bounded stage
+
+Specify acceptance before each implementation, run focused tests, inspect real Qt
+screens (EN/RU, light/dark, minimum size and 100/150% scaling), review the diff and
+record actual results. Preserve existing profile/connection/native/GeoData suites.
+Benchmark/profile only if an implementation introduces a performance-sensitive
+path. Keep generated captures and synthetic profiles out of Git.
+
+Before production integration is considered complete, run relevant CI-equivalent
+Windows x64/ARM64 and Linux amd64/arm64 builds/tests, explicitly distinguishing
+cross-compilation from runtime evidence. Native functionality remains Windows-only;
+Linux must keep its unavailable state and existing packet behavior. An unavailable
+target is a reported validation gap, not assumed success. Full package matrix and
+live installation/VPN acceptance belong to separately authorized release/product
+work coordinated by the main thread.
+
+Handoff includes Desktop commit(s), exact Core contract/artifact used, tests and
+screenshots, supported/disabled capabilities and remaining gates. Commit/push/PR
+operations require the user's authorization for that stage. Stop after the stage,
+not after silently extending into Core or lab work.
+
+### Recommended execution sequence
+
+Next: D1, plus preparation of the D2 contract handoff. Then D3 and D4 as their APIs
+become available; D5 and D6 are one lifecycle acceptance chain before enablement.
+D7 follows separately when supported. D8 applies to every stage. If Core supplies
+only a subset, integrate and test that subset offline without claiming full readiness.
+
+## Historical UI-only stage: specification and evidence
 
 The user requested implementation planning for the UI alone, followed later by
 runtime work. This section replaces slices 1–2 below as the immediate implementation
