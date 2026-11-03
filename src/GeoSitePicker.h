@@ -3,6 +3,8 @@
 #include <QApplication>
 #include <QDialog>
 #include <QDialogButtonBox>
+#include <QComboBox>
+#include <QSignalBlocker>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
@@ -58,6 +60,16 @@ public:
         search->setPlaceholderText(tr("Search names or IDs"));
         search->setAccessibleName(tr("Search names or IDs"));
         layout->addWidget(search);
+        auto *topicRow = new QHBoxLayout;
+        auto *topicLabel = new QLabel(tr("Topic"));
+        auto *topics = new QComboBox;
+        topics->setObjectName("geoSiteTopics");
+        topics->setAccessibleName(tr("Topic"));
+        topics->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+        topics->setMinimumContentsLength(12);
+        topicLabel->setBuddy(topics);
+        topicRow->addWidget(topicLabel);
+        topicRow->addWidget(topics, 1);
         if (!error.isEmpty()) {
             auto *notice = new QLabel(error);
             notice->setWordWrap(true); notice->setTextFormat(Qt::PlainText);
@@ -72,9 +84,9 @@ public:
         sections->setTextElideMode(Qt::ElideNone);
         sections->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
         sections->setStyleSheet("QListWidget { border: 0; border-right: 1px solid #dce5ef; border-radius: 0; } QListWidget::item { min-height: 28px; padding: 2px 7px; border: 0; }");
-        sections->addItems({tr("All groups"), tr("Advertising and tracking"),
-            tr("Communication and entertainment"), tr("Technology and access"),
-            tr("Work and education"), tr("Shopping and services"), tr("General lists")});
+        sections->addItem(tr("All groups"));
+        for (const auto &section : geoSiteSections()) sections->addItem(QObject::tr(qPrintable(section)));
+        sections->addItem(tr("Unclassified"));
         sections->setCurrentRow(0);
         body->addWidget(sections);
         list_ = new QListWidget;
@@ -84,11 +96,17 @@ public:
         list_->setItemDelegate(new GeoSiteRowDelegate(list_));
         list_->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
         list_->setStyleSheet("QListWidget::item { min-height: 24px; padding: 2px 4px; border: none; } QListWidget::indicator { width: 16px; height: 16px; border: 1px solid #b8c6d6; border-radius: 3px; } QListWidget::indicator:checked { border-color: #1677ff; image: url(:/icons/check.xpm); }");
-        body->addWidget(list_, 1);
+        auto *results = new QVBoxLayout;
+        results->addLayout(topicRow);
+        results->addWidget(list_, 1);
+        body->addLayout(results, 1);
         layout->addLayout(body, 1);
         QStringList groups = available;
+        groups.removeDuplicates();
         for (const auto &id : selected) if (!groups.contains(id)) groups.append(id);
-        const auto bucket = [](const QString &id) {
+        const QSet<QString> availableSet(available.begin(), available.end());
+        const auto bucket = [&availableSet](const QString &id) {
+            if (!availableSet.contains(id)) return 3;
             const auto it = geoSiteEntries().constFind(id);
             return it == geoSiteEntries().cend() ? 2 : (it->collection ? 0 : 1);
         };
@@ -98,12 +116,11 @@ public:
             const int compared = QString::localeAwareCompare(an.isEmpty() ? a : an, bn.isEmpty() ? b : bn);
             return compared == 0 ? a < b : compared < 0;
         });
-        const QSet<QString> availableSet(available.begin(), available.end());
         int previous = -1;
         for (const auto &id : groups) {
             const int group = bucket(id);
             if (group != previous) {
-                auto *heading = new QListWidgetItem(group == 0 ? tr("Collections") : group == 1 ? tr("Individual services") : tr("Unclassified"), list_);
+                auto *heading = new QListWidgetItem(group == 0 ? tr("Collections") : group == 1 ? tr("Individual services") : group == 2 ? tr("Unclassified") : tr("Unavailable groups"), list_);
                 heading->setFlags(Qt::NoItemFlags);
                 heading->setBackground(QColor("#f7f9fc"));
                 QFont font = heading->font(); font.setBold(true); heading->setFont(font);
@@ -120,29 +137,44 @@ public:
             const auto it = geoSiteEntries().constFind(id);
             item->setData(Qt::UserRole + 1, it == geoSiteEntries().cend() ? -1 : it->section);
             item->setData(Qt::UserRole + 2, group);
+            item->setData(Qt::UserRole + 5, it == geoSiteEntries().cend() || !it->topic ? QString{} : QString::fromUtf8(it->topic));
+            item->setData(Qt::UserRole + 6, geoSiteSearchText(id));
             item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
             item->setCheckState(selected.contains(id) ? Qt::Checked : Qt::Unchecked);
         }
         auto *empty = new QLabel(tr("No matching groups"));
         layout->addWidget(empty);
         auto *footer = new QHBoxLayout;
-        auto *count = new QLabel;
+        auto *count = new QPushButton;
         count->setObjectName("geoSiteSelectionCount");
+        count->setCheckable(true);
+        count->setAutoDefault(false);
+        count->setToolTip(tr("Show only selected groups"));
+        count->setAccessibleName(tr("Only selected"));
         footer->addWidget(count); footer->addStretch();
         auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
         footer->addWidget(buttons); layout->addLayout(footer);
-        auto updateCount = [this, count] { count->setText(tr("Selected: %1").arg(selectedIds().size())); };
+        auto updateCount = [this, count] {
+            count->setText((count->isChecked() ? tr("Selected: %1 · Only selected") : tr("Selected: %1")).arg(selectedIds().size()));
+        };
         connect(list_, &QListWidget::itemChanged, this, updateCount);
+        connect(count, &QPushButton::toggled, this, updateCount);
         updateCount();
-        auto filter = [this, search, sections, empty] {
+        auto filter = [this, search, sections, topics, count, empty] {
             const QString query = search->text().trimmed();
+            const QString topic = topics->currentData().toString();
             QSet<int> visibleBuckets;
             for (int i = 0; i < list_->count(); ++i) {
                 auto *item = list_->item(i);
                 if (!item->data(Qt::UserRole).isValid()) continue;
-                const bool visible = query.isEmpty()
-                    ? sections->currentRow() == 0 || item->data(Qt::UserRole + 1).toInt() == sections->currentRow() - 1
-                    : item->text().contains(query, Qt::CaseInsensitive);
+                const int section = item->data(Qt::UserRole + 1).toInt();
+                const bool sectionMatch = sections->currentRow() == 0
+                    || (sections->currentRow() == geoSiteSections().size() + 1 ? item->data(Qt::UserRole + 2).toInt() == 2
+                        : section == sections->currentRow() - 1);
+                const bool topicMatch = topic.isEmpty() || (topic == "without" ? section >= 0 && item->data(Qt::UserRole + 5).toString().isEmpty()
+                    : item->data(Qt::UserRole + 5).toString() == topic);
+                const bool visible = !query.isEmpty() ? item->data(Qt::UserRole + 6).toString().contains(query, Qt::CaseInsensitive)
+                    : count->isChecked() ? item->checkState() == Qt::Checked : sectionMatch && topicMatch;
                 item->setHidden(!visible);
                 if (visible) visibleBuckets.insert(item->data(Qt::UserRole + 2).toInt());
             }
@@ -158,11 +190,26 @@ public:
                 }
             }
         };
+        auto resetTopics = [sections, topics, count, filter] {
+            const QSignalBlocker blocker(topics);
+            topics->clear();
+            topics->addItem(tr("All topics"), QString{});
+            topics->addItem(tr("Without topic refinement"), "without");
+            for (const auto &topic : geoSiteTopics())
+                if (sections->currentRow() == 0 || topic.section == sections->currentRow() - 1)
+                    topics->addItem(QObject::tr(topic.name), QString::fromUtf8(topic.id));
+            topics->setEnabled(sections->currentRow() != geoSiteSections().size() + 1);
+            count->setChecked(false);
+            filter();
+        };
         connect(search, &QLineEdit::textChanged, this, filter);
-        connect(sections, &QListWidget::currentRowChanged, this, filter);
+        connect(sections, &QListWidget::currentRowChanged, this, resetTopics);
+        connect(topics, &QComboBox::currentIndexChanged, this, [count, filter] { count->setChecked(false); filter(); });
+        connect(count, &QPushButton::toggled, this, filter);
+        connect(list_, &QListWidget::itemChanged, this, filter);
         connect(buttons, &QDialogButtonBox::accepted, this, &QDialog::accept);
         connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
-        filter(); search->setFocus();
+        resetTopics(); search->setFocus();
     }
     QStringList selectedIds() const {
         QStringList checked;
@@ -173,6 +220,7 @@ public:
         }
         QStringList result;
         for (const auto &id : original_) if (checked.contains(id) && !result.contains(id)) result.append(id);
+        checked.sort();
         for (const auto &id : checked) if (!result.contains(id)) result.append(id);
         return result;
     }

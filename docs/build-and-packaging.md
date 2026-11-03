@@ -451,6 +451,15 @@ verify the emitted `.databases.json` rather than assuming the requested factor
 is the final DPR. On this host's native 150% screen, factors 2/3, 1 and 4/3
 produced measured DPR 1, 1.5 and 2.
 
+For the GeoSite classification fixture, set `BIMERON_GEOSITE_IDS` to an external
+JSON array of the real catalog IDs (the fixture normalizes the source's uppercase
+envelope keys). The same native capture writes `.catalog.png`, `.topic.png`,
+`.selected.png` (including a synthetic unavailable selection), `.minimum.png`
+(590x350 logical pixels), and `.catalog.json` with measured DPR and geometry.
+These are actual Qt picker captures using the application stylesheet, not HTML
+mockups or saved user profiles. `profile-vless-test` uses the same optional IDs
+file for diagnostic construction/filter timings; no timing threshold is enforced.
+
 
 GeoData feedback regression captures now also write `.transfer.png`, `.failure.png`
 and `.error-popup.png` beside `--profile-geometry` output. The transfer fixture
@@ -466,3 +475,35 @@ GeoIP bilingual-search fixtures embed the existing ru.json resource in
 profile-vless-test and developer-mode-test. This exercises the same cached
 English/Russian lookup used by the application, without a new dependency or
 installed payload. The application already embeds this catalog.
+
+
+The GeoSite transfer fixture additionally captures `.4-business-crm.png`,
+`.5-weather.png` and `.unknown.png` beside the existing OS/update and selected
+captures. Use a fresh output basename to preserve historical captures. Read each
+`.catalog.json` for its actual DPR; native windows may land on different screens.
+
+GeoSite topic-name search reuses the embedded Russian catalog and cached picker
+row search text. Mac evidence import changes only curated labels/translations;
+there is no new runtime research input, dependency or packaged payload. Native
+fixtures also capture 4-ai and AI/ИИ/Codex/Claude/928Net/RU-CENTER queries under the
+existing --profile-geometry workflow. See geosite-picker-trial.md for the external
+179-ID provenance ledger, four Release builds, CTest results and runtime limits.
+
+The mixed-purpose placement fixture also writes `.mixed-<original-id>.png` for
+all 40 reviewed additions in each language. Use a fresh `mixed-*-native` basename
+and the same documented native geometry workflow; set the reviewed
+`BIMERON_GEODATA_CORE` as well as `BIMERON_GEOSITE_IDS`. Capture output is ignored
+build evidence, never product metadata or package input.
+
+The final Xiaomi AI delta uses the same fixture and fresh `final-delta-en-native`
+and `final-delta-ru-native` basenames. Its `.search-xiaomi-ai.png` capture shows
+the mixed MiMo/XiaoAI collection in both languages. Prior captures are retained.
+
+
+The eight-section taxonomy fixture retains the populated stable `4-ai` topic in
+Artificial intelligence. It additionally writes `.section-6.png`, `.section-7.png`
+and `.section-8.png` for Ecosystems, Artificial intelligence and General lists,
+and `.distinction-google.png`, `.distinction-youtube.png`,
+`.distinction-github.png` and `.distinction-neuralink.png` using the existing
+native `--profile-geometry` workflow. Use fresh `eight-*-native` basenames;
+read `.catalog.json` for measured DPR. No build or packaging flow changes.

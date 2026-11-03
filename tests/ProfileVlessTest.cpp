@@ -2,6 +2,7 @@
 #include "ProfileEditorDialog.h"
 #include "GeoSitePicker.h"
 #include <QSettings>
+#include <QCryptographicHash>
 #include "GeoDataSelection.h"
 #include "ProfileStore.h"
 #include "CoreDiagnostic.h"
@@ -798,7 +799,7 @@ static void geodataBridgeRegressions(const QString &directory) {
         require(popup && popup != &editor);
         auto *search = popup->findChild<QLineEdit *>();
         auto *list = popup->findChild<QListWidget *>("geoSiteGroups");
-        require(search && list && list->count() == 3);
+        require(search && list && list->count() == 4);
         search->setText("YouTube");
         QListWidgetItem *github = nullptr, *youtube = nullptr;
         for (int i = 0; i < list->count(); ++i) {
@@ -824,7 +825,7 @@ static void geodataBridgeRegressions(const QString &directory) {
     QTimer::singleShot(0, [&] {
         auto *popup = qobject_cast<QDialog *>(QApplication::activeModalWidget()); require(popup);
         auto *list = popup->findChild<QListWidget *>("geoSiteGroups"); require(list);
-        auto *sections = popup->findChild<QListWidget *>("geoSiteSections"); require(sections && sections->count() == 7);
+        auto *sections = popup->findChild<QListWidget *>("geoSiteSections"); require(sections && sections->count() == 10);
         QListWidgetItem *youtube = nullptr, *github = nullptr, *unknown = nullptr;
         for (int i = 0; i < list->count(); ++i) {
             auto *item = list->item(i);
@@ -848,6 +849,17 @@ static void geodataBridgeRegressions(const QString &directory) {
     target->actions().first()->trigger();
     require(target->property("groupIds").toString() == "youtube,!unknown,github");
     require(status->text().contains("!unknown"));
+    const QString beforeCancel = target->property("groupIds").toString();
+    QTimer::singleShot(0, [&] {
+        auto *popup = qobject_cast<QDialog *>(QApplication::activeModalWidget()); require(popup);
+        auto *list = popup->findChild<QListWidget *>("geoSiteGroups"); require(list);
+        for (int i = 0; i < list->count(); ++i)
+            if (list->item(i)->data(Qt::UserRole).isValid()) list->item(i)->setCheckState(Qt::Unchecked);
+        popup->findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Cancel)->click();
+    });
+    target->actions().first()->trigger();
+    require(target->property("groupIds").toString() == beforeCancel);
+
     auto *geoType = qobject_cast<QComboBox *>(table->cellWidget(0, 1));
     geoType->setCurrentIndex(geoType->findData("GeoIP"));
     target->setProperty("groupIds", "ru,cloudflare,private");
@@ -919,8 +931,381 @@ static void geodataBridgeRegressions(const QString &directory) {
     }
 }
 
+static void geoSiteClassificationTest() {
+    require(geoSiteEntries().size() == 1561 && geoSiteTopics().size() == 46);
+    require(geoSiteSections().size() == 8);
+    require(geoSiteSections().at(5) == "Ecosystems" && geoSiteSections().at(6) == "Artificial intelligence"
+        && geoSiteSections().last() == "General lists");
+    const QSet<QString> ecosystems{
+        "adguard", "adobe", "alibaba", "alphabet", "amazon", "apple",
+        "autodesk", "auxgroup", "baidu", "broadcom", "bytedance", "canonical",
+        "cheetahmobile", "cisco", "dell", "didi", "disney", "dmm",
+        "douyin", "epicgames", "facebook", "gmo-internet", "google", "haier",
+        "hkt", "intuit", "jd", "kakao", "kingsoft", "kuaishou",
+        "lenovo", "line", "mailru", "mailru-group", "meitu", "meta",
+        "microsoft", "mozilla", "mts-ru", "naver", "nbcuniversal", "netease",
+        "newscorp", "oracle", "pccw", "progress", "protonmail", "rakuten",
+        "razer", "rostelecom", "ruanmei", "samsung", "sber", "sony",
+        "tencent", "xiaomi", "yandex"};
+    QByteArray baseline;
+    int ecosystemCount = 0, aiCount = 0;
+    for (auto it = geoSiteEntries().cbegin(); it != geoSiteEntries().cend(); ++it) {
+        int section = it->section;
+        QString topic = QString::fromUtf8(it->topic);
+        if (ecosystems.contains(it.key())) {
+            require(section == 5 && topic.isEmpty() && it->collection);
+            section = 5; topic = "6-organizations"; ++ecosystemCount;
+        } else if (section == 6) {
+            require(topic == "4-ai" || ((it.key() == "category-ai-!cn" || it.key() == "category-ai-chat-!cn") && topic.isEmpty()));
+            section = 3; ++aiCount;
+            if (it.key() == "xiaomi-ai") { section = 5; topic = "6-organizations"; }
+        } else if (section == 7) section = 5;
+        else require(section < 5);
+        baseline += (it.key() + '|' + QString::fromUtf8(it->name) + '|' + QString::number(section)
+            + '|' + QString::number(it->collection ? 1 : 0) + '|' + topic + '\n').toUtf8();
+    }
+    require(ecosystemCount == 57 && aiCount == 27);
+    require(QCryptographicHash::hash(baseline, QCryptographicHash::Sha256).toHex() == "829ab62fa3ebfceb0214fac754d0176d8b662af80e30f86b3b9e93dd2838974d");
+    require(geoSiteEntries().value("youtube").section == 1 && QString(geoSiteEntries().value("youtube").topic) == "2-video");
+    require(geoSiteEntries().value("github").section == 3 && QString(geoSiteEntries().value("github").topic) == "4-development");
+    const auto xiaomiAi = geoSiteEntries().value("xiaomi-ai");
+    require(xiaomiAi.section == 6 && xiaomiAi.collection && QString(xiaomiAi.topic) == "4-ai");
+    require(QString::fromUtf8(xiaomiAi.name) == QString::fromUtf8("Xiaomi AI — MiMo tools and XiaoAI device assistant"));
+    require(geoSiteSearchText("xiaomi-ai").contains(QString::fromUtf8("помощник XiaoAI")));
+    // Known mixed purposes receive explicit editorial navigation, not unknown status.
+    require(geoSiteEntries().value("8btc").section == 7 && geoSiteEntries().value("8btc").collection);
+    require(geoSiteEntries().value("cnet").section == 1 && geoSiteEntries().value("cnet").collection);
+    require(geoSiteEntries().value("falungong").section == 7 && geoSiteEntries().value("falungong").collection);
+    require(geoSiteEntries().value("filimo").section == 1 && geoSiteEntries().value("filimo").collection);
+    require(geoSiteEntries().value("hainanairlines").section == 7 && geoSiteEntries().value("hainanairlines").collection);
+    require(geoSiteEntries().value("hinet").section == 2 && geoSiteEntries().value("hinet").collection);
+    require(geoSiteEntries().value("hisense").section == 7 && geoSiteEntries().value("hisense").collection);
+    require(geoSiteEntries().value("hkbn").section == 7 && geoSiteEntries().value("hkbn").collection);
+    require(geoSiteEntries().value("hketgroup").section == 7 && geoSiteEntries().value("hketgroup").collection);
+    require(geoSiteEntries().value("hupu").section == 1 && geoSiteEntries().value("hupu").collection);
+    require(geoSiteEntries().value("icable").section == 7 && geoSiteEntries().value("icable").collection);
+    require(geoSiteEntries().value("idg").section == 7 && geoSiteEntries().value("idg").collection);
+    require(geoSiteEntries().value("ifanr").section == 7 && geoSiteEntries().value("ifanr").collection);
+    require(geoSiteEntries().value("kkbox").section == 1 && geoSiteEntries().value("kkbox").collection);
+    require(geoSiteEntries().value("kuaishou").section == 5 && geoSiteEntries().value("kuaishou").collection);
+    require(geoSiteEntries().value("ltn").section == 7 && geoSiteEntries().value("ltn").collection);
+    require(geoSiteEntries().value("madshi").section == 3 && geoSiteEntries().value("madshi").collection);
+    require(geoSiteEntries().value("mega").section == 2 && geoSiteEntries().value("mega").collection);
+    require(geoSiteEntries().value("nvidia").section == 7 && geoSiteEntries().value("nvidia").collection);
+    require(geoSiteEntries().value("okaapps").section == 3 && geoSiteEntries().value("okaapps").collection);
+    require(geoSiteEntries().value("oschina").section == 3 && geoSiteEntries().value("oschina").collection);
+    require(geoSiteEntries().value("paypal").section == 4 && geoSiteEntries().value("paypal").collection);
+    require(geoSiteEntries().value("phoenix").section == 7 && geoSiteEntries().value("phoenix").collection);
+    require(geoSiteEntries().value("pornhub").section == 1 && geoSiteEntries().value("pornhub").collection);
+    require(geoSiteEntries().value("protonmail").section == 5 && geoSiteEntries().value("protonmail").collection);
+    require(geoSiteEntries().value("quora").section == 7 && geoSiteEntries().value("quora").collection);
+    require(geoSiteEntries().value("renren").section == 7 && geoSiteEntries().value("renren").collection);
+    require(geoSiteEntries().value("secom").section == 7 && geoSiteEntries().value("secom").collection);
+    require(geoSiteEntries().value("sharethis").section == 7 && geoSiteEntries().value("sharethis").collection);
+    require(geoSiteEntries().value("sina").section == 7 && geoSiteEntries().value("sina").collection);
+    require(geoSiteEntries().value("sohu").section == 7 && geoSiteEntries().value("sohu").collection);
+    require(geoSiteEntries().value("tbank-ru").section == 4 && geoSiteEntries().value("tbank-ru").collection);
+    require(geoSiteEntries().value("uc").section == 2 && geoSiteEntries().value("uc").collection);
+    require(geoSiteEntries().value("verizon").section == 7 && geoSiteEntries().value("verizon").collection);
+    require(geoSiteEntries().value("vivo").section == 4 && geoSiteEntries().value("vivo").collection);
+    require(geoSiteEntries().value("wiwide").section == 7 && geoSiteEntries().value("wiwide").collection);
+    require(geoSiteEntries().value("x").section == 7 && geoSiteEntries().value("x").collection);
+    require(geoSiteEntries().value("xiaoheihe").section == 1 && geoSiteEntries().value("xiaoheihe").collection);
+    require(geoSiteEntries().value("xiaohongshu").section == 7 && geoSiteEntries().value("xiaohongshu").collection);
+    require(geoSiteEntries().value("zhangtao").section == 7 && geoSiteEntries().value("zhangtao").collection);
+    for (const auto &decision : {qMakePair(QString("neuralink"), QString("6-organizations")),
+                                 qMakePair(QString("redtube"), QString("2-adult"))}) {
+        const auto entry = geoSiteEntries().value(decision.first);
+        require(entry.collection && QString(entry.topic) == decision.second);
+        require(entry.section == (decision.first == "neuralink" ? 7 : 1));
+    }
+    require(QString(geoSiteEntries().value("neuralink").name) == "Neuralink");
+    require(QString(geoSiteEntries().value("redtube").name) == "RedTube adult content");
+    require(geoSiteSearchText("redtube").contains(QString::fromUtf8("Контент для взрослых RedTube")));
+    QMap<QString, int> topics;
+    for (const auto &topic : geoSiteTopics()) {
+        require(!topics.contains(topic.id) && topic.section >= 0 && topic.section < 8);
+        topics.insert(topic.id, topic.section);
+    }
+    int assigned = 0;
+    for (auto it = geoSiteEntries().cbegin(); it != geoSiteEntries().cend(); ++it) {
+        require(!it.key().isEmpty() && it.key() == it.key().toLower() && it->section >= 0 && it->section < 8);
+        require(it->name && *it->name && geoSiteSearchText(it.key()).contains(it->name));
+        if (it->topic) { require(topics.contains(it->topic) && topics.value(it->topic) == it->section); ++assigned; }
+    }
+    require(assigned == 1156);
+    for (const auto &pair : {qMakePair(QString("category-ai-chat-!cn"), QString("category-ai-!cn")),
+                             qMakePair(QString("archive"), QString("category-web-archive")),
+                             qMakePair(QString("google-gemini"), QString("google-deepmind"))}) {
+        const auto a = geoSiteEntries().value(pair.first), b = geoSiteEntries().value(pair.second);
+        require(a.section == b.section && a.collection == b.collection && QString::fromUtf8(a.topic) == QString::fromUtf8(b.topic));
+    }
+    const QMap<QString, QStringList> splitTopics{
+        {"3-operating-systems", {"android", "archlinux", "debian", "fedora", "grapheneos", "kernel", "openwrt", "ubuntu", "ubuntukylin"}},
+        {"3-updates-drivers", {"apple-update", "win-update"}},
+        {"3-app-packages", {"apkcombo", "apkmirror", "apkpure", "aptoide", "decryptipastore", "google-play", "paskoocheh", "setapp", "f-droid", "flatpak", "homebrew", "snapcraft", "category-android-app-download"}},
+        {"3-browsers", {"ceno", "epicbrowser", "firefox", "librewolf", "category-browser-!cn"}}
+    };
+    require(!topics.contains("3-browser-os"));
+    QStringList splitIds;
+    for (auto it = splitTopics.cbegin(); it != splitTopics.cend(); ++it) {
+        splitIds.append(it.value());
+        QStringList actual;
+        for (auto entry = geoSiteEntries().cbegin(); entry != geoSiteEntries().cend(); ++entry)
+            if (QString::fromUtf8(entry->topic) == it.key()) actual.append(entry.key());
+        auto expected = it.value(); expected.sort();
+        require(actual == expected && topics.value(it.key()) == 2);
+    }
+    require(QString::fromUtf8(geoSiteEntries().value("win-spy").topic) == "1-telemetry");
+    for (const QString &id : {QString("apple-pki"), QString("microsoft-pki")})
+        require(QString::fromUtf8(geoSiteEntries().value(id).topic) == "3-security");
+    for (const QString &id : {QString("deepin")})
+        require(QString::fromUtf8(geoSiteEntries().value(id).topic) == "6-organizations");
+    auto checkSplitNavigation = [&] {
+        GeoSitePicker split(nullptr, splitIds, {"win-update", "android", "missing-id"}, {});
+        auto *rows = split.findChild<QListWidget *>("geoSiteGroups");
+        auto *sections = split.findChild<QListWidget *>("geoSiteSections");
+        auto *combo = split.findChild<QComboBox *>("geoSiteTopics");
+        auto *query = split.findChild<QLineEdit *>();
+        auto *selected = split.findChild<QPushButton *>("geoSiteSelectionCount");
+        auto visible = [&] {
+            QStringList ids;
+            for (int i = 0; i < rows->count(); ++i) {
+                auto *row = rows->item(i);
+                if (row->data(Qt::UserRole).isValid() && !row->isHidden()) ids.append(row->data(Qt::UserRole).toString());
+            }
+            ids.sort(); return ids;
+        };
+        sections->setCurrentRow(3);
+        for (auto it = splitTopics.cbegin(); it != splitTopics.cend(); ++it) {
+            combo->setCurrentIndex(combo->findData(it.key()));
+            auto expected = it.value(); expected.sort(); require(visible() == expected);
+            selected->click(); require(selected->isChecked());
+            query->setText(QString::fromUtf8("обновлений Windows")); require(visible() == QStringList{"win-update"});
+            query->setText("Windows update"); require(visible() == QStringList{"win-update"});
+            query->clear(); require(visible() == QStringList({"android", "missing-id", "win-update"}));
+            selected->click(); require(visible() == expected);
+            for (int i = 0; i < rows->count(); ++i)
+                if (rows->item(i)->data(Qt::UserRole) == it.value().first()) rows->item(i)->setCheckState(Qt::Checked);
+            require(split.selectedIds().mid(0, 3) == QStringList({"win-update", "android", "missing-id"}));
+            // Restore initial selection for the next topic's selected-only assertion.
+            for (int i = 0; i < rows->count(); ++i) {
+                auto *row = rows->item(i);
+                if (row->data(Qt::UserRole).isValid())
+                    row->setCheckState(QStringList{"win-update", "android", "missing-id"}.contains(row->data(Qt::UserRole).toString()) ? Qt::Checked : Qt::Unchecked);
+            }
+        }
+        sections->setCurrentRow(0); require(combo->count() == 48 && combo->currentIndex() == 0);
+        require(split.selectedIds() == QStringList({"win-update", "android", "missing-id"}));
+    };
+    auto checkMixedNavigation = [&] {
+        const QStringList ids{"cnet", "madshi", "paypal", "nvidia", "mega", "xiaomi-ai"};
+        GeoSitePicker popup(nullptr, ids, {"paypal", "missing-mixed"}, {});
+        auto *rows = popup.findChild<QListWidget *>("geoSiteGroups");
+        auto *sections = popup.findChild<QListWidget *>("geoSiteSections");
+        auto *query = popup.findChild<QLineEdit *>();
+        for (const QString &id : ids) {
+            sections->setCurrentRow(geoSiteEntries().value(id).section + 1);
+            for (const QString &text : {id, QString::fromUtf8(geoSiteEntries().value(id).name), geoSiteName(id)}) {
+                query->setText(text);
+                bool matched = false;
+                for (int i = 0; i < rows->count(); ++i)
+                    if (rows->item(i)->data(Qt::UserRole) == id) matched = !rows->item(i)->isHidden();
+                require(matched);
+            }
+            query->clear();
+            require(popup.selectedIds() == QStringList({"paypal", "missing-mixed"}));
+        }
+    };
+    auto checkTopicSearch = [&] {
+        const QStringList ids = geoSiteEntries().keys();
+        GeoSitePicker popup(nullptr, ids, {"openai", "missing-ai"}, {});
+        auto *rows = popup.findChild<QListWidget *>("geoSiteGroups");
+        auto *query = popup.findChild<QLineEdit *>();
+        auto *sections = popup.findChild<QListWidget *>("geoSiteSections");
+        auto *combo = popup.findChild<QComboBox *>("geoSiteTopics");
+        auto *selected = popup.findChild<QPushButton *>("geoSiteSelectionCount");
+        auto visible = [&](const QString &id) {
+            for (int i = 0; i < rows->count(); ++i)
+                if (rows->item(i)->data(Qt::UserRole) == id) return !rows->item(i)->isHidden();
+            return false;
+        };
+        sections->setCurrentRow(3);
+        combo->setCurrentIndex(combo->findData("3-security"));
+        QFile file(":/translations/ru.json"); require(file.open(QIODevice::ReadOnly));
+        const auto russianTopics = QJsonDocument::fromJson(file.readAll()).object();
+        for (const auto &topic : geoSiteTopics()) {
+            for (const QString &label : {QString::fromUtf8(topic.name), russianTopics.value(topic.name).toString()}) {
+                if (label.isEmpty()) continue;
+                query->setText(label);
+                for (auto it = geoSiteEntries().cbegin(); it != geoSiteEntries().cend(); ++it)
+                    if (QString::fromUtf8(it->topic) == topic.id) require(visible(it.key()));
+            }
+        }
+        for (const QString &label : {QString("AI"), QString::fromUtf8("ИИ")}) {
+            query->setText(label);
+            require(visible("openai"));
+            for (auto it = geoSiteEntries().cbegin(); it != geoSiteEntries().cend(); ++it)
+                if (QString::fromUtf8(it->topic) == "4-ai") require(visible(it.key()));
+        }
+        for (const QString &label : {QString("Ecosystems"), QString::fromUtf8("Экосистемы")}) {
+            query->setText(label); require(visible("google") && visible("apple") && !visible("youtube") && !visible("neuralink"));
+        }
+        for (const QString &label : {QString("Artificial intelligence"), QString::fromUtf8("Искусственный интеллект")}) {
+            query->setText(label); require(visible("openai") && visible("xiaomi-ai") && !visible("google"));
+        }
+        query->setText("Codex"); require(visible("openai") && !visible("anthropic"));
+        query->setText("Claude"); require(visible("anthropic"));
+        query->setText(russianTopics.value("Security").toString()); require(visible("apple-pki"));
+        query->clear(); require(combo->currentData() == "3-security" && visible("apple-pki") && !visible("openai"));
+        selected->click(); query->setText("Codex"); require(visible("openai") && !visible("missing-ai"));
+        query->clear(); require(visible("missing-ai") && visible("openai") && !visible("anthropic"));
+        require(popup.selectedIds() == QStringList({"openai", "missing-ai"}));
+    };
+    checkMixedNavigation();
+    checkTopicSearch();
+    checkSplitNavigation();
+    require(geoSiteEntries().contains("neuralink") && geoSiteEntries().contains("redtube"));
+    require(geoSiteEntries().contains("nic-ru") && geoSiteEntries().contains("nvidia"));
+    require(geoSiteEntries().contains("anandtech") && !geoSiteEntries().value("anandtech").topic);
+    for (const QString &id : {QString("category-social-media-ir"), QString("itunes")})
+        require(geoSiteEntries().value(id).section == 1);
+    require(geoSiteEntries().value("entrust").section == 2);
+    for (const QString &id : {QString("category-urlshortner"), QString("category-pt"), QString("category-tm"), QString("category-cas")})
+        require(geoSiteEntries().contains(id) && geoSiteSearchText(id).contains(id));
+    const QMap<QString, QStringList> addedTopics{
+        {"4-business-crm", {"beisen", "bitrix", "carrotquest", "clearbit", "envybox", "intercom", "mindbox", "salesforce", "zendesk", "zoho"}},
+        {"5-weather", {"accuweather", "gismeteo", "moji", "openweather", "qweather", "weathercn", "windy"}}
+    };
+    auto checkAddedNavigation = [&] {
+        QStringList ids;
+        for (const auto &members : addedTopics) ids.append(members);
+        GeoSitePicker picker(nullptr, ids, {"salesforce", "windy", "missing-id"}, {});
+        auto *sections = picker.findChild<QListWidget *>("geoSiteSections");
+        auto *combo = picker.findChild<QComboBox *>("geoSiteTopics");
+        auto *rows = picker.findChild<QListWidget *>("geoSiteGroups");
+        auto *query = picker.findChild<QLineEdit *>();
+        auto visible = [&] {
+            QStringList result;
+            for (int i = 0; i < rows->count(); ++i)
+                if (!rows->item(i)->isHidden() && rows->item(i)->data(Qt::UserRole).isValid())
+                    result.append(rows->item(i)->data(Qt::UserRole).toString());
+            result.sort(); return result;
+        };
+        for (int section = 0; section < 8; ++section) {
+            sections->setCurrentRow(section + 1);
+            require(combo->currentIndex() == 0 && combo->isEnabled());
+            int expected = 2;
+            for (const auto &topic : geoSiteTopics()) {
+                require((combo->findData(topic.id) >= 0) == (topic.section == section));
+                expected += topic.section == section;
+            }
+            require(combo->count() == expected);
+        }
+        for (auto it = addedTopics.cbegin(); it != addedTopics.cend(); ++it) {
+            QStringList actual;
+            for (auto entry = geoSiteEntries().cbegin(); entry != geoSiteEntries().cend(); ++entry)
+                if (QString::fromUtf8(entry->topic) == it.key()) actual.append(entry.key());
+            auto expected = it.value(); expected.sort(); require(actual == expected);
+            sections->setCurrentRow(topics.value(it.key()) + 1);
+            combo->setCurrentIndex(combo->findData(it.key())); require(visible() == expected);
+            query->setText("Windy"); require(visible() == QStringList{"windy"});
+            query->setText(QString::fromUtf8("Прогнозы погоды")); require(visible().contains("windy"));
+            query->clear(); require(visible() == expected);
+            picker.findChild<QPushButton *>("geoSiteSelectionCount")->click();
+            require(visible() == QStringList({"missing-id", "salesforce", "windy"}));
+            require(picker.selectedIds() == QStringList({"salesforce", "windy", "missing-id"}));
+            sections->setCurrentRow(0); require(combo->currentIndex() == 0 && combo->count() == 48);
+        }
+    };
+    checkAddedNavigation();
+    require(geoSiteEntries().value("piratebay").section == 2);
+    require(geoSiteEntries().value("beisen").section == 3);
+    require(!geoSiteEntries().contains("future-unknown") && geoSiteName("future-unknown").isEmpty());
+    GeoSitePicker picker(nullptr, {"github", "youtube", "abema", "future-unknown", "category-ads", "github"}, {"missing-id", "youtube"}, {});
+    auto *list = picker.findChild<QListWidget *>("geoSiteGroups");
+    auto *sections = picker.findChild<QListWidget *>("geoSiteSections");
+    auto *topic = picker.findChild<QComboBox *>("geoSiteTopics");
+    auto *search = picker.findChild<QLineEdit *>();
+    auto *count = picker.findChild<QPushButton *>("geoSiteSelectionCount");
+    auto row = [list](const QString &id) -> QListWidgetItem * {
+        for (int i = 0; i < list->count(); ++i) if (list->item(i)->data(Qt::UserRole) == id) return list->item(i);
+        return nullptr;
+    };
+    auto *github = row("github"), *youtube = row("youtube"), *abema = row("abema"), *unknown = row("future-unknown"), *missing = row("missing-id");
+    require(github && youtube && abema && unknown && missing && topic->count() == 48);
+    int groupCount = 0;
+    for (int i = 0; i < list->count(); ++i) groupCount += list->item(i)->data(Qt::UserRole).isValid();
+    require(groupCount == 6 && unknown->text() == "future-unknown");
+    sections->setCurrentRow(2);
+    topic->setCurrentIndex(topic->findData("2-video"));
+    require(!youtube->isHidden() && abema->isHidden() && unknown->isHidden());
+    search->setText("GitHub"); require(!github->isHidden() && youtube->isHidden());
+    search->clear(); require(github->isHidden() && !youtube->isHidden());
+    topic->setCurrentIndex(1); require(!abema->isHidden() && youtube->isHidden() && unknown->isHidden());
+    count->click(); require(!missing->isHidden() && !youtube->isHidden() && abema->isHidden());
+    search->setText("future-unknown"); require(!unknown->isHidden() && missing->isHidden());
+    search->clear(); require(unknown->isHidden() && !missing->isHidden());
+    missing->setCheckState(Qt::Unchecked); require(missing->isHidden());
+    topic->setCurrentIndex(topic->findData("2-video"));
+    require(!count->isChecked() && !youtube->isHidden());
+    count->click(); require(count->isChecked() && count->text().contains("Only selected"));
+    sections->setCurrentRow(9); require(!count->isChecked() && topic->currentIndex() == 0 && !topic->isEnabled());
+    require(!unknown->isHidden() && missing->isHidden() && youtube->isHidden());
+    sections->setCurrentRow(4); require(topic->isEnabled());
+    search->setText(QString::fromUtf8("Реклама"));
+    require(!row("category-ads")->isHidden());
+    search->setText("Advertising"); require(!row("category-ads")->isHidden());
+    search->setText("future-unknown"); unknown->setCheckState(Qt::Checked);
+    search->setText("github"); github->setCheckState(Qt::Checked);
+    require(picker.selectedIds() == QStringList({"youtube", "future-unknown", "github"}));
+    for (int i = 0; i < list->count(); ++i) {
+        auto *item = list->item(i);
+        if (!item->data(Qt::UserRole).isValid()) {
+            bool visible = false;
+            for (int j = i + 1; j < list->count() && list->item(j)->data(Qt::UserRole).isValid(); ++j) visible |= !list->item(j)->isHidden();
+            require(item->isHidden() == !visible);
+        }
+    }
+    picker.reject(); require(picker.result() == QDialog::Rejected);
+    class Translator final : public QTranslator {
+    public:
+        QJsonObject strings;
+        QString translate(const char *, const char *text, const char *, int) const override { return strings.value(QString::fromUtf8(text)).toString(); }
+        bool isEmpty() const override { return false; }
+    } translator;
+    QFile translations(":/translations/ru.json"); require(translations.open(QIODevice::ReadOnly));
+    translator.strings = QJsonDocument::fromJson(translations.readAll()).object();
+    for (auto it = geoSiteEntries().cbegin(); it != geoSiteEntries().cend(); ++it)
+        require(!translator.strings.value(QString::fromUtf8(it->name)).toString().isEmpty());
+    for (const auto &topic : geoSiteTopics()) require(!translator.strings.value(QString::fromUtf8(topic.name)).toString().isEmpty());
+    qApp->installTranslator(&translator);
+    checkMixedNavigation();
+    checkTopicSearch();
+    checkSplitNavigation();
+    checkAddedNavigation();
+    GeoSitePicker russian(nullptr, {"category-ads", "github", "youtube"}, {"missing-id"}, {});
+    auto *russianList = russian.findChild<QListWidget *>("geoSiteGroups");
+    auto *russianSearch = russian.findChild<QLineEdit *>();
+    for (const QString &query : {QString("Advertising"), QString::fromUtf8("Реклама"), QString("category-ads")}) {
+        russianSearch->setText(query);
+        bool matched = false;
+        for (int i = 0; i < russianList->count(); ++i) {
+            auto *item = russianList->item(i);
+            if (item->data(Qt::UserRole) == "category-ads") matched = !item->isHidden();
+        }
+        require(matched);
+    }
+    for (int i = 0; i < russianList->count(); ++i)
+        if (russianList->item(i)->data(Qt::UserRole).isValid()) russianList->item(i)->setCheckState(Qt::Checked);
+    require(russian.selectedIds() == QStringList({"missing-id", "category-ads", "github", "youtube"}));
+    require(geoSiteName("category-ads").contains(QString::fromUtf8("Реклама")));
+    qApp->removeTranslator(&translator);
+}
+
 int main(int argc, char **argv) {
     QApplication app(argc, argv);
+    geoSiteClassificationTest();
     {
         QStringList catalog;
         const QString catalogPath = qEnvironmentVariable("BIMERON_GEOSITE_IDS");
@@ -956,7 +1341,7 @@ int main(int argc, char **argv) {
         search->clear();
         for (int i = 0; i < list->count(); ++i)
             if (list->item(i)->data(Qt::UserRole) == "github") require(list->item(i)->isHidden());
-        require(picker.findChild<QLabel *>("geoSiteSelectionCount")->text().contains('3'));
+        require(picker.findChild<QPushButton *>("geoSiteSelectionCount")->text().contains('3'));
         search->setText("fixture-no-matches");
         picker.reject(); require(picker.result() == QDialog::Rejected);
         fprintf(stdout, "GeoSite %d IDs: construct %.2f ms, filter %.2f ms\n", int(catalog.size()), opening / 1e6, filtering / 1e6);
