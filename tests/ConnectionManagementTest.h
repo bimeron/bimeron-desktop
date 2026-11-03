@@ -1615,6 +1615,36 @@ struct ConnectionManagementTest {
                 QCoreApplication::processEvents();
                 require(fields[1]->isVisible() && dialog->width() == original.width(), "SSH retains name and dialog width");
                 require(dialog->findChildren<QLineEdit *>().size() == 4, "SSH identity and known hosts retained");
+                require(dialog->findChild<QPushButton *>("browseProfileFile"), "File browse shares the add form");
+                require(dialog->findChild<QPushButton *>("createProfileInEditor"), "Create editor action is available");
+                fields[0]->setText(QDir::homePath() + "/profile.conf");
+                require(fields[1]->isHidden(), "Typed absolute path hides profile name");
+                require(dialog->findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Save)->isEnabled(), "File import does not require a name");
+                fields[0]->setText("relative.conf");
+                require(!dialog->findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Save)->isEnabled(), "Relative path is not accepted");
+                for (const QString &path : {QUrl::fromLocalFile(QDir::homePath() + "/profile.conf").toString(), QString("~/profile.conf"), "\"" + QDir::homePath() + "/profile.conf\""}) {
+                    fields[0]->setText(path);
+                    require(fields[1]->isHidden() && dialog->findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Save)->isEnabled(), "File URL, home path and quoted path accepted without name");
+                }
+                const QString retainedInput = fields[0]->text();
+                const QString capture = qEnvironmentVariable("BIMERON_CREATION_CAPTURE");
+                if (!capture.isEmpty()) {
+                    QCoreApplication::processEvents();
+                    require(dialog->grab().save(capture + ".add.png"), "capture actual add dialog");
+                }
+                QTimer::singleShot(0, [&] {
+                    auto *editor = qobject_cast<ProfileEditorDialog *>(QApplication::activeModalWidget());
+                    require(editor, "Create action opens profile editor");
+                    auto *sources = editor->findChild<QComboBox *>("keySource");
+                    require(sources && sources->isEnabled() && sources->findData("SS") < 0, "New editor has no URI source choices");
+                    if (!capture.isEmpty()) {
+                        QCoreApplication::processEvents();
+                        require(editor->grab().save(capture + ".editor.png"), "capture actual creation editor");
+                    }
+                    editor->findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Cancel)->click();
+                });
+                dialog->findChild<QPushButton *>("createProfileInEditor")->click();
+                require(fields[0]->text() == retainedInput, "Cancel editor retains add-dialog input");
                 QApplication::clipboard()->setText(previous);
                 dialog->reject();
             });

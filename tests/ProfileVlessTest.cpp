@@ -1702,6 +1702,49 @@ int main(int argc, char **argv) {
     if (app.arguments().size() == 3 && app.arguments().at(1) == "--permission-fixture")
         return ProfileStore::writeConfig(app.arguments().at(2), "synthetic permission fixture") ? 0 : 1;
     QTemporaryDir temporary;
+
+    {
+        ProfileEditorDialog draft({}, {}, nullptr, {}, {}, {}, true);
+        require(draft.configText().contains("Mode = vpn"));
+    }
+
+    // New drafts expose parameter sources only, including URI-backed protocols.
+    for (const QString &source : {QString("GeneratedHysteria2"), QString("GeneratedVMess"), QString("GeneratedTUIC"), QString("GeneratedAnyTLS"), QString("GeneratedNaive")}) {
+        ProfileEditorDialog draft({}, QJsonObject{{"vpn", true}, {"proxy", true}}, nullptr, [](const QString &, QString *) { return true; }, {}, {}, true);
+        auto *sources = draft.findChild<QComboBox *>("keySource");
+        require(sources && sources->isEnabled() && sources->count() == 14);
+        for (int i = 0; i < sources->count(); ++i)
+            require(sources->itemData(i).toString().startsWith("Explicit") || sources->itemData(i).toString().startsWith("Generated"));
+        sources->setCurrentIndex(sources->findData(source));
+        draft.findChild<QLineEdit *>("profileName")->setText("Created");
+        draft.findChild<QLineEdit *>("server")->setText("example.com");
+        draft.findChild<QSpinBox *>("port")->setValue(443);
+        draft.findChild<QLineEdit *>("username")->setText("alice");
+        draft.findChild<QLineEdit *>("password")->setText("secret@:#&+%");
+        if (source == "GeneratedTUIC" || source == "GeneratedVMess")
+            draft.findChild<QLineEdit *>("parameterID")->setText("123e4567-e89b-12d3-a456-426614174000");
+        const QString text = draft.configText();
+        require(text.contains("Name = Created") && text.contains(source.mid(9) + " = "));
+        require(ProfileStore::connectionInfo(text).connectable);
+        const QString cli = qEnvironmentVariable("BIMERON_PRESERVATION_CORE");
+        check(text, {"Name = Created"}, cli, temporary.filePath(source + ".conf"));
+        auto *tabs = draft.findChild<QTabWidget *>();
+        tabs->setCurrentIndex(tabs->count() - 1);
+        require(draft.findChild<QPlainTextEdit *>("rawConfig")->toPlainText() == text);
+        tabs->setCurrentIndex(0);
+        require(draft.configText() == text);
+        if (source == "GeneratedVMess") {
+            sources->setCurrentIndex(sources->findData("GeneratedAnyTLS"));
+            require(draft.findChild<QLineEdit *>("parameterVMessTLS")->isHidden());
+            require(!draft.configText().contains("VMess = "));
+            sources->setCurrentIndex(sources->findData(source));
+            require(draft.configText() == text);
+        }
+        draft.findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Save)->click();
+        require(draft.result() == QDialog::Accepted);
+        ProfileEditorDialog reopened(text, QJsonObject{});
+        require(reopened.configText() == text);
+    }
     require(temporary.isValid());
     QSettings::setDefaultFormat(QSettings::IniFormat);
     QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, temporary.path());
