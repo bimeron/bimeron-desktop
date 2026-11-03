@@ -15,6 +15,10 @@ QString safe(const QString &s) {
     static const QStringList codes{"activation_cancelled", "owner_closing", "cleanup_pending",
         "session_not_terminal", "stale_instance", "installation_mismatch", "operation_pending",
         "core_identity_mismatch", "session_start_failed", "session_stop_failed",
+        "ikev2_profile_creation_failed_rolled_back",
+        "ikev2_profile_rollback_manifest_cleanup_failed",
+        "ikev2_profile_removed_manifest_cleanup_failed",
+        "ikev2_profile_journal_write_failed",
         "ikev2_profile_preview_required", "ikev2_profile_preview_changed",
         "ikev2_profile_incomplete_transaction_manual_review_required",
         "ikev2_profile_rollback_incomplete_manual_review_required"};

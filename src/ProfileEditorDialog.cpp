@@ -2062,7 +2062,7 @@ void ProfileEditorDialog::manageDatabases() {
 }
 
 QDialog *ProfileEditorDialog::nativeConfirmation(QWidget *parent, const QString &profile,
-                                                const QString &server, const QString &action, bool reviewable) {
+                                                const QString &server, const QString &action, bool reviewable, const QJsonObject &plan) {
     auto *dialog = new QDialog(parent);
     dialog->setWindowTitle(tr("Windows profile"));
     auto *layout = new QVBoxLayout(dialog);
@@ -2083,7 +2083,31 @@ QDialog *ProfileEditorDialog::nativeConfirmation(QWidget *parent, const QString 
         value->setMaximumWidth(360);
         form->addRow(field.first, value);
     }
-    layout->addLayout(form);
+    if (plan.isEmpty()) {
+        layout->addLayout(form);
+    } else {
+        const QList<QPair<QString, QString>> fields = {
+            {tr("Action"), action}, {tr("Authentication"), plan.value("authentication").toString()},
+            {tr("IPsec"), plan.value("ipsec").toString()},
+            {tr("IPv6 routes"), [&plan] { QStringList routes; for (const auto &v : plan.value("ipv6_routes").toArray()) routes << v.toString(); return routes.join("\n"); }()},
+            {tr("Credentials"), plan.value("credentials").toString()}, {tr("Trust"), plan.value("trust").toString()}};
+        for (const auto &field : fields) {
+            auto *value = new QLabel(field.second);
+            value->setTextFormat(Qt::PlainText);
+            value->setWordWrap(true);
+            value->setMaximumWidth(360);
+            form->addRow(field.first, value);
+        }
+        auto *content = new QWidget;
+        content->setLayout(form);
+        auto *scroll = new QScrollArea(dialog);
+        scroll->setWidgetResizable(true);
+        scroll->setWidget(content);
+        scroll->setMinimumHeight(240);
+        scroll->setMaximumHeight(420);
+        layout->addWidget(scroll);
+        dialog->resize(540, 520);
+    }
     auto *buttons = new QDialogButtonBox(dialog);
     auto *cancel = buttons->addButton(valid && action != "unchanged" ? QDialogButtonBox::Cancel : QDialogButtonBox::Close);
     cancel->setDefault(true);

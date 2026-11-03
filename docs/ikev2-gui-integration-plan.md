@@ -2,11 +2,214 @@
 
 Planning snapshot: 2026-11-04. The user subsequently authorized the UI-only stage below. Native enablement remains outside scope.
 
-## Active remaining-work plan for this Desktop thread
+## D2 source resolution and D3 offline specification (2026-11-04)
+
+This section supersedes the earlier unanswered D2 list only where source evidence
+answers it. The user authorized D2 planning at MEDIUM and D3 implementation at
+LOW, without runtime enablement, Core edits, commits, push or release. Verified
+Desktop baseline is `49263d5b273f9a3420cef27056a16f942739272b`, clean: D1 was
+committed by the previous GUI thread with separate user permission. Preserve it.
+Core was read only at `498596eabe4ec734cb0bda72059dd74a66c9dc49` with dirty
+Step 5-9 work. Source evidence is not approval of any executable or final pair.
+
+### D2 implemented, unsupported and unresolved contracts
+
+- **Approval/admission: unresolved.** Desktop `NativeIKEv2Transport.h:14-19`
+  accepts explicit artifact approval; `NativeIKEv2Session.cpp:78-90` consumes
+  launch gates once and pins its historical accepted revision. There is no
+  production authority producer for the approved pair, fresh admission/absence,
+  or reviewed selected-Core config digest. D1 validation success does not supply
+  these. Keep runtime composition absent and show a concrete unavailable reason.
+  Do not turn on gates, change revision/digest pins, or reinterpret consumer B as
+  mandatory managed-host installation.
+- **Provisioning: implemented scaffold.** Core
+  `internal/control/server.go:22-40` defines request fields;
+  `internal/systemvpn/profile.go:13-24` defines the public plan. Review profile,
+  server, action, authentication, IPsec, IPv6 routes, credentials and trust.
+  `profile_control.go:72-107` accepts `apply`/`remove` with exact `accept_revision`,
+  `instance`, and `plan_token` matching the preview's `state_token`.
+  `profile_windows.go:174-176` rechecks state immediately before mutation and
+  returns `ikev2_profile_preview_changed` on mismatch. No in-place preview retry
+  exists: `profile_control.go:42-70` starts preview once. A stale result consumes
+  that intent; a fresh owner/admission/review is a later explicit operation.
+- **Cancellation/rollback: bounded support.** Core
+  `profile_windows.go:25` keeps mutation synchronous through rollback;
+  `profile_control.go:108-120` refuses close while previewing/applying but accepts
+  terminal provisioning close, including failure. There is no provisioning stop
+  command. Local cancel invalidates confirmation and cancels local exchange only;
+  it cannot promise rollback or stop an applied operation. Error codes in
+  `profile_control.go:130-137` distinguish changed preview, rolled-back creation,
+  incomplete rollback, journal/manifest cleanup failure and ownership conflicts.
+  Desktop must preserve the useful safe provisioning codes and render stale,
+  failure and manual-review/unknown outcomes without displaying privileged text.
+  Owner close is not proof that a failed provisioning transaction was repaired.
+- **Credentials: unsupported native submission.** Core
+  `foreground.go:20-23` and `profile_control.go:29-32` reject challenge/answers
+  fields on these routes. `ras_windows.go:267` requires EAP method 26;
+  `ras_windows.go:327-370` reads saved Windows credentials and EAP identity.
+  `systemvpn/config.go:15-20` permits only WindowsProfile, ServerName, KillSwitch;
+  `core/config.go:35` aliases that type. No native username/password, attempt-only
+  submission, remember-consent/result, certificate selection or smart-card/PIN
+  contract exists. Keep existing local authentication drafts and Save blocking;
+  no new config keys, credential IPC, logs or storage. Future prompts must bind
+  exact attempt/profile and ignore cancelled/late replies; this is a requirement,
+  not an implemented backend feature.
+- **Closure: observation exists; admission release unresolved.** Desktop
+  `NativeIKEv2Transport.cpp:595-607` observes either its launched handle or the
+  authenticated peer process handle retained during discovery. Thus discovery
+  does not necessarily lack an exit handle. Session `closeOwner`, `clean` and
+  `poll` require accepted close plus observed exit; snapshot/pipe disappearance
+  alone is insufficient. `MainWindow.cpp:1563-1565` deliberately retains its
+  sticky owner block even after ownerClosed. Do not release it or automatically
+  replace/reconnect a controller: fresh authority and recovery remain absent.
+- **Certificate/card capabilities: unsupported.** Core
+  `core/capabilities.go:27-38` has no authentication-method/identity capabilities;
+  working line 47 reports nested protection flags false. Static supported=true
+  does not mean credentials exist or protected activation is admitted. Preserve
+  current preview-only method UI and unavailable OS choosers. No Core redesign.
+
+### D3 accepted offline implementation and acceptance
+
+Implement one small production-useful native action/state adapter around the
+existing Session, with a default unavailable composition and private fixture
+injection. Integrate its state with existing native rendering/confirmation seams;
+do not add a general command bus or a second lifecycle engine. Production must
+construct no live native transport/controller and perform no native discovery,
+launch, apply/remove, connection, credential or OS operation. A compiled adapter
+may delegate existing Session methods only when privately supplied by fixtures
+at this stage. Do not grant launch gates in product code.
+
+Bind each local intent to selected profile/server/action and an exact generation;
+bind consent additionally to the current owner instance and token. Profile change,
+cancel, stale/invalid preview, IPC loss and controller destruction invalidate
+consent. Repeated/late consent cannot apply; duplicate callbacks must not restore
+cancelled intent. Read-only observation may update unknown state but never replay
+mutation or automatically reconnect. Reuse Session's transport correlation and
+identity checks rather than inventing another wire API.
+
+Expose only existing preview, confirm, local cancel, stop, read-only rediscovery
+and close-owner behavior. Distinguish unavailable, previewing/reviewable, applying,
+success, stale review, failed/manual-review, unknown and closure pending/observed
+where the existing API supplies evidence. Never classify unknown cleanup as safe,
+or terminal rollback failure as success. Fresh connection/retry remains refused
+without fresh admission and a fresh controller; sticky MainWindow blocking stays.
+
+Before implementation, this specification accepts these focused fixture cases:
+default composition refuses without dispatch; exact preview-confirm dispatches
+once; mismatched profile/server/action/token/instance and malformed preview refuse;
+cancel before/after preview, selection change, repeated and late callbacks cannot
+apply; changed token requires new review; IPC loss/destroyed controller retains
+unknown cleanup; rollback/manual-review remains visible after close; close during
+operation refuses; accepted-close-only and exit-only do not fabricate closure;
+discovery with authenticated peer exit can observe closure without granting new
+admission. Test actual adapter and Qt rendering, not a mirrored model. Preserve
+D1 and packet/GeoData regressions, English/Russian conventions and shared styles.
+
+Build Windows amd64 Release and run developer-mode-test, profile-vless-test,
+geodata-selection-test and geodata-download-test with offline Qt fixtures. Capture
+actual Qt screens for materially changed presentation. Review security, secret
+handling, callback lifetime and unnecessary complexity; run whitespace and
+translation checks. No performance-sensitive work is planned, so benchmarking
+and profiling are not applicable. Linux/ARM64 and release packaging are deferred
+under this bounded task, not claimed unaffected or release-validated. Record
+results and exact remaining runtime dependencies here, then stop.
+
+### D3 bounded UI refinement
+
+Confirmation renders only the public plan fields as wrapping plain text in a bounded scroll area with a persistent footer. Provisioning rendering consumes adapter state, preserves failure evidence after close, and retains sticky connection blocking. Production explains the missing approved Core/Desktop pair and fresh admission.
+
+### D3 offline implementation evidence (2026-11-04)
+
+Added header-only `NativeIKEv2Actions`: default unavailable, private binding accepts
+only the existing Session Hooks fixture, and a controller cannot be replaced.
+Local consent binds generation, profile, server, action, instance, token and the
+complete public plan. Typed, bounded plan fields are required; malformed or
+mismatched plans invalidate intent even if a later observation looks valid.
+confirmation is consumed before dispatch. Selection changes, cancel, unknown
+observations, owner/token changes and destruction invalidate intent. Session still
+owns transport validation, operation refusal and closure evidence. Read-only
+rediscovery does not restore consent. Closure preserves safe failure/recovery
+information in the adapter snapshot. No credentials or additional configuration
+fields are serialized. Authentication drafts remain local and runtime remains OFF.
+
+MainWindow observes adapter snapshots, retains its sticky owner block and routes
+its private confirmation seam through the existing Qt confirmation dialog and the
+adapter. Profile selection invalidates consent. No production action is wired to
+this seam and no live controller is constructed. The production unavailable reason
+now names the missing approved artifact pair and fresh admission. Offline native
+presentation distinguishes preview, apply, success, stale, failed and unknown;
+the confirmation displays all public plan fields as plain text. English/Russian
+labels are included. Native status wraps without changing packet styles.
+The Session and dialog grant narrowly scoped friendship for this integration;
+there are no build registration, bundle pin, Core or packaging changes.
+
+Windows amd64 Release built in the existing VS18/Qt 6.8.3 build with
+`BIMERON_DEPLOY_QT=OFF`. Adapter fixtures exercise unavailable dispatch, exact
+one-shot consent, all consent identity mismatches, cancel, selection changes,
+IPC timeout, changed token or summary, late/repeated responses, read-only
+provisioning rediscovery, destruction/rebind refusal, applying-close refusal and
+accepted-close versus observed-exit evidence. Failure codes survive status/close
+and unknown observations. Actual Qt modal tests cover consent, cancellation and
+selection/plan changes during review. Existing Session/Transport and native
+rendering fixtures retain lifecycle, correlation and malformed wire coverage.
+
+Validation uses `QT_QPA_PLATFORM=offscreen`, Qt bin on PATH, with optional
+`BIMERON_GEODATA_CORE` and `BIMERON_GEOSITE_IDS` removed. Initial build failure
+was private access to the existing dialog factory, corrected with MainWindow
+friendship. Initial new Qt fixture placement entered a modal loop while another
+test had queued legacy callbacks; isolating the fixture before that scenario
+fixed the test, without changing production callback behavior. Overlapping worker
+builds caused C1083/LNK1104; coordinator-owned sequential builds succeeded.
+A trailing comma in ru.json passed PowerShell's permissive parser but broke Qt
+translation-dependent fixtures. Strict Python UTF-8 json.load rejected it;
+removing the comma and rebuilding restored all four tests (4/4, 15.65 seconds).
+This supersedes earlier partial-worker validation claims. Final native wrapping
+verification and capture results are recorded below. No performance-sensitive
+change was added, so benchmarking/profiling are not applicable.
+
+Security review: no authority producer, gates enabled in product, live fixture
+transport, credential storage, privileged diagnostic output or automatic retry.
+Runtime dependencies remain approved exact artifacts, fresh admission and digest
+authority, plus the unsupported native authentication contract described above.
+Linux/ARM64 and release packaging were not run and are not claimed validated.
+No commit, push, merge or release was performed.
+
+### Final D3 offline acceptance
+
+Coordinator reran the final Windows amd64 Release application and all four fixture
+builds sequentially, with no parallel writer/build. Final CTest passed 4/4 in
+15.67 seconds: developer-mode-test 8.23 s, geodata-download-test 4.38 s,
+geodata-selection-test 0.11 s, profile-vless-test 2.95 s. Strict UTF-8 Python JSON
+parsing and git diff --check passed. D1 creation/validation/rollback and packet/
+GeoData regressions remain in those suites; no test was removed to obtain a pass.
+
+Actual Qt offscreen captures and localized state assertions passed using
+`developer-mode-test --visual-check --profile-geometry <absolute-png> --d3-only`
+with `--geometry-english --geometry-theme light`, and without the English flag
+with `--geometry-theme dark`. The 12 ignored images are
+`build/ui-evidence/d3-reviewed-en-light.png*` and `d3-reviewed-ru-dark.png*`:
+complete public plan, review, stale plan, incomplete rollback, generic failure
+and unknown after cancellation. Representative confirmation/review/unknown
+images were inspected. The first captures exposed a clipped Russian upper
+status; native-only word wrapping fixed it and the new captures were checked.
+The plan values are synthetic public fixture text, not a live Core response;
+these images prove Qt rendering only, not Windows DPI or VPN operation.
+
+Final diff review found no Core, package, dependency, bundle pin, shared QSS,
+credential persistence or native authority changes. Four additional source-backed
+provisioning codes are allowlisted; privileged diagnostic text remains excluded.
+Private mock binding is the only active composition. The sticky MainWindow block
+is deliberately not released by closure observations. No new product choice is
+needed for this offline slice. A later separately authorized runtime stage must
+first resolve the exact approved pair, fresh admission/recovery and reviewed
+digest producer; authentication APIs remain unsupported. Do not infer authority
+from these tests, the Core working tree or lab success. Stop at this boundary.
+
+## Historical D1 roadmap and remaining runtime boundaries
 
 Baseline: commit `2632568` (`feat(ikev2): prepare native profile and authentication UI`).
-This section is the current roadmap and takes precedence over the historical UI
-plans below. The user authorized the next bounded implementation stage: D1 local
+This section records the earlier roadmap; the D2/D3 section above is current.
+At this point the user authorized the bounded implementation stage: D1 local
 creation and D2 contract preparation. Runtime enablement is not implied. The
 initial UI-only stage is complete, not a completed native VPN feature.
 

@@ -423,6 +423,44 @@ struct ConnectionManagementTest {
         const int themeArgument = app.arguments().indexOf("--geometry-theme");
         if (themeArgument >= 0) QSettings().setValue("app/theme", app.arguments().value(themeArgument + 1));
         applyThemePalette(app);
+        if (app.arguments().contains("--d3-only")) {
+            MainWindow window;
+            auto plan = NativeIKEv2SessionTest::publicPlan();
+            plan.insert("authentication", "IKEv2 only; EAP-MSCHAPv2; no automatic redial");
+            plan.insert("ipsec", "IKE AES256/SHA256/DH14; ESP AES256/SHA256; no PFS");
+            plan.insert("credentials", "Profile preparation does not read or write credentials.");
+            plan.insert("trust", "Administrator-managed CA validation; no trust policy changes.");
+            plan.insert("ipv6_routes", QJsonArray{"::/1", "8000::/1"});
+            auto *dialog = ProfileEditorDialog::nativeConfirmation(&window, "fixture", "vpn.example", "remove", true, plan);
+            dialog->show(); QCoreApplication::processEvents();
+            require(dialog->grab().save(destination), "complete D3 plan capture");
+            delete dialog;
+            NativeIKEv2SessionTest::Fixture provision;
+            window.bindNativeController(&provision.controller);
+            window.nativeActions_.select("fixture", "vpn.example", "remove");
+            provision.controller.setLaunchGates({true,true,true,true});
+            window.nativeActions_.preview(); NativeIKEv2SessionTest::startProvision(provision);
+            window.show(); QCoreApplication::processEvents();
+            require(window.connectionLabel_->wordWrap(), "native connection status wraps");
+            require(window.connectionLabel_->isVisible() && window.connectionLabel_->text().contains(MainWindow::tr("Windows profile plan is ready for review.")), "localized review status visible");
+            require(window.controlBlocked(), "review retains packet blocking");
+            require(window.grab().save(destination + ".review.png"), "D3 review capture");
+            for (const auto &code : {QString("ikev2_profile_preview_changed"), QString("ikev2_profile_rollback_incomplete_manual_review_required"), QString("native_operation_failed")}) {
+                auto reply = provision.reply(); reply.insert("operation", "failed"); reply.insert("error", code);
+                provision.observe(reply); QCoreApplication::processEvents();
+                const QString expected = code == "ikev2_profile_preview_changed"
+                    ? MainWindow::tr("Windows profile plan changed. A fresh review is required.")
+                    : MainWindow::tr("Windows profile operation failed. Manual review is required.");
+                require(window.connectionLabel_->isVisible() && window.connectionLabel_->text().contains(expected), "localized failure status visible");
+                require(window.controlBlocked(), "provisioning blocks packet connection");
+                require(window.grab().save(destination + "." + code + ".png"), "D3 failure capture");
+            }
+            provision.controller.cancelExchange(); QCoreApplication::processEvents();
+            require(window.controlBlocked(), "unknown retains packet blocking");
+            require(window.connectionLabel_->isVisible() && window.connectionLabel_->text().contains(MainWindow::tr("Windows profile outcome is unknown. Manual review is required.")), "localized unknown status visible");
+            require(window.grab().save(destination + ".unknown.png"), "D3 unknown capture");
+            app.removeTranslator(&translator); return 0;
+        }
         downloadFeedback(destination);
         MainWindow window;
         window.core_.cancel();
@@ -948,6 +986,58 @@ struct ConnectionManagementTest {
     }
 
     static void run() {
+        for (int scenario = 0; scenario < 3; ++scenario) {
+            MainWindow reviewWindow;
+            require(reviewWindow.nativeUnavailableReason().contains("Core/Desktop"), "concrete approval reason");
+            NativeIKEv2SessionTest::Fixture provision;
+            reviewWindow.bindNativeController(&provision.controller);
+            reviewWindow.nativeActions_.select("fixture", "vpn.example", "remove");
+            provision.controller.setLaunchGates({true,true,true,true});
+            require(reviewWindow.nativeActions_.preview(), "modal fixture preview");
+            NativeIKEv2SessionTest::startProvision(provision);
+            QTimer::singleShot(0, [&] {
+                auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+                require(dialog, "actual consent modal");
+                const auto plan = NativeIKEv2SessionTest::publicPlan();
+                for (const auto *key : {"authentication", "ipsec", "credentials", "trust"}) {
+                    bool found = false;
+                    for (auto *label : dialog->findChildren<QLabel *>())
+                        if (label->text() == plan.value(key).toString()) {
+                            require(label->textFormat() == Qt::PlainText, "plan plain text"); found = true;
+                        }
+                    require(found, "public plan field displayed");
+                }
+                if (scenario == 0) { dialog->reject(); return; }
+                if (scenario == 1) reviewWindow.nativeActions_.select("other", "vpn.example", "remove");
+                else {
+                    auto reply = provision.reply(); auto changed = plan; changed.insert("trust", "changed");
+                    reply.insert("operation", "previewed"); reply.insert("profile", changed); provision.observe(reply);
+                }
+                dialog->accept();
+            });
+            reviewWindow.confirmNativePreview();
+            for (const auto &call : provision.calls)
+                require(call.command != "remove" && call.command != "apply", "cancel or changed modal cannot mutate");
+        }
+        {
+            MainWindow reviewWindow;
+            NativeIKEv2SessionTest::Fixture provision;
+            reviewWindow.bindNativeController(&provision.controller);
+            reviewWindow.nativeActions_.select("fixture", "vpn.example", "remove");
+            provision.controller.setLaunchGates({true,true,true,true});
+            require(reviewWindow.nativeActions_.preview(), "UI adapter starts fixture preview");
+            NativeIKEv2SessionTest::startProvision(provision);
+            QTimer::singleShot(0, [&] {
+                auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+                require(dialog, "adapter opens actual confirmation");
+                auto *buttons = dialog->findChild<QDialogButtonBox *>();
+                for (auto *button : buttons->buttons())
+                    if (buttons->buttonRole(button) == QDialogButtonBox::AcceptRole) button->click();
+            });
+            reviewWindow.confirmNativePreview();
+            require(provision.calls.back().command == "remove", "Qt consent reaches adapter once");
+        }
+
         {
             QTemporaryDir directory;
             require(directory.isValid(), "native creation fixture directory");
@@ -1408,7 +1498,7 @@ struct ConnectionManagementTest {
                 "native unavailable label is not replaced by unknown protocol");
         window.profileList_->setCurrentRow(nativeRow);
         window.updateConnectionButton();
-        require(!window.connectButton_->isEnabled() && window.nativeStatusLabel_->text().contains("not available"),
+        require(!window.connectButton_->isEnabled() && window.nativeStatusLabel_->text().contains("approved Core/Desktop artifact pair and fresh admission"),
                 "native action disabled with unavailable explanation");
         const auto settingsKeys = QSettings().allKeys();
         const auto startupProfile = QSettings().value("app/autoConnectProfile");

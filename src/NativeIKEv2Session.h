@@ -75,4 +75,5 @@ private:
     bool fake_ = false, poisoned_ = false, eventsNext_ = false;
     double cursor_ = 0;
     friend struct NativeIKEv2SessionTest;
+    friend class NativeIKEv2Actions;
 };

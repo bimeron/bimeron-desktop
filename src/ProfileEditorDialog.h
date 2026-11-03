@@ -28,9 +28,10 @@ protected:
     void reject() override;
 
 private:
+    friend class MainWindow;
     friend struct ConnectionManagementTest;
     static QDialog *nativeConfirmation(QWidget *parent, const QString &profile,
-                                       const QString &server, const QString &action, bool reviewable);
+                                       const QString &server, const QString &action, bool reviewable, const QJsonObject &plan = {});
     QWidget *nativeProfileActions_ = nullptr;
     QWidget *nativeAuthentication_ = nullptr;
     QComboBox *nativeAuthMethod_ = nullptr, *nativeAuthSource_ = nullptr;

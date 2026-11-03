@@ -587,6 +587,7 @@ QWidget *MainWindow::profilesPage() {
         editProfile(row);
     });
     connect(profileList_, &QListWidget::currentRowChanged, this, [this](int row) {
+        nativeActions_.select({}, {}, {});
         QTimer::singleShot(0, this, [this, row] {
             if (row < 0 || row != profileList_->currentRow() || !profileList_->hasFocus()
                 || !profileList_->item(row)->isSelected()) return;
@@ -1542,16 +1543,27 @@ bool MainWindow::packetProfile(int row) const {
 }
 
 QString MainWindow::nativeUnavailableReason() const {
-    return tr("Native IKEv2 is not available in this build. Connection and Windows profile operations are not enabled.");
+    return tr("Native IKEv2 requires an approved Core/Desktop artifact pair and fresh admission.");
+}
+
+void MainWindow::confirmNativePreview() {
+    const auto consent = nativeActions_.review();
+    const auto snapshot = nativeActions_.snapshot();
+    auto *dialog = ProfileEditorDialog::nativeConfirmation(this, consent.profile,
+        consent.server, snapshot.profile.value("action").toString(), consent.generation != 0, consent.plan);
+    if (dialog->exec() == QDialog::Accepted) nativeActions_.confirm(consent);
+    else nativeActions_.cancel();
+    delete dialog;
 }
 
 void MainWindow::bindNativeController(NativeIKEv2Session *controller) {
     // No production caller until protected installation approval is available.
     if (!controller || nativeOwnerBlocked_) return;
     nativeController_ = controller;
+    nativeActions_.bind(controller);
     const QPointer<NativeIKEv2Session> guarded(controller);
     connect(controller, &NativeIKEv2Session::changed, this, [this, guarded] {
-        if (guarded) showNativeSnapshot(guarded->snapshot());
+        if (guarded) showNativeSnapshot(nativeActions_.snapshot());
     });
     connect(controller, &QObject::destroyed, this, [this] {
         nativeController_.clear();
@@ -1585,8 +1597,21 @@ void MainWindow::showNativeSnapshot(const NativeIKEv2Session::Snapshot &snapshot
              protection(snapshot.authoritative ? snapshot.dns : QString{}));
     if (snapshot.recoveryRequired) detail += " " + tr("Cleanup requires attention. New connections are blocked.");
     if (!snapshot.safeError.isEmpty()) detail += " " + tr("The native operation could not be completed.");
+    if (nativeActions_.provisioning() || QStringList{"previewing", "previewed", "applying", "succeeded"}.contains(snapshot.operation)) {
+        switch (nativeActions_.state()) {
+        case NativeIKEv2Actions::State::Previewing: state = tr("Preparing Windows profile review..."); break;
+        case NativeIKEv2Actions::State::Reviewable: state = tr("Windows profile plan is ready for review."); break;
+        case NativeIKEv2Actions::State::Applying: state = tr("Applying Windows profile changes..."); break;
+        case NativeIKEv2Actions::State::Succeeded: state = tr("Windows profile changes completed."); break;
+        case NativeIKEv2Actions::State::Stale: state = tr("Windows profile plan changed. A fresh review is required."); break;
+        case NativeIKEv2Actions::State::Failed: state = tr("Windows profile operation failed. Manual review is required."); break;
+        default: state = tr("Windows profile outcome is unknown. Manual review is required."); break;
+        }
+        detail = tr("New connections remain blocked. Owner closure does not confirm recovery.");
+    }
     nativeStatusLabel_->setText(state + "\n" + detail);
     nativeStatusLabel_->show();
+    connectionLabel_->setWordWrap(true);
     connectionLabel_->setText(nativeStatusLabel_->text());
     if (tray_) {
         tray_->setIcon(trayIcon(false));

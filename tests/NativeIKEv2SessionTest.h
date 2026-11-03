@@ -1,5 +1,5 @@
 #pragma once
-#include "NativeIKEv2Session.h"
+#include "NativeIKEv2Actions.h"
 #include <QCoreApplication>
 #include <QEventLoop>
 #include <QElapsedTimer>
@@ -55,7 +55,165 @@ struct NativeIKEv2SessionTest {
         void discover() { check(controller.discover(),"discover accepted"); deliver(reply()); }
         void launch() { controller.setLaunchGates({true,true,true,true}); check(controller.connectProfile(QDir::rootPath()+"fixture.conf",QString(64,'c')),"launch accepted"); controller.launched(); }
     };
+    static QJsonObject publicPlan() {
+        return {{"state_token",QString(64,'e')},{"windows_profile","fixture"},
+            {"server_name","vpn.example"},{"action","remove"},{"authentication","EAP"},
+            {"ipsec","default"},{"credentials","saved"},{"trust","system"},{"ipv6_routes",QJsonArray{}}};
+    }
+    static void startProvision(Fixture &f) {
+        f.controller.launched();
+        auto r = f.reply(); r.insert("operation", "previewed");
+        r.insert("profile", publicPlan());
+        f.deliver(r);
+    }
     static void run() {
+        {
+            NativeIKEv2Actions actions;
+            actions.select("Fixture", "vpn.invalid", "apply");
+            check(!actions.available() && !actions.preview() && !actions.confirm({})
+                && !actions.stop() && !actions.rediscover() && !actions.closeOwner(), "default adapter refuses dispatch");
+            Fixture fixture; actions.bind(&fixture.controller);
+            actions.cancel();
+            check(!actions.confirm({}) && fixture.launches == 0, "cancelled adapter cannot mutate");
+        }
+        for (const auto *key : {"windows_profile", "server_name", "action"}) {
+            Fixture f; NativeIKEv2Actions a; a.bind(&f.controller);
+            a.select("fixture", "vpn.example", "remove");
+            f.controller.setLaunchGates({true,true,true,true});
+            check(a.preview(), "identity preview starts"); f.controller.launched();
+            auto r = f.reply(); auto p = publicPlan();
+            p.insert(key, QString(key) == "action" ? "create" : "other");
+            r.insert("operation", "previewed"); r.insert("profile", p); f.deliver(r);
+            check(!a.review().generation, "wrong preview identity refused");
+            r.insert("profile", publicPlan()); f.observe(r);
+            check(!a.review().generation && !a.confirm({}), "late identity cannot revive intent");
+            for (const auto &call : f.calls)
+                check(call.command != "apply" && call.command != "remove", "identity never mutates");
+        }
+        for (const auto *code : {"ikev2_profile_creation_failed_rolled_back",
+                "ikev2_profile_rollback_manifest_cleanup_failed",
+                "ikev2_profile_removed_manifest_cleanup_failed", "ikev2_profile_journal_write_failed"}) {
+            Fixture f; NativeIKEv2Actions a; a.bind(&f.controller);
+            a.select("fixture", "vpn.example", "remove");
+            f.controller.setLaunchGates({true,true,true,true});
+            check(a.preview(), "failure preview starts"); startProvision(f);
+            auto r = f.reply(); r.insert("operation", "failed"); r.insert("error", code);
+            f.observe(r);
+            r.remove("error"); f.observe(r);
+            check(a.snapshot().safeError == code, "status retains provisioning evidence");
+            check(a.closeOwner(), "terminal failure closes"); f.deliver(f.reply());
+            check(a.snapshot().safeError == code, "close retains provisioning evidence");
+            f.controller.poll();
+            check(a.snapshot().safeError == code, "closure uncertainty retains evidence");
+            f.process = T::ProcessState::Exited; f.controller.poll();
+            check(a.snapshot().ownerClosed && !a.preview(), "observed closure grants no admission");
+        }
+        for (int scenario = 0; scenario < 5; ++scenario) {
+            Fixture f; NativeIKEv2Actions actions; actions.bind(&f.controller);
+            actions.select("fixture", "vpn.example", "remove");
+            f.controller.setLaunchGates({true,true,true,true});
+            check(actions.preview(), "adapter preview dispatch"); f.controller.launched();
+            auto r = f.reply(); r.insert("operation", "previewed");
+            r.insert("profile", publicPlan());
+            f.deliver(r); const auto consent = actions.review();
+            check(consent.generation != 0, "adapter offers bound review");
+            auto wrong = consent; wrong.instance = "other";
+            check(!actions.confirm(wrong), "adapter rejects owner mismatch");
+            wrong = consent; wrong.server = "other";
+            check(!actions.confirm(wrong), "adapter rejects server mismatch");
+            wrong = consent; wrong.profile = "other";
+            check(!actions.confirm(wrong), "adapter rejects profile mismatch");
+            wrong = consent; wrong.action = "apply";
+            check(!actions.confirm(wrong), "adapter rejects action mismatch");
+            wrong = consent; wrong.token = QString(64,'f');
+            check(!actions.confirm(wrong), "adapter rejects token mismatch");
+            if (scenario == 1) actions.cancel();
+            if (scenario == 2) actions.select("other", "vpn.example", "remove");
+            if (scenario == 3) { f.controller.poll(); f.controller.failed("status", T::Failure::Timeout); }
+            if (scenario == 4) {
+                auto p = r.value("profile").toObject(); p.insert("state_token", QString(64,'f'));
+                r.insert("profile", p); f.observe(r);
+            }
+            check(actions.confirm(consent) == (scenario == 0), "adapter exact consent or invalidation");
+            check(!actions.confirm(consent), "adapter consent consumed once");
+        }
+        for (const auto *key : {"windows_profile","server_name","action","state_token","authentication","ipsec","credentials","trust","ipv6_routes"}) {
+            for (int variant = 0; variant < 4; ++variant) {
+                Fixture f; NativeIKEv2Actions a; a.bind(&f.controller);
+                a.select("fixture","vpn.example","remove"); f.controller.setLaunchGates({true,true,true,true});
+                check(a.preview(), "malformed preview dispatch"); f.controller.launched();
+                auto p = publicPlan();
+                if (variant == 0) p.remove(key);
+                if (variant == 1) p.insert(key, QJsonObject{});
+                if (variant == 2) p.insert(key, "");
+                if (variant == 3) p.insert(key, QString(2049,'x'));
+                auto r = f.reply(); r.insert("operation","previewed"); r.insert("profile",p); f.deliver(r);
+                check(!a.review().generation && !a.confirm({}), "malformed public plan refused");
+                r.insert("profile",publicPlan()); f.observe(r);
+                check(!a.review().generation && !a.confirm({}), "late valid plan cannot restore invalid intent");
+                for (const auto &c : f.calls) check(c.command != "apply" && c.command != "remove", "invalid plan never mutates");
+            }
+        }
+        for (int scenario = 0; scenario < 3; ++scenario) {
+            Fixture f; NativeIKEv2Actions a; a.bind(&f.controller);
+            a.select("fixture","vpn.example","remove"); f.controller.setLaunchGates({true,true,true,true});
+            check(a.preview(), "late reply preview"); f.controller.launched();
+            if (scenario == 1) a.cancel();
+            auto r = f.reply(); r.insert("operation","previewed"); r.insert("profile",publicPlan());
+            f.deliver(r); auto consent = a.review();
+            if (scenario == 0) {
+                auto p = publicPlan(); p.insert("trust","changed"); r.insert("profile",p); f.observe(r);
+            }
+            if (scenario == 2) { f.controller.poll(); f.controller.failed("status",T::Failure::Timeout); }
+            r.insert("profile",publicPlan()); f.observe(r); f.observe(r);
+            check(!a.review().generation && !a.confirm(consent), "changed cancelled or failed intent stays invalid");
+            for (const auto &c : f.calls) check(c.command != "apply" && c.command != "remove", "late replies never mutate");
+        }
+        {
+            Fixture f; NativeIKEv2Actions a; a.bind(&f.controller);
+            a.select("fixture","vpn.example","remove"); f.controller.setLaunchGates({true,true,true,true});
+            check(a.preview(), "adapter loss preview"); startProvision(f);
+            const auto consent = a.review();
+            f.controller.poll(); f.controller.failed("status",T::Failure::Timeout);
+            check(a.state() == NativeIKEv2Actions::State::Unknown, "adapter IPC loss unknown");
+            check(a.rediscover() && f.calls.back().endpoint == S::Endpoint::Provisioning
+                && f.calls.back().command == "hello", "adapter rediscovery uses provisioning endpoint");
+            auto r = f.reply(); r.insert("operation","previewed"); r.insert("profile",publicPlan());
+            f.deliver(r); f.observe(r);
+            check(!a.review().generation && !a.confirm(consent), "rediscovery cannot revive consent");
+            for (const auto &c : f.calls) check(c.command != "apply" && c.command != "remove", "rediscovery never mutates");
+        }
+        {
+            NativeIKEv2Actions a; NativeIKEv2Actions::Consent consent;
+            {
+                Fixture f; a.bind(&f.controller); a.select("fixture","vpn.example","remove");
+                f.controller.setLaunchGates({true,true,true,true});
+                check(a.preview(), "destruction preview"); startProvision(f); consent = a.review();
+            }
+            Fixture second; a.bind(&second.controller);
+            check(!a.available() && a.state() == NativeIKEv2Actions::State::Unknown
+                && a.snapshot().recoveryRequired && !a.snapshot().ownerClosed
+                && !a.snapshot().authoritative, "destroyed controller preserves unknown block");
+            check(!a.confirm(consent) && !a.preview() && !a.rediscover()
+                && second.calls.empty() && second.launches == 0, "destroyed controller cannot rebind");
+        }
+        for (bool acceptedClose : {false,true}) {
+            Fixture f; NativeIKEv2Actions a; a.bind(&f.controller);
+            a.select("fixture","vpn.example","remove"); f.controller.setLaunchGates({true,true,true,true});
+            check(a.preview(), "closure preview"); startProvision(f);
+            check(a.confirm(a.review()), "closure mutation consent");
+            auto r = f.reply(); r.insert("operation","applying"); f.deliver(r);
+            const auto count = f.calls.size();
+            check(a.state() == NativeIKEv2Actions::State::Applying && !a.closeOwner()
+                && f.calls.size() == count, "applying adapter refuses close without dispatch");
+            r.insert("operation","succeeded"); f.observe(r);
+            if (acceptedClose) {
+                check(a.closeOwner(), "terminal adapter close accepted"); f.deliver(f.reply());
+                check(a.snapshot().closureAccepted && !a.snapshot().ownerClosed, "accepted close awaits process exit");
+            }
+            f.process = T::ProcessState::Exited; f.controller.poll();
+            check(a.snapshot().ownerClosed == acceptedClose, "adapter closure requires accepted close and exit");
+        }
         // Reviewed acceptance criteria: delayed read-only discovery retains bounded
         // intent; cancellation and ambiguous activation can never send it again.
         {
@@ -243,7 +401,7 @@ struct NativeIKEv2SessionTest {
             Fixture f; f.controller.setLaunchGates({true,true,true,true});
             check(f.controller.previewProfile("fixture","vpn.example","remove"),"provision launch"); f.controller.launched();
             auto r=f.reply(); r.insert("operation","previewed");
-            r.insert("profile",QJsonObject{{"state_token",QString(64,'e')},{"windows_profile","fixture"},{"server_name","vpn.example"},{"action","remove"}});
+            r.insert("profile",publicPlan());
             f.deliver(r); check(!f.controller.confirmPreview(QString(64,'f')),"wrong token rejected");
             f.controller.poll();
             check(!f.controller.confirmPreview(QString(64,'e')) && !f.controller.confirmationSent_,"busy poll does not consume confirmation");

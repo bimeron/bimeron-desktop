@@ -4,7 +4,7 @@
 #include "CoreUpdater.h"
 #include "ProfileStore.h"
 #include "DevelopmentCore.h"
-#include "NativeIKEv2Session.h"
+#include "NativeIKEv2Actions.h"
 
 #include <QElapsedTimer>
 #include <QJsonObject>
@@ -55,6 +55,7 @@ private:
     bool activeProxyMode() const;
     bool packetProfile(int row) const;
     void bindNativeController(NativeIKEv2Session *controller);
+    void confirmNativePreview();
     void showNativeSnapshot(const NativeIKEv2Session::Snapshot &snapshot);
     QString nativeUnavailableReason() const;
     void addProfile();
@@ -118,6 +119,7 @@ private:
     QLabel *connectionLabel_ = nullptr;
     QLabel *nativeStatusLabel_ = nullptr;
     bool nativeOwnerBlocked_ = false;
+    NativeIKEv2Actions nativeActions_;
     QPointer<NativeIKEv2Session> nativeController_;
     QLabel *trafficLabel_ = nullptr;
     QLabel *sessionStatsLabel_ = nullptr;
