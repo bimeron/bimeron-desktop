@@ -125,3 +125,6 @@ Stage 6 adds explicit Trojan, HTTP(S), Naive H2 and MASQUE forms and a separate
 ShadowTLS v3 block for represented compatible explicit profiles. URI sources and
 extended XHTTP remain protected Raw. See [Parameter forms and ShadowTLS](docs/parameter-forms-and-shadowtls.md).
 This does not change the bundled Core or establish runtime interoperability.
+
+See [GeoData routing](docs/geodata-routing.md) for the local database editor,
+Core CLI dependency and routing limitations.

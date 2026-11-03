@@ -123,3 +123,8 @@ the daemon running). For a verified leftover Windows daemon, a separately
 confirmed Force stop Core and close action is available. Verify pipe peer PID,
 path and SID on the same process handle used for termination. Forced exit does
 not claim network cleanup or restore/start the service automatically.
+
+
+GeoIP/GeoSite routing and the Core document CLI boundary are described in
+[GeoData routing](geodata-routing.md). The running endpoint capabilities and
+selected validator identity remain separate; no bundle pin changes are implied.

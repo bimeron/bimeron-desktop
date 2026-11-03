@@ -76,6 +76,8 @@ public:
         return translations_.value(QString::fromUtf8(sourceText));
     }
 
+    bool isEmpty() const override { return translations_.isEmpty(); }
+
 private:
     QHash<QString, QString> translations_;
 };

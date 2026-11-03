@@ -51,6 +51,19 @@ foreach ($preset in @("windows-amd64-release", "windows-arm64-release")) {
     if (Test-Path -LiteralPath $stagePath) { Remove-Item -LiteralPath $stagePath -Recurse -Force }
     cmake --install (Join-Path $sourceRoot "build/$($preset -replace '-release$','')") --config Release
     if ($LASTEXITCODE -ne 0) { throw "Install failed: $preset" }
+    $expectedMachine = if ($preset -eq "windows-arm64-release") { 0xAA64 } else { 0x8664 }
+    foreach ($file in (Get-ChildItem -LiteralPath $stagePath -Recurse -File | Where-Object { $_.Extension -in @('.exe', '.dll') })) {
+        $bytes = [System.IO.File]::ReadAllBytes($file.FullName)
+        if ($bytes.Length -lt 64 -or [BitConverter]::ToUInt16($bytes, 0) -ne 0x5A4D) {
+            throw "Invalid PE file: $($file.FullName)"
+        }
+        $offset = [BitConverter]::ToInt32($bytes, 60)
+        if ($offset -lt 64 -or $offset -gt $bytes.Length - 6 -or
+            [BitConverter]::ToUInt32($bytes, $offset) -ne 0x4550 -or
+            [BitConverter]::ToUInt16($bytes, $offset + 4) -ne $expectedMachine) {
+            throw "Wrong PE architecture: $($file.FullName)"
+        }
+    }
     cpack --preset $preset -C Release
     if ($LASTEXITCODE -ne 0) { throw "Packaging failed: $preset" }
 }

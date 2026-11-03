@@ -80,6 +80,12 @@ bool safeUriReferences(const QString &value) {
 }
 
 bool ProfileStore::writeConfig(const QString &path, const QByteArray &data, QString *error) {
+    const QFileInfo existing(path);
+    if (existing.exists() && (!existing.isWritable() || !(existing.permissions()
+        & (QFileDevice::WriteOwner | QFileDevice::WriteGroup | QFileDevice::WriteOther)))) {
+        if (error) *error = QObject::tr("The profile is read-only; the previous file was retained.");
+        return false;
+    }
     QSaveFile output(path);
     output.setDirectWriteFallback(false);
     if (!output.open(QIODevice::WriteOnly)) {
@@ -106,6 +112,26 @@ bool ProfileStore::importReferencesSafe(const QByteArray &data, QString *error) 
         if (trimmed.startsWith('#') || trimmed.startsWith(';')) continue;
         if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
             section = sectionName(trimmed);
+            continue;
+        }
+        if (section == "GeoData") {
+            const int equal = trimmed.indexOf('=');
+            if (equal < 0) continue;
+            const QString key = trimmed.left(equal).trimmed();
+            QString reference = trimmed.mid(equal + 1).trimmed();
+            bool decoded = true;
+            if (reference.startsWith('"')) {
+                QJsonParseError parse;
+                const auto document = QJsonDocument::fromJson(('[' + reference + ']').toUtf8(), &parse);
+                decoded = parse.error == QJsonParseError::NoError && document.isArray()
+                    && document.array().size() == 1 && document.array().at(0).isString();
+                if (decoded) reference = document.array().at(0).toString();
+            }
+            if ((key == "GeoIPFile" || key == "GeoSiteFile")
+                && (!decoded || !absoluteReference(reference))) {
+                if (error) *error = QObject::tr("Import would relocate a GeoData file reference. Transfer the profile and databases together or correct the paths; no files were copied.");
+                return false;
+            }
             continue;
         }
         if (section != "AccessKey") continue;
@@ -278,7 +304,12 @@ ProfileConnectionInfo ProfileStore::connectionInfo(const QString &configText) {
         const qsizetype equal = trimmed.indexOf('=');
         if (equal < 0) continue;
         const QString key = trimmed.left(equal).trimmed();
-        const QString field = trimmed.mid(equal + 1).trimmed();
+        QString field = trimmed.mid(equal + 1).trimmed();
+        if (field.startsWith('"')) {
+            QJsonParseError parse;
+            const auto decoded = QJsonDocument::fromJson(('[' + field + ']').toUtf8(), &parse);
+            if (parse.error == QJsonParseError::NoError && decoded.isArray() && decoded.array().size() == 1 && decoded.array().at(0).isString()) field = decoded.array().at(0).toString();
+        }
         if (section == "Interface" && key.compare("Mode", Qt::CaseInsensitive) == 0)
             info.interfaceMode = field.toLower();
         if (section != "AccessKey") continue;
