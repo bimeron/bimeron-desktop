@@ -1,9 +1,12 @@
 #include "TrustedCore.h"
+#include "RepairBootstrap.h"
 
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
 #include <QProcess>
+#include <QCoreApplication>
+#include <QSettings>
 
 #ifdef Q_OS_WIN
 #include <qt_windows.h>
@@ -57,6 +60,24 @@ bool protectedComponent(const QString &path, bool packageComponent) {
 #endif
 }
 
+bool TrustedCore::protectedDirectory(const QString &path) {
+    if (!QFileInfo(path).isAbsolute() || !QFileInfo(path).isDir()) return false;
+    QString current = QDir::cleanPath(path);
+    while (!current.isEmpty()) {
+#ifdef Q_OS_WIN
+        if (!protectedComponent(current, current == QDir::cleanPath(path))) return false;
+#else
+        struct stat info{};
+        if (lstat(QFile::encodeName(current).constData(), &info) != 0 || info.st_uid != 0 ||
+            (info.st_mode & (S_IWGRP | S_IWOTH)) || !S_ISDIR(info.st_mode)) return false;
+#endif
+        const QString parent = QFileInfo(current).dir().absolutePath();
+        if (parent == current) break;
+        current = parent;
+    }
+    return true;
+}
+
 bool TrustedCore::protectedExecutable(const QString &path) {
     const QFileInfo file(path);
     if (!file.isAbsolute() || !file.exists() || !file.isFile() || file.isSymLink()) return false;
@@ -78,6 +99,28 @@ bool TrustedCore::protectedExecutable(const QString &path) {
         current = parent;
     }
     return true;
+}
+
+QString TrustedCore::repairExecutable() {
+    QStringList candidates;
+#ifdef Q_OS_WIN
+    // Machine registration is written by MSI. Do not consult HKCU, PATH or an
+    // environment-variable override when selecting an elevated executable.
+    for (const auto format : {QSettings::Registry64Format, QSettings::Registry32Format}) {
+        QSettings registration(QStringLiteral("HKEY_LOCAL_MACHINE\\Software\\Bimeron Network\\Repair"), format);
+        const QString directory = registration.value(QStringLiteral("InstallDirectory")).toString();
+        if (QFileInfo(directory).isAbsolute())
+            candidates.append(QDir(directory).filePath(QStringLiteral("repair/bimeron-repair.exe")));
+    }
+    candidates.append(QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("repair/bimeron-repair.exe")));
+#else
+    candidates.append(QStringLiteral("/usr/libexec/bimeron/repair/bimeron-repair"));
+#endif
+    for (const QString &candidate : candidates)
+        if (protectedExecutable(candidate)) return QDir::cleanPath(candidate);
+    if (RepairBootstrap::available() && protectedExecutable(QCoreApplication::applicationFilePath()))
+        return QCoreApplication::applicationFilePath();
+    return {};
 }
 
 bool TrustedCore::supportsSourceUpdate(const QString &path) {

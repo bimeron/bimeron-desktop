@@ -1,4 +1,6 @@
 #include "MainWindow.h"
+#include "RepairBootstrap.h"
+#include <cstring>
 #include "WindowsTheme.h"
 
 #include <QApplication>
@@ -83,6 +85,8 @@ private:
 };
 
 int main(int argc, char *argv[]) {
+    if (argc > 1 && std::strcmp(argv[1], "repair-session") == 0)
+        return RepairBootstrap::run(argc, argv);
     QApplication app(argc, argv);
 #ifdef Q_OS_WIN
     if (app.arguments().contains(QStringLiteral("--development"))) {

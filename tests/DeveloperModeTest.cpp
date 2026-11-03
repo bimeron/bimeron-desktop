@@ -1,4 +1,7 @@
 #include "CoreClient.h"
+#include "RepairBootstrap.h"
+#include "RepairBootstrap_p.h"
+#include <QLocalSocket>
 #include "DevelopmentCore.h"
 #include "MainWindow.h"
 #include <QApplication>
@@ -6,6 +9,7 @@
 #include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
+#include <QDir>
 #include <QJsonDocument>
 #include <QLabel>
 #include <QTextEdit>
@@ -24,6 +28,10 @@
 #include <QUuid>
 #include <cstdio>
 #include <cstring>
+#include <memory>
+#ifdef Q_OS_WIN
+#include <qt_windows.h>
+#endif
 #ifdef Q_OS_LINUX
 #include <fcntl.h>
 #include <sys/file.h>
@@ -49,6 +57,127 @@ static bool waitFor(const std::function<bool()> &condition, int timeout = 3000) 
 }
 
 #include "ConnectionManagementTest.h"
+
+struct DevelopmentRecoveryTest {
+    static void brokerFinalization(DevelopmentCore &backend) {
+        const QString journal = DevelopmentCore::recoveryJournalPath();
+        QFile original(journal);
+        require(original.open(QIODevice::ReadOnly), "broker journal fixture exists");
+        const QByteArray record = original.readAll();
+        original.close();
+        int completed = 0;
+        const auto connection = QObject::connect(&backend, &DevelopmentCore::completed,
+            &backend, [&](bool) { ++completed; });
+        backend.busy_ = true;
+        require(!backend.brokerRestoredSystem() && QFile::exists(journal)
+            && backend.interruptedRecovery(), "busy finalization preserves recovery gate and journal");
+        backend.busy_ = false;
+        require(backend.brokerRestoredSystem() && !backend.failed() && !backend.local()
+            && !backend.interruptedRecovery() && !QFile::exists(journal),
+            "authenticated broker completion finalizes stopped development state");
+        require(completed == 0, "broker finalization never triggers legacy restoration or elevation");
+        QObject::disconnect(connection);
+        require(original.open(QIODevice::WriteOnly) && original.write(record) == record.size(),
+            "restore journal fixture for existing reconciliation tests");
+    }
+    static void typedInspection(const QString &helper) {
+        using Block = DevelopmentCore::StartBlock;
+        for (const Block reason : {Block::LifecycleConflict, Block::EndpointOccupied,
+                Block::EndpointAccessDenied, Block::EndpointUnknown, Block::LockOccupied,
+                Block::LockAccessDenied, Block::LockUnknown, Block::CleanupUnconfirmed, Block::TimedOut}) {
+            require(!DevelopmentCore::StartInspection{reason, {}}.allowed(),
+                    "every unresolved inspection result blocks service start");
+        }
+        QLocalServer server;
+        const QString endpoint = "typed-inspection-" + QUuid::createUuid().toString(QUuid::WithoutBraces);
+        require(server.listen(endpoint), "private inspection endpoint");
+        DevelopmentCore backend(helper);
+        bool completed = false;
+        backend.inspectSystemStartAtEndpoint(endpoint, [&](DevelopmentCore::StartInspection result) {
+            require(result.reason == Block::EndpointOccupied && !result.allowed(),
+                    "responding unknown endpoint is conflict, not cleanup evidence");
+            require(!result.diagnostic.isEmpty(), "typed conflict retains evidence");
+            completed = true;
+        });
+        require(!completed, "inspection never calls completion synchronously");
+        require(waitFor([&] { return completed; }), "private occupied endpoint completes bounded inspection");
+        bool lateCallback = false;
+        auto *cancelled = new DevelopmentCore(helper);
+        cancelled->inspectSystemStartAtEndpoint(endpoint, [&](DevelopmentCore::StartInspection) { lateCallback = true; });
+        delete cancelled;
+        QCoreApplication::processEvents();
+        require(!lateCallback, "destroying inspection owner cancels pending callback");
+    }
+
+    static void healthyService(DevelopmentCore &backend, bool changed) {
+        QLocalServer server;
+        const QString endpoint = "recovery-healthy-" + QUuid::createUuid().toString(QUuid::WithoutBraces);
+        require(server.listen(endpoint), "healthy recovery service fixture");
+        const auto commands = std::make_shared<QStringList>();
+        QObject::connect(&server, &QLocalServer::newConnection, &server, [&server, commands] {
+            auto *socket = server.nextPendingConnection();
+            if (!socket) return;
+            socket->setParent(&server);
+            QObject::connect(socket, &QLocalSocket::disconnected, socket, &QObject::deleteLater);
+            QObject::connect(socket, &QLocalSocket::readyRead, &server, [commands, socket] {
+                if (!socket->canReadLine()) return;
+                const QJsonObject request = QJsonDocument::fromJson(socket->readLine()).object();
+                commands->append(request.value("command").toString());
+                const QJsonObject response{{"version", 1}, {"id", request.value("id")},
+                    {"instance", "healthy-system-service"}, {"core", QJsonObject{{"version", "test"}}},
+                    {"status", QJsonObject{{"State", "connected"}}}};
+                socket->write(QJsonDocument(response).toJson(QJsonDocument::Compact) + '\n');
+                socket->flush();
+            });
+        });
+        const auto query = [changed](std::function<void(qint64)> result) {
+            result(QCoreApplication::applicationPid() + (changed ? 1 : 0));
+        };
+        backend.busy_ = true;
+        backend.reconcileLinuxService(QCoreApplication::applicationPid(), endpoint, query);
+        require(waitFor([&] { return !backend.busy(); }), "healthy service recovery completes");
+        require(*commands == QStringList{"hello", "status"}, "reconciliation sends no stop/start/recover commands");
+        require(backend.interruptedRecovery() == changed && backend.failed() == changed,
+                "only stable live service identity clears recovery gate");
+        require(QFile::exists(DevelopmentCore::recoveryJournalPath()) == changed,
+                "changed service keeps journal; healthy stable service clears it");
+    }
+    static void blockedWithoutCleanup(DevelopmentCore &backend) {
+        backend.busy_ = true;
+        backend.restoreService_ = true;
+        backend.phase_ = DevelopmentCore::Phase::Verifying;
+        backend.exitPhase_ = DevelopmentCore::Phase::Idle;
+        backend.verifiedLock(true);
+        require(backend.failed() && !backend.busy() && backend.interruptedRecovery(),
+                "absent daemon and free lock do not prove interrupted cleanup");
+        require(QFile::exists(DevelopmentCore::recoveryJournalPath()), "unconfirmed cleanup retains journal");
+        require(backend.status().contains("unconfirmed"), "unconfirmed cleanup explains emergency recovery");
+    }
+    static void peerMismatch(DevelopmentCore &backend) {
+        QLocalServer server;
+        const QString endpoint = "recovery-peer-" + QUuid::createUuid().toString(QUuid::WithoutBraces);
+        require(server.listen(endpoint), "recovery peer fixture");
+        const auto accepted = std::make_shared<bool>(false);
+        const auto received = std::make_shared<QByteArray>();
+        QObject::connect(&server, &QLocalServer::newConnection, &server, [&server, accepted, received] {
+            *accepted = true;
+            auto *socket = server.nextPendingConnection();
+            if (!socket) return; // Windows may remove an already disconnected pipe.
+            socket->setParent(&server);
+            *received += socket->readAll();
+            QObject::connect(socket, &QLocalSocket::readyRead, &server, [socket, received] {
+                *received += socket->readAll();
+            });
+        });
+        backend.busy_ = true;
+        backend.reconcileLinuxService(QCoreApplication::applicationPid() + 1, endpoint);
+        require(waitFor([&] { return !backend.busy(); }), "mismatched service peer terminates inspection");
+        require(backend.failed() && backend.interruptedRecovery(), "foreign peer cannot clear interrupted journal");
+        require(QFile::exists(DevelopmentCore::recoveryJournalPath()), "foreign peer retains journal");
+        require(waitFor([&] { return *accepted; }), "inspection reached fixture endpoint");
+        require(received->isEmpty(), "no hello or mutation sent to mismatched service peer");
+    }
+};
 
 static void testRouting() {
     QLocalServer first;
@@ -95,6 +224,103 @@ static void testRouting() {
 }
 
 int main(int argc, char **argv) {
+
+#ifdef Q_OS_WIN
+    if (argc >= 2 && std::strcmp(argv[1], "--bootstrap-pipe-child") == 0) {
+        QCoreApplication app(argc, argv);
+        QLocalServer server;
+        server.setSocketOptions(QLocalServer::UserAccessOption);
+        require(server.listen(QString::fromLocal8Bit(argv[2])), "private pipe listen");
+        QTimer::singleShot(30000, &app, &QCoreApplication::quit);
+        return app.exec();
+    }
+    if (argc == 2 && std::strcmp(argv[1], "--bootstrap-auth-success") == 0) {
+        QCoreApplication app(argc, argv);
+        const QString exe = app.applicationFilePath();
+        const QString pipe = "bootstrap-auth-" + QUuid::createUuid().toString(QUuid::Id128);
+        auto spawn = [&](const QString &name) {
+            QString command = '"' + QDir::toNativeSeparators(exe) + "\" --bootstrap-pipe-child " + name;
+            STARTUPINFOW startup{}; startup.cb = sizeof(startup);
+            PROCESS_INFORMATION process{};
+            require(CreateProcessW(nullptr, reinterpret_cast<wchar_t *>(command.data()), nullptr, nullptr,
+                FALSE, 0, nullptr, nullptr, &startup, &process), "spawn harmless same-image child");
+            CloseHandle(process.hThread);
+            return process;
+        };
+        auto process = spawn(pipe);
+        auto unrelated = spawn(pipe + "-other");
+        auto *socket = new QLocalSocket;
+        require(waitFor([&] {
+            if (socket->state() == QLocalSocket::ConnectedState) return true;
+            socket->abort(); socket->connectToServer(pipe);
+            return socket->waitForConnected(100);
+        }, 10000), "connect private pipe");
+        ULONG peer = 0;
+        require(GetNamedPipeServerProcessId(reinterpret_cast<HANDLE>(socket->socketDescriptor()), &peer)
+            && peer == process.dwProcessId, "real pipe server PID");
+        const auto trust = [&](const QString &path) {
+            return QDir::cleanPath(path).compare(QDir::cleanPath(exe), Qt::CaseInsensitive) == 0;
+        };
+        const auto parent = reinterpret_cast<quintptr>(GetCurrentProcess());
+        const quintptr owned = RepairBootstrap::detail::authenticatedChild(parent, peer, exe, trust);
+        require(owned != 0, "authenticate live child");
+        require(!RepairBootstrap::detail::authenticatedChild(reinterpret_cast<quintptr>(unrelated.hProcess), peer, exe, trust),
+            "unrelated parent rejected");
+        require(!RepairBootstrap::detail::authenticatedChild(parent, peer, exe, [](const QString &) { return false; }),
+            "wrong trusted image rejected");
+        QTemporaryDir temporary;
+        QFile wrong(temporary.filePath("wrong-image"));
+        require(wrong.open(QIODevice::WriteOnly), "wrong payload");
+        wrong.write("wrong"); wrong.close();
+        require(!RepairBootstrap::detail::authenticatedChild(parent, peer, wrong.fileName(), trust), "wrong image bytes rejected");
+        CloseHandle(process.hProcess);
+        HANDLE handle = reinterpret_cast<HANDLE>(owned);
+        require(GetProcessId(handle) == peer && WaitForSingleObject(handle, 0) == WAIT_TIMEOUT,
+            "owned handle survives launching handle close");
+        RepairBootstrap::bindOwnedChild(socket, owned);
+        HANDLE terminator = OpenProcess(PROCESS_TERMINATE | SYNCHRONIZE, FALSE, peer);
+        require(terminator && TerminateProcess(terminator, 0) && WaitForSingleObject(terminator, 5000) == WAIT_OBJECT_0,
+            "stop harmless child");
+        require(!RepairBootstrap::detail::authenticatedChild(parent, peer, exe, trust), "exited child rejected");
+        CloseHandle(terminator);
+        delete socket;
+        DWORD flags = 0;
+        require(!GetHandleInformation(handle, &flags) && GetLastError() == ERROR_INVALID_HANDLE,
+            "socket destruction closes owned handle");
+        TerminateProcess(unrelated.hProcess, 0);
+        WaitForSingleObject(unrelated.hProcess, 5000);
+        CloseHandle(unrelated.hProcess);
+        puts("PASS bootstrap authentication and handle ownership");
+        return 0;
+    }
+#endif
+    if (argc == 2 && std::strcmp(argv[1], "--bootstrap-auth-rejection") == 0) {
+        QCoreApplication app(argc, argv);
+        require(RepairBootstrap::authenticatedChild(0, 0) == 0, "null parent rejected");
+#ifdef Q_OS_WIN
+        DWORD before = 0, after = 0;
+        // Initialize Qt resource/security lookup caches before measuring per-call leaks.
+        require(RepairBootstrap::authenticatedChild(reinterpret_cast<quintptr>(GetCurrentProcess()),
+            GetCurrentProcessId()) == 0, "initial self-process authentication rejected");
+        require(GetProcessHandleCount(GetCurrentProcess(), &before), "read initial handle count");
+        for (int i = 0; i < 256; ++i)
+            require(RepairBootstrap::authenticatedChild(reinterpret_cast<quintptr>(GetCurrentProcess()),
+                GetCurrentProcessId()) == 0, "self cannot authenticate as bootstrap child");
+        require(GetProcessHandleCount(GetCurrentProcess(), &after), "read final handle count");
+        require(after == before, "rejected authentication leaks no native handles");
+#endif
+        return 0;
+    }
+    if (argc == 3 && std::strcmp(argv[1], "--repair-probe-fixture") == 0) {
+        if (std::strcmp(argv[2], "failed") == 0) { std::fprintf(stderr, "password=secret-probe-fixture"); return 7; }
+        if (std::strcmp(argv[2], "missing") == 0) { std::fprintf(stderr, "service not installed"); return 1; }
+        if (std::strcmp(argv[2], "stopped") == 0) { std::printf("Service state: 1\n"); return 0; }
+        if (std::strcmp(argv[2], "starting") == 0) { std::printf("Service state: 2\n"); return 0; }
+        if (std::strcmp(argv[2], "stopping") == 0) { std::printf("Service state: 3\n"); return 0; }
+        std::printf("%s", std::strcmp(argv[2], "valid") == 0 ? "Service state: 4\n" : "invalid: 4\n");
+        return 0;
+    }
+
     if (argc == 3 && std::strcmp(argv[1], "validate") == 0) {
         QFile file(QString::fromLocal8Bit(argv[2]));
         if (!file.open(QIODevice::ReadOnly)) return 1;
@@ -130,6 +356,55 @@ int main(int argc, char **argv) {
     QCoreApplication::setApplicationName("DeveloperMode-" + QUuid::createUuid().toString());
     QSettings::setDefaultFormat(QSettings::IniFormat);
     QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, temporary.path());
+    if (app.arguments().contains("--repair-quit-ownership")) {
+        ConnectionManagementTest::repairQuitOwnership();
+        return 0;
+    }
+    {
+        const QString journal = DevelopmentCore::recoveryJournalPath();
+        require(QDir().mkpath(QFileInfo(journal).absolutePath()), "journal directory");
+        for (const QByteArray record : {QByteArray("invalid"),
+                QJsonDocument(QJsonObject{{"version", 1}, {"transition", QUuid::createUuid().toString()},
+                    {"originalServiceState", "running"}, {"stage", "launching"},
+                    {"path", "must-not-execute"}, {"pid", 42}}).toJson(QJsonDocument::Compact)}) {
+            QFile file(journal);
+            require(file.open(QIODevice::WriteOnly | QIODevice::Truncate), "write interrupted journal");
+            require(file.write(record) == record.size(), "write entire journal");
+            file.close();
+            DevelopmentCore interrupted(temporary.filePath("must-not-execute"));
+            require(interrupted.interruptedRecovery() && interrupted.failed(), "journal blocks normal backend control");
+            require(!interrupted.local() && interrupted.processId() == 0 && interrupted.endpoint().isEmpty(),
+                    "journal never adopts a path, PID or endpoint");
+            require(!interrupted.recoveryDiagnostic().isEmpty(), "journal has an actionable diagnostic");
+            bool inspected = false;
+            interrupted.inspectSystemStart([&](bool allowed, const QString &message) {
+                require(!allowed && !message.isEmpty(), "interrupted journal blocks automatic service start");
+                inspected = true;
+            });
+            require(waitFor([&] { return inspected; }), "startup guard is asynchronous and bounded");
+            inspected = false;
+            interrupted.inspectSystemStart([&](DevelopmentCore::StartInspection result) {
+                require(result.reason == DevelopmentCore::StartBlock::LifecycleConflict,
+                        "interrupted journal is lifecycle uncertainty, not inferred network damage");
+                inspected = true;
+            });
+            require(waitFor([&] { return inspected; }), "typed journal inspection completes");
+            DevelopmentRecoveryTest::blockedWithoutCleanup(interrupted);
+            DevelopmentRecoveryTest::peerMismatch(interrupted);
+            interrupted.select(QCoreApplication::applicationFilePath());
+            require(interrupted.interruptedRecovery() && !interrupted.busy() && !interrupted.local(),
+                    "new local selection cannot bypass interrupted recovery");
+            require(QFile::exists(journal), "failed selection retains recovery record");
+            DevelopmentRecoveryTest::brokerFinalization(interrupted);
+        }
+        DevelopmentCore restored(temporary.filePath("must-not-execute"));
+        DevelopmentRecoveryTest::healthyService(restored, true);
+        DevelopmentRecoveryTest::healthyService(restored, false);
+    }
+    DevelopmentRecoveryTest::typedInspection(temporary.filePath("must-not-execute"));
+    const int recoveryGeometry = app.arguments().indexOf("--recovery-geometry");
+    if (recoveryGeometry >= 0)
+        return ConnectionManagementTest::recoveryGeometry(app, app.arguments().value(recoveryGeometry + 1));
     const int profileGeometry = app.arguments().indexOf("--profile-geometry");
     if (profileGeometry >= 0)
         return ConnectionManagementTest::profileGeometry(app, app.arguments().value(profileGeometry + 1));
@@ -275,17 +550,17 @@ int main(int argc, char **argv) {
     client->setEndpoint(isolatedEndpoint);
     client->replied("status", QJsonObject{{"instance", "redaction"}, {"status", QJsonObject{{"State", "failed"}, {"LastError", "{\"answers\":[\"SENTINEL\"]}"}}}});
     client->setEndpoint(isolatedEndpoint);
-    bool safeDialog = false;
+    bool diagnosticShown = false;
     QTimer::singleShot(0, [&] {
         auto *box = qobject_cast<QMessageBox *>(QApplication::activeModalWidget());
         require(box, "Core error dialog");
-        safeDialog = !box->text().contains("SENTINEL");
+        diagnosticShown = box->text().contains("SENTINEL") && box->textFormat() == Qt::PlainText;
         box->accept();
     });
     client->replied("start", QJsonObject{{"instance", "redaction"}, {"status", QJsonObject{{"State", "failed"}}}, {"error", "SENTINEL"}});
-    require(safeDialog, "unknown IPC code must not leak into the dialog");
+    require(diagnosticShown, "unknown IPC diagnostic is shown as plain text");
     const auto *log = window.findChild<QTextEdit *>();
-    require(log && !log->toPlainText().contains("SENTINEL"), "IPC secrets must not reach the log or its export text");
+    require(log && log->toPlainText().contains("SENTINEL"), "IPC diagnostic details remain in Journal and its export text");
     client->setEndpoint(isolatedEndpoint);
 #ifdef Q_OS_WIN
     window.setProperty("developmentRestartWithoutElevation", true);

@@ -1,3 +1,5 @@
+#include "RepairBootstrap.h"
+#include <QDesktopServices>
 #include "MainWindow.h"
 #include "WindowsTheme.h"
 #include "HiDpiCheckBox.h"
@@ -48,6 +50,8 @@
 #include <QPixmap>
 #include <QPlainTextEdit>
 #include <QProcess>
+#include <QLocalSocket>
+#include <QProgressBar>
 #include <QPushButton>
 #include <QRegularExpression>
 #include <QSaveFile>
@@ -78,6 +82,7 @@
 #include <sddl.h>
 #elif defined(Q_OS_LINUX)
 #include <unistd.h>
+#include <sys/socket.h>
 #endif
 
 namespace {
@@ -396,6 +401,8 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), core_(this) {
             pages_->setCurrentIndex(i);
             button->setChecked(true);
         });
+        if (i == 0) profilesNavigation_ = button;
+        if (i == 1) settingsNavigation_ = button;
         navigation->addWidget(button);
     }
     navigation->addStretch();
@@ -500,6 +507,8 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), core_(this) {
     connect(&core_, &CoreClient::replied, this, &MainWindow::handleReply);
     connect(&core_, &CoreClient::failed, this, &MainWindow::connectionFailure);
     pollClock_.start();
+    startupPreparationPending_ = !developerMode_ && !QCoreApplication::arguments().contains("--visual-check");
+    startupDeadline_ = 30000;
     auto *pollTimer = new QTimer(this);
     pollTimer->setInterval(250);
     connect(pollTimer, &QTimer::timeout, this, &MainWindow::poll);
@@ -510,6 +519,26 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), core_(this) {
     connect(development_, &DevelopmentCore::changed, this, &MainWindow::updateDevelopment);
     connect(development_, &DevelopmentCore::forcedExitReady, this, [] { QApplication::quit(); });
     connect(development_, &DevelopmentCore::completed, this, [this](bool success) {
+        if (startAfterRecovery_ && development_->interruptedRecovery()) {
+            startAfterRecovery_ = false;
+            if (!development_->interruptedCleanupRequired()) {
+                restoreAndStart_ = true;
+                QTimer::singleShot(0, development_, &DevelopmentCore::recoverInterrupted);
+                return;
+            }
+        }
+        if (restoreAndStart_) {
+            if (success) { refreshServiceStatus(); }
+            else {
+                restoreAndStart_ = false;
+                repairFailure_ = tr("Failed step: restoring system service");
+                repairHistory_.append(repairFailure_);
+            }
+        }
+        if (verifyInterruptedRecovery_) {
+            verifyInterruptedRecovery_ = false;
+            if (success) beginAvailabilityVerification();
+        }
         if (!developmentExit_) return;
         developmentExit_ = false;
         if (success && !development_->needsCleanup()) {
@@ -553,7 +582,13 @@ QWidget *MainWindow::profilesPage() {
     layout->addWidget(title);
     connectionLabel_ = new QLabel(tr("Disconnected"));
     connectionLabel_->setStyleSheet(themedStyle("color: #66768a"));
-    layout->addWidget(connectionLabel_);
+    auto *statusRow = new QHBoxLayout;
+    connectionLabel_->setWordWrap(true);
+    statusRow->addWidget(connectionLabel_, 1);
+    availabilityDetails_ = new QPushButton(tr("Fix connection"));
+    statusRow->addWidget(availabilityDetails_);
+    layout->addLayout(statusRow);
+    connect(availabilityDetails_, &QPushButton::clicked, this, &MainWindow::openCoreManagement);
     trafficLabel_ = new QLabel(tr("Traffic: ↑ 0 B  ↓ 0 B"));
     trafficLabel_->setStyleSheet(themedStyle("color: #66768a"));
     layout->addWidget(trafficLabel_);
@@ -661,8 +696,16 @@ QWidget *MainWindow::profilesPage() {
 
 QWidget *MainWindow::settingsPage() {
     auto *page = new QWidget;
-    auto *layout = new QVBoxLayout(page);
-    layout->setContentsMargins(20, 18, 20, 18);
+    auto *outer = new QVBoxLayout(page);
+    outer->setContentsMargins(18, 16, 18, 16);
+    auto *scroll = new QScrollArea;
+    scroll->setWidgetResizable(true);
+    scroll->setFrameShape(QFrame::NoFrame);
+    auto *content = new QWidget;
+    auto *layout = new QVBoxLayout(content);
+    scroll->setWidget(content);
+    outer->addWidget(scroll, 1);
+    layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(12);
     auto *title = new QLabel(tr("Settings"));
     title->setStyleSheet("font-size: 17px; font-weight: 700");
@@ -831,12 +874,93 @@ QWidget *MainWindow::settingsPage() {
     auto *serviceHeader = new QHBoxLayout;
     auto *serviceTitle = new QLabel(tr("Bimeron service"));
     serviceTitle->setObjectName("sectionTitle");
-    serviceStatusLabel_ = new QLabel(tr("Service: checking…"));
+    serviceStatusLabel_ = new QLabel(tr("Checking…"));
     serviceStatusLabel_->setObjectName("sectionHint");
     serviceHeader->addWidget(serviceTitle);
     serviceHeader->addStretch();
     serviceHeader->addWidget(serviceStatusLabel_);
     service->addLayout(serviceHeader);
+    auto *manage = new QPushButton(tr("Open…"));
+    serviceHeader->addWidget(manage);
+    connect(manage, &QPushButton::clicked, this, &MainWindow::openCoreManagement);
+    layout->addWidget(serviceCard);
+    coreManagement_ = new QDialog(this);
+    coreManagement_->setWindowTitle(tr("Bimeron service"));
+    coreManagement_->setModal(true);
+    auto *dialogLayout = new QVBoxLayout(coreManagement_);
+    dialogLayout->setContentsMargins(18, 16, 18, 16);
+    dialogLayout->setSpacing(12);
+    dialogLayout->setSizeConstraint(QLayout::SetFixedSize);
+    auto *dialogContent = new QWidget;
+    dialogContent->setFixedWidth(424);
+    service = new QVBoxLayout(dialogContent);
+    service->setContentsMargins(0, 0, 0, 0);
+    service->setSpacing(12);
+    dialogLayout->addWidget(dialogContent);
+    coreManagementTitle_ = new QLabel;
+    coreManagementTitle_->setObjectName("sectionTitle");
+    coreManagementTitle_->setWordWrap(true);
+    service->addWidget(coreManagementTitle_);
+    settingsAvailability_ = new QLabel;
+    settingsAvailability_->setWordWrap(true);
+    settingsAvailability_->setTextFormat(Qt::PlainText);
+    service->addWidget(settingsAvailability_);
+    auto *repairProgress = new QProgressBar;
+    repairProgress->setObjectName("repairProgress");
+    repairProgress->setRange(0, 0);
+    repairProgress->setTextVisible(false);
+    repairProgress->setFixedHeight(6);
+    repairProgress->setStyleSheet(themedStyle("QProgressBar { border: none; border-radius: 3px; background: #edf1f5; } QProgressBar::chunk { background: #1677ff; border-radius: 3px; }"));
+    repairProgress->hide();
+    service->addWidget(repairProgress);
+    settingsRetry_ = new QPushButton(tr("Retry core check"));
+    settingsRetry_->setObjectName("connectButton");
+    settingsRetry_->setProperty("mode", "connect");
+
+    interruptedRecoveryButton_ = new QPushButton(tr("Restore system backend"));
+    interruptedRecoveryButton_->hide();
+    service->addWidget(interruptedRecoveryButton_);
+    connect(interruptedRecoveryButton_, &QPushButton::clicked, this, [this] {
+        if (!development_->busy() && !serviceCommandProcess_ && !linuxServiceProcess_ && !coreUpdateCommand_)
+        {
+            verifyInterruptedRecovery_ = development_->recoveryRestoresRunning();
+            development_->recoverInterrupted();
+        }
+    });
+    connect(settingsRetry_, &QPushButton::clicked, this, &MainWindow::startRepairSession);
+    repairFindings_ = new QLabel;
+    repairFindings_->setWordWrap(true);
+    repairFindings_->setTextFormat(Qt::PlainText);
+    repairFindings_->setStyleSheet(themedStyle("QLabel { color: #152238; background: #f7f9fc; border-radius: 9px; padding: 12px; }"));
+    repairRefresh_ = new QPushButton(tr("Refresh diagnostics"));
+    repairRefresh_->setToolTip(tr("Check application components, service state and service response."));
+    connect(repairRefresh_, &QPushButton::clicked, this, &MainWindow::retryCoreAvailability);
+    repairRefresh_->hide();
+    auto *details = new QPushButton;
+    details->setObjectName("coreManagementDetailsToggle");
+    details->setText(tr("Details"));
+    details->setCheckable(true);
+    auto *advanced = new QWidget;
+    auto *advancedLayout = new QVBoxLayout(advanced);
+    advancedLayout->setContentsMargins(0, 0, 0, 0);
+    advancedLayout->setSpacing(12);
+    service->addWidget(advanced);
+    advanced->hide();
+    advancedLayout->addWidget(repairFindings_);
+    connect(details, &QPushButton::toggled, advanced, &QWidget::setVisible);
+    connect(details, &QPushButton::toggled, details, [details](bool open) { details->setText(open ? tr("Hide details") : tr("Details")); });
+    coreManagementDetails_ = new QLabel;
+    coreManagementDetails_->setWordWrap(true);
+    coreManagementDetails_->setTextFormat(Qt::PlainText);
+    advancedLayout->addWidget(coreManagementDetails_);
+    auto *saveReport = new QPushButton(tr("Save diagnostic report…"));
+    connect(saveReport, &QPushButton::clicked, this, &MainWindow::saveRepairReport);
+    advancedLayout->addWidget(saveReport);
+    // Keep legacy settings controls out of the repair surface. The repair
+    // controller, rather than individual service commands, owns this workflow.
+    auto *legacyManagement = new QWidget(coreManagement_);
+    legacyManagement->hide();
+    auto *managementLayout = new QVBoxLayout(legacyManagement);
     auto *serviceButtons = new QHBoxLayout;
     serviceInstallButton_ = new QPushButton(tr("Install"));
     serviceAutomaticCheck_ = new HiDpiCheckBox(tr("Start the service at system boot"));
@@ -854,9 +978,10 @@ QWidget *MainWindow::settingsPage() {
 #ifdef Q_OS_LINUX
         command << "-owner" << QString::number(getuid());
 #endif
-        runServiceCommand(command, tr("Installing service"));
+        startServiceAfterInstall_ = true;
+        if (!runServiceCommand(command, tr("Installing service"))) startServiceAfterInstall_ = false;
     });
-    connect(serviceStartButton_, &QPushButton::clicked, this, [this] { runServiceCommand({"service", "start"}, tr("Starting service")); });
+    connect(serviceStartButton_, &QPushButton::clicked, this, &MainWindow::requestServiceStart);
     connect(serviceStopButton_, &QPushButton::clicked, this, [this] { runServiceCommand({"service", "stop"}, tr("Stopping service")); });
     connect(serviceUpdateButton_, &QPushButton::clicked, this, [this] {
         if (!coreUpdatePrerequisite()) return;
@@ -869,11 +994,11 @@ QWidget *MainWindow::settingsPage() {
     });
     for (auto *button : {serviceInstallButton_, serviceStartButton_, serviceStopButton_, serviceUpdateButton_, serviceUninstallButton_}) serviceButtons->addWidget(button);
     serviceButtons->addStretch();
-    service->addLayout(serviceButtons);
+    managementLayout->addLayout(serviceButtons);
     coreUpdateLabel_ = new QLabel(updater_.available() ? tr("Core updates have not been checked") : tr("Signed updates are not available yet"));
     coreUpdateLabel_->setObjectName("sectionHint");
     coreUpdateLabel_->setWordWrap(true);
-    service->addWidget(coreUpdateLabel_);
+    managementLayout->addWidget(coreUpdateLabel_);
     connect(&updater_, &CoreUpdater::statusChanged, coreUpdateLabel_, &QLabel::setText);
     connect(&updater_, &CoreUpdater::ready, this, [this](const QString &version, const QString &path, const QString &digest) {
         if (!coreUpdatePrerequisite()) { updater_.discardStaged(); return; }
@@ -917,16 +1042,26 @@ QWidget *MainWindow::settingsPage() {
     });
     QSettings().remove("app/coreBetaUpdates");
     betaUpdatesCheck_ = new HiDpiCheckBox(tr("Include beta core updates"));
-    service->addWidget(betaUpdatesCheck_);
+    managementLayout->addWidget(betaUpdatesCheck_);
     coreUpdateLabel_->hide();
     betaUpdatesCheck_->hide();
-    service->addWidget(serviceAutomaticCheck_);
+    managementLayout->addWidget(serviceAutomaticCheck_);
     serviceRecoveryButton_ = new QPushButton(tr("Emergency network recovery"));
     serviceRecoveryButton_->setObjectName("dangerButton");
     serviceRecoveryButton_->hide();
     connect(serviceRecoveryButton_, &QPushButton::clicked, this, &MainWindow::recoverNetwork);
-    serviceButtons->addWidget(serviceRecoveryButton_);
-    layout->addWidget(serviceCard);
+    managementLayout->addWidget(serviceRecoveryButton_);
+    auto *close = new QPushButton(tr("Close"));
+    coreManagementClose_ = close;
+    connect(close, &QPushButton::clicked, this, [this] {
+        coreManagement_->reject();
+    });
+    auto *dialogActions = new QHBoxLayout;
+    dialogActions->addWidget(details);
+    dialogActions->addStretch();
+    dialogActions->addWidget(close);
+    dialogActions->addWidget(settingsRetry_);
+    dialogLayout->addLayout(dialogActions);
     QTimer::singleShot(0, this, &MainWindow::refreshServiceStatus);
 #endif
     layout->addStretch();
@@ -940,7 +1075,7 @@ QWidget *MainWindow::settingsPage() {
     footer->addWidget(diagnostics);
     footer->addStretch();
     footer->addWidget(quit);
-    layout->addLayout(footer);
+    outer->addLayout(footer);
     return page;
 }
 
@@ -999,6 +1134,9 @@ QWidget *MainWindow::aboutPage() {
     layout->addWidget(desktopVersionLabel_);
     coreVersionLabel_ = new QLabel(tr("Core: unknown"));
     layout->addWidget(coreVersionLabel_);
+    if (serviceUpdateButton_) layout->addWidget(serviceUpdateButton_);
+    if (coreUpdateLabel_) layout->addWidget(coreUpdateLabel_);
+    if (betaUpdatesCheck_) layout->addWidget(betaUpdatesCheck_);
     layout->addStretch();
     return page;
 }
@@ -1519,8 +1657,8 @@ void MainWindow::moveProfile(int delta) {
 }
 
 bool MainWindow::controlBlocked() const {
-    return development_->busy() || development_->failed() || coreUpdateCommand_
-        || coreUpdateAwaitingResult_ || serviceCommandProcess_ || linuxServiceProcess_ || quitRequested_;
+    return startupPreparationPending_ || manualStartInspection_ || development_->busy() || development_->failed() || coreUpdateCommand_
+        || coreUpdateAwaitingResult_ || serviceCommandProcess_ || linuxServiceProcess_ || repairSession_ || quitRequested_;
 }
 
 bool MainWindow::cleanDisconnected() const {
@@ -1556,7 +1694,7 @@ void MainWindow::probeValidationCli() {
     connect(process, &QProcess::readyReadStandardOutput, process, [process] {
         if (process->bytesAvailable() > 16384) process->kill();
     });
-    QTimer::singleShot(5000, process, [process] { if (process->state() != QProcess::NotRunning) process->kill(); });
+    QTimer::singleShot(5000, process, [process] { if (process->state() != QProcess::NotRunning) { process->setProperty("probeTimedOut", true); process->kill(); } });
     process->start(executable, {"version"});
 }
 
@@ -1580,7 +1718,7 @@ void MainWindow::resetMeasurements() {
     if (trayTrafficAction_) trayTrafficAction_->setText(trayTraffic_);
 }
 
-void MainWindow::invalidateConnection() {
+void MainWindow::invalidateConnection(bool preserveServiceProbe) {
     clearSSHAuthentication();
     sshSeen_.clear();
     sshAuthSupported_ = true;
@@ -1592,7 +1730,8 @@ void MainWindow::invalidateConnection() {
         validationProcess_ = nullptr;
     }
     core_.cancel();
-    if (serviceStatusProcess_) {
+    if (!preserveServiceProbe) ++serviceProbeGeneration_;
+    if (!preserveServiceProbe && serviceStatusProcess_) {
         serviceStatusProcess_->disconnect(this);
         serviceStatusProcess_->kill();
         serviceStatusProcess_->deleteLater();
@@ -1621,8 +1760,11 @@ void MainWindow::invalidateConnection() {
 }
 
 void MainWindow::connectionFailure(const QString &, CoreClient::Failure reason, const QString &message) {
-    invalidateConnection();
-    autoConnectAttempted_ = true;
+    ipcObservedAt_ = QDateTime::currentMSecsSinceEpoch();
+    availabilityFailure_ = reason;
+    startupIpcChecked_ = true;
+    invalidateConnection(true);
+    if (!startupPreparationPending_) autoConnectAttempted_ = true;
     reconnectProfileAfterUpdate_.clear();
     if (coreUpdateAwaitingResult_ || !reconnectResultProfileId_.isEmpty()) {
         coreUpdateAwaitingResult_ = false;
@@ -1788,6 +1930,12 @@ bool MainWindow::startProfile(int row) {
 }
 
 void MainWindow::poll() {
+    advanceStartupPreparation();
+    updateCoreAvailability();
+    if (!helloReady_ && pollClock_.elapsed() >= nextServiceInspection_) {
+        nextServiceInspection_ = pollClock_.elapsed() + 10000;
+        refreshServiceStatus();
+    }
     if (development_->busy() || development_->failed() || coreUpdateCommand_
         || serviceCommandProcess_ || linuxServiceProcess_ || quitRequested_ || core_.busy()) return;
     const qint64 now = pollClock_.elapsed();
@@ -1882,10 +2030,12 @@ void MainWindow::handleReply(const QString &command, const QJsonObject &response
     }
     if (command == "hello" && error.isEmpty()) {
         helloReady_ = true;
+        availabilityFailure_ = CoreClient::Failure::Transport;
         statusNeeded_ = true;
         retryCount_ = 0;
         capabilities_ = response.value("capabilities").toObject();
         runtimeIdentity_ = coreIdentity(response.value("core").toObject());
+        ipcObservedAt_ = QDateTime::currentMSecsSinceEpoch();
         runningCoreVersion_ = runtimeIdentity_.value("version").toString();
         const QString version = runningCoreVersion_;
         updateCoreIdentity();
@@ -1944,7 +2094,7 @@ void MainWindow::handleReply(const QString &command, const QJsonObject &response
                 return;
             }
             if (command == "start" || command == "stop" || command == "shutdown") showCoreError(response);
-            else if (lastCoreError_ != error) { appendLog(safeCoreCode(error)); lastCoreError_ = error; }
+            else if (lastCoreError_ != error) { appendLog(safeCoreDiagnostic(error.toUtf8())); lastCoreError_ = error; }
             if (command != "status") statusNeeded_ = true;
             if (command == "shutdown") { quitRequested_ = false; if (tray_) tray_->show(); showWindow(); }
         }
@@ -2051,7 +2201,8 @@ void MainWindow::completeSynchronization() {
                 reportCoreUpdateResult(tr("Core %1 installed, but the previous profile is unavailable").arg(runningCoreVersion_));
         }
     }
-    if (!autoConnectAttempted_) {
+    if (startupPreparationPending_) advanceStartupPreparation();
+    if (!autoConnectAttempted_ && !startupPreparationPending_) {
         autoConnectAttempted_ = true;
         if (cleanDisconnected() && QSettings().value("app/autoConnect", false).toBool()) {
             const QString wanted = QSettings().value("app/autoConnectProfile").toString();
@@ -2155,7 +2306,7 @@ void MainWindow::handleStatus(const QJsonObject &status) {
     const QString lastError = status.value("LastError").toString();
     if (lastError != lastCoreError_) {
         lastCoreError_ = lastError;
-        if (!lastError.isEmpty()) appendLog(tr("Core: %1").arg(safeCoreCode(lastError)));
+        if (!lastError.isEmpty()) appendLog(tr("Core: %1").arg(safeCoreDiagnostic(lastError.toUtf8())));
     }
     if (state_ == "failed" && previousState != "failed" && lastError == "access_key_unavailable")
         QMessageBox::warning(this, tr("Key unavailable"),
@@ -2163,6 +2314,7 @@ void MainWindow::handleStatus(const QJsonObject &status) {
 }
 
 void MainWindow::updateConnectionButton() {
+    updateCoreAvailability();
     const int row = profileList_->currentRow();
     const bool active = sessionActive_ || state_ == "connecting" || state_ == "connected" || state_ == "reconnecting";
     const bool selected = row >= 0 && row < profiles_.size() && profileList_->currentItem()->isSelected();
@@ -2220,9 +2372,13 @@ void MainWindow::updateProfileAppearance() {
 void MainWindow::showCoreError(const QJsonObject &response) {
     const QString code = response.value("error").toString();
     const QHash<QString, QString> messages{{"unsupported_protocol", tr("The GUI and core protocol versions are incompatible")}, {"absolute_config_path_required", tr("Core requires an absolute profile path")}, {"invalid_configuration", tr("The profile configuration is invalid")}, {"session_already_running", tr("A session is already running")}, {"session_start_failed", tr("Failed to start the session")}, {"session_stop_failed", tr("Failed to fully clean up network settings")}, {"daemon_shutting_down", tr("Core is shutting down")}};
-    const QString message = messages.value(code, tr("Core error: %1").arg(safeCoreCode(code)));
-    appendLog(message);
-    QMessageBox::warning(this, tr("Error"), message, QMessageBox::Ok);
+    const QString message = messages.value(code, tr("Core error: %1").arg(code.left(16384)));
+    const QString details = safeCoreDiagnostic(response.value("detail").toString().toUtf8());
+    appendLog(QStringList{message, details}.filter(QRegularExpression(".+")).join("\n"));
+    QMessageBox box(QMessageBox::Warning, tr("Error"), message, QMessageBox::Ok, this);
+    box.setTextFormat(Qt::PlainText);
+    if (!details.isEmpty()) box.setDetailedText(details);
+    box.exec();
 }
 
 void MainWindow::appendLog(const QString &message) {
@@ -2395,6 +2551,13 @@ void MainWindow::showWindow() {
 }
 
 void MainWindow::requestShutdown() {
+    // Recovery owns development/network cleanup, including pending authorization
+    // before an elevated process handle has been assigned.
+    if (repairSession_ || coreUpdateCommand_ || coreUpdateAwaitingResult_
+        || serviceCommandProcess_ || linuxServiceProcess_) {
+        QTimer::singleShot(250, this, &MainWindow::requestShutdown);
+        return;
+    }
     clearSSHAuthentication();
     if (development_->busy()) {
         QTimer::singleShot(250, this, &MainWindow::requestShutdown);
@@ -2403,10 +2566,6 @@ void MainWindow::requestShutdown() {
     if (development_->needsCleanup()) {
         developmentExit_ = true;
         development_->select({});
-        return;
-    }
-    if (coreUpdateCommand_ || coreUpdateAwaitingResult_ || serviceCommandProcess_ || linuxServiceProcess_) {
-        QTimer::singleShot(250, this, &MainWindow::requestShutdown);
         return;
     }
     if (!quitRequested_) {
@@ -2437,6 +2596,44 @@ void MainWindow::requestShutdown() {
         return;
     }
     core_.request("shutdown", {}, 120000);
+}
+
+QJsonObject MainWindow::repairReport() const {
+    // Include the bounded diagnostic text shown in Details, as requested.
+    QJsonArray history;
+    for (const auto &entry : repairHistory_) history.append(entry);
+    return{{"schema", 1}, {"exportedAt", QDateTime::currentDateTimeUtc().toString(Qt::ISODate)},
+        {"failedProbe", failedProbe_}, {"operationStillRunning", repairWatchdogExpired_},
+        {"probeCategory", probeCategory_}, {"probeExitCode", probeExitCode_},
+        {"probeDetails", probeDiagnostic_}, {"repairDetails", repairFailure_},
+        {"startupDetails", startupDiagnostic_}, {"coreDetails", lastCoreError_},
+        {"probeDurationMs", probeDurationMs_}, {"probeObservedAt", probeObservedAt_},
+        {"ipcFailureCategory", int(availabilityFailure_)}, {"ipcObservedAt", ipcObservedAt_},
+        {"applicationVersion", QCoreApplication::applicationVersion()},
+        {"coreVersion", QRegularExpression("^[0-9A-Za-z.+_-]{1,64}$").match(runningCoreVersion_).hasMatch() ? runningCoreVersion_ : QString{}}, {"serviceState", int(serviceObservation_)},
+        {"startBlock", int(serviceStartBlock_)}, {"helloReady", helloReady_},
+        {"statusPending", statusNeeded_}, {"cleanupUnconfirmed", cleanupBlocked_ || repairWatchdogExpired_},
+        {"helperPresent", QFileInfo(coreExecutablePath()).isFile()},
+        {"helperTrusted", repairSnapshot_.helperTrusted}, {"failedSteps", history}};
+}
+
+void MainWindow::saveRepairReport() {
+    QString path = QFileDialog::getSaveFileName(coreManagement_, tr("Save diagnostic report"),
+        QDir::homePath() + "/bimeron-repair.json", tr("JSON (*.json)"));
+    if (path.isEmpty()) return;
+    if (!path.endsWith(".json", Qt::CaseInsensitive)) path += ".json";
+    const QJsonObject report = repairReport();
+    const QByteArray bytes = QJsonDocument(report).toJson();
+    QFile file(path);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::NewOnly)) {
+        QMessageBox::warning(coreManagement_, tr("Diagnostics"), tr("Cannot create a new diagnostic report."));
+        return;
+    }
+    if (!file.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner)
+        || file.write(bytes) != bytes.size() || !file.flush()) {
+        file.close(); file.remove();
+        QMessageBox::warning(coreManagement_, tr("Diagnostics"), tr("Cannot save the diagnostic report."));
+    }
 }
 
 void MainWindow::saveDiagnostics() {
@@ -2516,12 +2713,216 @@ bool MainWindow::coreUpdatePrerequisite() {
     return true;
 }
 
-bool MainWindow::runServiceCommand(const QStringList &arguments, const QString &description) {
-    if (development_->local() || development_->busy() || development_->failed()) return false;
+void MainWindow::startRepairSession() {
+    if (QCoreApplication::arguments().contains("--visual-check") && !repairCommandTest_) return;
+    updateCoreAvailability();
+    if (!settingsRetry_->isEnabled() || repairSession_) return;
+    repairNetworkRecovery_ = repairSnapshot_.cleanup;
+    repairDisruption_ = repairNetworkRecovery_ || repairSnapshot_.interrupted || repairSnapshot_.localFailed
+        || repairSnapshot_.service == ServiceObservation::Running;
+    if (repairDisruption_ && QMessageBox::warning(coreManagement_, tr("Restore service"),
+        repairNetworkRecovery_
+            ? tr("Recovery removes leftover routes, DNS settings, and the kill switch. Direct network access may be restored. Continue?")
+            : tr("Repair may stop the owned service and interrupt VPN or proxy traffic. Continue?"),
+        QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes) return;
+    repairSession_ = true;
+    repairVerificationPending_ = false;
+    repairSessionDone_ = repairSessionOK_ = false;
+    repairEventCount_ = 0;
+    repairConsentRequests_.clear();
+    repairInput_.clear();
+    repairFailure_.clear();
+    repairNonce_ = QUuid::createUuid().toString(QUuid::Id128);
+    startServiceAfterInstall_ = startAfterRecovery_ = restoreAndStart_ = false;
+    autoConnectAttempted_ = true;
+    const QStringList arguments{"repair-session", repairNonce_, QString::number(QCoreApplication::applicationPid())};
+    if (!runServiceCommand(arguments, tr("Inspecting service"))) {
+        repairSession_ = false;
+        appendLog(repairFailure_.isEmpty() ? tr("Service repair could not be started.")
+            : tr("Service repair failed: %1").arg(repairFailure_));
+        updateCoreAvailability();
+        return;
+    }
+    if (!repairCommandTest_) connectRepairSession();
+    updateCoreAvailability();
+}
+
+void MainWindow::connectRepairSession() {
+    if (!repairSession_ || repairSocket_) return;
+    // Authorization can remain open longer than the broker's connection window.
+    // The process stays tracked; the broker owns bounded accept/repair deadlines.
+    auto *socket = new QLocalSocket(this);
+    const QString nonce = repairNonce_;
+    repairSocket_ = socket;
+    connect(socket, &QLocalSocket::connected, this, [this, socket] {
+        bool authenticated = false;
+#ifdef Q_OS_WIN
+        ULONG peer = 0;
+        if (serviceCommandProcess_ && GetNamedPipeServerProcessId(
+                reinterpret_cast<HANDLE>(socket->socketDescriptor()), &peer)) {
+            authenticated = peer == GetProcessId(reinterpret_cast<HANDLE>(serviceCommandProcess_));
+            if (!authenticated) {
+                const quintptr child = RepairBootstrap::authenticatedChild(serviceCommandProcess_, peer);
+                authenticated = child != 0;
+                RepairBootstrap::bindOwnedChild(socket, child);
+            }
+        }
+#elif defined(Q_OS_LINUX)
+        struct ucred peer{};
+        socklen_t length = sizeof(peer);
+        authenticated = linuxServiceProcess_ && getsockopt(int(socket->socketDescriptor()), SOL_SOCKET, SO_PEERCRED,
+            &peer, &length) == 0 && peer.uid == 0 && peer.pid == linuxServiceProcess_->processId();
+#endif
+        if (!authenticated) {
+            repairFailure_ = tr("The repair broker identity could not be verified.");
+            repairHistory_.append(repairFailure_);
+            socket->abort();
+            updateCoreAvailability();
+            return;
+        }
+        socket->setProperty("authenticated", true);
+        socket->write(QJsonDocument(QJsonObject{{"version", 1}, {"disruption", repairDisruption_},
+            {"networkRecovery", repairNetworkRecovery_}}).toJson(QJsonDocument::Compact) + '\n');
+    });
+    connect(socket, &QLocalSocket::readyRead, this, &MainWindow::readRepairSession);
+    connect(socket, &QLocalSocket::errorOccurred, this, [this, socket, nonce](QLocalSocket::LocalSocketError) {
+        if (repairSocket_ != socket) return;
+        const bool authenticated = socket->property("authenticated").toBool();
+        repairSocket_ = nullptr;
+        socket->deleteLater();
+        if (!authenticated && repairFailure_.isEmpty()) QTimer::singleShot(100, this, [this, nonce] {
+            if (repairSession_ && repairNonce_ == nonce) connectRepairSession();
+        });
+    });
+#ifdef Q_OS_WIN
+    socket->connectToServer(QStringLiteral("Bimeron.Repair.") + repairNonce_);
+#else
+    socket->connectToServer(QStringLiteral("/run/bimeron-repair/") + repairNonce_ + QStringLiteral(".sock"));
+#endif
+}
+
+bool MainWindow::requestRepairConsent(const QString &kind) {
+    if ((kind != "network-recovery" && kind != "disruption") || repairConsentDialog_
+        || repairConsentRequests_.contains(kind) || !repairSocket_
+        || !repairSocket_->property("authenticated").toBool()) return false;
+    repairConsentRequests_.insert(kind);
+    auto *prompt = new QMessageBox(QMessageBox::Warning, tr("Restore service"),
+        kind == "network-recovery"
+            ? tr("Recovery removes leftover routes, DNS settings, and the kill switch. Direct network access may be restored. Continue?")
+            : tr("Repair may stop the owned service and interrupt VPN or proxy traffic. Continue?"),
+        QMessageBox::Yes | QMessageBox::No, coreManagement_);
+    prompt->setDefaultButton(QMessageBox::No);
+    prompt->setAttribute(Qt::WA_DeleteOnClose);
+    repairConsentDialog_ = prompt;
+    const QString nonce = repairNonce_;
+    const QPointer<QLocalSocket> socket = repairSocket_;
+    connect(prompt, &QMessageBox::finished, this, [this, socket, nonce, kind, prompt](int result) {
+        if (repairConsentDialog_ == prompt) repairConsentDialog_ = nullptr;
+        if (!repairSession_ || repairSessionDone_ || repairNonce_ != nonce || !socket
+            || repairSocket_ != socket || !socket->property("authenticated").toBool()) return;
+        socket->write(QJsonDocument(QJsonObject{{"consent", kind}, {"approved", result == QMessageBox::Yes}})
+            .toJson(QJsonDocument::Compact) + '\n');
+    });
+    coreManagement_->show();
+    coreManagement_->raise();
+    prompt->open();
+    return true;
+}
+
+void MainWindow::readRepairSession() {
+    if (!repairSocket_ || !repairSocket_->property("authenticated").toBool()) return;
+    repairInput_ += repairSocket_->readAll();
+    const QHash<QString, QString> stages{{"inspect", tr("Inspecting service")}, {"stop", tr("Stopping service")},
+        {"confirm-cleanup", tr("Confirming cleanup")}, {"recover", tr("Restoring network")},
+        {"install", tr("Installing service")}, {"replace", tr("Replacing service component")}, {"start", tr("Starting service")},
+        {"verify", tr("Verifying service readiness")}, {"rollback", tr("Rolling back repair")},
+        {"ready", tr("Verifying service readiness")}};
+    bool invalid = repairInput_.size() > 8192;
+    while (!invalid && repairInput_.contains('\n')) {
+        const int end = repairInput_.indexOf('\n');
+        const QByteArray line = repairInput_.left(end);
+        repairInput_.remove(0, end + 1);
+        const auto document = QJsonDocument::fromJson(line);
+        const auto event = document.object();
+        if (!document.isObject() || repairSessionDone_ || ++repairEventCount_ > 32) { invalid = true; break; }
+        if (event.value("done") == QJsonValue(true) && event.value("ok").isBool()) {
+            if (repairConsentDialog_ && event.value("ok").toBool()) { invalid = true; break; }
+            repairSessionDone_ = true;
+            if (repairConsentDialog_) repairConsentDialog_->reject();
+            repairSessionOK_ = event.value("ok").toBool();
+            if (!repairSessionOK_) {
+                const QHash<QString, QString> errors{{"timeout", tr("Repair timed out")},
+                    {"permission-denied", tr("Permission was not granted")},
+                    {"component-missing", tr("A required service component is missing")},
+                    {"identity-mismatch", tr("Service identity could not be verified")},
+                    {"consent-required", tr("Repair requires confirmation of network disruption")},
+                    {"consent-denied", tr("Permission was not granted")},
+                    {"ownership-unproven", tr("Service ownership could not be established")},
+                    {"cleanup-unconfirmed", tr("Network cleanup could not be confirmed")},
+                    {"untrusted-component", tr("The service component is not trusted")},
+                    {"transition-pending", tr("The service operation is still pending")},
+                    {"readiness-failed", tr("Service readiness could not be verified")},
+                    {"component-unavailable", tr("No trusted compatible component is available")},
+                    {"reconciliation-required", tr("The interrupted session requires reconciliation")},
+                    {"operation-failed", tr("The service operation failed")}};
+                const QString code = event.value("code").toString();
+                if (!errors.contains(code)) { invalid = true; break; }
+                repairFailure_ = tr("%1: %2").arg(serviceCommandDescription_, errors.value(code));
+            }
+        } else if (event.contains("consent")) {
+            if (event.size() != 1 || !requestRepairConsent(event.value("consent").toString())) { invalid = true; break; }
+        } else if (!repairConsentDialog_ && stages.contains(event.value("stage").toString())) {
+            serviceCommandDescription_ = stages.value(event.value("stage").toString());
+            repairHistory_.append(serviceCommandDescription_);
+            appendLog(tr("Service repair: %1").arg(serviceCommandDescription_));
+            while (repairHistory_.size() > 64) repairHistory_.removeFirst();
+        } else { invalid = true; break; }
+    }
+    if (invalid) {
+        repairSessionOK_ = false;
+        repairSessionDone_ = true;
+        if (repairConsentDialog_) repairConsentDialog_->reject();
+        repairFailure_ = tr("The repair broker returned an invalid response.");
+        repairSocket_->abort();
+    }
+    updateCoreAvailability();
+}
+
+bool MainWindow::runServiceCommand(const QStringList &arguments, const QString &description, bool startup) {
+    if (!startup && startupPreparationPending_) finishStartupPreparation(false);
+
+    const bool session = repairSession_ && arguments.size() == 3 && arguments[0] == "repair-session";
+    if (development_->busy() || (!session && (development_->local() || development_->failed()))) return false;
     if (!operation_.isEmpty()) return false;
-    if (serviceCommandProcess_ || linuxServiceProcess_)
+    if (serviceCommandProcess_ || linuxServiceProcess_ || repairCommandPending_)
         return false;
-    const QString executable = coreExecutablePath();
+    repairCommandStarted_ = pollClock_.elapsed();
+    repairWatchdogExpired_ = false;
+    if (repairCommandTest_) {
+        repairCommand_ = arguments;
+        serviceCommandDescription_ = description;
+        recoveryCommand_ = arguments == QStringList{"recover"};
+        verifyServiceCommand_ = arguments == QStringList{"service", "start"};
+        repairCommandPending_ = true;
+        autoConnectAttempted_ = true;
+        updateCoreAvailability();
+        repairCommandTest_(arguments);
+        return true;
+    }
+    const QString executable = session ? TrustedCore::repairExecutable() : coreExecutablePath();
+    repairCommand_ = arguments;
+    if (session && executable.isEmpty()) {
+        repairFailure_ = tr("The protected repair component is unavailable. No service changes were made.");
+        repairHistory_.append(repairFailure_);
+        return false;
+    }
+    if ((session || !developerMode_) && (!TrustedCore::protectedExecutable(executable)
+        || (!session && !TrustedCore::protectedExecutable(QCoreApplication::applicationFilePath())))) {
+        repairFailure_ = tr("Core updates require a protected system installation of the GUI package");
+        repairHistory_.append(repairFailure_);
+        updateCoreAvailability();
+        return false;
+    }
     if (arguments.size() >= 2 && arguments[0] == "service" && arguments[1] == "update" &&
         !coreUpdatePrerequisite()) {
         return false;
@@ -2534,8 +2935,14 @@ bool MainWindow::runServiceCommand(const QStringList &arguments, const QString &
         recoveredSession_ = sessionId_;
         recoveredInstance_ = instance_;
     }
+    servicePermissionCanceled_ = false;
+    startupServiceCommand_ = startup;
     invalidateConnection();
-    autoConnectAttempted_ = true;
+    verifyServiceCommand_ = arguments.size() >= 2 && arguments[0] == "service"
+        && (arguments[1] == "start" || arguments[1] == "install");
+    availabilityVerificationDeadline_ = 0;
+    availabilityVerificationFailed_ = false;
+    if (!startup) autoConnectAttempted_ = true;
     retryAt_ = 0;
     recoveryCommand_ = arguments == QStringList{"recover"};
     updateConnectionButton();
@@ -2543,9 +2950,10 @@ bool MainWindow::runServiceCommand(const QStringList &arguments, const QString &
     const QString parameters = TrustedCore::windowsCommandLine(arguments);
     const std::wstring file = QDir::toNativeSeparators(executable).toStdWString();
     const std::wstring params = parameters.toStdWString();
-    const std::wstring directory = QDir::toNativeSeparators(QCoreApplication::applicationDirPath()).toStdWString();
+    const std::wstring directory = QDir::toNativeSeparators(session ? QFileInfo(executable).absolutePath()
+        : QCoreApplication::applicationDirPath()).toStdWString();
     HANDLE handle = nullptr;
-    if (developerMode_) {
+    if (developerMode_ && !session) {
         std::wstring commandLine = TrustedCore::windowsCommandLine(QStringList{executable} + arguments).toStdWString();
         STARTUPINFOW startup{};
         startup.cb = sizeof(startup);
@@ -2568,6 +2976,11 @@ bool MainWindow::runServiceCommand(const QStringList &arguments, const QString &
         if (ShellExecuteExW(&info)) handle = info.hProcess;
     }
     if (!handle) {
+        const DWORD error = GetLastError();
+        servicePermissionCanceled_ = error == ERROR_CANCELLED;
+        repairFailure_ = servicePermissionCanceled_ ? tr("Permission was not granted")
+            : tr("Failed step: %1 (code %2)").arg(description).arg(error);
+        updateCoreAvailability();
         serviceStatusLabel_->setText(tr("Service: action canceled"));
         serviceStatusLabel_->setStyleSheet(themedStyle("color: #b54708"));
         return false;
@@ -2587,13 +3000,15 @@ bool MainWindow::runServiceCommand(const QStringList &arguments, const QString &
     QString elevationProgram;
     QStringList elevationArguments;
     const QString distro = qEnvironmentVariable("WSL_DISTRO_NAME");
-    if (!distro.isEmpty()) {
+    if (!session && !distro.isEmpty()) {
         elevationProgram = QStandardPaths::findExecutable(QStringLiteral("wsl.exe"));
         if (!elevationProgram.isEmpty())
             elevationArguments = {"-d", distro, "-u", "root", "--", executable};
     }
     if (elevationProgram.isEmpty()) {
-        elevationProgram = QStandardPaths::findExecutable(QStringLiteral("pkexec"));
+        elevationProgram = session ? QStringLiteral("/usr/bin/pkexec")
+            : QStandardPaths::findExecutable(QStringLiteral("pkexec"));
+        if (session && !TrustedCore::protectedExecutable(elevationProgram)) elevationProgram.clear();
         elevationArguments = {executable};
     }
     if (elevationProgram.isEmpty()) {
@@ -2640,7 +3055,9 @@ void MainWindow::pollServiceCommand() {
         return;
     auto process = reinterpret_cast<HANDLE>(serviceCommandProcess_);
     DWORD exitCode = STILL_ACTIVE;
-    if (GetExitCodeProcess(process, &exitCode) && exitCode == STILL_ACTIVE) {
+    if (WaitForSingleObject(process, 0) != WAIT_OBJECT_0
+        || !GetExitCodeProcess(process, &exitCode)) {
+        updateCoreAvailability();
         QTimer::singleShot(250, this, &MainWindow::pollServiceCommand);
         return;
     }
@@ -2651,8 +3068,66 @@ void MainWindow::pollServiceCommand() {
 }
 
 void MainWindow::finishServiceCommand(int exitCode, const QString &details) {
+    if (repairSession_) {
+        readRepairSession();
+        repairSessionDone_ = repairSessionDone_ || bool(repairConsentDialog_);
+        if (repairConsentDialog_) repairConsentDialog_->reject();
+        if (repairSocket_) {
+            repairSocket_->disconnect(this);
+            repairSocket_->abort();
+            repairSocket_->deleteLater();
+            repairSocket_ = nullptr;
+        }
+        repairSession_ = false;
+        repairCommandPending_ = false;
+        repairCommandStarted_ = -1;
+        repairWatchdogExpired_ = false;
+        servicePermissionCanceled_ = exitCode == 126;
+        if (exitCode == 0 && repairSessionDone_ && repairSessionOK_) {
+            if (!development_->brokerRestoredSystem()) {
+                repairFailure_ = tr("The interrupted session could not be finalized safely.");
+                repairHistory_.append(repairFailure_);
+                availabilityVerificationFailed_ = true;
+                appendLog(tr("Service repair failed: %1").arg(repairFailure_));
+                updateCoreAvailability();
+                return;
+            }
+            cleanupBlocked_ = false;
+            serviceStartBlock_ = DevelopmentCore::StartBlock::None;
+            repairStopFailed_ = false;
+            repairVerificationPending_ = true;
+            appendLog(tr("Repair steps completed; verifying service readiness."));
+            beginAvailabilityVerification();
+        } else {
+            if (servicePermissionCanceled_) repairFailure_ = tr("Permission was not granted");
+            else if (repairFailure_.isEmpty()) repairFailure_ = tr("Failed step: %1 (code %2)")
+                .arg(serviceCommandDescription_).arg(exitCode);
+            repairHistory_.append(repairFailure_);
+            availabilityVerificationFailed_ = true;
+            appendLog(tr("Service repair failed: %1").arg(repairFailure_));
+        }
+        refreshServiceStatus();
+        updateCoreAvailability();
+        return;
+    }
+    repairCommandPending_ = false;
+    repairCommandStarted_ = -1;
+    repairWatchdogExpired_ = false;
+    if (repairCommand_ == QStringList{"service", "stop"}) repairStopFailed_ = exitCode != 0;
+    if (exitCode != 0) repairFailure_ = tr("Failed step: %1 (code %2)").arg(serviceCommandDescription_).arg(exitCode);
+    if (exitCode != 0) repairHistory_.append(repairFailure_);
+    const bool continueRecovery = recoveryCommand_ && startAfterRecovery_ && exitCode == 0;
+    startAfterRecovery_ = false;
+    const bool startup = startupServiceCommand_;
+    startupServiceCommand_ = false;
+    if (startup && exitCode != 0) finishStartupPreparation(false,
+        exitCode == 126 ? tr("Service launch permission was canceled.") : tr("The service could not be started."));
+    const bool verifyAvailability = verifyServiceCommand_;
+    verifyServiceCommand_ = false;
     if (recoveryCommand_ && exitCode == 0) {
         cleanupBlocked_ = false;
+        serviceStartBlock_ = DevelopmentCore::StartBlock::None;
+        startupDiagnostic_.clear();
         recoveryVerified_ = true;
     }
     recoveryCommand_ = false;
@@ -2668,6 +3143,7 @@ void MainWindow::finishServiceCommand(int exitCode, const QString &details) {
     serviceAutomaticCheck_->setEnabled(true);
 #ifdef Q_OS_LINUX
     if (exitCode == 126) {
+        servicePermissionCanceled_ = true;
         startServiceAfterInstall_ = false;
         serviceStatusLabel_->setText(tr("Service: action canceled"));
         serviceStatusLabel_->setStyleSheet(themedStyle("color: #b54708"));
@@ -2690,12 +3166,16 @@ void MainWindow::finishServiceCommand(int exitCode, const QString &details) {
     } else {
         serviceRecoveryButton_->hide();
         appendLog(serviceCommandDescription_ + tr(": completed"));
-        if (startServiceAfterInstall_) {
+        if (startServiceAfterInstall_ || continueRecovery) {
             startServiceAfterInstall_ = false;
-            runServiceCommand({"service", "start"}, tr("Starting service"));
+            requestServiceStart();
             return;
         }
         refreshServiceStatus();
+        if (verifyAvailability) {
+            if (startup) startupDeadline_ = pollClock_.elapsed() + 30000;
+            beginAvailabilityVerification(startup);
+        }
         if (finishedCoreUpdate) {
             coreUpdateAwaitingResult_ = true;
             coreUpdateLabel_->setText(tr("Core service updated; verifying version and connection state…"));
@@ -2715,23 +3195,362 @@ void MainWindow::reportCoreUpdateResult(const QString &message) {
     appendLog(message);
 }
 
+void MainWindow::requestServiceStart() {
+    if (manualStartInspection_ || controlBlocked() || development_->local() || repairStopFailed_ || repairCommandPending_) return;
+    autoConnectAttempted_ = true;
+    startupDiagnostic_.clear();
+    manualStartInspection_ = true;
+    updateCoreAvailability();
+    const quint64 generation = serviceProbeGeneration_;
+    const auto inspect = [this](std::function<void(DevelopmentCore::StartInspection)> done) {
+        if (repairInspectionTest_) repairInspectionTest_(std::move(done));
+        else development_->inspectSystemStart(std::move(done));
+    };
+    inspect([this, generation](DevelopmentCore::StartInspection inspection) {
+        const bool allowed = inspection.allowed();
+        const QString diagnostic = inspection.diagnostic;
+        manualStartInspection_ = false;
+        if (generation != serviceProbeGeneration_ || quitRequested_) { updateCoreAvailability(); return; }
+        if (helloReady_ || controlBlocked() || !operation_.isEmpty()) { updateCoreAvailability(); return; }
+        if (!allowed) {
+            serviceStartBlock_ = inspection.reason;
+            startupDiagnostic_ = diagnostic;
+            updateCoreAvailability();
+            return;
+        }
+        runServiceCommand({"service", "start"}, tr("Starting service"));
+        updateCoreAvailability();
+    });
+}
+
+void MainWindow::finishStartupPreparation(bool success, const QString &diagnostic) {
+    startupPreparationPending_ = false;
+    startupPreparationFailed_ = !success;
+    startupDiagnostic_ = diagnostic;
+    if (!success) autoConnectAttempted_ = true;
+    updateCoreAvailability();
+}
+
+void MainWindow::advanceStartupPreparation(std::function<void()> start) {
+    if (!startupPreparationPending_) return;
+    if (developerMode_ || development_->local() || development_->busy() || development_->failed()
+        || development_->interruptedRecovery() || cleanupBlocked_ || quitRequested_) {
+        finishStartupPreparation(false);
+        return;
+    }
+    if (helloReady_ && !statusNeeded_) { finishStartupPreparation(true); return; }
+    // A privileged helper remains tracked even while its authorization prompt is open.
+    if (serviceCommandProcess_ || linuxServiceProcess_) return;
+    if (pollClock_.elapsed() >= startupDeadline_) {
+        finishStartupPreparation(false, tr("Core readiness could not be verified in time. Retry the check or save diagnostics."));
+        return;
+    }
+    if (!startupIpcChecked_) return;
+    if (availabilityFailure_ != CoreClient::Failure::Transport && availabilityFailure_ != CoreClient::Failure::Timeout) {
+        finishStartupPreparation(false);
+        return;
+    }
+    if (serviceObservation_ == ServiceObservation::Missing || serviceObservation_ == ServiceObservation::Failed
+        || serviceObservation_ == ServiceObservation::Paused) {
+        finishStartupPreparation(false);
+        return;
+    }
+    if (serviceObservation_ != ServiceObservation::Stopped || startupStartAttempted_) return;
+    startupStartAttempted_ = true;
+    if (start) { start(); return; } // Isolated tests replace the complete mutation boundary.
+    const quint64 generation = serviceProbeGeneration_;
+    development_->inspectSystemStart([this, generation](DevelopmentCore::StartInspection inspection) {
+        const bool allowed = inspection.allowed();
+        const QString diagnostic = inspection.diagnostic;
+        if (!startupPreparationPending_ || generation != serviceProbeGeneration_) return;
+        if (!allowed) { serviceStartBlock_ = inspection.reason; finishStartupPreparation(false, diagnostic); return; }
+        if (development_->busy() || development_->failed() || development_->local() || cleanupBlocked_
+            || coreUpdateCommand_ || coreUpdateAwaitingResult_ || !operation_.isEmpty() || quitRequested_) {
+            finishStartupPreparation(false);
+            return;
+        }
+        if (!QFileInfo::exists(coreExecutablePath())) {
+            finishStartupPreparation(false, tr("The core CLI was not found next to the application."));
+            return;
+        }
+        if (!runServiceCommand({"service", "start"}, tr("Starting service"), true)) {
+            startupServiceCommand_ = false;
+            finishStartupPreparation(false, tr("Service launch permission was canceled or the service could not be started."));
+        }
+    });
+}
+
+void MainWindow::beginAvailabilityVerification(bool preserveAutoConnect) {
+    invalidateConnection(true);
+    if (!preserveAutoConnect) autoConnectAttempted_ = true;
+    retryAt_ = 0;
+    availabilityVerificationFailed_ = false;
+    availabilityVerificationDeadline_ = pollClock_.elapsed() + 30000;
+    core_.request("hello");
+    updateCoreAvailability();
+}
+
+void MainWindow::retryCoreAvailability() {
+    if (development_->busy() || serviceCommandProcess_ || linuxServiceProcess_
+        || coreUpdateCommand_ || quitRequested_ || repairCommandPending_) return;
+    availabilityVerificationFailed_ = false;
+    serviceTransitionSince_ = -1;
+    if (serviceStartBlock_ != DevelopmentCore::StartBlock::None && !manualStartInspection_ && !development_->local()) {
+        manualStartInspection_ = true;
+        const auto generation = serviceProbeGeneration_;
+        auto done = [this, generation](DevelopmentCore::StartInspection inspection) {
+            manualStartInspection_ = false;
+            if (generation != serviceProbeGeneration_ || quitRequested_) return;
+            serviceStartBlock_ = inspection.reason;
+            startupDiagnostic_ = inspection.diagnostic;
+            updateCoreAvailability();
+        };
+        if (repairInspectionTest_) repairInspectionTest_(done);
+        else development_->inspectSystemStart(done);
+    }
+    refreshServiceStatus();
+    if (!development_->failed() && !development_->interruptedRecovery() && !core_.busy()) {
+        autoConnectAttempted_ = true;
+        retryAt_ = 0;
+        if (!helloReady_) core_.request("hello");
+        else { statusNeeded_ = true; core_.request("status"); }
+    }
+    updateCoreAvailability();
+}
+
+void MainWindow::openCoreManagement() {
+    retryCoreAvailability();
+    updateCoreAvailability();
+    if (coreManagement_ && !coreManagement_->isVisible()) {
+        coreManagement_->show();
+        coreManagement_->raise();
+        coreManagement_->activateWindow();
+    }
+}
+
+void MainWindow::updateCoreAvailability() {
+    if (!serviceStateLogged_ || loggedServiceState_ != serviceObservation_ || loggedServiceStateCode_ != serviceStateCode_) {
+        const QHash<ServiceObservation, QString> labels{
+            {ServiceObservation::Unknown, tr("unknown")}, {ServiceObservation::Missing, tr("Not installed")},
+            {ServiceObservation::Stopped, tr("Stopped")}, {ServiceObservation::Running, tr("Running")},
+            {ServiceObservation::Transitional, tr("Service is changing state")},
+            {ServiceObservation::Paused, tr("paused")}, {ServiceObservation::Failed, tr("Unavailable")}};
+        const QHash<QString, QString> transitions{{"2", tr("starting")}, {"3", tr("stopping")},
+            {"5", tr("resuming")}, {"6", tr("pausing")}};
+        const QString status = serviceObservation_ == ServiceObservation::Transitional
+            ? transitions.value(serviceStateCode_, labels.value(serviceObservation_)) : labels.value(serviceObservation_);
+        appendLog(tr("Service status: %1").arg(status));
+        loggedServiceState_ = serviceObservation_;
+        loggedServiceStateCode_ = serviceStateCode_;
+        serviceStateLogged_ = true;
+    }
+    while (repairHistory_.size() > 64) repairHistory_.removeFirst();
+    if ((serviceCommandProcess_ || linuxServiceProcess_ || repairCommandPending_)
+        && repairCommandStarted_ >= 0 && pollClock_.elapsed() - repairCommandStarted_ >= repairWatchdogMs_
+        && !repairWatchdogExpired_) {
+        repairWatchdogExpired_ = true;
+        repairFailure_ = tr("The service operation is still running after two minutes. Cleanup is unconfirmed. Keep this application open, inspect the operating system permission prompt and service status, and wait for completion. Do not start another Core or force termination.");
+        repairHistory_.append(repairFailure_);
+    }
+    if (!connectionLabel_) return;
+    const bool ready = !repairSession_ && helloReady_ && !statusNeeded_ && !cleanupBlocked_
+        && !development_->failed() && !development_->busy();
+    if (ready) { serviceStartBlock_ = DevelopmentCore::StartBlock::None; repairStopFailed_ = false; }
+    const bool busy = development_->busy() || serviceCommandProcess_ || linuxServiceProcess_
+        || coreUpdateCommand_ || coreUpdateAwaitingResult_ || quitRequested_ || startupPreparationPending_ || manualStartInspection_ || serviceStatusProcess_ || repairCommandPending_ || repairSession_;
+    if (ready) availabilityVerificationFailed_ = false;
+    if (availabilityVerificationDeadline_) {
+        if (ready) availabilityVerificationDeadline_ = 0;
+        else if (pollClock_.elapsed() >= availabilityVerificationDeadline_) {
+            availabilityVerificationDeadline_ = 0;
+            availabilityVerificationFailed_ = true;
+            repairFailure_ = tr("Failed step: waiting for service response (timeout)");
+            repairHistory_.append(repairFailure_);
+        }
+    }
+    if (repairVerificationPending_ && (ready || (!availabilityVerificationDeadline_ && availabilityVerificationFailed_))) {
+        repairVerificationPending_ = false;
+        appendLog(ready ? tr("Service repair completed: ready to connect.")
+            : tr("Service repair failed: %1").arg(repairFailure_));
+    }
+    repairSnapshot_ = {pollClock_.elapsed(), serviceProbeGeneration_, QFileInfo(coreExecutablePath()).isFile(),
+        serviceObservation_, availabilityFailure_, serviceStartBlock_, ready,
+        bool(serviceStatusProcess_) || manualStartInspection_ || startupPreparationPending_,
+        bool(serviceCommandProcess_) || bool(linuxServiceProcess_) || development_->busy() || repairCommandPending_ || repairSession_,
+        availabilityVerificationDeadline_ != 0,
+        cleanupBlocked_ || (development_->interruptedRecovery() && development_->interruptedCleanupRequired()),
+        development_->interruptedRecovery(), development_->failed() || (development_->local() && !ready),
+        availabilityVerificationFailed_ || !repairFailure_.isEmpty()};
+    repairSnapshot_.stopFailed = repairStopFailed_;
+    repairSnapshot_.helperTrusted = developerMode_ || !TrustedCore::repairExecutable().isEmpty()
+        || (TrustedCore::protectedExecutable(coreExecutablePath())
+        && TrustedCore::protectedExecutable(QCoreApplication::applicationFilePath()));
+    if (repairSnapshotTest_) repairSnapshotTest_(repairSnapshot_);
+    repairDiagnosis_ = ConnectionRepair::diagnose(repairSnapshot_);
+    if (coreManagement_) {
+        if (auto *progress = coreManagement_->findChild<QProgressBar *>("repairProgress"))
+            progress->setVisible(repairSnapshot_.executing || repairSnapshot_.verifying);
+    }
+    QString title;
+    QString message;
+    QString action;
+    recoveryAction_ = repairDiagnosis_.action;
+    using Cause = ConnectionRepair::Cause;
+    switch (repairDiagnosis_.cause) {
+    case Cause::Checking:
+        title = repairDiagnosis_.phase == ConnectionRepair::Phase::Executing
+            ? serviceCommandDescription_ : tr("Checking what prevents connection");
+        message = repairDiagnosis_.phase == ConnectionRepair::Phase::Verifying
+            ? tr("Waiting for service response") : tr("Checking application components, system service and service response.");
+        break;
+    case Cause::ComponentsUntrusted:
+        title = tr("Application location is not trusted");
+        message = tr("Restore uses the protected repair broker to inspect and repair the service."); break;
+    case Cause::ComponentsMissing:
+        title = tr("Application components are missing");
+        message = tr("Restore checks trusted components and repairs the service while preserving profiles and settings."); break;
+    case Cause::Cleanup:
+        title = tr("Network recovery required");
+        message = tr("The previous Core exited without confirmed network cleanup. Restore the network before starting the service."); break;
+    case Cause::Interrupted:
+        title = tr("Interrupted developer session");
+        message = tr("Complete restoration, start the system service and verify its response."); break;
+    case Cause::Local:
+        title = tr("Previous developer session is still running");
+        message = tr("Return to the system service. The local session must close safely before the service starts."); break;
+    case Cause::Ready:
+        title = tr("Ready to connect"); message = tr("The service is running and responding."); break;
+    case Cause::Conflict:
+        title = tr("Another process may be using the connection service");
+        message = tr("Restore checks ownership and cleanup before making changes. Unknown processes will not be stopped."); break;
+    case Cause::Permission:
+        title = tr("Cannot inspect the service with current permissions");
+        message = tr("Restore requests administrator permission and checks service access."); break;
+    case Cause::Incompatible:
+        title = tr("Application and service versions differ");
+        message = tr("Restore checks for a trusted compatible service component and verifies readiness."); break;
+    case Cause::Untrusted:
+        title = tr("Service identity could not be verified");
+        message = tr("Restore checks service identity before making changes."); break;
+    case Cause::Missing:
+        title = tr("Connection service is not installed");
+        message = tr("Install and start the service. Administrator permission will be requested; profiles remain disconnected."); break;
+    case Cause::Stopped:
+        title = servicePermissionCanceled_ ? tr("Permission was not granted") : tr("Connection service is stopped");
+        message = tr("Start the service and allow the operating system permission prompt. Readiness will be verified without connecting a profile."); break;
+    case Cause::Unresponsive:
+        title = tr("Service is running but not responding");
+        message = tr("Restore verifies ownership, stops the service safely and checks cleanup before restarting."); break;
+    case Cause::Transition:
+        title = tr("Service is changing state");
+        message = tr("Restore checks the pending operation within a bounded repair session."); break;
+    case Cause::StopFailed:
+        title = tr("Service could not be stopped");
+        message = tr("Restore checks the failed stop and cleanup. Another service will start only when it is safe."); break;
+    case Cause::Unknown:
+        title = tr("Service state could not be determined");
+        message = tr("Restore diagnoses the service and applies only a remedy supported by fresh evidence."); break;
+    }
+    const bool helperAvailable = repairSnapshot_.helperAvailable;
+    action = repairSnapshot_.executing ? tr("Restoring") : tr("Restore");
+    if (repairFindings_) repairFindings_->setText(tr("Application components: %1\nSystem service: %2\nConnection to service: %3")
+        .arg(helperAvailable ? (repairSnapshot_.helperTrusted ? tr("Available") : tr("Untrusted location")) : tr("Missing"),
+             serviceObservation_ == ServiceObservation::Running ? tr("Running") : serviceObservation_ == ServiceObservation::Stopped ? tr("Stopped") : serviceObservation_ == ServiceObservation::Missing ? tr("Not installed") : tr("Not established"),
+             ready ? tr("Responding") : tr("Not established")));
+    if (repairRefresh_) repairRefresh_->setEnabled(!busy);
+    if (!ready) {
+        connectionLabel_->setText(startupPreparationPending_ || availabilityVerificationDeadline_
+            ? tr("Preparing connection…") : tr("Could not prepare connection"));
+        connectionLabel_->setStyleSheet(themedStyle(startupPreparationPending_ || availabilityVerificationDeadline_
+            ? "color: #66768a" : "color: #c62828"));
+    }
+    if (serviceStatusLabel_ && (development_->interruptedRecovery() || development_->failed())) serviceStatusLabel_->setText(tr("Recovery required"));
+    else if (serviceStatusLabel_ && development_->local()) serviceStatusLabel_->setText(tr("Local Core"));
+    if (coreManagementClose_) coreManagementClose_->setText(tr("Close"));
+    if (repairWatchdogExpired_) {
+        title = tr("Service operation is still running");
+        message = repairFailure_;
+    }
+    if (!busy && !ready && !repairFailure_.isEmpty()) {
+        title = tr("Service repair failed");
+        message = repairFailure_;
+    }
+    if (coreManagementTitle_) coreManagementTitle_->setText(title);
+    if (coreManagement_) coreManagement_->setWindowTitle(tr("Bimeron service"));
+    if (settingsAvailability_) settingsAvailability_->setText(message);
+    const auto probeDescription = [](const QString &category) {
+        if (category == "timeout") return tr("Service check timed out");
+        if (category == "process-failure") return tr("Service check process failed");
+        if (category == "command-failure") return tr("Service check command failed");
+        if (category == "malformed-response") return tr("Invalid service check response");
+        if (category == "observed") return tr("Service state received");
+        return tr("Unknown state");
+    };
+    const QString probeDiagnostic = QStringList{
+        failedProbe_.isEmpty() ? QString{} : tr("Service check: %1; code %2; duration %3 ms; observed %4 UTC")
+            .arg(probeDescription(failedProbe_.value("category").toString())).arg(failedProbe_.value("exitCode").toInt())
+            .arg(failedProbe_.value("durationMs").toDouble()).arg(QDateTime::fromMSecsSinceEpoch(qint64(failedProbe_.value("observedAt").toDouble()), Qt::UTC).toString(Qt::ISODate)),
+        failedProbe_.value("details").toString(),
+        probeCategory_.isEmpty() ? QString{} : tr("Service check: %1; code %2; duration %3 ms; observed %4 UTC").arg(probeDescription(probeCategory_)).arg(probeExitCode_).arg(probeDurationMs_).arg(QDateTime::fromMSecsSinceEpoch(probeObservedAt_, Qt::UTC).toString(Qt::ISODate)),
+    }.filter(QRegularExpression(".+")).join("\n");
+    if (coreManagementDetails_) {
+        // The report retains full diagnostics; keep this non-scrolling dialog bounded.
+        QString summary = QStringList{repairFailure_, startupDiagnostic_, development_->failed() ? development_->status() : QString{}, lastCoreError_}.filter(QRegularExpression(".+")).join("\n");
+        summary = QStringList{probeDiagnostic, summary}.filter(QRegularExpression(".+")).join("\n");
+        coreManagementDetails_->setText(summary.left(420) + (summary.size() > 420 ? QStringLiteral("…") : QString{}));
+        coreManagementDetails_->setVisible(!summary.isEmpty());
+    }
+    if (settingsRetry_) {
+        settingsRetry_->setText(action);
+        settingsRetry_->setVisible(!ready);
+        settingsRetry_->setEnabled(!busy);
+    }
+    if (availabilityDetails_) {
+        availabilityDetails_->setVisible(!ready && !startupPreparationPending_);
+        availabilityDetails_->setEnabled(!busy);
+    }
+    if (interruptedRecoveryButton_) interruptedRecoveryButton_->hide();
+    const bool systemControls = !busy && !development_->local() && !development_->failed();
+    for (auto *button : {serviceInstallButton_, serviceStartButton_, serviceStopButton_, serviceUpdateButton_, serviceUninstallButton_})
+        if (button) button->setEnabled(systemControls);
+    if (serviceAutomaticCheck_) serviceAutomaticCheck_->setEnabled(systemControls);
+    if (serviceRecoveryButton_) serviceRecoveryButton_->setEnabled(systemControls);
+    if (serviceRecoveryButton_) {
+        serviceRecoveryButton_->setVisible(repairDiagnosis_.cause == ConnectionRepair::Cause::Cleanup);
+        serviceRecoveryButton_->setEnabled(!busy);
+    }
+}
+
 void MainWindow::refreshServiceStatus() {
-    if (QCoreApplication::arguments().contains("--visual-check")) return;
+    if (QCoreApplication::arguments().contains("--visual-check") && probeTestMode_.isEmpty()) return;
     if (development_->local() || development_->busy() || development_->failed()) return;
 #if defined(Q_OS_WIN) || defined(Q_OS_LINUX)
     if (!serviceStatusLabel_ || serviceCommandProcess_ || linuxServiceProcess_ || serviceStatusProcess_) return;
     auto *process = new QProcess(this);
     serviceStatusProcess_ = process;
-    const quint64 generation = connectionGeneration_;
-    const auto finished = [this, process, generation](int exitCode, QProcess::ExitStatus exitStatus) {
+    const quint64 generation = serviceProbeGeneration_;
+    const qint64 probeStarted = pollClock_.elapsed();
+    const auto finished = [this, process, generation, probeStarted](int exitCode, QProcess::ExitStatus exitStatus) {
         if (serviceStatusProcess_ != process) return;
         serviceStatusProcess_ = nullptr;
         process->deleteLater();
-        if (generation != connectionGeneration_ || development_->local() || development_->busy() || development_->failed()) return;
+        if (generation != serviceProbeGeneration_ || development_->local() || development_->busy() || development_->failed()) return;
+        probeObservedAt_ = QDateTime::currentMSecsSinceEpoch();
+        probeDurationMs_ = pollClock_.elapsed() - probeStarted;
+        probeExitCode_ = exitCode;
+        const QByteArray standardOutput = process->readAllStandardOutput();
+        const QByteArray standardError = process->readAllStandardError();
+        const QString diagnostic = QString::fromUtf8(standardError + standardOutput).trimmed().left(8192);
+        const QString previousDiagnostic = probeDiagnostic_;
+        probeDiagnostic_.clear();
+        probeCategory_ = process->property("probeTimedOut").toBool() ? QStringLiteral("timeout")
+            : exitStatus != QProcess::NormalExit ? QStringLiteral("process-failure")
+            : exitCode != 0 ? QStringLiteral("command-failure") : QStringLiteral("observed");
         const auto showActions = [this](bool install, bool start, bool stop, bool update, bool uninstall) {
-            serviceInstallButton_->setVisible(install);
+            serviceInstallButton_->hide(); // Installation is the contextual primary action.
             serviceAutomaticCheck_->setVisible(install);
-            serviceStartButton_->setVisible(start);
+            Q_UNUSED(start);
+            serviceStartButton_->hide(); // Starting is the contextual primary action.
             serviceStopButton_->setVisible(stop);
             serviceUpdateButton_->setVisible(update);
             coreUpdateLabel_->setVisible(update);
@@ -2739,48 +3558,77 @@ void MainWindow::refreshServiceStatus() {
             serviceUninstallButton_->setVisible(uninstall);
         };
         if (exitStatus != QProcess::NormalExit || exitCode != 0) {
-            const QString diagnostic = QString::fromUtf8(process->readAllStandardError() + process->readAllStandardOutput());
+            probeDiagnostic_ = diagnostic;
+            serviceStateCode_.clear();
             const bool notInstalled = QRegularExpression(QStringLiteral("service (?:is )?not installed"), QRegularExpression::CaseInsensitiveOption).match(diagnostic).hasMatch();
-            serviceStatusLabel_->setText(notInstalled ? tr("Service: not installed") : tr("Service: unavailable"));
+            failedProbe_ = {{"category", probeCategory_}, {"exitCode", probeExitCode_}, {"durationMs", probeDurationMs_}, {"observedAt", probeObservedAt_}, {"details", probeDiagnostic_}};
+            if (!diagnostic.isEmpty() && diagnostic != previousDiagnostic) appendLog(diagnostic);
+            serviceObservation_ = notInstalled ? ServiceObservation::Missing : ServiceObservation::Failed;
+            updateCoreAvailability();
+            serviceStatusLabel_->setText(notInstalled ? tr("not installed") : tr("unavailable"));
             serviceStatusLabel_->setStyleSheet(themedStyle("color: #66768a"));
             showActions(notInstalled, false, false, false, false);
             return;
         }
-        const QString output = QString::fromUtf8(process->readAllStandardOutput()).trimmed();
-        const QHash<QString, QString> states{{"1", tr("stopped")}, {"2", tr("starting")}, {"3", tr("stopping")}, {"4", tr("running")}, {"5", tr("resuming")}, {"6", tr("pausing")}, {"7", tr("paused")}};
-        const QString code = output.section(':', 1).trimmed();
+        const QString output = QString::fromUtf8(standardOutput).trimmed();
+        const QHash<QString, QString> states{{"1", tr("stopped")}, {"2", tr("starting")}, {"3", tr("stopping")}, {"4", tr("Running")}, {"5", tr("resuming")}, {"6", tr("pausing")}, {"7", tr("paused")}};
+        const QString code = QRegularExpression(QStringLiteral("^Service state: ([1-7])$")).match(output).captured(1);
+        serviceStateCode_ = code;
         const QString state = states.value(code, tr("unknown"));
+        serviceObservation_ = code == "1" ? ServiceObservation::Stopped
+            : code == "4" ? ServiceObservation::Running
+            : code == "7" ? ServiceObservation::Paused
+            : states.contains(code) ? ServiceObservation::Transitional : ServiceObservation::Unknown;
+        if (serviceObservation_ == ServiceObservation::Unknown) {
+            probeCategory_ = QStringLiteral("malformed-response");
+            probeDiagnostic_ = diagnostic;
+            failedProbe_ = {{"category", probeCategory_}, {"exitCode", probeExitCode_}, {"durationMs", probeDurationMs_}, {"observedAt", probeObservedAt_}, {"details", probeDiagnostic_}};
+            if (!diagnostic.isEmpty() && diagnostic != previousDiagnostic) appendLog(diagnostic);
+        }
+        if (serviceObservation_ == ServiceObservation::Transitional) {
+            if (serviceTransitionSince_ < 0) serviceTransitionSince_ = pollClock_.elapsed();
+        } else serviceTransitionSince_ = -1;
+        updateCoreAvailability();
         if (code == "4") {
-            serviceStatusLabel_->setText(tr("Service: <span style=\"color:#15803d; font-weight:600\">%1</span>").arg(state));
-            serviceStatusLabel_->setStyleSheet(themedStyle("color: #66768a"));
+            serviceStatusLabel_->setText(state);
+            serviceStatusLabel_->setStyleSheet(themedStyle("color: #16803c"));
         } else {
-            serviceStatusLabel_->setText(tr("Service: %1").arg(state));
+            serviceStatusLabel_->setText(state);
             serviceStatusLabel_->setStyleSheet(themedStyle((code == "2" || code == "3" || code == "5" || code == "6")
                 ? "color: #b54708; font-weight: 600"
                 : "color: #66768a"));
+        }
+        if (restoreAndStart_) {
+            restoreAndStart_ = false;
+            if (code == "1") QTimer::singleShot(0, this, &MainWindow::requestServiceStart);
+            else if (code == "4") beginAvailabilityVerification();
         }
         if (code == "1") showActions(false, true, false, true, true);
         else if (code == "4") showActions(false, false, true, true, false);
         else if (code == "7") showActions(false, false, true, false, false);
         else {
             showActions(false, false, false, false, false);
-            QTimer::singleShot(1000, this, &MainWindow::refreshServiceStatus);
+            if (serviceObservation_ == ServiceObservation::Transitional
+                && pollClock_.elapsed() - serviceTransitionSince_ < 30000)
+                QTimer::singleShot(1000, this, &MainWindow::refreshServiceStatus);
         }
     };
     connect(process, qOverload<int, QProcess::ExitStatus>(&QProcess::finished), this, finished);
     connect(process, &QProcess::errorOccurred, this, [finished](QProcess::ProcessError error) {
         if (error == QProcess::FailedToStart) finished(-1, QProcess::CrashExit);
     });
-    QTimer::singleShot(5000, process, [process] { if (process->state() != QProcess::NotRunning) process->kill(); });
-    process->start(coreExecutablePath(), {"service", "status"});
+    QTimer::singleShot(5000, process, [process] { if (process->state() != QProcess::NotRunning) { process->setProperty("probeTimedOut", true); process->kill(); } });
+    if (probeTestMode_.isEmpty()) process->start(coreExecutablePath(), {"service", "status"});
+    else process->start(QCoreApplication::applicationFilePath(), {"--repair-probe-fixture", probeTestMode_});
 #endif
 }
 
 void MainWindow::recoverNetwork() {
     if (QMessageBox::warning(this, tr("Emergency recovery"),
         tr("Recovery removes leftover routes, DNS settings, and the kill switch. Direct network access may be restored. Use this only after a cleanup failure. Continue?"),
-        QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes) return;
-    runServiceCommand({"recover"}, tr("Emergency network recovery"));
+        QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes) { startAfterRecovery_ = false; return; }
+    if (development_->interruptedRecovery()) development_->recoverInterruptedNetwork();
+    else runServiceCommand({"recover"}, tr("Emergency network recovery"));
 }
 
 void MainWindow::applyStartupSetting(bool enabled) {
@@ -2923,6 +3771,9 @@ QWidget *MainWindow::developmentPage() {
 }
 
 void MainWindow::updateDevelopment() {
+    if (startupPreparationPending_) finishStartupPreparation(false);
+    availabilityVerificationDeadline_ = 0;
+    availabilityVerificationFailed_ = false;
     autoConnectAttempted_ = true;
     invalidateConnection();
     activeProfileId_.clear();
@@ -2945,6 +3796,7 @@ void MainWindow::updateDevelopment() {
     for (auto *button : {serviceInstallButton_, serviceStartButton_, serviceStopButton_, serviceUpdateButton_, serviceUninstallButton_, serviceRecoveryButton_})
         button->setEnabled(system);
     serviceAutomaticCheck_->setEnabled(system);
+    if (development_->interruptedRecovery()) updateCoreAvailability();
     if (!system) {
         serviceStatusLabel_->setText(tr("System service controls are suspended"));
         serviceUpdateButton_->hide();

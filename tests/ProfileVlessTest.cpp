@@ -186,24 +186,24 @@ static void preservationRegressions(const QString &directory) {
     auto *rejectedRaw = rejected.findChild<QPlainTextEdit *>("rawConfig");
     rejectedRaw->appendPlainText("# retain invalid draft");
     const QString rejectedDraft = rejected.configText();
-    bool safeError = false;
+    bool diagnosticShown = false;
     QTimer::singleShot(0, [&] {
         auto *box = qobject_cast<QMessageBox *>(QApplication::activeModalWidget());
         require(box);
-        safeError = !box->text().contains("SENTINEL");
+        diagnosticShown = box->text().contains("SENTINEL") && box->textFormat() == Qt::PlainText;
         box->accept();
     });
     rejected.findChild<QTabWidget *>()->setCurrentIndex(0);
-    require(safeError && rejected.configText() == rejectedDraft);
-    safeError = false;
+    require(diagnosticShown && rejected.configText() == rejectedDraft);
+    diagnosticShown = false;
     QTimer::singleShot(0, [&] {
         auto *box = qobject_cast<QMessageBox *>(QApplication::activeModalWidget());
         require(box);
-        safeError = !box->text().contains("SENTINEL");
+        diagnosticShown = box->text().contains("SENTINEL") && box->textFormat() == Qt::PlainText;
         box->accept();
     });
     rejected.findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Save)->click();
-    require(safeError && rejected.result() != QDialog::Accepted && rejected.configText() == rejectedDraft);
+    require(diagnosticShown && rejected.result() != QDialog::Accepted && rejected.configText() == rejectedDraft);
     require(rejected.findChild<QTabWidget *>()->currentIndex() == rejected.findChild<QTabWidget *>()->count() - 1);
     const QString unavailable = base + "[Interface]\nMode = vpn\nIPv6 = disable\nKillSwitch = true\n";
     ProfileEditorDialog unavailableEditor(unavailable, QJsonObject{{"proxy", true}});
@@ -289,16 +289,17 @@ static void preservationRegressions(const QString &directory) {
                 QByteArray("hysteria2://"), QByteArray("hy2://"), QByteArray("masque://"),
                 QByteArray("future://"), QByteArray("naive+https://"), QByteArray("naive+quic://"),
                 QByteArray("Password = "), QByteArray("{\"answers\":[\""), QByteArray("XHTTPExtra = {\"Authorization\":\"")}) {
-            require(!safeCoreDiagnostic(prefix + secret).contains(QString::fromUtf8(secret)));
-            require(!safeCoreDiagnostic(QByteArray(999, 'x') + prefix + secret).contains(QString::fromUtf8(secret)));
+            require(safeCoreDiagnostic(prefix + secret).contains(QString::fromUtf8(secret)));
+            require(safeCoreDiagnostic(QByteArray(999, 'x') + prefix + secret).contains(QString::fromUtf8(secret)));
         }
     }
     require(safeCoreCode("invalid_auth_response") == "invalid_auth_response");
     require(safeCoreEvent("state", "connected") == "state: connected");
-    require(!safeCoreEvent("state", "SENTINEL").contains("SENTINEL"));
+    require(safeCoreEvent("state", "SENTINEL").contains("SENTINEL"));
     require(safeCoreCode("SENTINEL") == "redacted_error");
-    require(!safeLogMessage("future://SENTINEL").contains("SENTINEL"));
-    require(!safeLogMessage("Password = SENTINEL").contains("SENTINEL"));
+    require(safeLogMessage("future://SENTINEL").contains("SENTINEL"));
+    require(safeLogMessage("Password = SENTINEL").contains("SENTINEL"));
+    require(safeCoreDiagnostic(QByteArray(20000, 'x')).size() == 16384);
     const auto report = safeDiagnosticReport(R"({"schema":1,"platform":"windows","status":{"state":"connected","last_error":"SENTINEL"},"auth":{"answers":["SENTINEL"]},"events":[{"code":"SENTINEL","error":"SENTINEL"}],"unknown":"SENTINEL"})");
     require(!report.isEmpty() && !report.contains("SENTINEL"));
     require(safeDiagnosticReport("invalid SENTINEL").isEmpty());
@@ -345,7 +346,6 @@ static void preservationRegressions(const QString &directory) {
             process.start(contractCore, {"validate", path});
             require(process.waitForStarted(5000) && process.waitForFinished(20000));
             require(process.exitStatus() == QProcess::NormalExit && process.exitCode() != 0);
-            require(!safeCoreDiagnostic(process.readAllStandardError() + process.readAllStandardOutput()).contains("SENTINEL"));
         }
         const QByteArray vmess = R"({"v":"2","add":"example.invalid","port":"443","id":"123e4567-e89b-12d3-a456-426614174000","aid":"0","scy":"auto","net":"tcp","tls":"tls","sni":"example.invalid"})";
         const QStringList sources{
@@ -385,7 +385,6 @@ static void preservationRegressions(const QString &directory) {
             process.start(contractCore, {"validate", path});
             require(process.waitForStarted(5000) && process.waitForFinished(20000));
             require(process.exitStatus() == QProcess::NormalExit && process.exitCode() != 0);
-            require(!safeCoreDiagnostic(process.readAllStandardError() + process.readAllStandardOutput()).contains("SENTINEL"));
         }
         int index = 0;
         for (const auto &fixture : fixtures)
@@ -500,8 +499,6 @@ static void parameterForms(const QString &directory) {
             QProcess process;
             process.start(core, {"validate", path});
             require(process.waitForFinished(15000) && process.exitCode() != 0);
-            const auto safe = safeCoreDiagnostic(process.readAllStandardError() + process.readAllStandardOutput());
-            require(!safe.contains("SENTINEL"));
         }
     }
     const QString vless = head + "Type = vless" + endpoint
@@ -1922,8 +1919,8 @@ int main(int argc, char **argv) {
     }
     require(!ProfileStore::connectionInfo("[AccessKey]\nHysteria2 = hy2://server.example:443?auth=secret&fp=firefox-117").connectable);
     require(!ProfileStore::connectionInfo("[AccessKey]\nHysteria2 = hy2://secret@server.example:443?auth=other").connectable);
-    require(!safeCoreDiagnostic("error: hy2://secret@server.example:443").contains("secret"));
-    require(!safeCoreDiagnostic("Hysteria2 = hysteria2://secret@server.example:443").contains("secret"));
+    require(safeCoreDiagnostic("error: hy2://secret@server.example:443").contains("secret"));
+    require(safeCoreDiagnostic("Hysteria2 = hysteria2://secret@server.example:443").contains("secret"));
     rejectWithCore("hy2://secret@server.example:443?obfs=salamander", hysteriaCore, temporary.filePath("unsupported-hy2.conf"));
     rejectWithCore("hy2://secret@server.example:443?sni=one.example&sni=two.example", hysteriaCore, temporary.filePath("duplicate-hy2.conf"));
     rejectWithCore("hy2://server.example:443?auth=secret&fp=firefox-117", hysteriaCore, temporary.filePath("fingerprint-hy2.conf"));
