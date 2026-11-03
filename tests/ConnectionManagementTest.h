@@ -288,6 +288,93 @@ struct ConnectionManagementTest {
         editor.QDialog::reject();
         require(selection->apply(previous, core, {}, &error), "restore shared test settings");
     }
+    static void captureGeoSite(QWidget *parent, const QString &destination) {
+        auto settleSearch = [] {
+            QEventLoop loop; QTimer::singleShot(200, &loop, &QEventLoop::quit); loop.exec();
+        };
+        const QString catalogPath = qEnvironmentVariable("BIMERON_GEOSITE_IDS");
+        if (!catalogPath.isEmpty()) {
+            QFile catalogFile(catalogPath); require(catalogFile.open(QIODevice::ReadOnly), "catalog IDs fixture");
+            QStringList catalog;
+            for (const auto &id : QJsonDocument::fromJson(catalogFile.readAll()).array()) catalog.append(id.toString().toLower());
+            GeoSitePicker picker(parent, catalog, {"category-games-!cn", "youtube", "missing-fixture"}, {});
+            picker.findChild<QListWidget *>("geoSiteSections")->setCurrentRow(2);
+            // A hidden parent has no reliable monitor placement on multi-screen hosts.
+            // Anchor every DPR sample to the primary screen before native creation.
+            auto *captureScreen = QApplication::primaryScreen();
+            picker.setScreen(captureScreen);
+            picker.move(captureScreen->availableGeometry().topLeft() + QPoint(24, 24));
+            picker.show(); settleSearch();
+            require(picker.grab().save(destination + ".catalog.png"), "native catalog preview");
+            auto *topics = picker.findChild<QComboBox *>("geoSiteTopics");
+            topics->setCurrentIndex(topics->findData("2-video"));
+            settleSearch();
+            require(picker.grab().save(destination + ".topic.png"), "native topic preview");
+            for (const QString &topicId : {QString("3-operating-systems"), QString("3-updates-drivers"), QString("4-business-crm"), QString("5-weather"), QString("4-ai")}) {
+                picker.findChild<QListWidget *>("geoSiteSections")->setCurrentRow(topicId == "4-ai" ? 7 : topicId.startsWith("4-") ? 4 : topicId.startsWith("5-") ? 5 : 3);
+                topics->setCurrentIndex(topics->findData(topicId));
+                require(topics->currentData() == topicId, "OS split capture selects actual topic");
+                settleSearch();
+                require(picker.grab().save(destination + "." + topicId + ".png"), "native OS split preview");
+            }
+            for (const QString &query : {QString("AI"), QString::fromUtf8("ИИ"), QString("Codex"), QString("Claude"), QString("928Net"), QString("RU-CENTER"), QString("CNET"), QString("madshi"), QString("PayPal"), QString("NVIDIA"), QString("xiaomi-ai")}) {
+                picker.findChild<QLineEdit *>()->setText(query);
+                settleSearch();
+                require(picker.grab().save(destination + ".search-" + query + ".png"), "native bilingual topic search preview");
+            }
+            picker.findChild<QLineEdit *>()->clear();
+            for (int section : {6, 7, 8}) {
+                picker.findChild<QListWidget *>("geoSiteSections")->setCurrentRow(section);
+                settleSearch();
+                require(picker.grab().save(destination + ".section-" + QString::number(section) + ".png"), "native eight-section preview");
+            }
+            for (const QString &id : {QString("google"), QString("youtube"), QString("github"), QString("neuralink")}) {
+                picker.findChild<QListWidget *>("geoSiteSections")->setCurrentRow(geoSiteEntries().value(id).section + 1);
+                picker.findChild<QLineEdit *>()->setText(id);
+                settleSearch();
+                require(picker.grab().save(destination + ".distinction-" + id + ".png"), "native ecosystem/product distinction");
+            }
+            // Capture every newly placed mixed-scope record by exact original ID.
+            for (const QString &id : QStringList{"8btc", "cnet", "falungong", "filimo", "hainanairlines", "hinet", "hisense", "hkbn", "hketgroup", "hupu", "icable", "idg", "ifanr", "kkbox", "kuaishou", "ltn", "madshi", "mega", "nvidia", "okaapps", "oschina", "paypal", "phoenix", "pornhub", "protonmail", "quora", "renren", "secom", "sharethis", "sina", "sohu", "tbank-ru", "uc", "verizon", "vivo", "wiwide", "x", "xiaoheihe", "xiaohongshu", "zhangtao"}) {
+                picker.findChild<QLineEdit *>()->setText(id);
+                settleSearch();
+                require(picker.grab().save(destination + ".mixed-" + id + ".png"), "native mixed-scope preview");
+            }
+            picker.findChild<QLineEdit *>()->clear();
+            picker.findChild<QListWidget *>("geoSiteSections")->setCurrentRow(9);
+            settleSearch();
+            require(picker.grab().save(destination + ".unknown.png"), "native unknown preview");
+            picker.findChild<QPushButton *>("geoSiteSelectionCount")->click();
+            settleSearch();
+            require(picker.grab().save(destination + ".selected.png"), "native selected preview");
+            auto *selectedMode = picker.findChild<QPushButton *>("geoSiteSelectionCount");
+            auto *query = picker.findChild<QLineEdit *>();
+            query->setText("youtube"); settleSearch();
+            require(picker.grab().save(destination + ".selected-search.png"), "native selected search intersection");
+            query->setText("fixture-no-match"); settleSearch();
+            require(picker.grab().save(destination + ".selected-empty.png"), "native selected no-match state");
+            query->clear();
+            selectedMode->click();
+            query->setText("a"); settleSearch();
+            require(picker.grab().save(destination + ".grouped-search.png"), "native grouped global search and clear button");
+            query->clear();
+            picker.resize(590, 350); settleSearch();
+            if (picker.size() != QSize(590, 350))
+                fprintf(stderr, "Picker minimum: %dx%d, hint %dx%d, DPR %.6f, screen %s\n",
+                    picker.width(), picker.height(), picker.minimumSizeHint().width(), picker.minimumSizeHint().height(),
+                    picker.devicePixelRatioF(), qPrintable(picker.screen()->name()));
+            require(picker.size() == QSize(590, 350), "minimum picker geometry");
+            require(picker.grab().save(destination + ".minimum.png"), "native minimum picker preview");
+            QFile geometry(destination + ".catalog.json");
+            require(geometry.open(QIODevice::WriteOnly), "catalog geometry log");
+            geometry.write(QJsonDocument(QJsonObject{{"dpr", picker.devicePixelRatioF()},
+                {"width", picker.width()}, {"height", picker.height()},
+                {"screen", picker.screen()->name()},
+                {"sectionsWidth", picker.findChild<QListWidget *>("geoSiteSections")->width()},
+                {"topicWidth", topics->width()}}).toJson());
+            picker.reject();
+        }
+    }
     static int profileGeometry(QApplication &app, const QString &destination) {
         class Translator final : public QTranslator {
         public:
@@ -305,6 +392,12 @@ struct ConnectionManagementTest {
         downloadFeedback(destination);
         MainWindow window;
         window.core_.cancel();
+        if (app.arguments().contains("--geosite-only")) {
+            require(!qEnvironmentVariable("BIMERON_GEOSITE_IDS").isEmpty(), "real catalog for isolated picker captures");
+            captureGeoSite(&window, destination);
+            app.removeTranslator(&translator);
+            return 0;
+        }
         window.core_.setEndpoint("bimeron-geometry-" + QUuid::createUuid().toString());
         for (auto *timer : window.findChildren<QTimer *>()) timer->stop();
         QTemporaryDir directory;
@@ -419,68 +512,7 @@ struct ConnectionManagementTest {
                 }
             }
             }
-            const QString catalogPath = qEnvironmentVariable("BIMERON_GEOSITE_IDS");
-            if (!catalogPath.isEmpty()) {
-                QFile catalogFile(catalogPath); require(catalogFile.open(QIODevice::ReadOnly), "catalog IDs fixture");
-                QStringList catalog;
-                for (const auto &id : QJsonDocument::fromJson(catalogFile.readAll()).array()) catalog.append(id.toString().toLower());
-                GeoSitePicker picker(dialog, catalog, {"category-games-!cn", "youtube", "missing-fixture"}, {});
-                picker.findChild<QListWidget *>("geoSiteSections")->setCurrentRow(2);
-                picker.show(); QApplication::processEvents();
-                require(picker.grab().save(destination + ".catalog.png"), "native catalog preview");
-                auto *topics = picker.findChild<QComboBox *>("geoSiteTopics");
-                topics->setCurrentIndex(topics->findData("2-video"));
-                QApplication::processEvents();
-                require(picker.grab().save(destination + ".topic.png"), "native topic preview");
-                for (const QString &topicId : {QString("3-operating-systems"), QString("3-updates-drivers"), QString("4-business-crm"), QString("5-weather"), QString("4-ai")}) {
-                    picker.findChild<QListWidget *>("geoSiteSections")->setCurrentRow(topicId == "4-ai" ? 7 : topicId.startsWith("4-") ? 4 : topicId.startsWith("5-") ? 5 : 3);
-                    topics->setCurrentIndex(topics->findData(topicId));
-                    require(topics->currentData() == topicId, "OS split capture selects actual topic");
-                    QApplication::processEvents();
-                    require(picker.grab().save(destination + "." + topicId + ".png"), "native OS split preview");
-                }
-                for (const QString &query : {QString("AI"), QString::fromUtf8("ИИ"), QString("Codex"), QString("Claude"), QString("928Net"), QString("RU-CENTER"), QString("CNET"), QString("madshi"), QString("PayPal"), QString("NVIDIA"), QString("xiaomi-ai")}) {
-                    picker.findChild<QLineEdit *>()->setText(query);
-                    QApplication::processEvents();
-                    require(picker.grab().save(destination + ".search-" + query + ".png"), "native bilingual topic search preview");
-                }
-                picker.findChild<QLineEdit *>()->clear();
-                for (int section : {6, 7, 8}) {
-                    picker.findChild<QListWidget *>("geoSiteSections")->setCurrentRow(section);
-                    QApplication::processEvents();
-                    require(picker.grab().save(destination + ".section-" + QString::number(section) + ".png"), "native eight-section preview");
-                }
-                for (const QString &id : {QString("google"), QString("youtube"), QString("github"), QString("neuralink")}) {
-                    picker.findChild<QListWidget *>("geoSiteSections")->setCurrentRow(geoSiteEntries().value(id).section + 1);
-                    picker.findChild<QLineEdit *>()->setText(id);
-                    QApplication::processEvents();
-                    require(picker.grab().save(destination + ".distinction-" + id + ".png"), "native ecosystem/product distinction");
-                }
-                // Capture every newly placed mixed-scope record by exact original ID.
-                for (const QString &id : QStringList{"8btc", "cnet", "falungong", "filimo", "hainanairlines", "hinet", "hisense", "hkbn", "hketgroup", "hupu", "icable", "idg", "ifanr", "kkbox", "kuaishou", "ltn", "madshi", "mega", "nvidia", "okaapps", "oschina", "paypal", "phoenix", "pornhub", "protonmail", "quora", "renren", "secom", "sharethis", "sina", "sohu", "tbank-ru", "uc", "verizon", "vivo", "wiwide", "x", "xiaoheihe", "xiaohongshu", "zhangtao"}) {
-                    picker.findChild<QLineEdit *>()->setText(id);
-                    QApplication::processEvents();
-                    require(picker.grab().save(destination + ".mixed-" + id + ".png"), "native mixed-scope preview");
-                }
-                picker.findChild<QLineEdit *>()->clear();
-                picker.findChild<QListWidget *>("geoSiteSections")->setCurrentRow(9);
-                QApplication::processEvents();
-                require(picker.grab().save(destination + ".unknown.png"), "native unknown preview");
-                picker.findChild<QPushButton *>("geoSiteSelectionCount")->click();
-                QApplication::processEvents();
-                require(picker.grab().save(destination + ".selected.png"), "native selected preview");
-                picker.findChild<QPushButton *>("geoSiteSelectionCount")->click();
-                picker.resize(590, 350); QApplication::processEvents();
-                require(picker.size() == QSize(590, 350), "minimum picker geometry");
-                require(picker.grab().save(destination + ".minimum.png"), "native minimum picker preview");
-                QFile geometry(destination + ".catalog.json");
-                require(geometry.open(QIODevice::WriteOnly), "catalog geometry log");
-                geometry.write(QJsonDocument(QJsonObject{{"dpr", picker.devicePixelRatioF()},
-                    {"width", picker.width()}, {"height", picker.height()},
-                    {"sectionsWidth", picker.findChild<QListWidget *>("geoSiteSections")->width()},
-                    {"topicWidth", topics->width()}}).toJson());
-                picker.reject();
-            }
+            captureGeoSite(&window, destination);
             QFile log(destination + ".json");
             require(log.open(QIODevice::WriteOnly), "geometry log");
             log.write(QJsonDocument(observations).toJson()); log.close();

@@ -1,5 +1,35 @@
 # GeoSite picker trial
 
+## Accepted Other labels and empty sections follow-up — 2026-11-03
+
+Authorized for implementation. This delta supersedes historical labels below.
+Use Miscellaneous / Прочее for the stable `without` topic key, after all named
+topics and only under the existing meaningful-subset rule. Topicless scopes keep
+one disabled All topics option. Use Other / Другое for sidebar and search heading.
+Hide all empty content sections using unique available IDs only; unavailable
+selections, searches and selection filters never affect sidebar population.
+Keep fixed row identities (AI 7, Other 9), All groups always visible, and reset any
+hidden current section to All groups before deriving navigation state. Preserve
+Cursor's accepted AI placement and third priority, all IDs and serialization.
+Acceptance: sparse/empty/full catalogs have the correct visible section subset;
+Other appears only for unknown available IDs; Miscellaneous is last and restores
+by key; global modes preserve navigation and never restore a hidden section.
+Update directly affected fixture expectations, including Cursor's baseline reverse
+migration. Per explicit user instruction, run no tests, CTest, visual fixtures,
+screenshots, benchmarks or profiling. Incrementally build all four existing Release
+caches and launch only the normal Windows x64 GUI with the documented Qt environment.
+No package, dependency, settings, service, commit, push or PR changes.
+
+## Cursor placement and priority — 2026-11-03
+
+User-approved delta: move `cursor` from Work and education / Software development
+to Artificial intelligence / AI tools (`4-ai`). In the effective AI browsing view,
+the priority prefix is ChatGPT (`openai`), Claude (`anthropic`), Cursor (`cursor`),
+then the ordinary alphabetical remainder. Search and selected-view ordering retain
+their existing rules. Preserve Cursor's label, type, ID and search aliases.
+Tests are not run for this delta at the user's explicit request; existing test
+expectations may require adjustment before the next validation run.
+
 Status: implemented eight-section taxonomy, 2026-11-03. Baseline: e28d5d3 plus preserved dirty metadata transfer.
 Historical specifications and validation reports are retained below.
 
@@ -808,3 +838,149 @@ release, dependency, Core, settings, service, commit, push or PR operation occur
 Remaining limits are installed-source semantic correspondence, user-approved
 editorial provenance, ARM64 runtime and the earlier native clipboard/Paste
 instability; full catalog coverage does not remove these evidence limits.
+
+
+## Unified ordering and interaction implementation — 2026-11-03
+
+The accepted `geosite-list-order-plan.md` interaction addendum supersedes all
+historical collection-first and search-overrides-selected descriptions above.
+The picker now interleaves available entries alphabetically, uses only openai
+then anthropic as the effective AI prefix, and groups nonempty global search by
+the eight navigation sections, then Unclassified. Unavailable selections remain
+in a separate trailing block. Search intersects Only selected. Both global modes
+disable section/topic navigation and restore the browsing topic on exit.
+Topic options derive from available classified entries; topicless scopes expose
+one disabled All topics option. Counts include every checked ID; empty-state
+text distinguishes selected, selected-search and ordinary search. Native Qt
+clear-button behavior includes localized accessibility/tooltip text and keyboard
+activation. Query, checks and serialized ID order survive transitions.
+
+The reviewed label table records 655 Russian brand-first names and the two
+English ChatGPT / OpenAI (Codex), Claude / Anthropic names. All former complete
+EN/RU labels remain cached search aliases. Exact baseline comparison preserves
+1561 IDs, all kinds, sections, topics, compatibility aliases and scope metadata;
+there remain eight sections, 46 topics and 1156 topic assignments. Translation
+keys and alias IDs are unique. No automatic runtime label transformation exists.
+
+Focused bilingual fixtures cover all four query/selected combinations and both
+transition directions, restored topics, global control state, meaningful topic
+options, whitespace, unavailable/unknown IDs, zero selection, no matches,
+unchecking the last selected match, clear-button Space activation, AI subsets,
+alphabetical/group order, current-item preservation, cancellation and deterministic
+serialization. Existing profile/routing fixtures remain active. An old fixture
+counting collection/service headings was changed to count actual ID rows.
+An implementation failure allowing unavailable unknown rows into Unclassified
+was fixed by checking availability explicitly; no assertion was bypassed.
+
+Performance diagnosis used real-catalog elapsed timings for construction, first
+search, 100 repeated query edits, 100 selected toggles and 100 AI/browse switches.
+The initial remove-at-front/reinsert approach measured Linux mode switches at
+88.06 ms; removing from the end reduced this to 19.25 ms. The final Qt model sort
+with cached localized alphabetical rank measured 0.666 ms per switch. This is
+elapsed-time profiling of the changed path, not CPU sampling. Final Linux sample:
+construction 20.37 ms, first grouped search 1.76 ms, repeated queries 0.858 ms,
+selected toggles 0.317 ms (100 repetitions each). Earlier baseline single samples
+were 25.61/0.84 ms construction/filter. First search now includes one regrouping;
+ordinary query edits do not sort or recreate rows. Samples exclude Core
+enumeration, parsing and presentation, vary with host load, and impose no timing
+gate or end-to-end latency guarantee.
+
+The four existing GUI-only Release application/test configurations compiled:
+Windows x64/ARM64 and WSL Linux amd64/arm64. No configure, dependency, Core pin,
+installer or packaging flow changed. ARM64 is compile-only on this x64 host.
+Final Linux amd64 offscreen CTest passed 5/5 in 31.58 seconds using the reviewed
+local desktop-bridge Core CLI and real catalog. The optional unrelated protocol
+CLI overrides were not supplied.
+
+The full native editor capture at fractional scaling encountered the existing
+`switching tabs must not grow the dialog` geometry assertion before picker
+acceptance. The picker capture function is now shared by the full fixture and
+an explicit `--geosite-only` path using the same MainWindow stylesheet. Normal
+CTest retains the original editor/manager geometry checks. This independently
+validates picker DPR appearance without claiming to fix unrelated editor scaling.
+
+
+The first unanchored capture series also exposed monitor migration: a requested
+factor 4/3 yielded actual DPR 1.333 on another monitor, and a later factor 2/3
+sample ran below DPR 1 and failed the exact minimum-size fixture. The shared
+capture now anchors the picker to the primary screen before native creation,
+records its screen name/DPR, and prints actual minimum geometry on failure.
+The unchanged exact 590x350 assertion passed on the anchored Russian DPR 1 run.
+The capture driver verifies every measured DPR against its target. Historical
+failed/unanchored evidence remains under `order-verified-*`; final anchored
+captures use `order-screen-*`. No product geometry assertion was weakened.
+
+
+Final native matrix: EN/RU × light/dark × measured DPR 1/1.5/2, all on
+LG HDR 4K. `build/geosite-classification/order-screen-manifest.json` records 12
+combinations and 96 scenario PNGs: selected/unavailable, topicless Ecosystems,
+grouped search (including the multi-section Google query), selected-search,
+selected no-match, AI and minimum size. Every combination passed exact 590x350
+minimum geometry and measured-DPR validation. Representative EN/RU images across
+all scales and both themes were visually reviewed: text/IDs elide independently,
+section headings are readable, the native clear icon has contrast and padding,
+disabled context is muted, selected mode is visible, and AI starts ChatGPT then
+Claude. Native icon/style rendering is retained without a shared input-style
+change. This is picker appearance evidence, not installed routing acceptance.
+
+
+Final Windows x64 native CTest passed 5/5 in 36.66 seconds with Qt 6.8.3 Windows
+platform, documented font/plugin paths, the real catalog and reviewed local
+GeoData bridge CLI. The native clipboard/Paste fixture passed unchanged; this
+run does not explain away its historical intermittent failure. Final Windows
+real-catalog samples: construction 34.70 ms, first grouped search 1.69 ms,
+repeated queries 0.800 ms, selected toggles 0.339 ms, AI/browse switches 0.651 ms
+(100 repetitions each). The initial implementation's Windows switches were
+269.46 ms before the model-sort correction. These diagnostic samples share the
+limits stated above and are not a statistically controlled performance guarantee.
+
+Final incremental build logs are `order-verified-build-windows-amd64.log`,
+`order-verified-build-windows-arm64.log`, `order-verified-build-linux-amd64.log`
+and `order-verified-build-linux-arm64.log`, all successful. Final CTest logs are
+`order-verified-ctest-windows.log` and `order-verified-ctest-linux.log` under
+ignored build/geosite-classification. Exact-field/translation validation is
+`order-exact-validation.json`; captures are indexed by `order-screen-manifest.json`.
+The build guide documents the shared isolated capture option and screen anchoring;
+no supported build/package flow changed. The accepted plan contains all exact
+label changes and the cached-rank implementation rationale.
+
+Final diff review checked preserved taxonomy/kinds/scopes, literal unknown IDs,
+availability, selection serialization, localized/legacy search, stable model
+identity, noninteractive headings, signal blocking, mode restoration, accessibility,
+and unnecessary complexity. No unresolved task-code correctness/security defect
+was found. `git diff --check` and the untracked plan whitespace check passed.
+All changes remain local and uncommitted; previous partial work is preserved.
+No dependencies, packages, installed settings/services, Core mutations, commit,
+push, PR or subagents were used. Remaining limits are ARM64 runtime, package/
+installed-routing acceptance, inherited catalog scope/provenance, and the separate
+fractional editor-geometry/historical clipboard fixture risks. No release is prepared.
+
+## Other labels and empty sections implementation outcome — 2026-11-03
+
+Implemented the accepted follow-up above. Sidebar population is computed once
+from the unique available IDs, with fixed row indices and a visible All groups
+fallback. Other uses the same label in search headings. Miscellaneous retains
+`without`, follows all named topics, and preserves the meaningful-subset rule.
+Previous dirty work, including Cursor's AI placement and third priority, remains.
+Directly impacted fixture expectations now account for hidden sparse sections,
+Miscellaneous selection by stable key, and reversing Cursor's earlier migration
+for the historical metadata baseline (28 current AI entries).
+
+All four existing incremental Release builds completed with exit code 0:
+Windows amd64, Windows ARM64, WSL Linux amd64 and WSL Linux arm64. Independent
+build directories ran concurrently; Linux builds used two jobs each. Logs:
+`build/geosite-classification/other-build-windows-amd64.log`,
+`other-build-windows-arm64.log`, `other-build-linux-amd64.log` and
+`other-build-linux-arm64.log`. The documented stop-build-app guard ran before
+Windows builds. No reconfiguration, dependencies or packages were needed.
+The full existing build targets compiled fixture executables but did not run them.
+
+Only the normal `build/windows-amd64/Release/bimeron-desktop.exe` was launched,
+with Qt 6.8.3 msvc2022_64 bin/plugins and QT_QPA_PLATFORM=windows, visible normal
+window requested; running PID 23816. This is a launch, not runtime acceptance.
+Tests, CTest, screenshots, visual fixtures, benchmarks and profiling were not run,
+as explicitly requested. ARM64 runtime and interface behavior remain unvalidated.
+Diff review found no additional taxonomy, ID, routing or serialization changes in
+this follow-up; fixed AI/Other row mapping is retained. `git diff --check` passed.
+Historical reports remain intact. Build/packaging workflow is unchanged; no
+settings, installed Core/service, commit, push or PR changes were made.

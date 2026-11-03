@@ -16,6 +16,7 @@
 #include <QStyledItemDelegate>
 #include <QPainter>
 #include <QStyle>
+#include <QToolButton>
 
 // Keep Qt's native indicator/focus rendering; elide labels and IDs independently.
 class GeoSiteRowDelegate final : public QStyledItemDelegate {
@@ -48,6 +49,18 @@ public:
     }
 };
 
+// Qt's model sort retains row identity, hidden state and persistent selection.
+// Rank is cached once using the existing localized-name/ID comparison.
+class GeoSiteListItem final : public QListWidgetItem {
+public:
+    using QListWidgetItem::QListWidgetItem;
+    int rank = 0;
+    int order = 0;
+    bool operator<(const QListWidgetItem &other) const override {
+        return order < static_cast<const GeoSiteListItem &>(other).order;
+    }
+};
+
 class GeoSitePicker final : public QDialog {
 public:
     GeoSitePicker(QWidget *parent, const QStringList &available, QStringList selected,
@@ -57,6 +70,7 @@ public:
         resize(728, 473);
         auto *layout = new QVBoxLayout(this);
         auto *search = new QLineEdit;
+        search->setClearButtonEnabled(true);
         search->setPlaceholderText(tr("Search names or IDs"));
         search->setAccessibleName(tr("Search names or IDs"));
         layout->addWidget(search);
@@ -83,10 +97,10 @@ public:
         sections->setWordWrap(true);
         sections->setTextElideMode(Qt::ElideNone);
         sections->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-        sections->setStyleSheet("QListWidget { border: 0; border-right: 1px solid #dce5ef; border-radius: 0; } QListWidget::item { min-height: 28px; padding: 2px 7px; border: 0; }");
+        sections->setStyleSheet("QListWidget { border: 0; border-right: 1px solid #dce5ef; border-radius: 0; } QListWidget::item:disabled { color: #95a2b2; } QListWidget::item { min-height: 28px; padding: 2px 7px; border: 0; }");
         sections->addItem(tr("All groups"));
         for (const auto &section : geoSiteSections()) sections->addItem(QObject::tr(qPrintable(section)));
-        sections->addItem(tr("Unclassified"));
+        sections->addItem(tr("Other"));
         sections->setCurrentRow(0);
         body->addWidget(sections);
         list_ = new QListWidget;
@@ -105,42 +119,48 @@ public:
         groups.removeDuplicates();
         for (const auto &id : selected) if (!groups.contains(id)) groups.append(id);
         const QSet<QString> availableSet(available.begin(), available.end());
-        const auto bucket = [&availableSet](const QString &id) {
-            if (!availableSet.contains(id)) return 3;
-            const auto it = geoSiteEntries().constFind(id);
-            return it == geoSiteEntries().cend() ? 2 : (it->collection ? 0 : 1);
-        };
-        std::sort(groups.begin(), groups.end(), [&](const QString &a, const QString &b) {
-            if (bucket(a) != bucket(b)) return bucket(a) < bucket(b);
+        QSet<int> populatedSections;
+        for (const auto &id : availableSet) {
+            const auto entry = geoSiteEntries().constFind(id);
+            populatedSections.insert(entry == geoSiteEntries().cend() ? 9 : entry->section + 1);
+        }
+        // Retain fixed row identities used by navigation and AI ordering.
+        for (int row = 1; row < sections->count(); ++row)
+            sections->item(row)->setHidden(!populatedSections.contains(row));
+        std::sort(groups.begin(), groups.end(), [](const QString &a, const QString &b) {
             const QString an = geoSiteName(a), bn = geoSiteName(b);
             const int compared = QString::localeAwareCompare(an.isEmpty() ? a : an, bn.isEmpty() ? b : bn);
             return compared == 0 ? a < b : compared < 0;
         });
-        int previous = -1;
+        int rank = 0;
+        // Rows retain identity while ordering changes; role +2 means unavailable.
         for (const auto &id : groups) {
-            const int group = bucket(id);
-            if (group != previous) {
-                auto *heading = new QListWidgetItem(group == 0 ? tr("Collections") : group == 1 ? tr("Individual services") : group == 2 ? tr("Unclassified") : tr("Unavailable groups"), list_);
-                heading->setFlags(Qt::NoItemFlags);
-                heading->setBackground(QColor("#f7f9fc"));
-                QFont font = heading->font(); font.setBold(true); heading->setFont(font);
-                previous = group;
-            }
             const QString name = geoSiteName(id);
             QString label = name.isEmpty() ? id : name + " (" + id + ')';
             if (!availableSet.contains(id)) label += " — " + tr("Unavailable");
-            auto *item = new QListWidgetItem(label, list_);
+            auto *item = new GeoSiteListItem(label, list_);
+            item->rank = rank++;
             item->setToolTip(label);
             item->setData(Qt::UserRole + 3, name);
             item->setData(Qt::UserRole + 4, availableSet.contains(id) ? QString{} : " — " + tr("Unavailable"));
             item->setData(Qt::UserRole, id);
             const auto it = geoSiteEntries().constFind(id);
             item->setData(Qt::UserRole + 1, it == geoSiteEntries().cend() ? -1 : it->section);
-            item->setData(Qt::UserRole + 2, group);
+            item->setData(Qt::UserRole + 2, !availableSet.contains(id));
             item->setData(Qt::UserRole + 5, it == geoSiteEntries().cend() || !it->topic ? QString{} : QString::fromUtf8(it->topic));
             item->setData(Qt::UserRole + 6, geoSiteSearchText(id));
             item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
             item->setCheckState(selected.contains(id) ? Qt::Checked : Qt::Unchecked);
+        }
+        // Keep all potential headings; visibility follows their matching rows.
+        for (int section = 0; section < 10; ++section) {
+            const QString title = section == 9 ? tr("Unavailable groups") : section == 8 ? tr("Other")
+                : QObject::tr(qPrintable(geoSiteSections().at(section)));
+            auto *heading = new GeoSiteListItem(title, list_);
+            heading->setData(Qt::UserRole + 1, section);
+            heading->setFlags(Qt::NoItemFlags);
+            heading->setBackground(palette().alternateBase());
+            QFont font = heading->font(); font.setBold(true); heading->setFont(font);
         }
         auto *empty = new QLabel(tr("No matching groups"));
         layout->addWidget(empty);
@@ -148,68 +168,122 @@ public:
         auto *count = new QPushButton;
         count->setObjectName("geoSiteSelectionCount");
         count->setCheckable(true);
+        count->setStyleSheet("QPushButton:checked { color: #1677ff; border-color: #1677ff; }");
         count->setAutoDefault(false);
         count->setToolTip(tr("Show only selected groups"));
         count->setAccessibleName(tr("Only selected"));
         footer->addWidget(count); footer->addStretch();
         auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
         footer->addWidget(buttons); layout->addLayout(footer);
-        auto updateCount = [this, count] {
-            count->setText((count->isChecked() ? tr("Selected: %1 · Only selected") : tr("Selected: %1")).arg(selectedIds().size()));
-        };
-        connect(list_, &QListWidget::itemChanged, this, updateCount);
-        connect(count, &QPushButton::toggled, this, updateCount);
-        updateCount();
         auto filter = [this, search, sections, topics, count, empty] {
+            const QSignalBlocker rowsBlocked(list_);
+            const QSignalBlocker topicsBlocked(topics);
             const QString query = search->text().trimmed();
-            const QString topic = topics->currentData().toString();
-            QSet<int> visibleBuckets;
-            for (int i = 0; i < list_->count(); ++i) {
-                auto *item = list_->item(i);
-                if (!item->data(Qt::UserRole).isValid()) continue;
-                const int section = item->data(Qt::UserRole + 1).toInt();
-                const bool sectionMatch = sections->currentRow() == 0
-                    || (sections->currentRow() == geoSiteSections().size() + 1 ? item->data(Qt::UserRole + 2).toInt() == 2
-                        : section == sections->currentRow() - 1);
-                const bool topicMatch = topic.isEmpty() || (topic == "without" ? section >= 0 && item->data(Qt::UserRole + 5).toString().isEmpty()
-                    : item->data(Qt::UserRole + 5).toString() == topic);
-                const bool visible = !query.isEmpty() ? item->data(Qt::UserRole + 6).toString().contains(query, Qt::CaseInsensitive)
-                    : count->isChecked() ? item->checkState() == Qt::Checked : sectionMatch && topicMatch;
-                item->setHidden(!visible);
-                if (visible) visibleBuckets.insert(item->data(Qt::UserRole + 2).toInt());
+            const bool selectedOnly = count->isChecked();
+            const bool global = !query.isEmpty() || selectedOnly;
+            if (!sections->currentItem() || sections->currentItem()->isHidden()) {
+                const QSignalBlocker sectionsBlocked(sections);
+                sections->setCurrentRow(0);
             }
-            empty->setVisible(visibleBuckets.isEmpty());
-            int bucket = -1;
+            const int sectionRow = sections->currentRow();
+            if (!global && !globalMode_ && topicScope_ == sectionRow)
+                browseTopic_ = topics->currentData().toString();
+            if (global != globalMode_ || topicScope_ != sectionRow) {
+                topics->clear();
+                topics->addItem(tr("All topics"), QString{});
+                if (!global) {
+                    if (topicScope_ != sectionRow) browseTopic_.clear();
+                    QSet<QString> present;
+                    bool without = false;
+                    for (int i = 0; i < list_->count(); ++i) {
+                        const auto *item = list_->item(i);
+                        if (!item->data(Qt::UserRole).isValid() || item->data(Qt::UserRole + 2).toBool()) continue;
+                        const int section = item->data(Qt::UserRole + 1).toInt();
+                        if (section < 0 || (sectionRow != 0 && section != sectionRow - 1)) continue;
+                        const QString topic = item->data(Qt::UserRole + 5).toString();
+                        if (topic.isEmpty()) without = true; else present.insert(topic);
+                    }
+                    if (!present.isEmpty()) {
+                        for (const auto &topic : geoSiteTopics())
+                            if (present.contains(QString::fromUtf8(topic.id)))
+                                topics->addItem(QObject::tr(topic.name), QString::fromUtf8(topic.id));
+                        if (without) topics->addItem(tr("Miscellaneous"), "without");
+                    }
+                    const int restored = topics->findData(browseTopic_);
+                    topics->setCurrentIndex(restored < 0 ? 0 : restored);
+                    browseTopic_ = topics->currentData().toString();
+                }
+                topicScope_ = sectionRow;
+                globalMode_ = global;
+            }
+            sections->setEnabled(!global);
+            topics->setEnabled(!global && topics->count() > 1);
+            const QString scopeTip = global ? tr("Search and Only selected include all sections and topics") : QString{};
+            sections->setToolTip(scopeTip); topics->setToolTip(scopeTip);
+            search->setPlaceholderText(selectedOnly ? tr("Search selected names or IDs") : tr("Search names or IDs"));
+            search->setAccessibleName(search->placeholderText());
+            count->setToolTip(tr("Show only selected groups; typing searches within the selection"));
+            const QString topic = topics->currentData().toString();
+            const int mode = !query.isEmpty() ? 2 : !selectedOnly && (sectionRow == 7 || topic == "4-ai") ? 1 : 0;
+            if (mode != orderingMode_) {
+                const int stride = list_->count() + 1;
+                for (int i = 0; i < list_->count(); ++i) {
+                    auto *item = static_cast<GeoSiteListItem *>(list_->item(i));
+                    if (!item->data(Qt::UserRole).isValid()) {
+                        const int section = item->data(Qt::UserRole + 1).toInt();
+                        item->order = mode == 2 || section == 9 ? (section + 1) * stride : -1;
+                        continue;
+                    }
+                    const bool unavailable = item->data(Qt::UserRole + 2).toBool();
+                    const int section = item->data(Qt::UserRole + 1).toInt();
+                    const QString id = item->data(Qt::UserRole).toString();
+                    if (unavailable) item->order = 10 * stride + item->rank + 1;
+                    else if (mode == 2) item->order = (section < 0 ? 9 : section + 1) * stride + item->rank + 1;
+                    else if (mode == 1) item->order = id == "openai" ? 0 : id == "anthropic" ? 1 : id == "cursor" ? 2 : item->rank + 3;
+                    else item->order = item->rank + 1;
+                }
+                list_->sortItems();
+                orderingMode_ = mode;
+            }
+            int visibleCount = 0, checkedCount = 0;
+            QListWidgetItem *heading = nullptr;
             for (int i = 0; i < list_->count(); ++i) {
                 auto *item = list_->item(i);
                 if (!item->data(Qt::UserRole).isValid()) {
-                    ++bucket;
-                    // A catalog can omit any bucket; use the following row's bucket.
-                    if (i + 1 < list_->count()) bucket = list_->item(i + 1)->data(Qt::UserRole + 2).toInt();
-                    item->setHidden(!visibleBuckets.contains(bucket));
+                    item->setHidden(true);
+                    heading = mode == 2 || item->data(Qt::UserRole + 1).toInt() == 9 ? item : nullptr;
+                    continue;
                 }
+                const int section = item->data(Qt::UserRole + 1).toInt();
+                const bool checked = item->checkState() == Qt::Checked;
+                checkedCount += checked;
+                const bool sectionMatch = sectionRow == 0 || (sectionRow == 9 ? section < 0 && !item->data(Qt::UserRole + 2).toBool() : section == sectionRow - 1);
+                const bool topicMatch = topic.isEmpty() || (topic == "without" ? section >= 0 && item->data(Qt::UserRole + 5).toString().isEmpty()
+                    : item->data(Qt::UserRole + 5).toString() == topic);
+                const bool visible = (!selectedOnly || checked)
+                    && (query.isEmpty() || item->data(Qt::UserRole + 6).toString().contains(query, Qt::CaseInsensitive))
+                    && (global || (sectionMatch && topicMatch));
+                item->setHidden(!visible);
+                if (visible) { ++visibleCount; if (heading) heading->setHidden(false); }
             }
+            count->setText((selectedOnly ? tr("Selected: %1 · Only selected") : tr("Selected: %1")).arg(checkedCount));
+            empty->setText(selectedOnly ? (query.isEmpty() ? tr("No selected groups") : tr("No matching selected groups")) : tr("No matching groups"));
+            empty->setVisible(visibleCount == 0);
         };
-        auto resetTopics = [sections, topics, count, filter] {
-            const QSignalBlocker blocker(topics);
-            topics->clear();
-            topics->addItem(tr("All topics"), QString{});
-            topics->addItem(tr("Without topic refinement"), "without");
-            for (const auto &topic : geoSiteTopics())
-                if (sections->currentRow() == 0 || topic.section == sections->currentRow() - 1)
-                    topics->addItem(QObject::tr(topic.name), QString::fromUtf8(topic.id));
-            topics->setEnabled(sections->currentRow() != geoSiteSections().size() + 1);
-            count->setChecked(false);
-            filter();
-        };
+        for (auto *button : search->findChildren<QToolButton *>()) {
+            button->setToolTip(tr("Clear search"));
+            button->setAccessibleName(tr("Clear search"));
+            button->setFocusPolicy(Qt::StrongFocus);
+            connect(button, &QToolButton::clicked, search, [search] { search->setFocus(); });
+        }
         connect(search, &QLineEdit::textChanged, this, filter);
-        connect(sections, &QListWidget::currentRowChanged, this, resetTopics);
-        connect(topics, &QComboBox::currentIndexChanged, this, [count, filter] { count->setChecked(false); filter(); });
+        connect(sections, &QListWidget::currentRowChanged, this, filter);
+        connect(topics, &QComboBox::currentIndexChanged, this, filter);
         connect(count, &QPushButton::toggled, this, filter);
         connect(list_, &QListWidget::itemChanged, this, filter);
         connect(buttons, &QDialogButtonBox::accepted, this, &QDialog::accept);
         connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
-        resetTopics(); search->setFocus();
+        filter(); search->setFocus();
     }
     QStringList selectedIds() const {
         QStringList checked;
@@ -225,6 +299,10 @@ public:
         return result;
     }
 private:
+    QString browseTopic_;
+    int topicScope_ = -1;
+    int orderingMode_ = -1;
+    bool globalMode_ = false;
     QStringList original_;
     QListWidget *list_ = nullptr;
 };

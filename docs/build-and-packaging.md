@@ -507,3 +507,14 @@ and `.distinction-google.png`, `.distinction-youtube.png`,
 `.distinction-github.png` and `.distinction-neuralink.png` using the existing
 native `--profile-geometry` workflow. Use fresh `eight-*-native` basenames;
 read `.catalog.json` for measured DPR. No build or packaging flow changes.
+
+
+GeoSite interaction/order captures also write `.grouped-search.png`,
+`.selected-search.png` and `.selected-empty.png`. Use
+`developer-mode-test --visual-check --profile-geometry <absolute-png> --geosite-only`
+with the existing language/theme, real-ID and native DPR environment above for
+isolated picker captures. This uses the same capture function and MainWindow
+stylesheet as the full editor fixture, waits for native clear-button animation,
+and does not run or replace editor geometry acceptance. Normal CTest continues
+to exercise the full editor/manager fixtures. The fixture anchors the picker to the primary screen. Use fresh `order-screen-*`
+basenames and read `.catalog.json` for measured DPR. Build/package flow is unchanged.

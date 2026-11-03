@@ -799,7 +799,10 @@ static void geodataBridgeRegressions(const QString &directory) {
         require(popup && popup != &editor);
         auto *search = popup->findChild<QLineEdit *>();
         auto *list = popup->findChild<QListWidget *>("geoSiteGroups");
-        require(search && list && list->count() == 4);
+        require(search && list);
+        int entries = 0;
+        for (int i = 0; i < list->count(); ++i) entries += list->item(i)->data(Qt::UserRole).isValid();
+        require(entries == 2);
         search->setText("YouTube");
         QListWidgetItem *github = nullptr, *youtube = nullptr;
         for (int i = 0; i < list->count(); ++i) {
@@ -958,13 +961,16 @@ static void geoSiteClassificationTest() {
         } else if (section == 6) {
             require(topic == "4-ai" || ((it.key() == "category-ai-!cn" || it.key() == "category-ai-chat-!cn") && topic.isEmpty()));
             section = 3; ++aiCount;
+            if (it.key() == "cursor") topic = "4-development";
             if (it.key() == "xiaomi-ai") { section = 5; topic = "6-organizations"; }
         } else if (section == 7) section = 5;
         else require(section < 5);
-        baseline += (it.key() + '|' + QString::fromUtf8(it->name) + '|' + QString::number(section)
+        const QString baselineName = it.key() == "openai" ? "OpenAI and ChatGPT (Codex)"
+            : it.key() == "anthropic" ? "Anthropic AI tools (Claude)" : QString::fromUtf8(it->name);
+        baseline += (it.key() + '|' + baselineName + '|' + QString::number(section)
             + '|' + QString::number(it->collection ? 1 : 0) + '|' + topic + '\n').toUtf8();
     }
-    require(ecosystemCount == 57 && aiCount == 27);
+    require(ecosystemCount == 57 && aiCount == 28);
     require(QCryptographicHash::hash(baseline, QCryptographicHash::Sha256).toHex() == "829ab62fa3ebfceb0214fac754d0176d8b662af80e30f86b3b9e93dd2838974d");
     require(geoSiteEntries().value("youtube").section == 1 && QString(geoSiteEntries().value("youtube").topic) == "2-video");
     require(geoSiteEntries().value("github").section == 3 && QString(geoSiteEntries().value("github").topic) == "4-development");
@@ -1095,7 +1101,7 @@ static void geoSiteClassificationTest() {
                     row->setCheckState(QStringList{"win-update", "android", "missing-id"}.contains(row->data(Qt::UserRole).toString()) ? Qt::Checked : Qt::Unchecked);
             }
         }
-        sections->setCurrentRow(0); require(combo->count() == 48 && combo->currentIndex() == 0);
+        sections->setCurrentRow(0); require(combo->count() == 5 && combo->currentIndex() == 0);
         require(split.selectedIds() == QStringList({"win-update", "android", "missing-id"}));
     };
     auto checkMixedNavigation = [&] {
@@ -1162,6 +1168,103 @@ static void geoSiteClassificationTest() {
         query->clear(); require(visible("missing-ai") && visible("openai") && !visible("anthropic"));
         require(popup.selectedIds() == QStringList({"openai", "missing-ai"}));
     };
+    auto checkInteraction = [&] {
+        QStringList ids = geoSiteEntries().keys(); ids.append("future-unknown");
+        GeoSitePicker popup(nullptr, ids, {"openai", "anthropic", "youtube", "missing-ai", "openai"}, {});
+        auto *rows = popup.findChild<QListWidget *>("geoSiteGroups");
+        auto *query = popup.findChild<QLineEdit *>();
+        auto *sections = popup.findChild<QListWidget *>("geoSiteSections");
+        auto *combo = popup.findChild<QComboBox *>("geoSiteTopics");
+        auto *selected = popup.findChild<QPushButton *>("geoSiteSelectionCount");
+        auto visible = [&] {
+            QStringList result;
+            for (int i = 0; i < rows->count(); ++i)
+                if (!rows->item(i)->isHidden() && rows->item(i)->data(Qt::UserRole).isValid())
+                    result.append(rows->item(i)->data(Qt::UserRole).toString());
+            return result;
+        };
+        auto checkOrdering = [&](bool grouped) {
+            int lastSection = -1; QString previous, previousId; bool unavailable = false;
+            int headings = 0;
+            for (int i = 0; i < rows->count(); ++i) {
+                auto *item = rows->item(i); if (item->isHidden()) continue;
+                if (!item->data(Qt::UserRole).isValid()) {
+                    require(item->flags() == Qt::NoItemFlags); ++headings; previous.clear(); continue;
+                }
+                const QString id = item->data(Qt::UserRole).toString();
+                const bool missing = item->data(Qt::UserRole + 2).toBool();
+                require(!unavailable || missing); unavailable = missing;
+                const int section = missing ? 9 : item->data(Qt::UserRole + 1).toInt() < 0 ? 8 : item->data(Qt::UserRole + 1).toInt();
+                if (grouped) { require(section >= lastSection); lastSection = section; }
+                const QString name = geoSiteName(id).isEmpty() ? id : geoSiteName(id);
+                if (!previous.isEmpty()) {
+                    const int cmp = QString::localeAwareCompare(previous, name);
+                    require(cmp < 0 || (cmp == 0 && previousId < id));
+                }
+                previous = name; previousId = id;
+            }
+            if (grouped && !visible().isEmpty()) require(headings > 0);
+        };
+        sections->setCurrentRow(7); combo->setCurrentIndex(combo->findData("4-ai"));
+        require(visible().mid(0, 3) == QStringList({"openai", "anthropic", "cursor"}));
+        for (int i = 0; i < rows->count(); ++i)
+            if (rows->item(i)->data(Qt::UserRole) == "openai") rows->setCurrentItem(rows->item(i));
+        auto *current = rows->currentItem();
+        query->setText("a"); require(!sections->isEnabled() && !combo->isEnabled() && combo->count() == 1);
+        checkOrdering(true); require(rows->currentItem() == current);
+        selected->click(); checkOrdering(true);
+        selected->click(); require(query->text() == "a" && visible().size() > 4); checkOrdering(true);
+        selected->click();
+        require(selected->isChecked() && query->text() == "a" && selected->text().contains('4'));
+        for (const auto &id : visible()) require(popup.selectedIds().contains(id));
+        query->clear(); require(selected->isChecked() && !sections->isEnabled()); checkOrdering(false);
+        require(query->placeholderText() == QObject::tr("Search selected names or IDs"));
+        selected->click(); require(sections->isEnabled() && combo->currentData() == "4-ai");
+        require(visible().mid(0, 3) == QStringList({"openai", "anthropic", "cursor"}));
+        sections->setCurrentRow(0); combo->setCurrentIndex(combo->findData("4-ai"));
+        require(visible().mid(0, 3) == QStringList({"openai", "anthropic", "cursor"}));
+        query->setText("future-unknown"); require(visible() == QStringList{"future-unknown"}); checkOrdering(true);
+        query->setText("missing-ai"); require(visible() == QStringList{"missing-ai"}); checkOrdering(true);
+        query->setText("fixture-no-match"); require(visible().isEmpty());
+        for (int i = 0; i < rows->count(); ++i) require(rows->item(i)->isHidden());
+        query->setText("Codex"); selected->click(); require(visible() == QStringList{"openai"});
+        for (int i = 0; i < rows->count(); ++i)
+            if (rows->item(i)->data(Qt::UserRole) == "openai") rows->item(i)->setCheckState(Qt::Unchecked);
+        require(visible().isEmpty() && selected->isChecked() && selected->text().contains('3'));
+        query->clear();
+        for (int i = 0; i < rows->count(); ++i)
+            if (rows->item(i)->data(Qt::UserRole).isValid()) rows->item(i)->setCheckState(Qt::Unchecked);
+        require(visible().isEmpty() && selected->isChecked() && selected->isEnabled());
+        auto emptyText = [&] {
+            for (auto *label : popup.findChildren<QLabel *>())
+                if (!label->isHidden() && label->text() != QObject::tr("Topic")) return label->text();
+            return QString{};
+        };
+        require(emptyText() == QObject::tr("No selected groups"));
+        query->setText("none"); require(emptyText() == QObject::tr("No matching selected groups"));
+        auto *clear = query->findChild<QToolButton *>();
+        require(clear && clear->toolTip() == QObject::tr("Clear search") && clear->focusPolicy() == Qt::StrongFocus);
+        QKeyEvent press(QEvent::KeyPress, Qt::Key_Space, Qt::NoModifier);
+        QKeyEvent release(QEvent::KeyRelease, Qt::Key_Space, Qt::NoModifier);
+        QApplication::sendEvent(clear, &press); QApplication::sendEvent(clear, &release);
+        require(query->text().isEmpty() && selected->isChecked());
+        selected->click(); query->setText("   "); require(sections->isEnabled()); query->clear();
+        sections->setCurrentRow(6); require(combo->count() == 1 && !combo->isEnabled());
+        sections->setCurrentRow(9); require(combo->count() == 1 && !combo->isEnabled());
+        sections->setCurrentRow(0); checkOrdering(false);
+        query->setText("OpenAI and ChatGPT (Codex)"); require(visible().contains("openai"));
+        query->setText(QString::fromUtf8("Инструменты ИИ Anthropic (Claude)")); require(visible().contains("anthropic"));
+        popup.reject(); require(popup.result() == QDialog::Rejected);
+        GeoSitePicker subset(nullptr, {"anthropic", "deepseek", "google-gemini", "google-deepmind"}, {}, {});
+        subset.findChild<QListWidget *>("geoSiteSections")->setCurrentRow(7);
+        auto *subsetRows = subset.findChild<QListWidget *>("geoSiteGroups");
+        QString firstVisible;
+        for (int i = 0; i < subsetRows->count(); ++i)
+            if (!subsetRows->item(i)->isHidden()) { firstVisible = subsetRows->item(i)->data(Qt::UserRole).toString(); break; }
+        require(firstVisible == "anthropic");
+        require(subset.selectedIds().isEmpty());
+    };
+    checkInteraction();
     checkMixedNavigation();
     checkTopicSearch();
     checkSplitNavigation();
@@ -1194,13 +1297,13 @@ static void geoSiteClassificationTest() {
         };
         for (int section = 0; section < 8; ++section) {
             sections->setCurrentRow(section + 1);
-            require(combo->currentIndex() == 0 && combo->isEnabled());
-            int expected = 2;
-            for (const auto &topic : geoSiteTopics()) {
-                require((combo->findData(topic.id) >= 0) == (topic.section == section));
-                expected += topic.section == section;
-            }
-            require(combo->count() == expected);
+            const bool populated = section == 3 || section == 4;
+            require(sections->item(section + 1)->isHidden() == !populated);
+            if (!populated) { require(sections->currentRow() == 0 && combo->count() == 3); continue; }
+            const bool hasTopic = true;
+            require(combo->currentIndex() == 0 && combo->isEnabled() == hasTopic);
+            require(combo->count() == (hasTopic ? 2 : 1));
+            require(combo->findData("without") < 0);
         }
         for (auto it = addedTopics.cbegin(); it != addedTopics.cend(); ++it) {
             QStringList actual;
@@ -1215,7 +1318,8 @@ static void geoSiteClassificationTest() {
             picker.findChild<QPushButton *>("geoSiteSelectionCount")->click();
             require(visible() == QStringList({"missing-id", "salesforce", "windy"}));
             require(picker.selectedIds() == QStringList({"salesforce", "windy", "missing-id"}));
-            sections->setCurrentRow(0); require(combo->currentIndex() == 0 && combo->count() == 48);
+            picker.findChild<QPushButton *>("geoSiteSelectionCount")->click();
+            sections->setCurrentRow(0); require(combo->currentIndex() == 0 && combo->count() == 3);
         }
     };
     checkAddedNavigation();
@@ -1233,7 +1337,7 @@ static void geoSiteClassificationTest() {
         return nullptr;
     };
     auto *github = row("github"), *youtube = row("youtube"), *abema = row("abema"), *unknown = row("future-unknown"), *missing = row("missing-id");
-    require(github && youtube && abema && unknown && missing && topic->count() == 48);
+    require(github && youtube && abema && unknown && missing && topic->count() == 4);
     int groupCount = 0;
     for (int i = 0; i < list->count(); ++i) groupCount += list->item(i)->data(Qt::UserRole).isValid();
     require(groupCount == 6 && unknown->text() == "future-unknown");
@@ -1242,14 +1346,16 @@ static void geoSiteClassificationTest() {
     require(!youtube->isHidden() && abema->isHidden() && unknown->isHidden());
     search->setText("GitHub"); require(!github->isHidden() && youtube->isHidden());
     search->clear(); require(github->isHidden() && !youtube->isHidden());
-    topic->setCurrentIndex(1); require(!abema->isHidden() && youtube->isHidden() && unknown->isHidden());
+    topic->setCurrentIndex(topic->findData("without")); require(!abema->isHidden() && youtube->isHidden() && unknown->isHidden());
     count->click(); require(!missing->isHidden() && !youtube->isHidden() && abema->isHidden());
-    search->setText("future-unknown"); require(!unknown->isHidden() && missing->isHidden());
+    search->setText("future-unknown"); require(unknown->isHidden() && missing->isHidden());
     search->clear(); require(unknown->isHidden() && !missing->isHidden());
     missing->setCheckState(Qt::Unchecked); require(missing->isHidden());
+    count->click();
     topic->setCurrentIndex(topic->findData("2-video"));
     require(!count->isChecked() && !youtube->isHidden());
     count->click(); require(count->isChecked() && count->text().contains("Only selected"));
+    count->click();
     sections->setCurrentRow(9); require(!count->isChecked() && topic->currentIndex() == 0 && !topic->isEnabled());
     require(!unknown->isHidden() && missing->isHidden() && youtube->isHidden());
     sections->setCurrentRow(4); require(topic->isEnabled());
@@ -1280,6 +1386,7 @@ static void geoSiteClassificationTest() {
         require(!translator.strings.value(QString::fromUtf8(it->name)).toString().isEmpty());
     for (const auto &topic : geoSiteTopics()) require(!translator.strings.value(QString::fromUtf8(topic.name)).toString().isEmpty());
     qApp->installTranslator(&translator);
+    checkInteraction();
     checkMixedNavigation();
     checkTopicSearch();
     checkSplitNavigation();
@@ -1344,6 +1451,19 @@ int main(int argc, char **argv) {
         require(picker.findChild<QPushButton *>("geoSiteSelectionCount")->text().contains('3'));
         search->setText("fixture-no-matches");
         picker.reject(); require(picker.result() == QDialog::Rejected);
+        performance.restart();
+        for (int i = 0; i < 100; ++i) search->setText(i % 2 ? "git" : "github");
+        const qint64 repeatedQueries = performance.nsecsElapsed();
+        search->clear();
+        auto *selectedMode = picker.findChild<QPushButton *>("geoSiteSelectionCount");
+        performance.restart();
+        for (int i = 0; i < 100; ++i) selectedMode->click();
+        const qint64 repeatedToggles = performance.nsecsElapsed();
+        performance.restart();
+        for (int i = 0; i < 100; ++i) sections->setCurrentRow(i % 2 ? 7 : 2);
+        const qint64 repeatedModes = performance.nsecsElapsed();
+        fprintf(stdout, "GeoSite repeated means: query %.3f ms, selected toggle %.3f ms, AI/browse %.3f ms (100 each)\n",
+            repeatedQueries / 1e8, repeatedToggles / 1e8, repeatedModes / 1e8);
         fprintf(stdout, "GeoSite %d IDs: construct %.2f ms, filter %.2f ms\n", int(catalog.size()), opening / 1e6, filtering / 1e6);
     }
     require(geoIPLabel("us") == "United States (US)");
