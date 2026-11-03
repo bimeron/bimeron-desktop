@@ -2,11 +2,27 @@
 #include "HiDpiCheckBox.h"
 #include "HiDpiComboBox.h"
 #include "ProfileStore.h"
+#include "GeoDataSelection.h"
+#include "GeoDataDialog.h"
+#include "GeoIPLabels.h"
+#include "GeoSitePicker.h"
 #include "CoreDiagnostic.h"
+#include <algorithm>
+#include <QApplication>
 #include <memory>
 #include <vector>
 
 #include <QCheckBox>
+#include <QAction>
+#include <QStyle>
+#include <QElapsedTimer>
+#include <QFileSystemWatcher>
+#include <QDateTime>
+#include <QJsonDocument>
+#include <QProcess>
+#include <QTimer>
+#include <QDir>
+#include <QListWidget>
 #include <QComboBox>
 #include <QDialogButtonBox>
 #include <QFileDialog>
@@ -28,6 +44,8 @@
 #include <QSet>
 #include <QScrollArea>
 #include <QStandardItemModel>
+#include <QStyledItemDelegate>
+#include <QPainter>
 #include <QSpinBox>
 #include <QSyntaxHighlighter>
 #include <QTabBar>
@@ -40,6 +58,73 @@
 #include <QVBoxLayout>
 
 namespace {
+// Profile contents travel only through stdin/stdout, never process arguments or diagnostics.
+QJsonObject bridgeJson(const QString &executable, const QStringList &args, const QByteArray &input, QString *error) {
+    QProcess process;
+    process.start(executable, args);
+    if (!process.waitForStarted(2000)) { *error = QObject::tr("Core document bridge is unavailable. Use Raw config."); return {}; }
+    process.write(input);
+    process.closeWriteChannel();
+    QByteArray output;
+    QElapsedTimer elapsed; elapsed.start();
+    while (process.state() != QProcess::NotRunning && elapsed.elapsed() < 5000) {
+        process.waitForReadyRead(50);
+        output += process.readAllStandardOutput();
+        process.readAllStandardError();
+        if (output.size() > 32 * 1024 * 1024) break;
+    }
+    if (process.state() != QProcess::NotRunning) {
+        process.kill(); process.waitForFinished(1000);
+        *error = QObject::tr("Core document bridge timed out or exceeded its response limit. The draft has been retained."); return {};
+    }
+    output += process.readAllStandardOutput();
+    QJsonParseError parse;
+    const auto json = QJsonDocument::fromJson(output, &parse);
+    const auto result = json.object();
+    if (output.size() > 32 * 1024 * 1024 || process.exitStatus() != QProcess::NormalExit || process.exitCode() != 0
+        || parse.error != QJsonParseError::NoError || !json.isObject() || result.value("version").toInt() != 1) {
+        *error = QObject::tr("Core document bridge returned an invalid response. The draft has been retained."); return {};
+    }
+    if (!result.value("error").toString().isEmpty()) *error = QObject::tr("Core refused this document edit. Use Raw config; the draft has been retained.");
+    return result;
+}
+
+QString groupLabel(const QString &id, bool geoIP = false) {
+    if (geoIP) return geoIPLabel(id, true);
+    const QString name = geoSiteName(id);
+    return name.isEmpty() ? id : name + " (" + id + ')';
+}
+
+void showGroupSummary(QLineEdit *target, const QString &ids) {
+    QStringList labels;
+    for (const auto &id : ids.split(',', Qt::SkipEmptyParts)) labels.append(groupLabel(id.trimmed(), target->property("geoip").toBool()));
+    const QSignalBlocker blocker(target);
+    target->setProperty("groupIds", ids);
+    target->setText(labels.join(", "));
+    target->setAccessibleDescription(labels.join(", "));
+}
+
+QString resourceIdentity(const QString &path) {
+    const QFileInfo info(path);
+    return info.canonicalFilePath() + '/' + QString::number(info.size()) + '/' + QString::number(info.lastModified().toMSecsSinceEpoch());
+}
+
+QMap<QString, QString> visualFields(const QString &text) {
+    QMap<QString, QString> fields;
+    QString section;
+    for (const auto &source : text.split('\n')) {
+        const QString line = source;
+        if (line.startsWith('[') && line.endsWith(']')) section = line.mid(1, line.size() - 2);
+        else if (section != "Rule" && !line.startsWith('#') && !line.startsWith(';') && line.contains('=')) {
+            QString value = line.mid(line.indexOf('=') + 1);
+            // buildText adds exactly one separator space; the rest is user data.
+            if (value.startsWith(' ')) value.remove(0, 1);
+            fields.insert(section + "/" + line.left(line.indexOf('=')).trimmed(), value);
+        }
+    }
+    return fields;
+}
+
 class ConfigHighlighter final : public QSyntaxHighlighter {
 public:
     explicit ConfigHighlighter(QTextDocument *document) : QSyntaxHighlighter(document) {}
@@ -149,8 +234,10 @@ QCheckBox *ruleEnabled(QTableWidget *table, int row) {
 }
 
 ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject &capabilities, QWidget *parent,
-                                         std::function<bool(const QString &, QString *)> validateRaw)
-    : QDialog(parent), originalText_(text), validateRaw_(validateRaw) {
+                                         std::function<bool(const QString &, QString *)> validateRaw,
+                                         const QString &coreExecutable, const QString &profilePath)
+    : QDialog(parent), coreExecutable_(coreExecutable), profilePath_(profilePath), capabilities_(capabilities),
+      originalText_(text), validateRaw_(validateRaw) {
     setWindowTitle(tr("Profile settings"));
     resize(680, 520);
     setMinimumSize(620, 460);
@@ -243,6 +330,11 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
     if (capabilities.value("vpn").toBool()) mode_->addItem(tr("System VPN"), "vpn");
     if (capabilities.value("proxy").toBool()) mode_->addItem(tr("Local SOCKS5"), "proxy");
     listen_ = new QLineEdit;
+    auto *sourceNotice = new QLabel(tr("Changing the key source or removing configured fields requires Raw config; the document bridge cannot delete fields."));
+    sourceNotice->setWordWrap(true);
+    sourceNotice->setObjectName("sourceEditRestriction");
+    sourceNotice->setVisible(!coreExecutable_.isEmpty());
+    generalForm->addRow(sourceNotice);
     generalForm->addRow(tr("Name"), name_);
     generalForm->addRow(tr("Key source"), keySource_);
     generalForm->addRow(tr("Key or path"), keyRow);
@@ -323,7 +415,14 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
     vlessForm->addRow(tr("gRPC TunMulti"), vlessMultiMode_);
     vlessForm->addRow(tr("XHTTP mode"), vlessXhttpMode_);
     vlessForm->addRow(tr("XHTTP extra"), vlessExtra);
-    tabs_->addTab(vlessPage, tr("VLESS"));
+    // Hidden tab pages still contribute to QStackedWidget's minimum size.
+    // Bound the long VLESS form with a scroll viewport, as for other parameters.
+    auto *vlessScroll = new QScrollArea;
+    vlessScroll->setObjectName("vlessScroll");
+    vlessScroll->setWidgetResizable(true);
+    vlessScroll->setFrameShape(QFrame::NoFrame);
+    vlessScroll->setWidget(vlessPage);
+    tabs_->addTab(vlessScroll, tr("VLESS"));
 
     auto *network = new QWidget;
     auto *networkForm = new QFormLayout(network);
@@ -363,6 +462,10 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
     defaultRow->addStretch();
     routingLayout->addLayout(defaultRow);
     rules_ = new QTableWidget(0, 4);
+    // A flexible table must not turn its preferred viewport height into the
+    // height-for-width minimum of every page in QTabWidget.
+    rules_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Ignored);
+    rules_->setMinimumHeight(100);
     rules_->setProperty("ipSplit", capabilities.value("ip_split").toBool());
     rules_->setProperty("domainSplit", capabilities.value("domain_split").toBool());
     rules_->setHorizontalHeaderLabels({tr("On"), tr("Type"), tr("Destination"), tr("Action")});
@@ -376,7 +479,7 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
     rules_->verticalHeader()->hide();
     rules_->verticalHeader()->setDefaultSectionSize(30);
     rules_->setSelectionBehavior(QAbstractItemView::SelectRows);
-    routingLayout->addWidget(rules_);
+    routingLayout->addWidget(rules_, 1);
     auto *ruleButtons = new QHBoxLayout;
     auto *add = new QPushButton(tr("Add"));
     add->setEnabled(capabilities.value("ip_split").toBool() || capabilities.value("domain_split").toBool());
@@ -394,13 +497,62 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
     connect(rules_->model(), &QAbstractItemModel::rowsInserted, this, updateRuleActions);
     connect(rules_->model(), &QAbstractItemModel::rowsRemoved, this, updateRuleActions);
     updateRuleActions();
-    connect(add, &QPushButton::clicked, this, [this] { addRule(Rule{}); });
-    connect(remove, &QPushButton::clicked, this, [this] { if (rules_->currentRow() >= 0) rules_->removeRow(rules_->currentRow()); });
+    connect(add, &QPushButton::clicked, this, [this] {
+        addRule(Rule{});
+        const int row = rules_->rowCount() - 1;
+        rules_->setCurrentCell(row, 1, QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
+        rules_->scrollTo(rules_->model()->index(row, 1));
+        rules_->cellWidget(row, 1)->setFocus(Qt::OtherFocusReason);
+    });
+    connect(remove, &QPushButton::clicked, this, [this] {
+        const int row = rules_->currentRow();
+        if (row < 0) return;
+        if (!tableRule(row).target.trimmed().isEmpty()
+            && QMessageBox::question(this, tr("Remove rule"),
+                tr("This rule has a destination. Remove it?"),
+                QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes)
+            return;
+        rules_->removeRow(row);
+        refreshRouting();
+    });
     connect(up, &QPushButton::clicked, this, [this, updateRuleActions] { moveRule(-1); updateRuleActions(); });
     connect(down, &QPushButton::clicked, this, [this, updateRuleActions] { moveRule(1); updateRuleActions(); });
     for (auto *button : {add, remove, up, down}) ruleButtons->addWidget(button);
     ruleButtons->addStretch();
     routingLayout->addLayout(ruleButtons);
+    auto *firstMatch = new QLabel(tr("Rules run top to bottom; the first match wins. New local-network bypass rules are inserted first; imported rules keep their positions. Edited IP literals use /32 or /128."));
+    firstMatch->setWordWrap(true);
+    routingLayout->addWidget(firstMatch);
+    auto *limitations = new QPushButton(tr("Routing limitations…"));
+    connect(limitations, &QPushButton::clicked, this, [this] {
+        QMessageBox::information(this, tr("Routing limitations…"),
+            tr("GeoSite VPN routing uses DNS metadata (TTL, shared IPs and caches); DoH/DoT and bare IPs may not match. SOCKS GeoIP uses known IPs only, without local DNS lookup. IPv6 disable remains dominant."));
+    });
+    routingLayout->addWidget(limitations);
+    routingStatus_ = new QLabel;
+    routingStatus_->setObjectName("routingStatus");
+    routingStatus_->setWordWrap(true);
+    routingStatus_->setTextFormat(Qt::PlainText);
+    // Capability diagnostics can be long on older cores. Keep them scrollable
+    // instead of letting a hidden tab increase the entire dialog's minimum height.
+    auto *routingStatusScroll = new QScrollArea;
+    routingStatusScroll->setObjectName("routingStatusScroll");
+    routingStatusScroll->setWidgetResizable(true);
+    routingStatusScroll->setFrameShape(QFrame::NoFrame);
+    routingStatusScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    routingStatusScroll->setMinimumHeight(0);
+    routingStatusScroll->setMaximumHeight(64);
+    routingStatusScroll->setWidget(routingStatus_);
+    routingLayout->addWidget(routingStatusScroll);
+    auto *manage = new QPushButton(tr("Manage databases…"));
+    manage->setObjectName("manageGeodata");
+    manage->setObjectName("manageDatabases");
+    connect(manage, &QPushButton::clicked, this, &ProfileEditorDialog::manageDatabases);
+    routingLayout->addWidget(manage);
+    add->setShortcut(QKeySequence("Alt+Insert"));
+    remove->setShortcut(QKeySequence("Alt+Delete"));
+    up->setShortcut(QKeySequence("Alt+Up"));
+    down->setShortcut(QKeySequence("Alt+Down"));
     tabs_->addTab(routing, tr("Routing"));
 
     auto *rawPage = new QWidget;
@@ -410,23 +562,9 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
     raw_->setLineWrapMode(QPlainTextEdit::NoWrap);
     raw_->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
     new ConfigHighlighter(raw_->document());
-    auto *rawNotice = new QLabel(tr("Raw config contains credentials. Settings unavailable in the visual editor must be edited here."));
+    auto *rawNotice = new QLabel(tr("Raw config contains credentials."));
     rawNotice->setWordWrap(true);
-    auto *showRaw = new QPushButton(tr("Show/Edit raw config"));
-    showRaw->setObjectName("showRaw");
-    raw_->hide();
     rawLayout->addWidget(rawNotice);
-    rawLayout->addWidget(showRaw);
-    auto *useVisual = new QPushButton(tr("Validate and use visual editor"));
-    useVisual->setObjectName("useVisual");
-    rawLayout->addWidget(useVisual);
-    connect(useVisual, &QPushButton::clicked, this, [this] {
-        if (applyRaw()) tabs_->setCurrentIndex(0);
-    });
-    connect(showRaw, &QPushButton::clicked, this, [this, showRaw] {
-        raw_->setVisible(!raw_->isVisible());
-        showRaw->setText(raw_->isVisible() ? tr("Hide raw config") : tr("Show/Edit raw config"));
-    });
     rawLayout->addWidget(raw_);
     tabs_->addTab(rawPage, tr("Raw config"));
     for (int index = 0; index < tabs_->count(); ++index) {
@@ -460,9 +598,18 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
             QMessageBox::warning(this, tr("Error"), parameterError());
             return;
         }
+        const QString draft = configText();
+        QString error = (rawDirty_ || rawOnly_ || !bridgeReady_) ? QString() : bridgeError_;
+        if (error.isEmpty()) error = routingError();
+        if (error.isEmpty() && validateRaw_ && !validateRaw_(draft, &error) && error.isEmpty())
+            error = tr("Core validation failed. The draft has been retained.");
+        if (!error.isEmpty()) {
+            QMessageBox::warning(this, tr("Error"), safeCoreDiagnostic(error.toUtf8()));
+            return;
+        }
         accept();
     });
-    connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
+    connect(buttons, &QDialogButtonBox::rejected, this, &ProfileEditorDialog::reject);
     layout->addWidget(buttons);
     parameterPage_ = new QWidget;
     auto *parameterLayout = new QVBoxLayout(parameterPage_);
@@ -517,7 +664,26 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
         browseCa->setVisible(keySource_->currentData() == "Explicitmasque");
     });
     browseCa->setVisible(valueFor(text, "AccessKey", "Type") == "masque");
+    connect(GeoDataSelection::instance(), &GeoDataSelection::catalogResult, this,
+        [this](const QString &key, const QStringList &groups, const QString &error) {
+            for (const QString &kind : {QString("geoip"), QString("geosite")}) if (datasetKeys_.value(kind) == key) {
+                datasetGroups_[kind] = groups; datasetErrors_[kind] = error; refreshRouting();
+            }
+        });
+    connect(GeoDataSelection::instance(), &GeoDataSelection::catalogInvalidated, this, [this](const QString &key) {
+        for (const QString &kind : {QString("geoip"), QString("geosite")}) if (datasetKeys_.value(kind) == key) {
+            datasetChanged_ = true; inspectDataset(kind);
+        }
+    });
     loadText(text);
+    connect(GeoDataSelection::instance(), &GeoDataSelection::changed, this, [this] {
+        const auto shared = GeoDataSelection::instance()->paths();
+        for (const QString &kind : {QString("geoip"), QString("geosite")}) {
+            if (datasetPaths_.value(kind) == shared.value(kind)) continue;
+            datasetPaths_[kind] = shared.value(kind); datasetChanged_ = true; inspectDataset(kind);
+        }
+        cachedVisual_.clear(); refreshRouting();
+    });
     const auto applySs = [this](const QString &value) {
         const SsParameters parsed = parseSsUrl(value);
         server_->setText(parsed.valid ? parsed.server : QString());
@@ -672,7 +838,7 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
         const QString accessKey = source.startsWith("Explicit")
             ? "Type = " + QString(source == "ExplicitVLESS" ? "vless" : source == "ExplicitSOCKS5" ? "socks5" : source == "ExplicitSSH" ? "ssh" : source == "ExplicitTrojan" ? "trojan" : source == "Explicit" ? "shadowsocks" : source.mid(8))
             : source + " = " + key_->text();
-        keySource_->setEnabled(!ProfileStore::connectionInfo("[AccessKey]\n" + accessKey).connectable);
+        keySource_->setEnabled(!bridgeReady_ && !ProfileStore::connectionInfo("[AccessKey]\n" + accessKey).connectable);
     };
     connect(keySource_, &QComboBox::currentIndexChanged, this, updateSourceLock);
     connect(key_, &QLineEdit::textChanged, this, [this, applySs](const QString &value) {
@@ -715,11 +881,52 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
         updateModeControls(false);
     };
     updateModeControls(false);
-    connect(raw_, &QPlainTextEdit::textChanged, this, [this] { rawDirty_ = true; });
+    connect(raw_, &QPlainTextEdit::textChanged, this, [this] {
+        rawDirty_ = true;
+        // A corrected Raw-only document can request visual editing by switching tabs.
+        for (int i = 0; i < tabs_->count() - 1; ++i) tabs_->setTabEnabled(i, true);
+    });
     connect(method_, &QComboBox::currentTextChanged, this, [this] { refreshParameters(); });
     connect(ssPlugin_, &QComboBox::currentTextChanged, this, [this] { refreshParameters(); });
     connect(vlessAlpn_, &QLineEdit::textChanged, this, [this] { refreshParameters(); });
     assessRepresentation();
+    connect(mode_, &QComboBox::currentIndexChanged, this, [this] { refreshRouting(); });
+    connect(killSwitch_, &QCheckBox::toggled, this, [this](bool checked) {
+        if (checked && bridgeReady_ && mode_->currentData() == "vpn") {
+            QList<int> conflicts;
+            for (int row = 0; row < rules_->rowCount(); ++row)
+                if (tableRule(row).enabled && tableRule(row).matcher != "CIDR") conflicts.append(row);
+            if (!conflicts.isEmpty()) {
+                QMessageBox prompt(QMessageBox::Warning, tr("Routing conflict"),
+                    tr("The VPN kill switch permits CIDR rules only. Disable the conflicting rules or cancel this protection change."), QMessageBox::NoButton, this);
+                auto *disable = prompt.addButton(tr("Disable conflicting rules"), QMessageBox::AcceptRole);
+                prompt.addButton(QMessageBox::Cancel);
+                prompt.exec();
+                if (prompt.clickedButton() == disable) {
+                    for (int row : conflicts) ruleEnabled(rules_, row)->setChecked(false);
+                } else { const QSignalBlocker blocker(killSwitch_); killSwitch_->setChecked(false); }
+            }
+        }
+        refreshRouting();
+    });
+    connect(ignoreLocalNetwork_, &QCheckBox::toggled, this, [this](bool checked) {
+        if (!bridgeReady_) return;
+        if (localRule_ >= 0) {
+            for (int i = 0; i < rules_->rowCount(); ++i)
+                if (tableRule(i).index == localRule_) ruleEnabled(rules_, i)->setChecked(checked);
+        } else if (localRule_ == -2) {
+            for (int i = 0; i < rules_->rowCount(); ++i)
+                if (tableRule(i).index == -2) ruleEnabled(rules_, i)->setChecked(checked);
+        } else if (checked) {
+            addRule(Rule{localNetworkCidrs(), "direct", true, "CIDR", -2});
+            int row = rules_->rowCount() - 1;
+            while (row > 0) { rules_->selectRow(row--); moveRule(-1); }
+            localRule_ = -2;
+        }
+        refreshRouting();
+    });
+    refreshRouting();
+    syncRaw();
     connect(tabs_, &QTabWidget::currentChanged, this, [this](int index) {
         const int rawIndex = tabs_->count() - 1;
         if (index == rawIndex) {
@@ -731,6 +938,20 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
             }
         }
     });
+}
+
+ProfileEditorDialog::~ProfileEditorDialog() {
+    // Stop callbacks before QWidget members and their children begin destruction.
+    const auto processes = findChildren<QProcess *>(QString(), Qt::FindDirectChildrenOnly);
+    for (auto *watcher : findChildren<QFileSystemWatcher *>()) watcher->disconnect();
+    for (auto *process : processes) {
+        process->disconnect();
+        for (auto *timer : process->findChildren<QTimer *>()) timer->stop();
+        if (process->state() != QProcess::NotRunning) process->kill();
+    }
+    QElapsedTimer elapsed; elapsed.start();
+    for (auto *process : processes)
+        if (process->state() != QProcess::NotRunning) process->waitForFinished(qMax(1, 1500 - int(elapsed.elapsed())));
 }
 
 QStringList ProfileEditorDialog::parameterFields() const {
@@ -823,21 +1044,32 @@ void ProfileEditorDialog::loadText(const QString &text) {
             blockers.push_back(std::make_unique<QSignalBlocker>(widget));
     }
     loadedText_ = text;
+    populatingRules_ = true;
+    QString inspectionError;
+    QJsonObject inspection;
+    if (!coreExecutable_.isEmpty()) inspection = document({}, &inspectionError);
+    documentFields_ = inspection.value("fields").toObject();
+    const auto fieldValue = [this, &text](const QString &section, const QString &key) {
+        const QString id = section + "/" + key;
+        return documentFields_.contains(id) ? documentFields_.value(id).toString() : valueFor(text, section, key);
+    };
     rules_->setRowCount(0);
     ignoreLocalNetwork_->setChecked(false);
     hasUnknownSettings_ = false;
-    rawOnly_ = false;
-    name_->setText(valueFor(text, "Profile", "Name"));
-    QString source = "SS", value = valueFor(text, "AccessKey", "SS");
-    if (value.isEmpty()) { source = "SSConf"; value = valueFor(text, "AccessKey", "SSConf"); }
-    if (value.isEmpty()) { source = "SOCKS5"; value = valueFor(text, "AccessKey", "SOCKS5"); }
-    if (value.isEmpty()) { source = "VLESS"; value = valueFor(text, "AccessKey", "VLESS"); }
-    if (value.isEmpty()) { source = "Hysteria2"; value = valueFor(text, "AccessKey", "Hysteria2"); }
-    if (value.isEmpty()) { source = "SSH"; value = valueFor(text, "AccessKey", "SSH"); }
-    if (value.isEmpty()) { source = "Key"; value = valueFor(text, "AccessKey", "Key"); }
-    if (value.isEmpty()) { source = "File"; value = valueFor(text, "AccessKey", "File"); }
-    if (value.isEmpty() && !valueFor(text, "AccessKey", "Server").isEmpty()) {
-        const QString type = valueFor(text, "AccessKey", "Type");
+    rawOnly_ = !inspection.value("fields_error").toString().isEmpty();
+    for (auto it = documentFields_.constBegin(); it != documentFields_.constEnd(); ++it)
+        if (it.value().toString().contains('\n') || it.value().toString().contains('\r')) rawOnly_ = true;
+    name_->setText(fieldValue("Profile", "Name"));
+    QString source = "SS", value = fieldValue("AccessKey", "SS");
+    if (value.isEmpty()) { source = "SSConf"; value = fieldValue("AccessKey", "SSConf"); }
+    if (value.isEmpty()) { source = "SOCKS5"; value = fieldValue("AccessKey", "SOCKS5"); }
+    if (value.isEmpty()) { source = "VLESS"; value = fieldValue("AccessKey", "VLESS"); }
+    if (value.isEmpty()) { source = "Hysteria2"; value = fieldValue("AccessKey", "Hysteria2"); }
+    if (value.isEmpty()) { source = "SSH"; value = fieldValue("AccessKey", "SSH"); }
+    if (value.isEmpty()) { source = "Key"; value = fieldValue("AccessKey", "Key"); }
+    if (value.isEmpty()) { source = "File"; value = fieldValue("AccessKey", "File"); }
+    if (value.isEmpty() && !fieldValue("AccessKey", "Server").isEmpty()) {
+        const QString type = fieldValue("AccessKey", "Type");
         source = type == "socks5" ? "ExplicitSOCKS5" : type == "vless" ? "ExplicitVLESS" : type == "ssh" ? "ExplicitSSH"
             : type == "trojan" ? "ExplicitTrojan"
             : QStringList{"http", "https", "naive", "masque"}.contains(type) ? "Explicit" + type
@@ -845,29 +1077,29 @@ void ProfileEditorDialog::loadText(const QString &text) {
         if (source.isEmpty()) rawOnly_ = true;
     }
     keySource_->setCurrentIndex(keySource_->findData(source)); key_->setText(value);
-    server_->setText(valueFor(text, "AccessKey", "Server"));
-    port_->setValue(valueFor(text, "AccessKey", "Port").toInt());
-    const int methodIndex = method_->findText(valueFor(text, "AccessKey", "Method"));
+    server_->setText(fieldValue("AccessKey", "Server"));
+    port_->setValue(fieldValue("AccessKey", "Port").toInt());
+    const int methodIndex = method_->findText(fieldValue("AccessKey", "Method"));
     method_->setCurrentIndex(methodIndex);
     if (source == "Explicit" && methodIndex < 0) rawOnly_ = true;
     for (auto it = parameters_.begin(); it != parameters_.end(); ++it)
-        it.value()->setText(QStringList{"ExplicitTrojan", "Explicithttp", "Explicithttps", "Explicitnaive", "Explicitmasque"}.contains(source) ? valueFor(text, "AccessKey", it.key()) : QString());
-    trojanNetwork_->setCurrentIndex(trojanNetwork_->findText(valueFor(text, "AccessKey", "Network")));
+        it.value()->setText(QStringList{"ExplicitTrojan", "Explicithttp", "Explicithttps", "Explicitnaive", "Explicitmasque"}.contains(source) ? fieldValue("AccessKey", it.key()) : QString());
+    trojanNetwork_->setCurrentIndex(trojanNetwork_->findText(fieldValue("AccessKey", "Network")));
     shadowTls_->setChecked(text.contains("[ShadowTLS]"));
-    shadowName_->setText(valueFor(text, "ShadowTLS", "ServerName"));
-    shadowPassword_->setText(valueFor(text, "ShadowTLS", "Password"));
-    password_->setText(valueFor(text, "AccessKey", "Password"));
-    username_->setText(valueFor(text, "AccessKey", "Username"));
-    sshIdentity_->setText(valueFor(text, "AccessKey", "IdentityFile"));
-    sshKnownHosts_->setText(valueFor(text, "AccessKey", "KnownHostsFile"));
-    prefix_->setText(valueFor(text, "AccessKey", "Prefix"));
-    ssPlugin_->setCurrentIndex(ssPlugin_->findText(valueFor(text, "AccessKey", "Plugin")));
-    ssPluginOpts_->setText(valueFor(text, "AccessKey", "PluginOpts"));
+    shadowName_->setText(fieldValue("ShadowTLS", "ServerName"));
+    shadowPassword_->setText(fieldValue("ShadowTLS", "Password"));
+    password_->setText(fieldValue("AccessKey", "Password"));
+    username_->setText(fieldValue("AccessKey", "Username"));
+    sshIdentity_->setText(fieldValue("AccessKey", "IdentityFile"));
+    sshKnownHosts_->setText(fieldValue("AccessKey", "KnownHostsFile"));
+    prefix_->setText(fieldValue("AccessKey", "Prefix"));
+    ssPlugin_->setCurrentIndex(ssPlugin_->findText(fieldValue("AccessKey", "Plugin")));
+    ssPluginOpts_->setText(fieldValue("AccessKey", "PluginOpts"));
     if (source == "Explicit" && (ssPlugin_->currentIndex() < 0
         || (method_->currentText().startsWith("2022-") && !prefix_->text().isEmpty()))) rawOnly_ = true;
-    vlessId_->setText(valueFor(text, "AccessKey", "ID"));
-    const auto setChoice = [this, &text, &source](QComboBox *combo, const QString &field) {
-        const QString value = valueFor(text, "AccessKey", field);
+    vlessId_->setText(fieldValue("AccessKey", "ID"));
+    const auto setChoice = [this, &fieldValue, &source](QComboBox *combo, const QString &field) {
+        const QString value = fieldValue("AccessKey", field);
         if (value.isEmpty()) return;
         const int index = combo->findText(value);
         if (index < 0) {
@@ -882,38 +1114,38 @@ void ProfileEditorDialog::loadText(const QString &text) {
     setChoice(vlessFlow_, "Flow");
     setChoice(vlessFingerprint_, "Fingerprint");
     setChoice(vlessXhttpMode_, "XHTTPMode");
-    vlessServerName_->setText(valueFor(text, "AccessKey", "ServerName"));
-    vlessPublicKey_->setText(valueFor(text, "AccessKey", "PublicKey"));
-    vlessShortId_->setText(valueFor(text, "AccessKey", "ShortID"));
-    vlessSpiderX_->setText(valueFor(text, "AccessKey", "SpiderX"));
-    vlessAlpn_->setText(valueFor(text, "AccessKey", "ALPN"));
+    vlessServerName_->setText(fieldValue("AccessKey", "ServerName"));
+    vlessPublicKey_->setText(fieldValue("AccessKey", "PublicKey"));
+    vlessShortId_->setText(fieldValue("AccessKey", "ShortID"));
+    vlessSpiderX_->setText(fieldValue("AccessKey", "SpiderX"));
+    vlessAlpn_->setText(fieldValue("AccessKey", "ALPN"));
     const QString network = vlessNetwork_->currentText();
-    vlessPath_->setText(valueFor(text, "AccessKey", network == "xhttp" ? "XHTTPPath" : "WSPath"));
-    vlessHost_->setText(valueFor(text, "AccessKey", network == "xhttp" ? "XHTTPHost" : "WSHost"));
-    vlessEarlyData_->setValue(valueFor(text, "AccessKey", "WSEarlyData").toInt());
-    vlessServiceName_->setText(valueFor(text, "AccessKey", "GRPCServiceName"));
-    vlessAuthority_->setText(valueFor(text, "AccessKey", "GRPCAuthority"));
-    const QString multiMode = valueFor(text, "AccessKey", "GRPCMultiMode");
+    vlessPath_->setText(fieldValue("AccessKey", network == "xhttp" ? "XHTTPPath" : "WSPath"));
+    vlessHost_->setText(fieldValue("AccessKey", network == "xhttp" ? "XHTTPHost" : "WSHost"));
+    vlessEarlyData_->setValue(fieldValue("AccessKey", "WSEarlyData").toInt());
+    vlessServiceName_->setText(fieldValue("AccessKey", "GRPCServiceName"));
+    vlessAuthority_->setText(fieldValue("AccessKey", "GRPCAuthority"));
+    const QString multiMode = fieldValue("AccessKey", "GRPCMultiMode");
     vlessMultiModeConfigured_ = !multiMode.isEmpty();
     vlessMultiMode_->setChecked(multiMode == "true");
-    if (source == "ExplicitVLESS" && valueFor(text, "AccessKey", "Encryption") != "none")
+    if (source == "ExplicitVLESS" && fieldValue("AccessKey", "Encryption") != "none")
         rawOnly_ = true;
-    const QString configuredMode = valueFor(text, "Interface", "Mode");
+    const QString configuredMode = fieldValue("Interface", "Mode");
     const int modeIndex = mode_->findData(configuredMode);
     if (!configuredMode.isEmpty() && modeIndex < 0) hasUnknownSettings_ = true;
     mode_->setCurrentIndex(qMax(0, modeIndex));
-    listen_->setText(valueFor(text, "Interface", "Listen").isEmpty() ? "127.0.0.1:1080" : valueFor(text, "Interface", "Listen"));
-    interfaceName_->setText(valueFor(text, "Interface", "Name").isEmpty() ? "Bimeron" : valueFor(text, "Interface", "Name"));
-    const int mtu = valueFor(text, "Interface", "MTU").toInt();
+    listen_->setText(fieldValue("Interface", "Listen").isEmpty() ? "127.0.0.1:1080" : fieldValue("Interface", "Listen"));
+    interfaceName_->setText(fieldValue("Interface", "Name").isEmpty() ? "Bimeron" : fieldValue("Interface", "Name"));
+    const int mtu = fieldValue("Interface", "MTU").toInt();
     mtu_->setValue(mtu ? mtu : 1420);
-    dns_->setText(valueFor(text, "Interface", "DNS").isEmpty() ? "1.1.1.1" : valueFor(text, "Interface", "DNS"));
-    ipv6_->setCurrentIndex(qMax(0, ipv6_->findData(valueFor(text, "Interface", "IPv6"))));
-    killSwitch_->setChecked(valueFor(text, "Interface", "KillSwitch").compare("true", Qt::CaseInsensitive) == 0);
-    defaultRoute_->setCurrentIndex(qMax(0, defaultRoute_->findData(valueFor(text, "Routing", "Default"))));
+    dns_->setText(fieldValue("Interface", "DNS").isEmpty() ? "1.1.1.1" : fieldValue("Interface", "DNS"));
+    ipv6_->setCurrentIndex(qMax(0, ipv6_->findData(fieldValue("Interface", "IPv6"))));
+    killSwitch_->setChecked(fieldValue("Interface", "KillSwitch").compare("true", Qt::CaseInsensitive) == 0);
+    defaultRoute_->setCurrentIndex(qMax(0, defaultRoute_->findData(fieldValue("Routing", "Default"))));
     QString section; Rule rule;
     const auto finishRule = [this](const Rule &finished) {
         if (finished.target.isEmpty()) return;
-        if (finished.enabled && !finished.domain && finished.action == "direct"
+        if (finished.enabled && finished.matcher == "CIDR" && finished.action == "direct"
             && normalizedCidrs(finished.target) == localNetworkCidrs()) {
             ignoreLocalNetwork_->setChecked(true);
         } else {
@@ -926,8 +1158,8 @@ void ProfileEditorDialog::loadText(const QString &text) {
         if (commented) trimmed = trimmed.mid(1).trimmed();
         if (trimmed == "[Rule]") { finishRule(rule); rule = {}; rule.enabled = !commented; section = "Rule"; }
         else if (trimmed.startsWith('[')) section.clear();
-        else if (section == "Rule" && trimmed.startsWith("CIDR")) { rule.target = trimmed.mid(trimmed.indexOf('=') + 1).trimmed(); rule.domain = false; }
-        else if (section == "Rule" && trimmed.startsWith("Domain")) { rule.target = trimmed.mid(trimmed.indexOf('=') + 1).trimmed(); rule.domain = true; }
+        else if (section == "Rule" && trimmed.startsWith("CIDR")) { rule.target = trimmed.mid(trimmed.indexOf('=') + 1).trimmed(); rule.matcher = "CIDR"; }
+        else if (section == "Rule" && trimmed.startsWith("Domain")) { rule.target = trimmed.mid(trimmed.indexOf('=') + 1).trimmed(); rule.matcher = "Domain"; }
         else if (section == "Rule" && trimmed.startsWith("Action")) rule.action = trimmed.mid(trimmed.indexOf('=') + 1).trimmed();
     }
     finishRule(rule);
@@ -952,53 +1184,149 @@ void ProfileEditorDialog::loadText(const QString &text) {
             }
         }
     }
+    bridgeReady_ = false;
+    cachedVisual_.clear(); cachedDocument_.clear(); bridgeError_.clear();
+    localRule_ = -1;
+    if (!coreExecutable_.isEmpty()) {
+        const auto result = inspection;
+        if (inspectionError.isEmpty()) {
+            bridgeReady_ = true;
+            documentRules_ = result.value("rules").toArray();
+            rules_->setRowCount(0);
+            int localCount = 0;
+            for (const auto &value : documentRules_) {
+                const auto row = value.toObject();
+                Rule rule{row.value("value").toString(), row.value("action").toString(), row.value("enabled").toBool(),
+                          row.value("matcher").toString(), row.value("index").toInt(), row.value("editable").toBool(), row.value("error").toString()};
+                addRule(rule);
+                if (rule.matcher == "CIDR" && rule.action == "direct" && normalizedCidrs(rule.target) == localNetworkCidrs()) {
+                    ++localCount;
+                    if (rule.index == 0 && rule.editable) localRule_ = rule.index;
+                }
+            }
+            if (localCount != 1) localRule_ = -1;
+            ignoreLocalNetwork_->setChecked(localRule_ == 0 && !documentRules_.isEmpty() && documentRules_.first().toObject().value("enabled").toBool());
+        } else { bridgeError_ = inspectionError; }
+    }
+    for (const QString &kind : {QString("geoip"), QString("geosite")}) {
+        const QString path = GeoDataSelection::instance()->paths().value(kind);
+        if (datasetPaths_.value(kind) != path || !datasetGeneration_.contains(kind)) {
+            datasetPaths_[kind] = path;
+            inspectDataset(kind);
+        }
+    }
     raw_->setPlainText(text);
     rawDirty_ = false;
+    populatingRules_ = false;
 }
 
 void ProfileEditorDialog::addRule(const Rule &rule) {
-    if ((rule.domain && !rules_->property("domainSplit").toBool()) || (!rule.domain && !rules_->property("ipSplit").toBool()))
-        hasUnknownSettings_ = true;
+    if (coreExecutable_.isEmpty() && ((rule.matcher == "Domain" && !rules_->property("domainSplit").toBool())
+        || (rule.matcher == "CIDR" && !rules_->property("ipSplit").toBool()))) hasUnknownSettings_ = true;
     const int row = rules_->rowCount(); rules_->insertRow(row);
     auto *enabledCell = new QWidget;
+    enabledCell->setProperty("documentIndex", rule.index);
+    enabledCell->setProperty("editable", rule.editable);
+    enabledCell->setProperty("error", rule.error);
     auto *enabledLayout = new QHBoxLayout(enabledCell);
     enabledLayout->setContentsMargins(0, 0, 0, 0);
     enabledLayout->setAlignment(Qt::AlignCenter);
     auto *enabled = new HiDpiCheckBox;
+    enabled->setAccessibleName(tr("Rule enabled"));
     enabled->setChecked(rule.enabled);
+    enabled->setEnabled(rule.editable || rule.enabled);
     enabledLayout->addWidget(enabled);
     rules_->setCellWidget(row, 0, enabledCell);
     auto *type = new QComboBox;
     type->setObjectName("tableEditor");
-    if (rules_->property("ipSplit").toBool()) type->addItem(tr("IP / CIDR"), "CIDR");
-    if (rules_->property("domainSplit").toBool()) type->addItem(tr("Domain"), "Domain");
-    type->setCurrentIndex(qMax(0, type->findData(rule.domain ? "Domain" : "CIDR")));
+    type->setAccessibleName(tr("Rule type"));
+    type->addItem(tr("IP / CIDR"), "CIDR");
+    type->addItem(tr("Domain"), "Domain");
+    type->addItem(tr("Countries (GeoIP)"), "GeoIP");
+    type->addItem(tr("Sites (GeoSite)"), "GeoSite");
+    if (type->findData(rule.matcher) < 0) type->addItem(rule.matcher, rule.matcher);
+    type->setCurrentIndex(type->findData(rule.matcher));
+    type->setEnabled(rule.editable);
     rules_->setCellWidget(row, 1, type);
+    rules_->horizontalHeader()->resizeSection(1, qMax(rules_->columnWidth(1), type->sizeHint().width()));
     auto *target = new QLineEdit(rule.target);
     target->setObjectName("tableEditor");
-    const auto updatePlaceholder = [type, target] {
-        target->setPlaceholderText(type->currentData().toString() == "Domain"
-            ? QObject::tr("Domain: example.com")
-            : QObject::tr("IP or CIDR: 1.1.1.1, 10.0.0.0/8"));
-    };
-    connect(type, &QComboBox::currentIndexChanged, target, updatePlaceholder);
-    updatePlaceholder();
+    target->setAccessibleName(tr("Destination"));
+    target->setToolTip(rule.error);
+    target->setProperty("groupIds", rule.target);
     rules_->setCellWidget(row, 2, target);
     auto *action = new QComboBox;
     action->setObjectName("tableEditor");
+    action->setAccessibleName(tr("Action"));
     action->addItem(tr("Via VPN"), "proxy"); action->addItem(tr("Direct"), "direct"); action->addItem(tr("Block"), "block");
     action->setCurrentIndex(qMax(0, action->findData(rule.action)));
+    action->setEnabled(rule.editable);
     rules_->setCellWidget(row, 3, action);
+    QPixmap arrowIcon(16, 16);
+    arrowIcon.fill(Qt::transparent);
+    { QPainter painter(&arrowIcon); painter.drawPixmap(3, 6, QPixmap(":/icons/chevron-down.xpm")); }
+    auto *choose = new QAction(QIcon(arrowIcon), tr("Choose groups…"), target);
+    target->addAction(choose, QLineEdit::TrailingPosition);
+    const auto updateTarget = [this, type, target, choose, rule] {
+        const QString matcher = type->currentData().toString();
+        const bool geo = matcher == "GeoIP" || matcher == "GeoSite";
+        target->setReadOnly(geo || !rule.editable);
+        target->setPlaceholderText(geo ? tr("Choose groups…") : matcher == "Domain"
+            ? tr("Domain: example.com") : tr("IP or CIDR: 1.1.1.1, 10.0.0.0/8"));
+        const bool wasGeo = target->property("geodata").toBool();
+        target->setProperty("geoip", matcher == "GeoIP");
+        if (geo) showGroupSummary(target, wasGeo ? target->property("groupIds").toString() : target->text());
+        else if (wasGeo) { const QSignalBlocker blocker(target); target->setText(target->property("groupIds").toString()); }
+        target->setProperty("geodata", geo);
+        choose->setVisible(geo && rule.editable);
+        refreshRouting();
+    };
+    connect(choose, &QAction::triggered, this, [this, target, type] { selectGroups(target, type); });
+    auto *open = new QShortcut(QKeySequence("Alt+Down"), target);
+    open->setContext(Qt::WidgetShortcut);
+    connect(open, &QShortcut::activated, this, [this, target, type] {
+        if (target->property("geodata").toBool()) selectGroups(target, type);
+    });
+    type->setProperty("previousMatcher", rule.matcher);
+    connect(type, &QComboBox::currentIndexChanged, this, [this, type, updateTarget] {
+        if (!coreExecutable_.isEmpty() && !matcherError(type->currentData().toString()).isEmpty()) {
+            const QSignalBlocker blocker(type);
+            type->setCurrentIndex(type->findData(type->property("previousMatcher")));
+        } else type->setProperty("previousMatcher", type->currentData());
+        updateTarget();
+    });
+    connect(enabled, &QCheckBox::toggled, this, [this, enabled, type](bool checked) {
+        if (checked && !coreExecutable_.isEmpty() && !matcherError(type->currentData().toString()).isEmpty()) {
+            const QSignalBlocker blocker(enabled); enabled->setChecked(false);
+        }
+        refreshRouting();
+    });
+    connect(target, &QLineEdit::textChanged, this, [this] { refreshRouting(); });
+    connect(action, &QComboBox::currentIndexChanged, this, [this] { refreshRouting(); });
+    updateTarget();
+}
+
+ProfileEditorDialog::Rule ProfileEditorDialog::tableRule(int row) const {
+    const auto *cell = rules_->cellWidget(row, 0);
+    const auto *target = static_cast<QLineEdit *>(rules_->cellWidget(row, 2));
+    return {target->property("geodata").toBool() ? target->property("groupIds").toString() : target->text(),
+        static_cast<QComboBox *>(rules_->cellWidget(row, 3))->currentData().toString(), ruleEnabled(rules_, row)->isChecked(),
+        static_cast<QComboBox *>(rules_->cellWidget(row, 1))->currentData().toString(),
+        cell->property("documentIndex").toInt(), cell->property("editable").toBool(), cell->property("error").toString()};
 }
 
 void ProfileEditorDialog::moveRule(int delta) {
     const int row = rules_->currentRow(), target = row + delta;
     if (row < 0 || target < 0 || target >= rules_->rowCount()) return;
-    Rule a{static_cast<QLineEdit *>(rules_->cellWidget(row, 2))->text(), static_cast<QComboBox *>(rules_->cellWidget(row, 3))->currentData().toString(), ruleEnabled(rules_, row)->isChecked(), static_cast<QComboBox *>(rules_->cellWidget(row, 1))->currentData().toString() == "Domain"};
-    Rule b{static_cast<QLineEdit *>(rules_->cellWidget(target, 2))->text(), static_cast<QComboBox *>(rules_->cellWidget(target, 3))->currentData().toString(), ruleEnabled(rules_, target)->isChecked(), static_cast<QComboBox *>(rules_->cellWidget(target, 1))->currentData().toString() == "Domain"};
-    ruleEnabled(rules_, row)->setChecked(b.enabled); static_cast<QComboBox *>(rules_->cellWidget(row, 1))->setCurrentIndex(b.domain ? 1 : 0); static_cast<QLineEdit *>(rules_->cellWidget(row, 2))->setText(b.target); static_cast<QComboBox *>(rules_->cellWidget(row, 3))->setCurrentIndex(static_cast<QComboBox *>(rules_->cellWidget(row, 3))->findData(b.action));
-    ruleEnabled(rules_, target)->setChecked(a.enabled); static_cast<QComboBox *>(rules_->cellWidget(target, 1))->setCurrentIndex(a.domain ? 1 : 0); static_cast<QLineEdit *>(rules_->cellWidget(target, 2))->setText(a.target); static_cast<QComboBox *>(rules_->cellWidget(target, 3))->setCurrentIndex(static_cast<QComboBox *>(rules_->cellWidget(target, 3))->findData(a.action));
+    QList<Rule> snapshot;
+    for (int i = 0; i < rules_->rowCount(); ++i) snapshot.append(tableRule(i));
+    snapshot.swapItemsAt(row, target);
+    populatingRules_ = true;
+    rules_->setRowCount(0);
+    for (const auto &rule : snapshot) addRule(rule);
+    populatingRules_ = false;
     rules_->selectRow(target);
+    refreshRouting();
 }
 
 QString ProfileEditorDialog::buildText() const {
@@ -1079,12 +1407,12 @@ QString ProfileEditorDialog::buildText() const {
         + "\nKillSwitch = " + QString(killSwitch_->isChecked() ? "true" : "false")
         + "\nListen = " + listen_->text()
         + "\n\n[Routing]\nDefault = " + defaultRoute_->currentData().toString() + "\n";
-    if (ignoreLocalNetwork_->isChecked())
+    if (!bridgeReady_ && ignoreLocalNetwork_->isChecked())
         text += QString("\n[Rule]\nCIDR = %1\nAction = direct\n").arg(localNetworkCidrs());
     for (int row = 0; row < rules_->rowCount(); ++row) {
         const QString prefix = ruleEnabled(rules_, row)->isChecked() ? QString() : "# ";
         const QString type = static_cast<QComboBox *>(rules_->cellWidget(row, 1))->currentData().toString();
-        const QString target = static_cast<QLineEdit *>(rules_->cellWidget(row, 2))->text();
+        const QString target = tableRule(row).target;
         text += QString("\n%1[Rule]\n%1%2 = %3\n%1Action = %4\n")
             .arg(prefix, type, type == "CIDR" ? normalizedCidrs(target) : target.trimmed(), static_cast<QComboBox *>(rules_->cellWidget(row, 3))->currentData().toString());
     }
@@ -1095,6 +1423,26 @@ void ProfileEditorDialog::assessRepresentation() {
     const QSignalBlocker tabBlocker(tabs_);
     if (refreshControls_) refreshControls_();
     visualBaseline_ = buildText();
+    if (bridgeReady_) {
+        // Older adapters expose only decoded rules. Keep quoted section values
+        // Raw-only rather than displaying Go string syntax as credential data.
+        if (documentFields_.isEmpty()) {
+            QString section;
+            for (QString line : loadedText_.split('\n')) {
+                line = line.trimmed();
+                if (line.startsWith(QChar::ByteOrderMark)) line.remove(0, 1);
+                if (line.startsWith('[') && line.endsWith(']')) section = line.mid(1, line.size() - 2);
+                else if (section != "Rule" && !line.startsWith('#') && !line.startsWith(';') && line.contains('='))
+                    if (line.mid(line.indexOf('=') + 1).trimmed().startsWith('"')) rawOnly_ = true;
+            }
+        }
+        rawOnly_ = rawOnly_ || !bridgeReady_ || !parameterError().isEmpty();
+        const int rawIndex = tabs_->count() - 1;
+        for (int i = 0; i < rawIndex; ++i) tabs_->setTabEnabled(i, !rawOnly_);
+        if (rawOnly_) tabs_->setCurrentIndex(rawIndex);
+        refreshRouting();
+        return;
+    }
     // This is a conservative serializer guard, not a second Core validator.
     // Compare configured tokens with the actual serializer, including ordered rules.
     const auto tokens = [](const QString &text, bool *valid) {
@@ -1187,6 +1535,11 @@ bool ProfileEditorDialog::applyRaw() {
 
 void ProfileEditorDialog::syncRaw() {
     const QString text = configText();
+    if (bridgeReady_ && !bridgeError_.isEmpty() && !rawOnly_) {
+        routingStatus_->setText(bridgeError_);
+        findChild<QScrollArea *>("routingStatusScroll")->show();
+        return;
+    }
     const QSignalBlocker blocker(raw_);
     raw_->setPlainText(text);
 }
@@ -1200,12 +1553,21 @@ QString ProfileEditorDialog::configText() const {
         if (raw_->toPlainText() == normalized) return loadedText_;
         return raw_->toPlainText();
     }
-    if (rawOnly_ || buildText() == visualBaseline_) return loadedText_;
+    if (rawOnly_) return loadedText_;
+    if (bridgeReady_) return documentText();
+    if (buildText() == visualBaseline_) return loadedText_;
     return buildText();
 }
 
 void ProfileEditorDialog::reject() {
-    if (configText() != originalText_) {
+    bool reordered = false;
+    int previousIndex = -1;
+    for (int row = 0; row < rules_->rowCount(); ++row) {
+        const int index = tableRule(row).index;
+        if (index >= 0 && index < previousIndex) reordered = true;
+        if (index >= 0) previousIndex = index;
+    }
+    if (reordered || buildText() != visualBaseline_ || configText() != originalText_) {
         QMessageBox prompt(QMessageBox::Question, tr("Discard changes"), tr("Discard unsaved changes?"), QMessageBox::NoButton, this);
         auto *discard = prompt.addButton(tr("Discard changes"), QMessageBox::DestructiveRole);
         prompt.addButton(tr("Continue editing"), QMessageBox::RejectRole);
@@ -1213,4 +1575,297 @@ void ProfileEditorDialog::reject() {
         if (prompt.clickedButton() != discard) return;
     }
     QDialog::reject();
+}
+
+
+QJsonObject ProfileEditorDialog::document(const QJsonArray &operations, QString *error) const {
+    const QJsonObject request{{"version", 1}, {"profile", loadedText_}, {"operations", operations}};
+    if (loadedText_.toUtf8().size() > 65536) {
+        *error = tr("Profile exceeds the Core document limit. Use Raw config."); return {};
+    }
+    const auto result = bridgeJson(coreExecutable_, {"document"}, QJsonDocument(request).toJson(QJsonDocument::Compact), error);
+    if (error->isEmpty() && (!result.value("profile").isString() || !result.value("rules").isArray()))
+        *error = tr("Core document bridge returned an invalid response. The draft has been retained.");
+    return result;
+}
+
+QString ProfileEditorDialog::documentText() const {
+    const QString visual = buildText();
+    QString cacheKey = visual;
+    for (auto it = datasetPaths_.cbegin(); it != datasetPaths_.cend(); ++it) cacheKey += '\n' + it.key() + '=' + it.value();
+    // The same text can contain reordered identical rules with different attached comments.
+    for (int i = 0; i < rules_->rowCount(); ++i) cacheKey += '\n' + QString::number(tableRule(i).index);
+    bridgeError_.clear();
+    if (cacheKey == cachedVisual_) return cachedDocument_;
+    QJsonArray operations;
+    const auto before = visualFields(visualBaseline_), after = visualFields(visual);
+    for (auto it = before.cbegin(); it != before.cend(); ++it) {
+        if (!after.contains(it.key())) {
+            bridgeError_ = tr("Removing a configured field requires Raw config. The draft has been retained.");
+            return loadedText_;
+        }
+    }
+    for (auto it = after.cbegin(); it != after.cend(); ++it) {
+        if (before.contains(it.key()) && before.value(it.key()) == it.value()) continue;
+        const int slash = it.key().indexOf('/');
+        operations.append(QJsonObject{{"op", "set_field"}, {"section", it.key().left(slash)},
+                          {"key", it.key().mid(slash + 1)}, {"value", it.value()}});
+    }
+    for (auto it = datasetPaths_.cbegin(); it != datasetPaths_.cend(); ++it) {
+        bool used = false;
+        for (int row = 0; row < rules_->rowCount(); ++row) {
+            const auto rule = tableRule(row);
+            used |= rule.enabled && rule.matcher == (it.key() == "geoip" ? "GeoIP" : "GeoSite");
+        }
+        if (!used || it.value().isEmpty()) continue;
+        const QString key = it.key() == "geoip" ? "GeoIPFile" : "GeoSiteFile";
+        if (it.value() != (documentFields_.contains("GeoData/" + key) ? documentFields_.value("GeoData/" + key).toString() : valueFor(loadedText_, "GeoData", key)))
+            operations.append(QJsonObject{{"op", "set_field"}, {"section", "GeoData"}, {"key", key}, {"value", it.value()}});
+    }
+    QList<int> order;
+    QSet<int> retained;
+    for (int i = 0; i < documentRules_.size(); ++i) order.append(i);
+    for (int i = 0; i < rules_->rowCount(); ++i) if (tableRule(i).index >= 0) retained.insert(tableRule(i).index);
+    for (int i = order.size() - 1; i >= 0; --i) {
+        if (!retained.contains(order[i])) {
+            operations.append(QJsonObject{{"op", "delete"}, {"index", i}});
+            order.removeAt(i);
+        }
+    }
+    for (int row = 0; row < rules_->rowCount(); ++row) {
+        const Rule rule = tableRule(row);
+        const QString target = rule.matcher == "CIDR" ? normalizedCidrs(rule.target) : rule.target.trimmed();
+        if (rule.index < 0) {
+            operations.append(QJsonObject{{"op", "add"}, {"index", row}, {"matcher", rule.matcher},
+                              {"value", target}, {"action", rule.action}, {"enabled", rule.enabled}});
+            order.insert(row, -1);
+            continue;
+        }
+        const int from = order.indexOf(rule.index);
+        if (from != row) {
+            operations.append(QJsonObject{{"op", "move"}, {"index", from}, {"to", row}});
+            order.move(from, row);
+        }
+        const auto old = documentRules_.at(rule.index).toObject();
+        // Do not normalize an untouched imported value.
+        if (rule.matcher != old.value("matcher").toString() || rule.target != old.value("value").toString()
+            || rule.action != old.value("action").toString())
+            operations.append(QJsonObject{{"op", "set_rule"}, {"index", row}, {"matcher", rule.matcher}, {"value", target}, {"action", rule.action}});
+        if (rule.enabled != old.value("enabled").toBool())
+            operations.append(QJsonObject{{"op", "toggle"}, {"index", row}, {"enabled", rule.enabled}});
+    }
+    if (operations.isEmpty()) return loadedText_;
+    const auto result = document(operations, &bridgeError_);
+    if (!bridgeError_.isEmpty()) return loadedText_;
+    cachedVisual_ = cacheKey;
+    cachedDocument_ = result.value("profile").toString();
+    return cachedDocument_;
+}
+
+QString ProfileEditorDialog::routingError() const {
+    if (coreExecutable_.isEmpty()) return {};
+    if (rawDirty_ || rawOnly_) return {};
+    for (int row = 0; row < rules_->rowCount(); ++row) {
+        if (!rules_->cellWidget(row, 3)) continue;
+        const Rule rule = tableRule(row);
+        if (!rule.enabled) continue;
+        const QString prefix = tr("Rule %1: ").arg(row + 1);
+        if (!rule.editable) return prefix + tr("Unsafe rule fields require Raw config.");
+        if (mode_->currentData() == "vpn" && killSwitch_->isChecked() && rule.matcher != "CIDR")
+            return prefix + tr("The VPN kill switch permits CIDR rules only. Disable the conflicting rules or explicitly turn off the kill switch.");
+        const QString restriction = matcherError(rule.matcher);
+        if (!restriction.isEmpty()) return prefix + restriction;
+        if (rule.matcher != "GeoIP" && rule.matcher != "GeoSite") continue;
+        const QString kind = rule.matcher == "GeoIP" ? "geoip" : "geosite";
+        if (!datasetErrors_.value(kind).isEmpty()) return prefix + datasetErrors_.value(kind);
+        for (const auto &id : rule.target.split(','))
+            if (!routingGroupContains(datasetGroups_.value(kind), id)) return prefix + tr("Dataset group is unavailable: %1").arg(id.trimmed());
+    }
+    return {};
+}
+
+QString ProfileEditorDialog::matcherError(const QString &matcher) const {
+    if (routingHasSection(loadedText_, "IKEv2")) return tr("IKEv2 does not support split routing.");
+    if (mode_->currentData() == "vpn" && killSwitch_->isChecked() && matcher != "CIDR")
+        return tr("The VPN kill switch permits CIDR rules only. Disable the conflicting rules or explicitly turn off the kill switch.");
+    const QString flag = matcher == "CIDR" ? "ip_split" : matcher == "Domain" ? "domain_split" : matcher == "GeoIP" ? "geoip_split" : "geosite_split";
+    if (!capabilities_.value(flag).toBool()
+        || ((matcher == "GeoIP" || matcher == "GeoSite") && capabilities_.value("geodata_schema").toString() != "v2ray-protobuf")
+        || (matcher == "GeoSite" && mode_->currentData() == "vpn" && !capabilities_.value("domain_split").toBool()))
+        return tr("The current endpoint does not explicitly support this routing type and schema. Keep this rule disabled.");
+    if ((matcher == "GeoIP" || matcher == "GeoSite") && !bridgeReady_)
+        return tr("Core document bridge is unavailable. Use Raw config.");
+    return {};
+}
+
+void ProfileEditorDialog::refreshRouting() {
+    if (!routingStatus_ || populatingRules_) return;
+    killSwitch_->setEnabled(capabilities_.value("kill_switch").toBool() && mode_->currentData() == "vpn");
+    if (localRule_ != -1 && bridgeReady_) {
+        bool found = false;
+        for (int row = 0; row < rules_->rowCount(); ++row) {
+            if (!rules_->cellWidget(row, 3)) continue;
+            const Rule rule = tableRule(row);
+            if (rule.index == localRule_ && rule.matcher == "CIDR" && rule.action == "direct"
+                && normalizedCidrs(rule.target) == localNetworkCidrs()) {
+                found = true;
+                const QSignalBlocker blocker(ignoreLocalNetwork_);
+                ignoreLocalNetwork_->setChecked(rule.enabled);
+                break;
+            }
+        }
+        if (!found) {
+            localRule_ = -1;
+            const QSignalBlocker blocker(ignoreLocalNetwork_); ignoreLocalNetwork_->setChecked(false);
+        }
+    }
+    QStringList unavailable;
+    for (const QString &matcher : {QString("CIDR"), QString("Domain"), QString("GeoIP"), QString("GeoSite")})
+        if (!matcherError(matcher).isEmpty()) unavailable.append(matcher + ": " + matcherError(matcher));
+    for (int row = 0; row < rules_->rowCount(); ++row) {
+        if (!rules_->cellWidget(row, 3)) continue;
+        auto *type = static_cast<QComboBox *>(rules_->cellWidget(row, 1));
+        auto *enabled = ruleEnabled(rules_, row);
+        if (auto *model = qobject_cast<QStandardItemModel *>(type->model()))
+            for (int i = 0; i < type->count(); ++i) model->item(i)->setEnabled(matcherError(type->itemData(i).toString()).isEmpty());
+        enabled->setEnabled(enabled->isChecked() || (rules_->cellWidget(row, 0)->property("editable").toBool()
+            && matcherError(type->currentData().toString()).isEmpty()));
+    }
+    const QString error = routingError();
+    QString text = error;
+    if (text.isEmpty() && datasetChanged_) text = tr("New databases take effect on the next connection.");
+    routingStatus_->setToolTip(unavailable.join('\n'));
+    routingStatus_->setText(text);
+    auto *statusScroll = findChild<QScrollArea *>("routingStatusScroll");
+    statusScroll->hide();
+}
+
+void ProfileEditorDialog::inspectDataset(const QString &kind) {
+    ++datasetGeneration_[kind];
+    datasetGroups_.remove(kind); datasetKeys_.remove(kind);
+    const QString path = datasetPaths_.value(kind);
+    if (path.isEmpty()) {
+        datasetErrors_[kind] = tr("No shared database selected. Open Manage databases to set it up.");
+        refreshRouting(); return;
+    }
+    if (coreExecutable_.isEmpty() || (QDir::isRelativePath(path) && profilePath_.isEmpty())) {
+        datasetErrors_[kind] = tr("Select a Core executable and final profile path before validating datasets.");
+        refreshRouting(); return;
+    }
+    const QString absolute = QDir::isAbsolutePath(path) ? QFileInfo(path).absoluteFilePath()
+        : QFileInfo(QFileInfo(profilePath_).absoluteDir(), path).absoluteFilePath();
+    datasetKeys_[kind] = GeoDataSelection::catalogKey(coreExecutable_, kind, absolute);
+    datasetErrors_[kind] = tr("Checking file…"); refreshRouting();
+    GeoDataSelection::instance()->requestCatalog(coreExecutable_, kind, absolute);
+}
+
+void ProfileEditorDialog::selectGroups(QLineEdit *target, QComboBox *type) {
+    const QString kind = type->currentData() == "GeoIP" ? "geoip" : "geosite";
+    if (kind == "geosite") {
+        QStringList selected = target->property("groupIds").toString().split(',', Qt::SkipEmptyParts);
+        for (auto &id : selected) id = id.trimmed();
+        GeoSitePicker popup(this, datasetGroups_.value(kind), selected, datasetErrors_.value(kind));
+        if (popup.exec() == QDialog::Accepted) {
+            showGroupSummary(target, popup.selectedIds().join(','));
+            refreshRouting();
+        }
+        return;
+    }
+    QDialog popup(this);
+    popup.setWindowTitle(tr("Choose groups…"));
+    popup.resize(440, 420);
+    auto *layout = new QVBoxLayout(&popup);
+    auto *search = new QLineEdit;
+    search->setPlaceholderText(tr("Search names or IDs"));
+    search->setAccessibleName(tr("Search names or IDs"));
+    layout->addWidget(search);
+    auto *notice = new QLabel(datasetErrors_.value(kind));
+    notice->setWordWrap(true); notice->setTextFormat(Qt::PlainText);
+    layout->addWidget(notice);
+    notice->setVisible(!notice->text().isEmpty());
+    auto *list = new QListWidget;
+    list->setItemDelegate(new GeoSiteRowDelegate(list));
+    list->setFont(QApplication::font());
+    list->setStyleSheet(
+        "QListWidget::item { min-height: 24px; padding: 2px 4px; border: none; }"
+        "QListWidget::indicator { width: 16px; height: 16px; border: 1px solid #b8c6d6; border-radius: 3px; }"
+        "QListWidget::indicator:checked { border-color: #1677ff; image: url(:/icons/check.xpm); }");
+    list->setAccessibleName(tr("Available groups"));
+    layout->addWidget(list);
+    QStringList selected = target->property("groupIds").toString().split(',', Qt::SkipEmptyParts);
+    for (auto &id : selected) id = id.trimmed();
+    QStringList groups = datasetGroups_.value(kind);
+    groups = routingGroupRows(groups, selected);
+    if (kind == "geoip")
+        std::stable_partition(groups.begin(), groups.end(), [](const QString &id) { return !geoIPSpecialName(id).isEmpty(); });
+    std::stable_partition(groups.begin(), groups.end(), [&selected](const QString &id) { return routingGroupContains(selected, id); });
+    for (const auto &id : groups) {
+        QString label = groupLabel(id, kind == "geoip");
+        if (!routingGroupContains(datasetGroups_.value(kind), id)) label += " — " + tr("Unavailable");
+        auto *item = new QListWidgetItem(label, list);
+        item->setData(Qt::UserRole, id);
+        item->setData(Qt::UserRole + 1, kind == "geoip" ? geoIPSearchText(id) : label);
+        QString name = geoIPLabel(id, true);
+        const QString suffix = " (" + id.toUpper() + ')';
+        if (name.endsWith(suffix)) name.chop(suffix.size());
+        item->setData(Qt::UserRole + 3, name == id ? QString{} : name);
+        item->setData(Qt::UserRole + 4, routingGroupContains(datasetGroups_.value(kind), id) ? QString{} : " — " + tr("Unavailable"));
+        item->setData(Qt::UserRole + 7, true);
+        item->setToolTip(label);
+        item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
+        item->setCheckState(routingGroupContains(selected, id) ? Qt::Checked : Qt::Unchecked);
+    }
+    auto *empty = new QLabel;
+    layout->addWidget(empty);
+    auto *footer = new QHBoxLayout;
+    auto *count = new QPushButton;
+    count->setCheckable(true);
+    count->setAutoDefault(false);
+    count->setAccessibleName(tr("Only selected"));
+    count->setToolTip(tr("Show only selected groups; typing searches within the selection"));
+    count->setStyleSheet("QPushButton:checked { color: #1677ff; border-color: #1677ff; }");
+    footer->addWidget(count);
+    footer->addStretch();
+    auto filter = [list, search, count, empty] {
+        const QSignalBlocker blocker(list);
+        int checkedCount = 0, visibleCount = 0;
+        for (int i = 0; i < list->count(); ++i) {
+            auto *item = list->item(i);
+            const bool checked = item->checkState() == Qt::Checked;
+            checkedCount += checked;
+            const bool visible = (!count->isChecked() || checked)
+                && (item->text() + '\n' + item->data(Qt::UserRole + 1).toString()).contains(search->text(), Qt::CaseInsensitive);
+            item->setHidden(!visible);
+            visibleCount += visible;
+        }
+        count->setText((count->isChecked() ? tr("Selected: %1 · Only selected") : tr("Selected: %1")).arg(checkedCount));
+        empty->setText(count->isChecked() ? (search->text().isEmpty() ? tr("No selected groups") : tr("No matching selected groups")) : tr("No matching groups"));
+        empty->setVisible(visibleCount == 0);
+    };
+    connect(search, &QLineEdit::textChanged, list, filter);
+    connect(count, &QPushButton::toggled, list, filter);
+    connect(list, &QListWidget::itemChanged, list, filter);
+    filter();
+    auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
+    footer->addWidget(buttons);
+    layout->addLayout(footer);
+    connect(buttons, &QDialogButtonBox::accepted, &popup, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &popup, &QDialog::reject);
+    search->setFocus();
+    if (popup.exec() == QDialog::Accepted) {
+        QStringList ids;
+        for (int i = 0; i < list->count(); ++i)
+            if (list->item(i)->checkState() == Qt::Checked) ids.append(list->item(i)->data(Qt::UserRole).toString());
+        showGroupSummary(target, routingRetainedGroups(ids, selected).join(','));
+        refreshRouting();
+    }
+}
+
+void ProfileEditorDialog::manageDatabases() {
+    QJsonArray active;
+    for (int row = 0; row < rules_->rowCount(); ++row) {
+        const auto rule = tableRule(row);
+        active.append(QJsonObject{{"matcher", rule.matcher}, {"value", rule.target}, {"enabled", rule.enabled}});
+    }
+    manageSharedGeoData(this, coreExecutable_, profilePath_, active);
 }

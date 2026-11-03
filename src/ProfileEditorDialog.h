@@ -2,6 +2,7 @@
 
 #include <QDialog>
 #include <QJsonObject>
+#include <QJsonArray>
 #include <QMap>
 #include <functional>
 
@@ -18,14 +19,39 @@ class ProfileEditorDialog final : public QDialog {
     Q_OBJECT
 public:
     explicit ProfileEditorDialog(const QString &text, const QJsonObject &capabilities, QWidget *parent = nullptr,
-                                 std::function<bool(const QString &, QString *)> validateRaw = {});
+                                 std::function<bool(const QString &, QString *)> validateRaw = {},
+                                 const QString &coreExecutable = {}, const QString &profilePath = {});
+    ~ProfileEditorDialog() override;
     QString configText() const;
 
 protected:
     void reject() override;
 
 private:
-    struct Rule { QString target; QString action; bool enabled = true; bool domain = false; };
+    struct Rule { QString target; QString action; bool enabled = true; QString matcher = "CIDR"; int index = -1; bool editable = true; QString error; };
+    Rule tableRule(int row) const;
+    QJsonObject document(const QJsonArray &operations, QString *error) const;
+    QString documentText() const;
+    QString routingError() const;
+    QString matcherError(const QString &matcher) const;
+    void refreshRouting();
+    void manageDatabases();
+    void inspectDataset(const QString &kind);
+    void selectGroups(QLineEdit *target, QComboBox *type);
+    QString coreExecutable_, profilePath_;
+    QJsonObject capabilities_;
+    QJsonArray documentRules_;
+    QJsonObject documentFields_;
+    bool populatingRules_ = false;
+    bool bridgeReady_ = false;
+    int localRule_ = -1;
+    QLabel *routingStatus_ = nullptr;
+    QMap<QString, QString> datasetPaths_, datasetErrors_, datasetIdentities_, datasetKeys_;
+    bool datasetChanged_ = false;
+    QMap<QString, QStringList> datasetGroups_;
+    QMap<QString, int> datasetGeneration_;
+    mutable QString bridgeError_;
+    mutable QString cachedVisual_, cachedDocument_;
     void loadText(const QString &text);
     QString buildText() const;
     void addRule(const Rule &rule);

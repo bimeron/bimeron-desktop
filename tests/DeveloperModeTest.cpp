@@ -130,6 +130,9 @@ int main(int argc, char **argv) {
     QCoreApplication::setApplicationName("DeveloperMode-" + QUuid::createUuid().toString());
     QSettings::setDefaultFormat(QSettings::IniFormat);
     QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, temporary.path());
+    const int profileGeometry = app.arguments().indexOf("--profile-geometry");
+    if (profileGeometry >= 0)
+        return ConnectionManagementTest::profileGeometry(app, app.arguments().value(profileGeometry + 1));
     const int quitFixture = app.arguments().indexOf("--connection-quit");
     if (quitFixture >= 0)
         return ConnectionManagementTest::quitFixture(app, app.arguments().value(quitFixture + 1) == "stop");
@@ -245,7 +248,10 @@ int main(int argc, char **argv) {
         return 0;
     }
     testRouting();
+    ConnectionManagementTest::profileGeometry(app, temporary.filePath("profile-geometry.png"));
     ConnectionManagementTest::run();
+    ConnectionManagementTest::sharedGeoDataPreparation();
+    ConnectionManagementTest::settingsGeoDataChecking();
     DevelopmentCore backend(temporary.filePath("missing-helper"));
     bool completed = false;
     QObject::connect(&backend, &DevelopmentCore::completed, &backend, [&](bool success) {

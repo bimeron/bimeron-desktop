@@ -8,6 +8,7 @@
 #include <QElapsedTimer>
 #include <QJsonObject>
 #include <QMainWindow>
+#include <QMap>
 #include <QPointer>
 #include <QSet>
 #include <QJsonArray>
@@ -99,6 +100,7 @@ private:
     QIcon trayIcon(bool connected) const;
     void showCoreError(const QJsonObject &response);
     void appendLog(const QString &message);
+    bool prepareSharedGeoData(const QString &path, QString *error);
     bool validateConfig(const QString &path, QString *error = nullptr) const;
     QString humanBytes(qint64 bytes) const;
 
@@ -164,6 +166,8 @@ private:
     bool cleanupBlocked_ = false;
     QString operation_;
     QString startReadyPath_;
+    QMap<QString, QString> startSharedPaths_;
+    bool startUsesGeoData_ = false;
     quint64 connectionGeneration_ = 0;
     QProcess *validationProcess_ = nullptr;
     QProcess *serviceStatusProcess_ = nullptr;

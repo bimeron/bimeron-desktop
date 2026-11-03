@@ -412,3 +412,109 @@ connection test executable also covers transient SSH challenge UI and private IP
 Protocol URI import tests use `BIMERON_PRESERVATION_CORE` targeting Core
 `v0.3.0-beta.1` revision `9f527efe0a4959786084675f1ff795edb8a0d910`.
 The current bundle pin is not evidence of support for these new protocols.
+
+
+GeoData routing uses a Core-owned CLI document/catalog adapter without a new
+packaged executable or dependency. The current pinned candidate is not evidence
+that this development CLI surface is present; package pins and signed-update
+approval remain unchanged. For local bridge tests set BIMERON_GEODATA_CORE to a
+reviewed build implementing Core docs/DESKTOP_DOCUMENT_API.MD. With
+BIMERON_DEPLOY_QT=OFF on Windows, run CTest with the architecture-matching Qt bin
+on PATH and QT_QPA_PLATFORM_PLUGIN_PATH pointing to its plugins/platforms
+folder. Use QT_QPA_PLATFORM=offscreen for headless profile fixtures and
+QT_QPA_FONTDIR=C:/Windows/Fonts for readable offscreen screenshots. Never run
+ARM64 test executables on an x64 host as native runtime acceptance.
+
+
+The explicit shared GeoData manager adds `GeoDataDialog`, `GeoDataDownload` and
+`GeoDataSelection` to the desktop and profile fixture source lists. It uses the
+existing Qt Network dependency and adds no package payload, executable installer,
+database bundle or release pin. `geodata-download-test` uses injected local fake
+Qt replies (no public download), covering pinning, redirects, bounds, cancellation,
+timeouts and immutable publication. `geodata-selection-test` uses synthetic
+protobufs with `BIMERON_GEODATA_CORE` for shared settings/groups and document
+preparation. The existing developer-mode fixtures check shared profile preparation
+and modal manager geometry through the actual editor action. Use the same explicit
+Qt environment described above for every Windows test invocation.
+
+Native geometry capture: run `developer-mode-test --profile-geometry <absolute-png>`
+with `QT_QPA_PLATFORM=windows` and `QT_SCALE_FACTOR=1`, `1.5` or `2`. Each run waits
+500 ms for the editor and another 500 ms for its manager, captures collapsed and
+expanded Details, and writes size diagnostics. Do not substitute offscreen output
+for native Windows DPI evidence. These checks build applications/tests only; they
+do not authorize packages or installed-service changes.
+
+For isolated captures also pass `--visual-check` to suppress the unrelated CLI
+version probe. `--geometry-theme light|dark` and `--geometry-english` exercise
+appearance/English strings. `QT_SCALE_FACTOR` multiplies the native screen DPR;
+verify the emitted `.databases.json` rather than assuming the requested factor
+is the final DPR. On this host's native 150% screen, factors 2/3, 1 and 4/3
+produced measured DPR 1, 1.5 and 2.
+
+For the GeoSite classification fixture, set `BIMERON_GEOSITE_IDS` to an external
+JSON array of the real catalog IDs (the fixture normalizes the source's uppercase
+envelope keys). The same native capture writes `.catalog.png`, `.topic.png`,
+`.selected.png` (including a synthetic unavailable selection), `.minimum.png`
+(590x350 logical pixels), and `.catalog.json` with measured DPR and geometry.
+These are actual Qt picker captures using the application stylesheet, not HTML
+mockups or saved user profiles. `profile-vless-test` uses the same optional IDs
+file for diagnostic construction/filter timings; no timing threshold is enforced.
+
+
+GeoData feedback regression captures now also write `.transfer.png`, `.failure.png`
+and `.error-popup.png` beside `--profile-geometry` output. The transfer fixture
+uses the application stylesheet and injected held/HTTP-429 replies, checks the
+painted progress groove against row controls, and exercises keyboard error-popup
+activation plus cancellation/retry without public traffic. The optional manual
+`geodata-download-test --real-probe [--geosite]` makes one bounded real fixed-source
+operation in test storage, prints only phase/codes or verified size/hash/tag and
+removes its candidate; it is never invoked by CTest and publishes/selects nothing.
+
+
+GeoIP bilingual-search fixtures embed the existing ru.json resource in
+profile-vless-test and developer-mode-test. This exercises the same cached
+English/Russian lookup used by the application, without a new dependency or
+installed payload. The application already embeds this catalog.
+
+
+The GeoSite transfer fixture additionally captures `.4-business-crm.png`,
+`.5-weather.png` and `.unknown.png` beside the existing OS/update and selected
+captures. Use a fresh output basename to preserve historical captures. Read each
+`.catalog.json` for its actual DPR; native windows may land on different screens.
+
+GeoSite topic-name search reuses the embedded Russian catalog and cached picker
+row search text. Mac evidence import changes only curated labels/translations;
+there is no new runtime research input, dependency or packaged payload. Native
+fixtures also capture 4-ai and AI/ИИ/Codex/Claude/928Net/RU-CENTER queries under the
+existing --profile-geometry workflow. See geosite-picker-trial.md for the external
+179-ID provenance ledger, four Release builds, CTest results and runtime limits.
+
+The mixed-purpose placement fixture also writes `.mixed-<original-id>.png` for
+all 40 reviewed additions in each language. Use a fresh `mixed-*-native` basename
+and the same documented native geometry workflow; set the reviewed
+`BIMERON_GEODATA_CORE` as well as `BIMERON_GEOSITE_IDS`. Capture output is ignored
+build evidence, never product metadata or package input.
+
+The final Xiaomi AI delta uses the same fixture and fresh `final-delta-en-native`
+and `final-delta-ru-native` basenames. Its `.search-xiaomi-ai.png` capture shows
+the mixed MiMo/XiaoAI collection in both languages. Prior captures are retained.
+
+
+The eight-section taxonomy fixture retains the populated stable `4-ai` topic in
+Artificial intelligence. It additionally writes `.section-6.png`, `.section-7.png`
+and `.section-8.png` for Ecosystems, Artificial intelligence and General lists,
+and `.distinction-google.png`, `.distinction-youtube.png`,
+`.distinction-github.png` and `.distinction-neuralink.png` using the existing
+native `--profile-geometry` workflow. Use fresh `eight-*-native` basenames;
+read `.catalog.json` for measured DPR. No build or packaging flow changes.
+
+
+GeoSite interaction/order captures also write `.grouped-search.png`,
+`.selected-search.png` and `.selected-empty.png`. Use
+`developer-mode-test --visual-check --profile-geometry <absolute-png> --geosite-only`
+with the existing language/theme, real-ID and native DPR environment above for
+isolated picker captures. This uses the same capture function and MainWindow
+stylesheet as the full editor fixture, waits for native clear-button animation,
+and does not run or replace editor geometry acceptance. Normal CTest continues
+to exercise the full editor/manager fixtures. The fixture anchors the picker to the primary screen. Use fresh `order-screen-*`
+basenames and read `.catalog.json` for measured DPR. Build/package flow is unchanged.

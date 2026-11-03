@@ -1,8 +1,23 @@
+#include "GeoIPLabels.h"
 #include "ProfileEditorDialog.h"
+#include "GeoSitePicker.h"
+#include <QSettings>
+#include <QCryptographicHash>
+#include "GeoDataSelection.h"
 #include "ProfileStore.h"
 #include "CoreDiagnostic.h"
+#include "RoutingCompatibility.h"
 
 #include <QApplication>
+#include <QScrollArea>
+#include <QAction>
+#include <QElapsedTimer>
+#include <QEventLoop>
+#include <QKeyEvent>
+#include <QLabel>
+#include <QListWidget>
+#include <QTableWidget>
+#include <QJsonArray>
 #include <QComboBox>
 #include <QCheckBox>
 #include <QDialogButtonBox>
@@ -25,9 +40,10 @@
 #include <QTranslator>
 
 #include <cstdlib>
+#include <cstdio>
 
 namespace {
-void requireAt(bool condition, int line) { if (!condition) qFatal("Profile regression failed at line %d", line); }
+void requireAt(bool condition, int line) { if (!condition) { std::fprintf(stderr, "Profile regression failed at line %d\n", line); std::fflush(stderr); qFatal("Profile regression failed at line %d", line); } }
 #define require(condition) requireAt(bool(condition), __LINE__)
 
 void check(const QString &profile, const QStringList &fields, const QString &core, const QString &path) {
@@ -135,7 +151,10 @@ static void preservationRegressions(const QString &directory) {
         require(!tabs->isTabEnabled(0));
         require(tabs->currentIndex() == tabs->count() - 1);
         require(editor.configText() == input);
-        require(raw->isHidden());
+        require(!raw->isHidden());
+        require(raw->toPlainText() == input);
+        require(!editor.findChild<QPushButton *>("showRaw"));
+        require(!editor.findChild<QPushButton *>("useVisual"));
         editor.findChild<QLineEdit *>("profileName")->setText("programmatic visual overwrite");
         require(editor.configText() == input);
         raw->appendPlainText("# intentional Raw edit");
@@ -157,7 +176,7 @@ static void preservationRegressions(const QString &directory) {
     }
     ProfileEditorDialog recovery(inputs.first(), caps, nullptr, [](const QString &, QString *) { return true; });
     recovery.findChild<QPlainTextEdit *>("rawConfig")->setPlainText(base);
-    recovery.findChild<QPushButton *>("useVisual")->click();
+    recovery.findChild<QTabWidget *>()->setCurrentIndex(0);
     require(recovery.findChild<QTabWidget *>()->isTabEnabled(0));
     require(recovery.configText() == base);
     ProfileEditorDialog rejected(inputs.first(), caps, nullptr, [](const QString &, QString *error) {
@@ -174,9 +193,18 @@ static void preservationRegressions(const QString &directory) {
         safeError = !box->text().contains("SENTINEL");
         box->accept();
     });
-    rejected.findChild<QPushButton *>("useVisual")->click();
+    rejected.findChild<QTabWidget *>()->setCurrentIndex(0);
     require(safeError && rejected.configText() == rejectedDraft);
-    require(!rejected.findChild<QTabWidget *>()->isTabEnabled(0));
+    safeError = false;
+    QTimer::singleShot(0, [&] {
+        auto *box = qobject_cast<QMessageBox *>(QApplication::activeModalWidget());
+        require(box);
+        safeError = !box->text().contains("SENTINEL");
+        box->accept();
+    });
+    rejected.findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Save)->click();
+    require(safeError && rejected.result() != QDialog::Accepted && rejected.configText() == rejectedDraft);
+    require(rejected.findChild<QTabWidget *>()->currentIndex() == rejected.findChild<QTabWidget *>()->count() - 1);
     const QString unavailable = base + "[Interface]\nMode = vpn\nIPv6 = disable\nKillSwitch = true\n";
     ProfileEditorDialog unavailableEditor(unavailable, QJsonObject{{"proxy", true}});
     require(unavailableEditor.configText() == unavailable);
@@ -497,12 +525,1093 @@ static void parameterForms(const QString &directory) {
     require(conflict.configText().contains("WSPath = /retained"));
 }
 
+static void routingHostRegressions(const QString &directory) {
+    const QJsonObject caps{{"ip_split", true}, {"domain_split", true}, {"geoip_split", true},
+        {"geosite_split", true}, {"geodata_schema", "v2ray-protobuf"}};
+    const QString site = "[Rule]\nGeoSite=github\nAction=proxy\n";
+    auto noDomains = caps;
+    noDomains.remove("domain_split");
+    require(!routingCompatibilityError(site, noDomains).isEmpty());
+    require(routingCompatibilityError("[Interface]\nMode=\"proxy\"\n" + site, noDomains).isEmpty());
+    for (const QString &settings : {"Mode=\"v\\x70n\"\n", "Mode=proxy\nMode=vpn\n",
+            "KillSwitch=\"tr\\u0075e\"\n", "KillSwitch=\"true\n", "KillSwitch=yes\n",
+            "KillSwitch=false\nKillSwitch=true\n", "Mode=unknown\n"})
+        require(!routingCompatibilityError("[Interface]\n" + settings + site, caps).isEmpty());
+    for (const QString &matcher : {"Domain", "GeoIP", "GeoSite"})
+        require(!routingCompatibilityError("[Interface]\nKillSwitch=\"true\"\n[Rule]\n"
+            + matcher + "=example\nAction=block\n", caps).isEmpty());
+    const QString disabled = "# [Rule]\n# GeoIP=missing\n# Action=direct\n; [Rule]\n; GeoSite=missing\n";
+    require(routingCompatibilityError("[Interface]\nKillSwitch=true\n" + disabled, {}).isEmpty());
+    const QString mixed = "[Rule]\nCIDR=10.0.0.0/8\nAction=direct\n" + disabled
+        + "[Rule]\nDomain=example.org\nAction=block\n[Rule]\nGeoIP=ru\nAction=direct\n" + site;
+    require(routingCompatibilityError(mixed, caps).isEmpty());
+    for (const QString &flag : {"geoip_split", "geosite_split", "geodata_schema"}) {
+        auto missing = caps;
+        missing.remove(flag);
+        require(!routingCompatibilityError(mixed, missing).isEmpty());
+        missing.insert(flag, "true"); // Strings never establish capability/schema support.
+        require(!routingCompatibilityError(mixed, missing).isEmpty());
+    }
+    ProfileStore store(directory + "/relocation/managed");
+    const QByteArray base = "[Profile]\nVersion=1\n[AccessKey]\nSOCKS5=socks5://localhost:1080\n";
+    const QString absolute = QDir::fromNativeSeparators(directory + "/geoip.dat");
+    for (const QString &reference : QStringList{"data/geoip.dat", "../geoip.dat", "\"data/geoip.dat\"",
+            absolute + "\nGeoIPFile=data/geoip.dat",
+            "data/geoip.dat\nGeoIPFile=" + absolute}) {
+        const QByteArray bytes = base + ("[GeoData]\nGeoIPFile=" + reference + "\n").toUtf8();
+        const QString source = directory + "/relocation/source.conf";
+        require(ProfileStore::writeConfig(source, bytes));
+        const auto before = QDir(directory + "/relocation/managed").entryList(QDir::Files);
+        QString error;
+        require(store.importConfig(source, &error).isEmpty());
+        require(!error.isEmpty());
+        require(QDir(directory + "/relocation/managed").entryList(QDir::Files) == before);
+        QFile original(source);
+        require(original.open(QIODevice::ReadOnly));
+        require(original.readAll() == bytes);
+    }
+    require(ProfileStore::importReferencesSafe(("[GeoData]\nGeoIPFile=" + absolute
+        + "\nGeoSiteFile=" + absolute + "\n").toUtf8()));
+    require(ProfileStore::importReferencesSafe("# [GeoData]\n# GeoIPFile=data/geoip.dat\n"));
+    // A same-directory copy preserves relative resolution and exact source bytes.
+    const QString local = directory + "/relocation/managed/local.conf";
+    const QByteArray bytes = base + "[GeoData]\nGeoSiteFile=data/geosite.dat\n" + disabled.toUtf8();
+    require(ProfileStore::writeConfig(local, bytes));
+    const QString imported = store.importConfig(local);
+    require(!imported.isEmpty());
+    QFile copy(imported);
+    require(copy.open(QIODevice::ReadOnly));
+    require(copy.readAll() == bytes);
+}
+// Optional native editor integration: set BIMERON_GEODATA_CORE to a Core
+// executable implementing docs/DESKTOP_DOCUMENT_API.MD (protocol 1).
+static void geodataBridgeRegressions(const QString &directory) {
+    const QString core = qEnvironmentVariable("BIMERON_GEODATA_CORE");
+    if (core.isEmpty()) return;
+    require(QFileInfo(core).isExecutable());
+    const QJsonObject caps{{"vpn", true}, {"proxy", true}, {"ip_split", true}, {"domain_split", true},
+        {"geoip_split", true}, {"geosite_split", true}, {"geodata_schema", "v2ray-protobuf"}};
+    const QString path = directory + "/bridge.conf";
+    const auto call = [&](const QStringList &args, const QJsonObject &request = QJsonObject{}) {
+        QProcess process;
+        process.start(core, args);
+        require(process.waitForStarted(5000));
+        if (!request.isEmpty()) {
+            const QByteArray input = QJsonDocument(request).toJson(QJsonDocument::Compact);
+            require(process.write(input) == input.size());
+        }
+        process.closeWriteChannel();
+        require(process.waitForFinished(20000));
+        require(process.exitStatus() == QProcess::NormalExit && process.exitCode() == 0);
+        QJsonParseError error;
+        const auto response = QJsonDocument::fromJson(process.readAllStandardOutput(), &error).object();
+        require(error.error == QJsonParseError::NoError && response.value("version").toInt() == 1);
+        require(response.value("error").toString().isEmpty());
+        return response;
+    };
+    const auto inspect = [&](const QString &text) {
+        return call({"document"}, {{"version", 1}, {"profile", text}, {"operations", QJsonArray{}}});
+    };
+    // Same tiny wire messages as Core internal/routing/geodata_test.go helpers:
+    // bytesField, geoGroup, geoCIDR and geoDomain. All lengths fit one byte.
+    const auto field = [](char tag, const QByteArray &value) {
+        require(value.size() < 128);
+        return QByteArray(1, tag) + QByteArray(1, char(value.size())) + value;
+    };
+    const auto group = [&](const QByteArray &id, const QByteArray &entry) {
+        return field(0x0a, field(0x0a, id) + field(0x12, entry));
+    };
+    const QByteArray ips = group("ru", field(0x0a, QByteArray::fromHex("cb007100")) + QByteArray::fromHex("1018"))
+        + group("by", field(0x0a, QByteArray::fromHex("c6336400")) + QByteArray::fromHex("1018"))
+        + group("cloudflare", field(0x0a, QByteArray::fromHex("c0000200")) + QByteArray::fromHex("1018"));
+    const QByteArray sites = group("github", QByteArray::fromHex("0802") + field(0x12, "github.example"))
+        + group("youtube", QByteArray::fromHex("0802") + field(0x12, "youtube.example"));
+    for (const auto &kind : {QString("geoip"), QString("geosite")}) {
+        QFile file(directory + '/' + kind + ".dat");
+        require(file.open(QIODevice::WriteOnly));
+        const auto bytes = kind == "geoip" ? ips : sites;
+        require(file.write(bytes) == bytes.size()); file.close();
+        const auto groups = call({"geodata", "groups", kind, file.fileName()}).value("groups").toArray();
+        require(groups == (kind == "geoip" ? QJsonArray{"by", "cloudflare", "ru"} : QJsonArray{"github", "youtube"}));
+    }
+    const auto settle = [](ProfileEditorDialog &dialog) {
+        QElapsedTimer elapsed; elapsed.start();
+        while ((!dialog.findChildren<QProcess *>().isEmpty() || GeoDataSelection::instance()->catalogsBusy()) && elapsed.elapsed() < 20000) {
+            QApplication::processEvents(QEventLoop::AllEvents, 50);
+            QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+        }
+        require(dialog.findChildren<QProcess *>().isEmpty());
+    };
+    const QString base = "[Profile]\nVersion=1\nName=Bridge\n[AccessKey]\nType=shadowsocks\n"
+        "Server=example.invalid\nPort=443\nMethod=aes-256-gcm\nPassword=SYNTHETIC\n"
+        "[GeoData]\nGeoIPFile=geoip.dat\nGeoSiteFile=geosite.dat\n[Routing]\nDefault=proxy\n";
+    // Integration acceptance: imported IDs and commented sections survive a name-only save.
+    for (const QString &rule : {QString("[Rule]\nGeoIP=RU\nAction=direct\n"), QString("# [IKEv2]\n[Rule]\nDomain=example.org\nAction=direct\n")}) {
+        ProfileEditorDialog dialog(base + rule, caps, nullptr, {}, core, path);
+        settle(dialog);
+        dialog.findChild<QLineEdit *>("profileName")->setText("Renamed");
+        bool warned = false;
+        QTimer guard;
+        QObject::connect(&guard, &QTimer::timeout, [&] {
+            if (auto *box = qobject_cast<QMessageBox *>(QApplication::activeModalWidget())) { warned = true; box->accept(); }
+        });
+        guard.start(10);
+        dialog.findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Save)->click();
+        guard.stop();
+        require(!warned && dialog.result() == QDialog::Accepted);
+        const auto result = inspect(dialog.configText());
+        require(result.value("fields").toObject().value("Profile/Name") == "Renamed");
+        if (rule.contains("GeoIP")) require(result.value("rules").toArray().first().toObject().value("value") == "RU");
+    }
+    {
+        GeoSitePicker picker(nullptr, {"youtube", "github"}, {"YOUTUBE", "youtube", "YouTube"}, {});
+        auto *list = picker.findChild<QListWidget *>("geoSiteGroups");
+        int checked = 0;
+        for (int row = 0; row < list->count(); ++row) {
+            auto *item = list->item(row);
+            if (item->checkState() != Qt::Checked) continue;
+            ++checked;
+            require(item->data(Qt::UserRole) == "youtube");
+            require(!item->data(Qt::UserRole + 2).toBool());
+        }
+        require(checked == 1);
+        picker.findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Ok)->click();
+        require(picker.selectedIds() == QStringList{"YOUTUBE"});
+    }
+    {
+        const QString source = QString(base).replace("Password=SYNTHETIC", "Password=SYNTHETIC\nPlugin=v2ray-plugin\nPluginOpts=tls;host=example.invalid");
+        ProfileEditorDialog dialog(source, caps, nullptr, {}, core, path);
+        settle(dialog); dialog.show();
+        auto *name = dialog.findChild<QLineEdit *>("profileName");
+        auto *options = dialog.findChild<QLineEdit *>("ssPluginOpts");
+        require(name && options && !options->text().isEmpty());
+        name->setText("Unsaved name"); options->clear();
+        for (bool discard : {false, true}) {
+            bool prompted = false;
+            QTimer::singleShot(0, [&] {
+                auto *box = qobject_cast<QMessageBox *>(QApplication::activeModalWidget());
+                require(box); prompted = true;
+                for (auto *button : box->buttons())
+                    if (box->buttonRole(button) == (discard ? QMessageBox::DestructiveRole : QMessageBox::RejectRole)) { button->click(); return; }
+                require(false);
+            });
+            dialog.findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Cancel)->click();
+            require(prompted && name->text() == "Unsaved name" && options->text().isEmpty());
+            require(dialog.isVisible() != discard);
+        }
+        require(dialog.result() == QDialog::Rejected);
+    }
+    {
+        QString quoted = base;
+        quoted.replace("Password=SYNTHETIC", "Password=\"sec\\x72et\"");
+        quoted.replace("Port=443", "Port=\"443\"");
+        ProfileEditorDialog decoded(quoted, caps, nullptr, {}, core, path);
+        require(decoded.configText() == quoted);
+        QLineEdit *password = nullptr;
+        for (auto *edit : decoded.findChildren<QLineEdit *>()) if (edit->text() == "secret") password = edit;
+        require(password);
+        password->setText("changed");
+        const auto fields = inspect(decoded.configText()).value("fields").toObject();
+        require(fields.value("AccessKey/Password") == "changed");
+        require(fields.value("AccessKey/Port") == "443");
+        settle(decoded);
+    }
+    {
+        QWidget styledParent;
+        QFile sourceFile(QFileInfo(QString::fromUtf8(__FILE__)).dir().filePath("../src/MainWindow.cpp"));
+        require(sourceFile.open(QIODevice::ReadOnly));
+        const QString sourceCode = QString::fromUtf8(sourceFile.readAll());
+        const QString start = "QString applicationStyle = QStringLiteral(R\"(";
+        const int from = sourceCode.indexOf(start) + start.size();
+        const int to = sourceCode.indexOf(")\");", from);
+        require(from >= start.size() && to > from);
+        styledParent.setStyleSheet(sourceCode.mid(from, to - from));
+        class SizeTranslator final : public QTranslator {
+        public:
+            QJsonObject strings;
+            QString translate(const char *, const char *text, const char *, int) const override { return strings.value(QString::fromUtf8(text)).toString(); }
+            bool isEmpty() const override { return strings.isEmpty(); }
+        } sizeTranslator;
+        QFile ru(QFileInfo(QString::fromUtf8(__FILE__)).dir().filePath("../assets/translations/ru.json"));
+        require(ru.open(QIODevice::ReadOnly));
+        sizeTranslator.strings = QJsonDocument::fromJson(ru.readAll()).object();
+        QApplication::installTranslator(&sizeTranslator);
+        ProfileEditorDialog styled("[Profile]\nVersion=1\nName=Size\n[AccessKey]\nSSConf=ssconf://example.invalid\n", caps, &styledParent, {}, core, path);
+        styled.show();
+        QElapsedTimer geometryTimer; geometryTimer.start();
+        while (geometryTimer.elapsed() < 500) QApplication::processEvents(QEventLoop::AllEvents, 50);
+        require(styled.findChild<QScrollArea *>("vlessScroll"));
+        require(styled.size() == QSize(680, 520));
+        auto *styledTabs = styled.findChild<QTabWidget *>();
+        styledTabs->setCurrentIndex(styledTabs->count() - 1);
+        require(styled.findChild<QPlainTextEdit *>("rawConfig")->isVisible());
+        require(styled.findChild<QPlainTextEdit *>("rawConfig")->toPlainText().contains("SSConf=ssconf://example.invalid"));
+        const QString sizePreview = qEnvironmentVariable("BIMERON_GEODATA_PREVIEW");
+        if (!sizePreview.isEmpty()) require(styled.grab().save(sizePreview + "-styled.png"));
+        settle(styled);
+        QApplication::removeTranslator(&sizeTranslator);
+    }
+    const QString local = "[Rule]\nCIDR=10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,169.254.0.0/16,fc00::/7,fe80::/10\nAction=direct\n";
+    const QString first = "[Rule]\nGeoSite=github\nAction=block\n# attached site comment\n";
+    const QString disabled = "# [Rule]\n# GeoIP=ru\n# Action=direct\n# # nested comment\n";
+    const QString domain = "[Rule]\nDomain=example.org\nAction=proxy\n";
+    const QString suffix = "[Future]\nOpaque = retained";
+    const QString source = QString(QChar(0xfeff)) + QString(base + first + disabled + local + domain + suffix).replace("\n", "\r\n");
+    const auto crlf = [](QString text) { return text.replace("\n", "\r\n"); };
+    ProfileEditorDialog editor(source, caps, nullptr, {}, core, path);
+    auto *tabs = editor.findChild<QTabWidget *>();
+    auto *table = editor.findChild<QTableWidget *>();
+    require(tabs && table && tabs->isTabEnabled(0) && table->rowCount() == 4);
+    auto *statusScroll = editor.findChild<QScrollArea *>("routingStatusScroll");
+    require(statusScroll && statusScroll->maximumHeight() == 64);
+    auto *geometryStatus = editor.findChild<QLabel *>("routingStatus");
+    require(geometryStatus);
+    const QString previousStatus = geometryStatus->text();
+    ProfileEditorDialog emptyStatus(base, caps, nullptr, {}, core, path);
+    settle(emptyStatus);
+    require(emptyStatus.findChild<QLabel *>("routingStatus")->text().isEmpty());
+    require(emptyStatus.findChild<QScrollArea *>("routingStatusScroll")->isHidden());
+    require(statusScroll->minimumHeight() == 0);
+    geometryStatus->setText(QString("Long capability diagnostic\n").repeated(40));
+    editor.resize(680, 520);
+    editor.show(); QApplication::processEvents();
+    require(editor.height() == 520);
+    editor.hide(); geometryStatus->setText(previousStatus);
+
+    require(editor.configText().toUtf8() == source.toUtf8());
+    const QString preview = qEnvironmentVariable("BIMERON_GEODATA_PREVIEW");
+    if (!preview.isEmpty()) {
+        require(QDir::isAbsolutePath(preview));
+        editor.resize(1100, 800);
+        for (int i = 0; i < tabs->count(); ++i)
+            if (tabs->widget(i)->isAncestorOf(table)) tabs->setCurrentIndex(i);
+        editor.show();
+        QApplication::processEvents();
+        require(editor.grab().save(preview, "PNG"));
+        editor.hide();
+    }
+
+    tabs->setCurrentIndex(tabs->count() - 1); tabs->setCurrentIndex(0);
+    require(editor.configText().toUtf8() == source.toUtf8());
+    const auto enabled = [&](int row) { return table->cellWidget(row, 0)->findChild<QCheckBox *>(); };
+    for (int cycle = 0; cycle < 3; ++cycle) {
+        enabled(1)->setChecked(true);
+        const QString output = editor.configText();
+        require(output == QString(source).replace(crlf(disabled), crlf("[Rule]\nGeoIP=ru\nAction=direct\n# nested comment\n")));
+        require(!output.contains("Enabled="));
+        enabled(1)->setChecked(false);
+        require(editor.configText() == source);
+    }
+    // A later local block must stay after the earlier blocking GeoSite rule.
+    auto *action = qobject_cast<QComboBox *>(table->cellWidget(0, 3));
+    require(action); action->setCurrentIndex(action->findData("direct"));
+    const QString edited = editor.configText();
+    const QString editedExpected = QString(source)
+        .replace("Default=proxy\r\n[Rule]", "Default=proxy\r\n\r\n[Rule]")
+        .replace("GeoSite=github\r\nAction=block", "GeoSite=github\r\nAction=direct")
+        .replace("# attached site comment\r\n# [Rule]", "# attached site comment\r\n\r\n# [Rule]");
+    require(edited == editedExpected);
+    require(inspect(edited).value("rules").toArray().at(2).toObject().value("matcher") == "CIDR");
+    action->setCurrentIndex(action->findData("block"));
+    require(editor.configText() == source);
+    table->selectRow(1);
+    QPushButton *down = nullptr;
+    for (auto *button : editor.findChildren<QPushButton *>()) if (button->text() == "Move down") down = button;
+    require(down && down->isEnabled()); down->click();
+    const QString moved = QString(QChar(0xfeff)) + crlf(base + first + "\n" + local + "\n" + disabled + "\n" + domain + suffix);
+    require(editor.configText() == moved && table->currentRow() == 2);
+    const auto rows = inspect(moved).value("rules").toArray();
+    require(rows.size() == 4 && !rows.at(2).toObject().value("enabled").toBool());
+    require(rows.at(3).toObject().value("matcher") == "Domain");
+    // Duplicated and disabled local blocks must remain visible, in place.
+    for (const QString &tail : {local + local, disabled + local, first + local}) {
+        const QString input = base + tail;
+        ProfileEditorDialog imported(input, caps, nullptr, {}, core, path);
+        auto *importedTable = imported.findChild<QTableWidget *>();
+        require(importedTable && importedTable->rowCount() == 2);
+        require(imported.configText() == input);
+        auto *lastAction = qobject_cast<QComboBox *>(importedTable->cellWidget(1, 3));
+        require(lastAction); lastAction->setCurrentIndex(lastAction->findData("block"));
+        const QString output = imported.configText();
+        const auto importedRows = inspect(output).value("rules").toArray();
+        require(importedRows.size() == 2);
+        require(importedRows.at(0).toObject() == inspect(input).value("rules").toArray().at(0).toObject());
+        require(importedRows.at(1).toObject().value("action") == "block");
+        require(output.startsWith(base));
+        settle(imported);
+    }
+    // Catalog completion is asynchronous; drive the event loop with a bound.
+    QElapsedTimer timer; timer.start();
+    auto *status = editor.findChild<QLabel *>("routingStatus");
+    require(status);
+    while (status->text().contains("Validating dataset") && timer.elapsed() < 20000)
+        QApplication::processEvents(QEventLoop::AllEvents, 50);
+    require(!status->text().contains("Validating dataset"));
+    auto *target = qobject_cast<QLineEdit *>(table->cellWidget(0, 2));
+    require(target && !target->actions().isEmpty());
+    bool popupChecked = false;
+    QTimer::singleShot(0, [&] {
+        auto *popup = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+        require(popup && popup != &editor);
+        auto *search = popup->findChild<QLineEdit *>();
+        auto *list = popup->findChild<QListWidget *>("geoSiteGroups");
+        require(search && list);
+        int entries = 0;
+        for (int i = 0; i < list->count(); ++i) entries += list->item(i)->data(Qt::UserRole).isValid();
+        require(entries == 2);
+        search->setText("YouTube");
+        QListWidgetItem *github = nullptr, *youtube = nullptr;
+        for (int i = 0; i < list->count(); ++i) {
+            auto *item = list->item(i);
+            if (item->data(Qt::UserRole) == "github") github = item;
+            if (item->data(Qt::UserRole) == "youtube") youtube = item;
+        }
+        require(github && youtube && github->isHidden() && github->checkState() == Qt::Checked);
+        require(!youtube->isHidden()); list->setCurrentItem(youtube); list->setFocus();
+        QKeyEvent space(QEvent::KeyPress, Qt::Key_Space, Qt::NoModifier);
+        QApplication::sendEvent(list, &space);
+        require(youtube->checkState() == Qt::Checked);
+        search->setText("github");
+        require(!github->isHidden() && youtube->isHidden() && youtube->checkState() == Qt::Checked);
+        auto *buttons = popup->findChild<QDialogButtonBox *>(); require(buttons);
+        buttons->button(QDialogButtonBox::Ok)->click(); popupChecked = true;
+    });
+    target->actions().first()->trigger();
+    require(popupChecked && target->property("groupIds").toString() == "github,youtube" && editor.result() != QDialog::Accepted);
+    require(target->text().contains("GitHub") && target->text().contains("YouTube"));
+    require(inspect(editor.configText()).value("rules").toArray().at(0).toObject().value("value") == "github,youtube");
+    target->setProperty("groupIds", "youtube,!unknown");
+    QTimer::singleShot(0, [&] {
+        auto *popup = qobject_cast<QDialog *>(QApplication::activeModalWidget()); require(popup);
+        auto *list = popup->findChild<QListWidget *>("geoSiteGroups"); require(list);
+        auto *sections = popup->findChild<QListWidget *>("geoSiteSections"); require(sections && sections->count() == 10);
+        QListWidgetItem *youtube = nullptr, *github = nullptr, *unknown = nullptr;
+        for (int i = 0; i < list->count(); ++i) {
+            auto *item = list->item(i);
+            if (item->data(Qt::UserRole) == "youtube") youtube = item;
+            if (item->data(Qt::UserRole) == "github") github = item;
+            if (item->data(Qt::UserRole) == "!unknown") unknown = item;
+        }
+        require(youtube && github && unknown && unknown->text().contains("Unavailable"));
+        sections->setCurrentRow(2);
+        require(!youtube->isHidden() && github->isHidden() && unknown->isHidden());
+        auto *search = popup->findChild<QLineEdit *>(); search->setText("github");
+        require(!github->isHidden() && youtube->isHidden() && youtube->checkState() == Qt::Checked);
+        github->setCheckState(Qt::Checked);
+        require(unknown->checkState() == Qt::Checked);
+        search->clear();
+        require(!youtube->isHidden() && github->isHidden());
+        sections->setCurrentRow(0);
+        require(!unknown->isHidden());
+        popup->findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Ok)->click();
+    });
+    target->actions().first()->trigger();
+    require(target->property("groupIds").toString() == "youtube,!unknown,github");
+    require(status->text().contains("!unknown"));
+    const QString beforeCancel = target->property("groupIds").toString();
+    QTimer::singleShot(0, [&] {
+        auto *popup = qobject_cast<QDialog *>(QApplication::activeModalWidget()); require(popup);
+        auto *list = popup->findChild<QListWidget *>("geoSiteGroups"); require(list);
+        for (int i = 0; i < list->count(); ++i)
+            if (list->item(i)->data(Qt::UserRole).isValid()) list->item(i)->setCheckState(Qt::Unchecked);
+        popup->findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Cancel)->click();
+    });
+    target->actions().first()->trigger();
+    require(target->property("groupIds").toString() == beforeCancel);
+
+    auto *geoType = qobject_cast<QComboBox *>(table->cellWidget(0, 1));
+    geoType->setCurrentIndex(geoType->findData("GeoIP"));
+    target->setProperty("groupIds", "ru,cloudflare,private");
+    QTimer::singleShot(0, [&] {
+        auto *popup = qobject_cast<QDialog *>(QApplication::activeModalWidget()); require(popup);
+        auto *list = popup->findChild<QListWidget *>(); require(list && list->count() >= 3);
+        require(list->item(0)->data(Qt::UserRole) == "cloudflare");
+        require(list->item(1)->data(Qt::UserRole) == "private");
+        require(list->item(2)->data(Qt::UserRole) == "ru");
+        require(list->item(2)->text().startsWith("Russia (RU)"));
+        auto *search = popup->findChild<QLineEdit *>(); search->setText(QString::fromUtf8("Россия"));
+        require(!list->item(2)->isHidden());
+        search->setText("Russia");
+        require(!list->item(2)->isHidden());
+        search->setText("RU");
+        require(!list->item(2)->isHidden());
+        popup->findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Ok)->click();
+    });
+    target->actions().first()->trigger();
+    require(target->property("groupIds").toString() == "ru,cloudflare,private");
+    require(target->text().contains("Russia (RU)"));
+    target->setProperty("groupIds", "ru");
+    QTimer::singleShot(0, [&] {
+        auto *popup = qobject_cast<QDialog *>(QApplication::activeModalWidget()); require(popup);
+        auto *list = popup->findChild<QListWidget *>(); require(list && list->count() == 3);
+        auto *ru = list->item(0), *cloudflare = list->item(1), *by = list->item(2);
+        require(ru->data(Qt::UserRole) == "ru" && ru->checkState() == Qt::Checked);
+        require(cloudflare->data(Qt::UserRole) == "cloudflare" && cloudflare->checkState() == Qt::Unchecked);
+        require(by->data(Qt::UserRole) == "by" && by->checkState() == Qt::Unchecked);
+        auto *search = popup->findChild<QLineEdit *>(); require(search);
+        search->setText("cloudflare");
+        require(ru->isHidden() && !cloudflare->isHidden() && by->isHidden());
+        cloudflare->setCheckState(Qt::Checked);
+        search->clear();
+        require(!ru->isHidden() && !cloudflare->isHidden() && !by->isHidden());
+        require(list->item(0) == ru && list->item(1) == cloudflare && list->item(2) == by);
+        ru->setCheckState(Qt::Unchecked);
+        require(list->item(0) == ru && list->item(1) == cloudflare && list->item(2) == by);
+        ru->setCheckState(Qt::Checked);
+        popup->findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Ok)->click();
+    });
+    target->actions().first()->trigger();
+    require(target->property("groupIds").toString() == "ru,cloudflare");
+    require(inspect(editor.configText()).value("rules").toArray().at(0).toObject().value("value") == "ru,cloudflare");
+    for (const QString &flag : {QString("geoip_split"), QString("geosite_split"), QString("geodata_schema")}) {
+        auto restricted = caps; restricted.remove(flag);
+        const QString rule = flag == "geoip_split" ? "[Rule]\nGeoIP=ru\nAction=direct\n" : first;
+        const QString input = base + rule;
+        ProfileEditorDialog gated(input, restricted, nullptr, {}, core, path);
+        require(gated.configText() == input);
+        auto *reason = gated.findChild<QLabel *>("routingStatus");
+        require(reason && reason->text().contains("does not explicitly support"));
+        bool rejected = false;
+        QTimer::singleShot(0, [&] {
+            auto *box = qobject_cast<QMessageBox *>(QApplication::activeModalWidget());
+            require(box); rejected = true; box->accept();
+        });
+        gated.findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Save)->click();
+        require(rejected && gated.result() != QDialog::Accepted && gated.configText() == input);
+        settle(gated);
+    }
+    // Closing while asynchronous catalogs are still queued must not invoke
+    // callbacks against a partially destroyed dialog.
+    for (int attempt = 0; attempt < 3; ++attempt) {
+        auto *closing = new ProfileEditorDialog(source, caps, nullptr, {}, core, path);
+        delete closing;
+        QApplication::processEvents();
+        QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    }
+}
+
+static void geoSiteClassificationTest() {
+    require(geoSiteEntries().size() == 1561 && geoSiteTopics().size() == 46);
+    require(geoSiteSections().size() == 8);
+    require(geoSiteSections().at(5) == "Ecosystems" && geoSiteSections().at(6) == "Artificial intelligence"
+        && geoSiteSections().last() == "General lists");
+    const QSet<QString> ecosystems{
+        "adguard", "adobe", "alibaba", "alphabet", "amazon", "apple",
+        "autodesk", "auxgroup", "baidu", "broadcom", "bytedance", "canonical",
+        "cheetahmobile", "cisco", "dell", "didi", "disney", "dmm",
+        "douyin", "epicgames", "facebook", "gmo-internet", "google", "haier",
+        "hkt", "intuit", "jd", "kakao", "kingsoft", "kuaishou",
+        "lenovo", "line", "mailru", "mailru-group", "meitu", "meta",
+        "microsoft", "mozilla", "mts-ru", "naver", "nbcuniversal", "netease",
+        "newscorp", "oracle", "pccw", "progress", "protonmail", "rakuten",
+        "razer", "rostelecom", "ruanmei", "samsung", "sber", "sony",
+        "tencent", "xiaomi", "yandex"};
+    QByteArray baseline;
+    int ecosystemCount = 0, aiCount = 0;
+    for (auto it = geoSiteEntries().cbegin(); it != geoSiteEntries().cend(); ++it) {
+        int section = it->section;
+        QString topic = QString::fromUtf8(it->topic);
+        if (ecosystems.contains(it.key())) {
+            require(section == 5 && topic.isEmpty() && it->collection);
+            section = 5; topic = "6-organizations"; ++ecosystemCount;
+        } else if (section == 6) {
+            require(topic == "4-ai" || ((it.key() == "category-ai-!cn" || it.key() == "category-ai-chat-!cn") && topic.isEmpty()));
+            section = 3; ++aiCount;
+            if (it.key() == "cursor") topic = "4-development";
+            if (it.key() == "xiaomi-ai") { section = 5; topic = "6-organizations"; }
+        } else if (section == 7) section = 5;
+        else require(section < 5);
+        const QString baselineName = it.key() == "openai" ? "OpenAI and ChatGPT (Codex)"
+            : it.key() == "anthropic" ? "Anthropic AI tools (Claude)" : QString::fromUtf8(it->name);
+        baseline += (it.key() + '|' + baselineName + '|' + QString::number(section)
+            + '|' + QString::number(it->collection ? 1 : 0) + '|' + topic + '\n').toUtf8();
+    }
+    require(ecosystemCount == 57 && aiCount == 28);
+    require(QCryptographicHash::hash(baseline, QCryptographicHash::Sha256).toHex() == "829ab62fa3ebfceb0214fac754d0176d8b662af80e30f86b3b9e93dd2838974d");
+    require(geoSiteEntries().value("youtube").section == 1 && QString(geoSiteEntries().value("youtube").topic) == "2-video");
+    require(geoSiteEntries().value("github").section == 3 && QString(geoSiteEntries().value("github").topic) == "4-development");
+    const auto xiaomiAi = geoSiteEntries().value("xiaomi-ai");
+    require(xiaomiAi.section == 6 && xiaomiAi.collection && QString(xiaomiAi.topic) == "4-ai");
+    require(QString::fromUtf8(xiaomiAi.name) == QString::fromUtf8("Xiaomi AI — MiMo tools and XiaoAI device assistant"));
+    require(geoSiteSearchText("xiaomi-ai").contains(QString::fromUtf8("помощник XiaoAI")));
+    // Known mixed purposes receive explicit editorial navigation, not unknown status.
+    require(geoSiteEntries().value("8btc").section == 7 && geoSiteEntries().value("8btc").collection);
+    require(geoSiteEntries().value("cnet").section == 1 && geoSiteEntries().value("cnet").collection);
+    require(geoSiteEntries().value("falungong").section == 7 && geoSiteEntries().value("falungong").collection);
+    require(geoSiteEntries().value("filimo").section == 1 && geoSiteEntries().value("filimo").collection);
+    require(geoSiteEntries().value("hainanairlines").section == 7 && geoSiteEntries().value("hainanairlines").collection);
+    require(geoSiteEntries().value("hinet").section == 2 && geoSiteEntries().value("hinet").collection);
+    require(geoSiteEntries().value("hisense").section == 7 && geoSiteEntries().value("hisense").collection);
+    require(geoSiteEntries().value("hkbn").section == 7 && geoSiteEntries().value("hkbn").collection);
+    require(geoSiteEntries().value("hketgroup").section == 7 && geoSiteEntries().value("hketgroup").collection);
+    require(geoSiteEntries().value("hupu").section == 1 && geoSiteEntries().value("hupu").collection);
+    require(geoSiteEntries().value("icable").section == 7 && geoSiteEntries().value("icable").collection);
+    require(geoSiteEntries().value("idg").section == 7 && geoSiteEntries().value("idg").collection);
+    require(geoSiteEntries().value("ifanr").section == 7 && geoSiteEntries().value("ifanr").collection);
+    require(geoSiteEntries().value("kkbox").section == 1 && geoSiteEntries().value("kkbox").collection);
+    require(geoSiteEntries().value("kuaishou").section == 5 && geoSiteEntries().value("kuaishou").collection);
+    require(geoSiteEntries().value("ltn").section == 7 && geoSiteEntries().value("ltn").collection);
+    require(geoSiteEntries().value("madshi").section == 3 && geoSiteEntries().value("madshi").collection);
+    require(geoSiteEntries().value("mega").section == 2 && geoSiteEntries().value("mega").collection);
+    require(geoSiteEntries().value("nvidia").section == 7 && geoSiteEntries().value("nvidia").collection);
+    require(geoSiteEntries().value("okaapps").section == 3 && geoSiteEntries().value("okaapps").collection);
+    require(geoSiteEntries().value("oschina").section == 3 && geoSiteEntries().value("oschina").collection);
+    require(geoSiteEntries().value("paypal").section == 4 && geoSiteEntries().value("paypal").collection);
+    require(geoSiteEntries().value("phoenix").section == 7 && geoSiteEntries().value("phoenix").collection);
+    require(geoSiteEntries().value("pornhub").section == 1 && geoSiteEntries().value("pornhub").collection);
+    require(geoSiteEntries().value("protonmail").section == 5 && geoSiteEntries().value("protonmail").collection);
+    require(geoSiteEntries().value("quora").section == 7 && geoSiteEntries().value("quora").collection);
+    require(geoSiteEntries().value("renren").section == 7 && geoSiteEntries().value("renren").collection);
+    require(geoSiteEntries().value("secom").section == 7 && geoSiteEntries().value("secom").collection);
+    require(geoSiteEntries().value("sharethis").section == 7 && geoSiteEntries().value("sharethis").collection);
+    require(geoSiteEntries().value("sina").section == 7 && geoSiteEntries().value("sina").collection);
+    require(geoSiteEntries().value("sohu").section == 7 && geoSiteEntries().value("sohu").collection);
+    require(geoSiteEntries().value("tbank-ru").section == 4 && geoSiteEntries().value("tbank-ru").collection);
+    require(geoSiteEntries().value("uc").section == 2 && geoSiteEntries().value("uc").collection);
+    require(geoSiteEntries().value("verizon").section == 7 && geoSiteEntries().value("verizon").collection);
+    require(geoSiteEntries().value("vivo").section == 4 && geoSiteEntries().value("vivo").collection);
+    require(geoSiteEntries().value("wiwide").section == 7 && geoSiteEntries().value("wiwide").collection);
+    require(geoSiteEntries().value("x").section == 7 && geoSiteEntries().value("x").collection);
+    require(geoSiteEntries().value("xiaoheihe").section == 1 && geoSiteEntries().value("xiaoheihe").collection);
+    require(geoSiteEntries().value("xiaohongshu").section == 7 && geoSiteEntries().value("xiaohongshu").collection);
+    require(geoSiteEntries().value("zhangtao").section == 7 && geoSiteEntries().value("zhangtao").collection);
+    for (const auto &decision : {qMakePair(QString("neuralink"), QString("6-organizations")),
+                                 qMakePair(QString("redtube"), QString("2-adult"))}) {
+        const auto entry = geoSiteEntries().value(decision.first);
+        require(entry.collection && QString(entry.topic) == decision.second);
+        require(entry.section == (decision.first == "neuralink" ? 7 : 1));
+    }
+    require(QString(geoSiteEntries().value("neuralink").name) == "Neuralink");
+    require(QString(geoSiteEntries().value("redtube").name) == "RedTube adult content");
+    require(geoSiteSearchText("redtube").contains(QString::fromUtf8("Контент для взрослых RedTube")));
+    QMap<QString, int> topics;
+    for (const auto &topic : geoSiteTopics()) {
+        require(!topics.contains(topic.id) && topic.section >= 0 && topic.section < 8);
+        topics.insert(topic.id, topic.section);
+    }
+    int assigned = 0;
+    for (auto it = geoSiteEntries().cbegin(); it != geoSiteEntries().cend(); ++it) {
+        require(!it.key().isEmpty() && it.key() == it.key().toLower() && it->section >= 0 && it->section < 8);
+        require(it->name && *it->name && geoSiteSearchText(it.key()).contains(it->name));
+        if (it->topic) { require(topics.contains(it->topic) && topics.value(it->topic) == it->section); ++assigned; }
+    }
+    require(assigned == 1156);
+    for (const auto &pair : {qMakePair(QString("category-ai-chat-!cn"), QString("category-ai-!cn")),
+                             qMakePair(QString("archive"), QString("category-web-archive")),
+                             qMakePair(QString("google-gemini"), QString("google-deepmind"))}) {
+        const auto a = geoSiteEntries().value(pair.first), b = geoSiteEntries().value(pair.second);
+        require(a.section == b.section && a.collection == b.collection && QString::fromUtf8(a.topic) == QString::fromUtf8(b.topic));
+    }
+    const QMap<QString, QStringList> splitTopics{
+        {"3-operating-systems", {"android", "archlinux", "debian", "fedora", "grapheneos", "kernel", "openwrt", "ubuntu", "ubuntukylin"}},
+        {"3-updates-drivers", {"apple-update", "win-update"}},
+        {"3-app-packages", {"apkcombo", "apkmirror", "apkpure", "aptoide", "decryptipastore", "google-play", "paskoocheh", "setapp", "f-droid", "flatpak", "homebrew", "snapcraft", "category-android-app-download"}},
+        {"3-browsers", {"ceno", "epicbrowser", "firefox", "librewolf", "category-browser-!cn"}}
+    };
+    require(!topics.contains("3-browser-os"));
+    QStringList splitIds;
+    for (auto it = splitTopics.cbegin(); it != splitTopics.cend(); ++it) {
+        splitIds.append(it.value());
+        QStringList actual;
+        for (auto entry = geoSiteEntries().cbegin(); entry != geoSiteEntries().cend(); ++entry)
+            if (QString::fromUtf8(entry->topic) == it.key()) actual.append(entry.key());
+        auto expected = it.value(); expected.sort();
+        require(actual == expected && topics.value(it.key()) == 2);
+    }
+    require(QString::fromUtf8(geoSiteEntries().value("win-spy").topic) == "1-telemetry");
+    for (const QString &id : {QString("apple-pki"), QString("microsoft-pki")})
+        require(QString::fromUtf8(geoSiteEntries().value(id).topic) == "3-security");
+    for (const QString &id : {QString("deepin")})
+        require(QString::fromUtf8(geoSiteEntries().value(id).topic) == "6-organizations");
+    auto checkSplitNavigation = [&] {
+        GeoSitePicker split(nullptr, splitIds, {"win-update", "android", "missing-id"}, {});
+        auto *rows = split.findChild<QListWidget *>("geoSiteGroups");
+        auto *sections = split.findChild<QListWidget *>("geoSiteSections");
+        auto *combo = split.findChild<QComboBox *>("geoSiteTopics");
+        auto *query = split.findChild<QLineEdit *>();
+        auto *selected = split.findChild<QPushButton *>("geoSiteSelectionCount");
+        auto visible = [&] {
+            QStringList ids;
+            for (int i = 0; i < rows->count(); ++i) {
+                auto *row = rows->item(i);
+                if (row->data(Qt::UserRole).isValid() && !row->isHidden()) ids.append(row->data(Qt::UserRole).toString());
+            }
+            ids.sort(); return ids;
+        };
+        sections->setCurrentRow(3);
+        for (auto it = splitTopics.cbegin(); it != splitTopics.cend(); ++it) {
+            combo->setCurrentIndex(combo->findData(it.key()));
+            auto expected = it.value(); expected.sort(); require(visible() == expected);
+            selected->click(); require(selected->isChecked());
+            query->setText(QString::fromUtf8("обновлений Windows")); require(visible() == QStringList{"win-update"});
+            query->setText("Windows update"); require(visible() == QStringList{"win-update"});
+            query->clear(); require(visible() == QStringList({"android", "missing-id", "win-update"}));
+            selected->click(); require(visible() == expected);
+            for (int i = 0; i < rows->count(); ++i)
+                if (rows->item(i)->data(Qt::UserRole) == it.value().first()) rows->item(i)->setCheckState(Qt::Checked);
+            require(split.selectedIds().mid(0, 3) == QStringList({"win-update", "android", "missing-id"}));
+            // Restore initial selection for the next topic's selected-only assertion.
+            for (int i = 0; i < rows->count(); ++i) {
+                auto *row = rows->item(i);
+                if (row->data(Qt::UserRole).isValid())
+                    row->setCheckState(QStringList{"win-update", "android", "missing-id"}.contains(row->data(Qt::UserRole).toString()) ? Qt::Checked : Qt::Unchecked);
+            }
+        }
+        sections->setCurrentRow(0); require(combo->count() == 5 && combo->currentIndex() == 0);
+        require(split.selectedIds() == QStringList({"win-update", "android", "missing-id"}));
+    };
+    auto checkMixedNavigation = [&] {
+        const QStringList ids{"cnet", "madshi", "paypal", "nvidia", "mega", "xiaomi-ai"};
+        GeoSitePicker popup(nullptr, ids, {"paypal", "missing-mixed"}, {});
+        auto *rows = popup.findChild<QListWidget *>("geoSiteGroups");
+        auto *sections = popup.findChild<QListWidget *>("geoSiteSections");
+        auto *query = popup.findChild<QLineEdit *>();
+        for (const QString &id : ids) {
+            sections->setCurrentRow(geoSiteEntries().value(id).section + 1);
+            for (const QString &text : {id, QString::fromUtf8(geoSiteEntries().value(id).name), geoSiteName(id)}) {
+                query->setText(text);
+                bool matched = false;
+                for (int i = 0; i < rows->count(); ++i)
+                    if (rows->item(i)->data(Qt::UserRole) == id) matched = !rows->item(i)->isHidden();
+                require(matched);
+            }
+            query->clear();
+            require(popup.selectedIds() == QStringList({"paypal", "missing-mixed"}));
+        }
+    };
+    auto checkTopicSearch = [&] {
+        const QStringList ids = geoSiteEntries().keys();
+        GeoSitePicker popup(nullptr, ids, {"openai", "missing-ai"}, {});
+        auto *rows = popup.findChild<QListWidget *>("geoSiteGroups");
+        auto *query = popup.findChild<QLineEdit *>();
+        auto *sections = popup.findChild<QListWidget *>("geoSiteSections");
+        auto *combo = popup.findChild<QComboBox *>("geoSiteTopics");
+        auto *selected = popup.findChild<QPushButton *>("geoSiteSelectionCount");
+        auto visible = [&](const QString &id) {
+            for (int i = 0; i < rows->count(); ++i)
+                if (rows->item(i)->data(Qt::UserRole) == id) return !rows->item(i)->isHidden();
+            return false;
+        };
+        sections->setCurrentRow(3);
+        combo->setCurrentIndex(combo->findData("3-security"));
+        QFile file(":/translations/ru.json"); require(file.open(QIODevice::ReadOnly));
+        const auto russianTopics = QJsonDocument::fromJson(file.readAll()).object();
+        for (const auto &topic : geoSiteTopics()) {
+            for (const QString &label : {QString::fromUtf8(topic.name), russianTopics.value(topic.name).toString()}) {
+                if (label.isEmpty()) continue;
+                query->setText(label);
+                for (auto it = geoSiteEntries().cbegin(); it != geoSiteEntries().cend(); ++it)
+                    if (QString::fromUtf8(it->topic) == topic.id) require(visible(it.key()));
+            }
+        }
+        for (const QString &label : {QString("AI"), QString::fromUtf8("ИИ")}) {
+            query->setText(label);
+            require(visible("openai"));
+            for (auto it = geoSiteEntries().cbegin(); it != geoSiteEntries().cend(); ++it)
+                if (QString::fromUtf8(it->topic) == "4-ai") require(visible(it.key()));
+        }
+        for (const QString &label : {QString("Ecosystems"), QString::fromUtf8("Экосистемы")}) {
+            query->setText(label); require(visible("google") && visible("apple") && !visible("youtube") && !visible("neuralink"));
+        }
+        for (const QString &label : {QString("Artificial intelligence"), QString::fromUtf8("Искусственный интеллект")}) {
+            query->setText(label); require(visible("openai") && visible("xiaomi-ai") && !visible("google"));
+        }
+        query->setText("Codex"); require(visible("openai") && !visible("anthropic"));
+        query->setText("Claude"); require(visible("anthropic"));
+        query->setText(russianTopics.value("Security").toString()); require(visible("apple-pki"));
+        query->clear(); require(combo->currentData() == "3-security" && visible("apple-pki") && !visible("openai"));
+        selected->click(); query->setText("Codex"); require(visible("openai") && !visible("missing-ai"));
+        query->clear(); require(visible("missing-ai") && visible("openai") && !visible("anthropic"));
+        require(popup.selectedIds() == QStringList({"openai", "missing-ai"}));
+    };
+    auto checkInteraction = [&] {
+        QStringList ids = geoSiteEntries().keys(); ids.append("future-unknown");
+        GeoSitePicker popup(nullptr, ids, {"openai", "anthropic", "youtube", "missing-ai", "openai"}, {});
+        auto *rows = popup.findChild<QListWidget *>("geoSiteGroups");
+        auto *query = popup.findChild<QLineEdit *>();
+        auto *sections = popup.findChild<QListWidget *>("geoSiteSections");
+        auto *combo = popup.findChild<QComboBox *>("geoSiteTopics");
+        auto *selected = popup.findChild<QPushButton *>("geoSiteSelectionCount");
+        auto visible = [&] {
+            QStringList result;
+            for (int i = 0; i < rows->count(); ++i)
+                if (!rows->item(i)->isHidden() && rows->item(i)->data(Qt::UserRole).isValid())
+                    result.append(rows->item(i)->data(Qt::UserRole).toString());
+            return result;
+        };
+        auto checkOrdering = [&](bool grouped) {
+            int lastSection = -1; QString previous, previousId; bool unavailable = false;
+            int headings = 0;
+            for (int i = 0; i < rows->count(); ++i) {
+                auto *item = rows->item(i); if (item->isHidden()) continue;
+                if (!item->data(Qt::UserRole).isValid()) {
+                    require(item->flags() == Qt::NoItemFlags); ++headings; previous.clear(); continue;
+                }
+                const QString id = item->data(Qt::UserRole).toString();
+                const bool missing = item->data(Qt::UserRole + 2).toBool();
+                require(!unavailable || missing); unavailable = missing;
+                const int section = missing ? 9 : item->data(Qt::UserRole + 1).toInt() < 0 ? 8 : item->data(Qt::UserRole + 1).toInt();
+                if (grouped) { require(section >= lastSection); lastSection = section; }
+                const QString name = geoSiteName(id).isEmpty() ? id : geoSiteName(id);
+                if (!previous.isEmpty()) {
+                    const int cmp = QString::localeAwareCompare(previous, name);
+                    require(cmp < 0 || (cmp == 0 && previousId < id));
+                }
+                previous = name; previousId = id;
+            }
+            if (grouped && !visible().isEmpty()) require(headings > 0);
+        };
+        sections->setCurrentRow(7); combo->setCurrentIndex(combo->findData("4-ai"));
+        require(visible().mid(0, 3) == QStringList({"openai", "anthropic", "cursor"}));
+        for (int i = 0; i < rows->count(); ++i)
+            if (rows->item(i)->data(Qt::UserRole) == "openai") rows->setCurrentItem(rows->item(i));
+        auto *current = rows->currentItem();
+        query->setText("a"); require(!sections->isEnabled() && !combo->isEnabled() && combo->count() == 1);
+        checkOrdering(true); require(rows->currentItem() == current);
+        selected->click(); checkOrdering(true);
+        selected->click(); require(query->text() == "a" && visible().size() > 4); checkOrdering(true);
+        selected->click();
+        require(selected->isChecked() && query->text() == "a" && selected->text().contains('4'));
+        for (const auto &id : visible()) require(popup.selectedIds().contains(id));
+        query->clear(); require(selected->isChecked() && !sections->isEnabled()); checkOrdering(false);
+        require(query->placeholderText() == QObject::tr("Search selected names or IDs"));
+        selected->click(); require(sections->isEnabled() && combo->currentData() == "4-ai");
+        require(visible().mid(0, 3) == QStringList({"openai", "anthropic", "cursor"}));
+        sections->setCurrentRow(0); combo->setCurrentIndex(combo->findData("4-ai"));
+        require(visible().mid(0, 3) == QStringList({"openai", "anthropic", "cursor"}));
+        query->setText("future-unknown"); require(visible() == QStringList{"future-unknown"}); checkOrdering(true);
+        query->setText("missing-ai"); require(visible() == QStringList{"missing-ai"}); checkOrdering(true);
+        query->setText("fixture-no-match"); require(visible().isEmpty());
+        for (int i = 0; i < rows->count(); ++i) require(rows->item(i)->isHidden());
+        query->setText("Codex"); selected->click(); require(visible() == QStringList{"openai"});
+        for (int i = 0; i < rows->count(); ++i)
+            if (rows->item(i)->data(Qt::UserRole) == "openai") rows->item(i)->setCheckState(Qt::Unchecked);
+        require(visible().isEmpty() && selected->isChecked() && selected->text().contains('3'));
+        query->clear();
+        for (int i = 0; i < rows->count(); ++i)
+            if (rows->item(i)->data(Qt::UserRole).isValid()) rows->item(i)->setCheckState(Qt::Unchecked);
+        require(visible().isEmpty() && selected->isChecked() && selected->isEnabled());
+        auto emptyText = [&] {
+            for (auto *label : popup.findChildren<QLabel *>())
+                if (!label->isHidden() && label->text() != QObject::tr("Topic")) return label->text();
+            return QString{};
+        };
+        require(emptyText() == QObject::tr("No selected groups"));
+        query->setText("none"); require(emptyText() == QObject::tr("No matching selected groups"));
+        auto *clear = query->findChild<QToolButton *>();
+        require(clear && clear->toolTip() == QObject::tr("Clear search") && clear->focusPolicy() == Qt::StrongFocus);
+        QKeyEvent press(QEvent::KeyPress, Qt::Key_Space, Qt::NoModifier);
+        QKeyEvent release(QEvent::KeyRelease, Qt::Key_Space, Qt::NoModifier);
+        QApplication::sendEvent(clear, &press); QApplication::sendEvent(clear, &release);
+        require(query->text().isEmpty() && selected->isChecked());
+        selected->click(); query->setText("   "); require(sections->isEnabled()); query->clear();
+        sections->setCurrentRow(6); require(combo->count() == 1 && !combo->isEnabled());
+        sections->setCurrentRow(9); require(combo->count() == 1 && !combo->isEnabled());
+        sections->setCurrentRow(0); checkOrdering(false);
+        query->setText("OpenAI and ChatGPT (Codex)"); require(visible().contains("openai"));
+        query->setText(QString::fromUtf8("Инструменты ИИ Anthropic (Claude)")); require(visible().contains("anthropic"));
+        popup.reject(); require(popup.result() == QDialog::Rejected);
+        GeoSitePicker subset(nullptr, {"anthropic", "deepseek", "google-gemini", "google-deepmind"}, {}, {});
+        subset.findChild<QListWidget *>("geoSiteSections")->setCurrentRow(7);
+        auto *subsetRows = subset.findChild<QListWidget *>("geoSiteGroups");
+        QString firstVisible;
+        for (int i = 0; i < subsetRows->count(); ++i)
+            if (!subsetRows->item(i)->isHidden()) { firstVisible = subsetRows->item(i)->data(Qt::UserRole).toString(); break; }
+        require(firstVisible == "anthropic");
+        require(subset.selectedIds().isEmpty());
+    };
+    checkInteraction();
+    checkMixedNavigation();
+    checkTopicSearch();
+    checkSplitNavigation();
+    require(geoSiteEntries().contains("neuralink") && geoSiteEntries().contains("redtube"));
+    require(geoSiteEntries().contains("nic-ru") && geoSiteEntries().contains("nvidia"));
+    require(geoSiteEntries().contains("anandtech") && !geoSiteEntries().value("anandtech").topic);
+    for (const QString &id : {QString("category-social-media-ir"), QString("itunes")})
+        require(geoSiteEntries().value(id).section == 1);
+    require(geoSiteEntries().value("entrust").section == 2);
+    for (const QString &id : {QString("category-urlshortner"), QString("category-pt"), QString("category-tm"), QString("category-cas")})
+        require(geoSiteEntries().contains(id) && geoSiteSearchText(id).contains(id));
+    const QMap<QString, QStringList> addedTopics{
+        {"4-business-crm", {"beisen", "bitrix", "carrotquest", "clearbit", "envybox", "intercom", "mindbox", "salesforce", "zendesk", "zoho"}},
+        {"5-weather", {"accuweather", "gismeteo", "moji", "openweather", "qweather", "weathercn", "windy"}}
+    };
+    auto checkAddedNavigation = [&] {
+        QStringList ids;
+        for (const auto &members : addedTopics) ids.append(members);
+        GeoSitePicker picker(nullptr, ids, {"salesforce", "windy", "missing-id"}, {});
+        auto *sections = picker.findChild<QListWidget *>("geoSiteSections");
+        auto *combo = picker.findChild<QComboBox *>("geoSiteTopics");
+        auto *rows = picker.findChild<QListWidget *>("geoSiteGroups");
+        auto *query = picker.findChild<QLineEdit *>();
+        auto visible = [&] {
+            QStringList result;
+            for (int i = 0; i < rows->count(); ++i)
+                if (!rows->item(i)->isHidden() && rows->item(i)->data(Qt::UserRole).isValid())
+                    result.append(rows->item(i)->data(Qt::UserRole).toString());
+            result.sort(); return result;
+        };
+        for (int section = 0; section < 8; ++section) {
+            sections->setCurrentRow(section + 1);
+            const bool populated = section == 3 || section == 4;
+            require(sections->item(section + 1)->isHidden() == !populated);
+            if (!populated) { require(sections->currentRow() == 0 && combo->count() == 3); continue; }
+            const bool hasTopic = true;
+            require(combo->currentIndex() == 0 && combo->isEnabled() == hasTopic);
+            require(combo->count() == (hasTopic ? 2 : 1));
+            require(combo->findData("without") < 0);
+        }
+        for (auto it = addedTopics.cbegin(); it != addedTopics.cend(); ++it) {
+            QStringList actual;
+            for (auto entry = geoSiteEntries().cbegin(); entry != geoSiteEntries().cend(); ++entry)
+                if (QString::fromUtf8(entry->topic) == it.key()) actual.append(entry.key());
+            auto expected = it.value(); expected.sort(); require(actual == expected);
+            sections->setCurrentRow(topics.value(it.key()) + 1);
+            combo->setCurrentIndex(combo->findData(it.key())); require(visible() == expected);
+            query->setText("Windy"); require(visible() == QStringList{"windy"});
+            query->setText(QString::fromUtf8("Прогнозы погоды")); require(visible().contains("windy"));
+            query->clear(); require(visible() == expected);
+            picker.findChild<QPushButton *>("geoSiteSelectionCount")->click();
+            require(visible() == QStringList({"missing-id", "salesforce", "windy"}));
+            require(picker.selectedIds() == QStringList({"salesforce", "windy", "missing-id"}));
+            picker.findChild<QPushButton *>("geoSiteSelectionCount")->click();
+            sections->setCurrentRow(0); require(combo->currentIndex() == 0 && combo->count() == 3);
+        }
+    };
+    checkAddedNavigation();
+    require(geoSiteEntries().value("piratebay").section == 2);
+    require(geoSiteEntries().value("beisen").section == 3);
+    require(!geoSiteEntries().contains("future-unknown") && geoSiteName("future-unknown").isEmpty());
+    GeoSitePicker picker(nullptr, {"github", "youtube", "abema", "future-unknown", "category-ads", "github"}, {"missing-id", "youtube"}, {});
+    auto *list = picker.findChild<QListWidget *>("geoSiteGroups");
+    auto *sections = picker.findChild<QListWidget *>("geoSiteSections");
+    auto *topic = picker.findChild<QComboBox *>("geoSiteTopics");
+    auto *search = picker.findChild<QLineEdit *>();
+    auto *count = picker.findChild<QPushButton *>("geoSiteSelectionCount");
+    auto row = [list](const QString &id) -> QListWidgetItem * {
+        for (int i = 0; i < list->count(); ++i) if (list->item(i)->data(Qt::UserRole) == id) return list->item(i);
+        return nullptr;
+    };
+    auto *github = row("github"), *youtube = row("youtube"), *abema = row("abema"), *unknown = row("future-unknown"), *missing = row("missing-id");
+    require(github && youtube && abema && unknown && missing && topic->count() == 4);
+    int groupCount = 0;
+    for (int i = 0; i < list->count(); ++i) groupCount += list->item(i)->data(Qt::UserRole).isValid();
+    require(groupCount == 6 && unknown->text() == "future-unknown");
+    sections->setCurrentRow(2);
+    topic->setCurrentIndex(topic->findData("2-video"));
+    require(!youtube->isHidden() && abema->isHidden() && unknown->isHidden());
+    search->setText("GitHub"); require(!github->isHidden() && youtube->isHidden());
+    search->clear(); require(github->isHidden() && !youtube->isHidden());
+    topic->setCurrentIndex(topic->findData("without")); require(!abema->isHidden() && youtube->isHidden() && unknown->isHidden());
+    count->click(); require(!missing->isHidden() && !youtube->isHidden() && abema->isHidden());
+    search->setText("future-unknown"); require(unknown->isHidden() && missing->isHidden());
+    search->clear(); require(unknown->isHidden() && !missing->isHidden());
+    missing->setCheckState(Qt::Unchecked); require(missing->isHidden());
+    count->click();
+    topic->setCurrentIndex(topic->findData("2-video"));
+    require(!count->isChecked() && !youtube->isHidden());
+    count->click(); require(count->isChecked() && count->text().contains("Only selected"));
+    count->click();
+    sections->setCurrentRow(9); require(!count->isChecked() && topic->currentIndex() == 0 && !topic->isEnabled());
+    require(!unknown->isHidden() && missing->isHidden() && youtube->isHidden());
+    sections->setCurrentRow(4); require(topic->isEnabled());
+    search->setText(QString::fromUtf8("Реклама"));
+    require(!row("category-ads")->isHidden());
+    search->setText("Advertising"); require(!row("category-ads")->isHidden());
+    search->setText("future-unknown"); unknown->setCheckState(Qt::Checked);
+    search->setText("github"); github->setCheckState(Qt::Checked);
+    require(picker.selectedIds() == QStringList({"youtube", "future-unknown", "github"}));
+    for (int i = 0; i < list->count(); ++i) {
+        auto *item = list->item(i);
+        if (!item->data(Qt::UserRole).isValid()) {
+            bool visible = false;
+            for (int j = i + 1; j < list->count() && list->item(j)->data(Qt::UserRole).isValid(); ++j) visible |= !list->item(j)->isHidden();
+            require(item->isHidden() == !visible);
+        }
+    }
+    picker.reject(); require(picker.result() == QDialog::Rejected);
+    class Translator final : public QTranslator {
+    public:
+        QJsonObject strings;
+        QString translate(const char *, const char *text, const char *, int) const override { return strings.value(QString::fromUtf8(text)).toString(); }
+        bool isEmpty() const override { return false; }
+    } translator;
+    QFile translations(":/translations/ru.json"); require(translations.open(QIODevice::ReadOnly));
+    translator.strings = QJsonDocument::fromJson(translations.readAll()).object();
+    for (auto it = geoSiteEntries().cbegin(); it != geoSiteEntries().cend(); ++it)
+        require(!translator.strings.value(QString::fromUtf8(it->name)).toString().isEmpty());
+    for (const auto &topic : geoSiteTopics()) require(!translator.strings.value(QString::fromUtf8(topic.name)).toString().isEmpty());
+    qApp->installTranslator(&translator);
+    checkInteraction();
+    checkMixedNavigation();
+    checkTopicSearch();
+    checkSplitNavigation();
+    checkAddedNavigation();
+    GeoSitePicker russian(nullptr, {"category-ads", "github", "youtube"}, {"missing-id"}, {});
+    auto *russianList = russian.findChild<QListWidget *>("geoSiteGroups");
+    auto *russianSearch = russian.findChild<QLineEdit *>();
+    for (const QString &query : {QString("Advertising"), QString::fromUtf8("Реклама"), QString("category-ads")}) {
+        russianSearch->setText(query);
+        bool matched = false;
+        for (int i = 0; i < russianList->count(); ++i) {
+            auto *item = russianList->item(i);
+            if (item->data(Qt::UserRole) == "category-ads") matched = !item->isHidden();
+        }
+        require(matched);
+    }
+    for (int i = 0; i < russianList->count(); ++i)
+        if (russianList->item(i)->data(Qt::UserRole).isValid()) russianList->item(i)->setCheckState(Qt::Checked);
+    require(russian.selectedIds() == QStringList({"missing-id", "category-ads", "github", "youtube"}));
+    require(geoSiteName("category-ads").contains(QString::fromUtf8("Реклама")));
+    qApp->removeTranslator(&translator);
+}
+
 int main(int argc, char **argv) {
+    require(routingGroupContains({"us", "google"}, " US "));
+    require(routingGroupRows({"google", "GOOGLE", "us"}, {" Google ", "US"})
+        == QStringList({"google", "us"}));
+    require(routingRetainedGroups({"us", "google", "new"}, {" Google ", "US"})
+        == QStringList({" Google ", "US", "new"}));
+    require(!routingHasSection("# [IKEv2]\n; [IKEv2]\nName = \"[IKEv2]\"\n", "IKEv2"));
+    require(routingHasSection(QString(QChar::ByteOrderMark) + " [IKEv2]\n", "IKEv2"));
+
     QApplication app(argc, argv);
+    geoSiteClassificationTest();
+    {
+        QStringList catalog;
+        const QString catalogPath = qEnvironmentVariable("BIMERON_GEOSITE_IDS");
+        if (!catalogPath.isEmpty()) {
+            QFile file(catalogPath); require(file.open(QIODevice::ReadOnly));
+            for (const auto &id : QJsonDocument::fromJson(file.readAll()).array()) catalog.append(id.toString().toLower());
+            require(catalog.size() == 1561);
+        } else {
+            for (int i = 0; i < 1558; ++i) catalog.append(QString("fixture-%1").arg(i));
+            catalog.append({"category-games-!cn", "github", "youtube"});
+        }
+        QElapsedTimer performance; performance.start();
+        GeoSitePicker picker(nullptr, catalog, {"youtube", "missing-fixture"}, {});
+        const qint64 opening = performance.nsecsElapsed();
+        auto *list = picker.findChild<QListWidget *>("geoSiteGroups");
+        auto *sections = picker.findChild<QListWidget *>("geoSiteSections");
+        auto *search = picker.findChild<QLineEdit *>();
+        require(list && sections && search);
+        require(picker.selectedIds() == QStringList({"youtube", "missing-fixture"}));
+        sections->setCurrentRow(2);
+        performance.restart(); search->setText("github");
+        const qint64 filtering = performance.nsecsElapsed();
+        int matches = 0;
+        for (int i = 0; i < list->count(); ++i) {
+            auto *item = list->item(i);
+            if (item->data(Qt::UserRole).isValid() && !item->isHidden()) {
+                require(item->text().contains("github", Qt::CaseInsensitive));
+                if (item->data(Qt::UserRole) == "github") { item->setCheckState(Qt::Checked); ++matches; }
+            }
+        }
+        require(matches == 1);
+        require(picker.selectedIds() == QStringList({"youtube", "missing-fixture", "github"}));
+        search->clear();
+        for (int i = 0; i < list->count(); ++i)
+            if (list->item(i)->data(Qt::UserRole) == "github") require(list->item(i)->isHidden());
+        require(picker.findChild<QPushButton *>("geoSiteSelectionCount")->text().contains('3'));
+        search->setText("fixture-no-matches");
+        picker.reject(); require(picker.result() == QDialog::Rejected);
+        performance.restart();
+        for (int i = 0; i < 100; ++i) search->setText(i % 2 ? "git" : "github");
+        const qint64 repeatedQueries = performance.nsecsElapsed();
+        search->clear();
+        auto *selectedMode = picker.findChild<QPushButton *>("geoSiteSelectionCount");
+        performance.restart();
+        for (int i = 0; i < 100; ++i) selectedMode->click();
+        const qint64 repeatedToggles = performance.nsecsElapsed();
+        performance.restart();
+        for (int i = 0; i < 100; ++i) sections->setCurrentRow(i % 2 ? 7 : 2);
+        const qint64 repeatedModes = performance.nsecsElapsed();
+        fprintf(stdout, "GeoSite repeated means: query %.3f ms, selected toggle %.3f ms, AI/browse %.3f ms (100 each)\n",
+            repeatedQueries / 1e8, repeatedToggles / 1e8, repeatedModes / 1e8);
+        fprintf(stdout, "GeoSite %d IDs: construct %.2f ms, filter %.2f ms\n", int(catalog.size()), opening / 1e6, filtering / 1e6);
+    }
+    require(geoIPLabel("us") == "United States (US)");
+    require(geoIPLabel("ru") == "Russia (RU)");
+    require(geoIPLabel("by") == "Belarus (BY)");
+    require(geoIPLabel("cloudfront") == "Amazon CloudFront (CLOUDFRONT)");
+    require(geoIPLabel("private") == "Private and special networks (PRIVATE)");
+    require(geoIPLabel("unknown-id") == "unknown-id");
+    require(geoIPLabel("xk") == "Kosovo (XK)");
+    require(geoIPSearchText("ru").contains(QString::fromUtf8("Россия")));
+    require(geoIPSearchText("ru").contains("Russia"));
+    class CountryTranslator final : public QTranslator {
+    public:
+        QJsonObject strings;
+        QString translate(const char *, const char *source, const char *, int) const override {
+            return strings.value(QString::fromUtf8(source)).toString();
+        }
+        bool isEmpty() const override { return strings.isEmpty(); }
+    } countryTranslator;
+    QFile countryTranslations(":/translations/ru.json");
+    require(countryTranslations.open(QIODevice::ReadOnly));
+    countryTranslator.strings = QJsonDocument::fromJson(countryTranslations.readAll()).object();
+    require(geoIPLabel("ru", true) == "Russia (RU)");
+    app.installTranslator(&countryTranslator);
+    require(geoIPLabel("ru", true) == QString::fromUtf8("Россия (RU)"));
+    require(geoIPSearchText("ru").contains("Russia"));
+    app.removeTranslator(&countryTranslator);
+    const QLocale previousLocale;
+    QLocale::setDefault(QLocale("ru_RU"));
+    require(geoIPLabel("us") == "United States (US)");
+    QLocale::setDefault(previousLocale);
+    const QString catalogPath = qEnvironmentVariable("BIMERON_GEOIP_COUNTRY_CATALOG");
+    if (!catalogPath.isEmpty()) {
+        QFile catalog(catalogPath); require(catalog.open(QIODevice::ReadOnly));
+        const QStringList lines = QString::fromUtf8(catalog.readAll()).split('\n', Qt::SkipEmptyParts);
+        int count = 0;
+        for (const QString &line : lines) {
+            const auto match = QRegularExpression("\\(([A-Z]{2})\\)").match(line);
+            if (!match.hasMatch()) continue;
+            const QString id = match.captured(1).toLower();
+            require(geoIPLabel(id) != id && geoIPLabel(id).endsWith('(' + id.toUpper() + ')'));
+            const QString english = geoIPLabel(id).chopped(5);
+            require(!countryTranslator.strings.value(english).toString().isEmpty());
+            require(geoIPSearchText(id).contains(countryTranslator.strings.value(english).toString()));
+            ++count;
+        }
+        require(count == 250);
+    }
     if (app.arguments().size() == 3 && app.arguments().at(1) == "--permission-fixture")
         return ProfileStore::writeConfig(app.arguments().at(2), "synthetic permission fixture") ? 0 : 1;
     QTemporaryDir temporary;
     require(temporary.isValid());
+    QSettings::setDefaultFormat(QSettings::IniFormat);
+    QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, temporary.path());
+    QSettings().setValue("geodata/paths", QVariantMap{{"geoip", "geoip.dat"}, {"geosite", "geosite.dat"}});
+    geodataBridgeRegressions(temporary.path());
+    const QJsonObject geoCaps{{"ip_split", true}, {"domain_split", true}, {"geoip_split", true},
+        {"geosite_split", true}, {"geodata_schema", "v2ray-protobuf"}};
+    require(routingCompatibilityError("[Rule]\nGeoIP=ru\nAction=direct\n", geoCaps).isEmpty());
+    require(!routingCompatibilityError("[Rule]\nGeoIP=ru\nAction=direct\n", {}).isEmpty());
+    require(routingCompatibilityError("# [Rule]\n# GeoIP=ru\n# Action=direct\n", {}).isEmpty());
+    require(!routingCompatibilityError("[Interface]\nKillSwitch=true\n[Rule]\nDomain=example.com\nAction=direct\n", geoCaps).isEmpty());
+    require(routingCompatibilityError("[Interface]\nKillSwitch=true\n[Rule]\nCIDR=10.0.0.0/8\nAction=direct\n", geoCaps).isEmpty());
+    require(!routingCompatibilityError("[IKEv2]\n[Rule]\nGeoSite=github\nAction=proxy\n", geoCaps).isEmpty());
+    auto noSchema = geoCaps;
+    noSchema.remove("geodata_schema");
+    require(!routingCompatibilityError("[Rule]\nGeoSite=github\nAction=proxy\n", noSchema).isEmpty());
+    require(geoDataValidationError("{\"version\":1}").isEmpty());
+    require(!geoDataValidationError("not JSON").isEmpty());
+    require(geoDataValidationError("{\"version\":1,\"error\":\"request failed\",\"details\":{\"code\":\"geodata_group_unknown\",\"group\":\"missing\",\"rule\":2}}").contains("Active rule 2"));
+    require(routingInterfaceValue("[Interface]\nMode=\"proxy\"\n", "Mode", "vpn") == "proxy");
+    require(routingInterfaceValue("[Interface]\nIPv6=\"disable\"\n", "IPv6", "enable") == "disable");
+    require(routingInterfaceValue("[Interface]\nKillSwitch=\"true\"\n", "KillSwitch", "false") == "true");
+    require(ProfileStore::connectionInfo("[AccessKey]\nSOCKS5=socks5://localhost:1080\n[Interface]\nMode=\"proxy\"\n").interfaceMode == "proxy");
+    QString geoImportError;
+    const QString quotedGeoPath = QString::fromUtf8(QJsonDocument(QJsonArray{temporary.filePath("geoip.dat")}).toJson(QJsonDocument::Compact)).mid(1).chopped(1);
+    require(ProfileStore::importReferencesSafe(("[GeoData]\nGeoIPFile=" + quotedGeoPath + "\n").toUtf8(), &geoImportError));
+    require(!ProfileStore::importReferencesSafe("[GeoData]\nGeoIPFile=\"data/geoip.dat\"\n", &geoImportError));
+
+    require(!ProfileStore::importReferencesSafe("[GeoData]\nGeoIPFile=data/geoip.dat\n", &geoImportError));
+    require(!geoImportError.isEmpty());
+    require(ProfileStore::importReferencesSafe("[GeoData]\n# GeoIPFile=data/geoip.dat\n", &geoImportError));
+    require(ProfileStore::importReferencesSafe(("[GeoData]\nGeoIPFile=" + temporary.filePath("geoip.dat") + "\n").toUtf8(), &geoImportError));
+
     if (app.arguments().size() == 4 && (app.arguments().at(1) == "--ss-preview" || app.arguments().at(1) == "--parameters-preview")) {
         class Translator final : public QTranslator {
         public:
@@ -540,6 +1649,7 @@ int main(int argc, char **argv) {
         }
         return 0;
     }
+    routingHostRegressions(temporary.path());
     parameterForms(temporary.path());
     preservationRegressions(temporary.path());
     sshProfiles(temporary.path());
