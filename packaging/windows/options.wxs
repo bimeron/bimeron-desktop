@@ -44,9 +44,17 @@
       </Component>
     </DirectoryRef>
 
+    <DirectoryRef Id="INSTALL_ROOT">
+      <Component Id="BimeronRepairRegistration" Guid="*">
+        <RegistryValue Root="HKLM" Key="Software\Bimeron Network\Repair"
+                       Name="InstallDirectory" Type="string" Value="[INSTALL_ROOT]" KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
+
     <FeatureRef Id="ProductFeature">
       <ComponentRef Id="BimeronStartMenuShortcut" />
       <ComponentRef Id="BimeronDesktopShortcut" />
+      <ComponentRef Id="BimeronRepairRegistration" />
     </FeatureRef>
 
     <CustomAction Id="LaunchBimeron"

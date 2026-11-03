@@ -7,8 +7,8 @@
 #include <QRegularExpression>
 #include <QSet>
 
-// Free text from any CLI/IPC version can contain credentials, even without a URI
-// scheme or a recognized field name. Only complete safe templates are retained.
+// Keep diagnostic free text visible, including credentials, as requested by the
+// user. Bound its size; callers render it as plain text or escape it for logs.
 inline QString safeCoreDiagnostic(const QByteArray &output) {
     const QString text = QString::fromUtf8(output).trimmed();
     if (text.isEmpty()) return {};
@@ -20,7 +20,7 @@ inline QString safeCoreDiagnostic(const QByteArray &output) {
         QStringLiteral("^error: (invalid configuration|duplicate section|duplicate option|unknown section|unknown option) at line ([0-9]{1,5})$")).match(text);
     if (line.hasMatch())
         return QObject::tr("Invalid configuration at line %1.").arg(line.captured(2));
-    return QObject::tr("Core diagnostic details were hidden because they may contain credentials.");
+    return text.left(16384);
 }
 
 inline QString safeCoreCode(const QString &code) {
@@ -38,11 +38,11 @@ inline QString safeCoreCode(const QString &code) {
 inline QString safeCoreEvent(const QString &code, const QString &message) {
     if (code == "state" && QStringList{"disconnected", "connecting", "connected", "reconnecting", "stopping", "failed"}.contains(message))
         return QStringLiteral("state: ") + message;
-    return code.isEmpty() ? safeCoreDiagnostic(message.toUtf8()) : safeCoreCode(code);
+    return safeCoreDiagnostic(QStringList{code, message}.filter(QRegularExpression(".+")).join(": ").toUtf8());
 }
 
-// Defense at the shared log sink for application messages interpolating URIs or
-// config fragments. Untrusted Core free text must use safeCoreDiagnostic first.
+// Apply the same bounded diagnostic formatting to messages containing config
+// fragments or URIs. This does not redact credential-bearing diagnostic text.
 inline QString safeLogMessage(const QString &message) {
     if (message.contains(QRegularExpression(QStringLiteral("[a-zA-Z][a-zA-Z0-9+.-]*://")))
         || message.contains(QRegularExpression(QStringLiteral("(?i)(password|passphrase|answers|authorization|token|secret|key|ID|XHTTP[^ ]*)\\s*[=:]"))))

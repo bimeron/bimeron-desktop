@@ -614,7 +614,9 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
         if (error.isEmpty() && validateRaw_ && !validateRaw_(draft, &error) && error.isEmpty())
             error = tr("Core validation failed. The draft has been retained.");
         if (!error.isEmpty()) {
-            QMessageBox::warning(this, tr("Error"), safeCoreDiagnostic(error.toUtf8()));
+            QMessageBox box(QMessageBox::Warning, tr("Error"), safeCoreDiagnostic(error.toUtf8()), QMessageBox::Ok, this);
+            box.setTextFormat(Qt::PlainText);
+            box.exec();
             return;
         }
         accept();
@@ -1625,9 +1627,11 @@ bool ProfileEditorDialog::applyRaw() {
     const QString text = configText();
     QString error;
     if (!validateRaw_ || !validateRaw_(text, &error)) {
-        QMessageBox::warning(this, tr("Error"), error.isEmpty()
+        QMessageBox box(QMessageBox::Warning, tr("Error"), error.isEmpty()
             ? tr("The selected Core CLI must validate this configuration before visual editing.")
-            : safeCoreDiagnostic(error.toUtf8()));
+            : safeCoreDiagnostic(error.toUtf8()), QMessageBox::Ok, this);
+        box.setTextFormat(Qt::PlainText);
+        box.exec();
         return false;
     }
     loadText(text);

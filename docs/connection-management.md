@@ -1,5 +1,13 @@
 # Desktop connection management
 
+Core availability feedback is shared by Profiles and Settings. It distinguishes
+local/system backend, service observations and IPC readiness without replacing VPN
+status. Explicit Retry core check suppresses a new auto-connect intention and sends
+only hello/status plus service inspection. IPC failure preserves an independent
+service probe; backend/mutation invalidation still rejects stale results. A ready
+disconnected Core needs no repair. Interrupted developer restoration remains an
+explicit, separately gated action; IPC failure never silently switches endpoints.
+
 ## Contract
 
 The active protected Core endpoint is authoritative. Startup performs IPC 1 hello
@@ -23,8 +31,10 @@ Observe connecting, connected, reconnecting, stopping and failed from Core.
 Reconnection belongs to Core. Check instance on every response, including errors;
 on restart reset hello/capabilities, event cursor, session and speed baselines and
 cancel old intentions. Dropped events or invalid cursors require status resync.
-Unknown or malformed state never means disconnected. Unknown diagnostics remain
-redacted according to the profile-preservation contract.
+Unknown or malformed state never means disconnected. Diagnostic free text is
+shown even when it contains credentials, as explicitly requested by the user.
+It remains bounded and is rendered as plain text or escaped Journal content.
+Structured diagnostic report schemas retain their separate field filtering.
 
 ## Scheduling and lifecycle
 
@@ -106,3 +116,34 @@ visible in the profile list and is retained internally for session management.
 Notification, detailed-statistics and keep-previous-log settings are editable.
 Update status and beta-update options are hidden whenever service update actions
 are unavailable, including local Development and failed backend transitions.
+
+Ordinary GUI startup now performs one bounded system-service preparation attempt
+before configured auto-connect. Initial transport failure during this attempt does
+not consume auto-connect eligibility. Success requires fresh hello/status; failure,
+cancellation, manual service work and developer transitions consume that eligibility.
+The preparation state blocks profile activation until resolved. Existing connected
+VPN state is preserved. See [service actions](service-actions.md) for the guided Connection repair workflow.
+
+
+## Guided connection repair
+
+Fix connection on Profiles and Manage service in Settings open the same repair
+helper and immediately diagnose components, service state and service response.
+Each finding separates established and unknown facts. A specific remedy executes
+its complete authorized sequence, then verifies compatible hello and fresh status.
+Install requires guarded start after installation; service start is never inferred
+from successful installation alone. Manual repair suppresses auto-connect without
+changing the saved preference, and preserves an existing healthy VPN.
+
+Unknown ownership, inaccessible locks, failed status and response timeouts do not
+prove that installation or emergency cleanup is needed. When an automatic remedy
+cannot meet the existing identity/cleanup contract, the helper supplies platform
+service-management or official installer instructions with Verify repair result.
+That action repeats diagnosis after the user's manual work; diagnostic export is
+secondary. Failed operation evidence remains visible through later probes.
+
+Closing the helper does not abandon a running privileged command. Service, update,
+developer and quit exclusion remains in force until the operation actually exits.
+Restart requires verified ownership, graceful stop, exit and cleanup before a new
+start; separate emergency recovery authorization cannot be inferred from restart
+consent. See [service actions](service-actions.md) for current CLI capability limits.

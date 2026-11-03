@@ -402,6 +402,184 @@ struct ConnectionManagementTest {
             picker.reject();
         }
     }
+    // Acceptance: recovery controls remain within the window or scroll content.
+    static int recoveryGeometry(QApplication &app, QString path) {
+        require(app.arguments().contains("--visual-check") && !path.isEmpty(), "isolated recovery capture");
+        class Translator final : public QTranslator {
+        public:
+            QJsonObject strings;
+            QString translate(const char *, const char *text, const char *, int) const override { return strings.value(QString::fromUtf8(text)).toString(); }
+            bool isEmpty() const override { return strings.isEmpty(); }
+        } translator;
+        QFile translations(QFileInfo(QString::fromUtf8(__FILE__)).dir().filePath("../assets/translations/ru.json"));
+        require(translations.open(QIODevice::ReadOnly), "geometry translations");
+        translator.strings = QJsonDocument::fromJson(translations.readAll()).object();
+        if (!app.arguments().contains("--geometry-english")) app.installTranslator(&translator);
+        const int themeArgument = app.arguments().indexOf("--geometry-theme");
+        if (themeArgument >= 0) QSettings().setValue("app/theme", app.arguments().value(themeArgument + 1));
+        applyThemePalette(app);
+        MainWindow window;
+        window.core_.cancel();
+        window.developerMode_ = true;
+        window.core_.setEndpoint("bimeron-geometry-" + QUuid::createUuid().toString());
+        for (auto *timer : window.findChildren<QTimer *>()) timer->stop();
+        for (auto *list : window.findChildren<QListWidget *>())
+            if (!list->count()) list->addItems({QString::fromUtf8("Основной сервер\nVLESS → Системный VPN"), QString::fromUtf8("Резервный сервер\nVLESS → Системный VPN")});
+        window.resize(720, 600);
+        auto *captureScreen = QApplication::primaryScreen();
+        window.setScreen(captureScreen);
+        window.move(captureScreen->availableGeometry().topLeft() + QPoint(40, 40));
+        window.coreManagement_->setScreen(captureScreen);
+        window.coreManagement_->move(captureScreen->availableGeometry().topLeft() + QPoint(80, 80));
+        window.show();
+        QJsonArray observations;
+        const auto capture = [&](QString state, QWidget *surface) {
+            QEventLoop loop;
+            QTimer::singleShot(300, &loop, &QEventLoop::quit);
+            loop.exec();
+            for (auto *button : surface->findChildren<QAbstractButton *>()) {
+                if (!button->isVisibleTo(surface)) continue;
+                QWidget *bounds = surface;
+                for (auto *parent = button->parentWidget(); parent && parent != surface; parent = parent->parentWidget())
+                    if (auto *scroll = qobject_cast<QScrollArea *>(parent)) { bounds = scroll->widget(); break; }
+                require(bounds && bounds->rect().contains(QRect(button->mapTo(bounds, QPoint()), button->size())),
+                        "actionable control inside window or scroll content");
+            }
+            const QPixmap shot = surface->grab();
+            require(shot.save(path + "." + state + ".png"), "native recovery screenshot");
+            observations.append(QJsonObject{{"state", state}, {"width", surface->width()}, {"height", surface->height()},
+                {"dpr", shot.devicePixelRatioF()}, {"pixelWidth", shot.width()}, {"pixelHeight", shot.height()}});
+        };
+        window.startupPreparationPending_ = true;
+        window.helloReady_ = false;
+        window.statusNeeded_ = true;
+        window.updateCoreAvailability();
+        capture("preparing", &window);
+        window.startupPreparationPending_ = false;
+        window.helloReady_ = true;
+        window.statusNeeded_ = false;
+        window.state_ = "disconnected";
+        window.connectionLabel_->setText(QObject::tr("Disconnected"));
+        window.updateCoreAvailability();
+        capture("ready", &window);
+        window.helloReady_ = false;
+        window.serviceObservation_ = MainWindow::ServiceObservation::Stopped;
+        window.serviceStatusLabel_->setText(QObject::tr("stopped"));
+        window.updateCoreAvailability();
+        capture("error", &window);
+        window.settingsNavigation_->click();
+        capture("settings", &window);
+        window.openCoreManagement();
+        require(window.coreManagement_, "management dialog");
+        require(window.coreManagement_->findChildren<QDialog *>().isEmpty(), "service actions never open a nested empty management dialog");
+        capture("dialog", window.coreManagement_);
+        auto *details = window.coreManagement_->findChild<QPushButton *>("coreManagementDetailsToggle");
+        require(details && window.coreManagement_->findChildren<QScrollArea *>().isEmpty(), "recovery dialog has no scroll areas");
+        require(!window.repairFindings_->isVisibleTo(window.coreManagement_)
+            && !window.repairRefresh_->isVisibleTo(window.coreManagement_),
+            "collapsed repair excludes findings and refresh");
+        require(details->mapTo(window.coreManagement_, QPoint()).y()
+            == window.coreManagementClose_->mapTo(window.coreManagement_, QPoint()).y(),
+            "Details and Close share one footer");
+        const QSize collapsed = window.coreManagement_->size();
+        window.serviceStartBlock_ = DevelopmentCore::StartBlock::CleanupUnconfirmed;
+        window.startupDiagnostic_ = QObject::tr("System service start is blocked: a local core, session lock or unverified recovery state may remain.");
+        window.updateCoreAvailability();
+        details->click();
+        capture("dialog-expanded", window.coreManagement_);
+        require(window.repairFindings_->isVisibleTo(window.coreManagement_), "findings appear only in Details");
+        require(window.coreManagement_->height() > collapsed.height(), "expanded dialog fits additional content");
+        require(window.coreManagement_->minimumSize() == window.coreManagement_->maximumSize(), "dialog cannot be resized manually");
+        details->click();
+        window.serviceStartBlock_ = DevelopmentCore::StartBlock::None;
+        window.startupDiagnostic_.clear();
+        window.updateCoreAvailability();
+        capture("dialog-collapsed", window.coreManagement_);
+        require(window.coreManagement_->size() == collapsed, "collapsing restores content-sized bounds");
+        for (bool available : {false, true}) {
+            window.repairSnapshotTest_ = [available](auto &snapshot) {
+                snapshot.helperAvailable = available;
+                snapshot.helperTrusted = false;
+            };
+            window.updateCoreAvailability();
+            require(window.repairDiagnosis_.cause == (available ? ConnectionRepair::Cause::ComponentsUntrusted
+                                                               : ConnectionRepair::Cause::ComponentsMissing),
+                    "helper evidence selects consistent cause");
+            const QString name = available ? "untrusted-helper" : "missing-helper";
+            capture(name + "-collapsed", window.coreManagement_);
+            details->click();
+            capture(name + "-expanded", window.coreManagement_);
+            require(window.serviceInstallButton_->isHidden() && window.serviceStartButton_->isHidden(),
+                    "contextual commands stay hidden in expanded details");
+            require(window.coreManagement_->findChildren<QDialog *>().isEmpty(), "no nested management modal");
+            details->click();
+        }
+        window.repairSnapshotTest_ = {};
+        window.updateCoreAvailability();
+        window.repairSnapshotTest_ = [](auto &snapshot) { snapshot.interrupted = true; };
+        window.updateCoreAvailability();
+        capture("interrupted", window.coreManagement_);
+        window.repairSnapshotTest_ = {};
+        window.probeCategory_ = "malformed-response";
+        window.probeExitCode_ = 7;
+        window.probeDurationMs_ = 23;
+        window.probeObservedAt_ = QDateTime::currentMSecsSinceEpoch();
+        window.updateCoreAvailability();
+        details->click();
+        capture("probe-failure-expanded", window.coreManagement_);
+        details->click();
+        window.probeCategory_.clear();
+        window.repairCommandPending_ = true;
+        window.serviceCommandDescription_ = QObject::tr("Confirming cleanup");
+        window.updateCoreAvailability();
+        capture("executing", window.coreManagement_);
+        window.repairCommandStarted_ = window.pollClock_.elapsed();
+        window.repairWatchdogMs_ = 0;
+        window.updateCoreAvailability();
+        capture("helper-watchdog", window.coreManagement_);
+        window.coreManagement_->hide();
+        window.openCoreManagement();
+        capture("helper-watchdog-reopened", window.coreManagement_);
+        window.repairCommandPending_ = false;
+        window.repairCommandStarted_ = -1;
+        window.repairWatchdogExpired_ = false;
+        window.repairWatchdogMs_ = 120000;
+        window.updateCoreAvailability();
+
+        for (const auto state : {MainWindow::ServiceObservation::Missing, MainWindow::ServiceObservation::Running,
+                                MainWindow::ServiceObservation::Unknown, MainWindow::ServiceObservation::Failed}) {
+            window.serviceObservation_ = state;
+            window.updateCoreAvailability();
+            capture(QString("remedy-%1").arg(int(state)), window.coreManagement_);
+        }
+        window.serviceStartBlock_ = DevelopmentCore::StartBlock::LockOccupied;
+        window.updateCoreAvailability();
+        capture("unknown-owner", window.coreManagement_);
+        window.settingsRetry_->click();
+        capture("unknown-discovery", window.coreManagement_);
+        window.serviceStartBlock_ = DevelopmentCore::StartBlock::None;
+        window.availabilityFailure_ = CoreClient::Failure::Incompatible;
+        window.updateCoreAvailability();
+        capture("incompatible", window.coreManagement_);
+        window.availabilityFailure_ = CoreClient::Failure::Transport;
+        window.repairFailure_ = QObject::tr("Network cleanup could not be confirmed");
+        window.updateCoreAvailability();
+        capture("failed", window.coreManagement_);
+        window.repairFailure_.clear();
+        window.availabilityVerificationDeadline_ = window.pollClock_.elapsed() + 30000;
+        window.updateCoreAvailability();
+        capture("verification", window.coreManagement_);
+        window.helloReady_ = true;
+        window.statusNeeded_ = false;
+        window.updateCoreAvailability();
+        capture("success", window.coreManagement_);
+        QFile log(path + ".json");
+        require(log.open(QIODevice::WriteOnly), "recovery geometry log");
+        log.write(QJsonDocument(observations).toJson());
+        app.removeTranslator(&translator);
+        return 0;
+    }
+
     static int profileGeometry(QApplication &app, const QString &destination) {
         class Translator final : public QTranslator {
         public:
@@ -425,6 +603,7 @@ struct ConnectionManagementTest {
             app.removeTranslator(&translator);
             return 0;
         }
+        window.developerMode_ = true;
         window.core_.setEndpoint("bimeron-geometry-" + QUuid::createUuid().toString());
         for (auto *timer : window.findChildren<QTimer *>()) timer->stop();
         QTemporaryDir directory;
@@ -876,7 +1055,527 @@ struct ConnectionManagementTest {
         require(!window.sshDialog_ && window.sshAnswers_.isEmpty(), "backend invalidation closes SSH prompt");
     }
 
+    static void serviceProbeSurvivesIpcFailure() {
+        QTemporaryDir temporary;
+        const QString path = temporary.filePath("held-probe.conf");
+        QFile file(path);
+        require(file.open(QIODevice::WriteOnly), "held service probe fixture");
+        file.write("fixture-delay\n");
+        file.close();
+        MainWindow window;
+        window.core_.cancel();
+        for (auto *timer : window.findChildren<QTimer *>()) timer->stop();
+        window.invalidateConnection();
+        const quint64 generation = window.serviceProbeGeneration_;
+        auto *probe = new QProcess(&window);
+        window.serviceStatusProcess_ = probe;
+        bool completed = false;
+        QObject::connect(probe, qOverload<int, QProcess::ExitStatus>(&QProcess::finished), &window,
+                         [&](int code, QProcess::ExitStatus status) {
+            completed = code == 0 && status == QProcess::NormalExit
+                && window.serviceProbeGeneration_ == generation;
+            window.serviceStatusProcess_ = nullptr;
+            probe->deleteLater();
+        });
+        probe->start(QCoreApplication::applicationFilePath(), {"validate", path});
+        require(probe->waitForStarted(), "asynchronous service probe starts");
+        window.connectionFailure("hello", CoreClient::Failure::Transport, "fixture IPC loss");
+        require(window.serviceStatusProcess_ == probe && window.serviceProbeGeneration_ == generation,
+                "IPC failure preserves independent service inspection");
+        require(waitFor([&] { return completed; }), "preserved service observation reaches completion");
+        auto *stale = new QProcess(&window);
+        window.serviceStatusProcess_ = stale;
+        stale->start(QCoreApplication::applicationFilePath(), {"validate", path});
+        require(stale->waitForStarted(), "stale probe starts");
+        window.invalidateConnection();
+        require(!window.serviceStatusProcess_ && window.serviceProbeGeneration_ != generation,
+                "backend invalidation cancels service probe and rejects its generation");
+        window.core_.cancel();
+    }
+
+    static void startupPreparation() {
+        MainWindow window;
+        window.core_.cancel();
+        for (auto *timer : window.findChildren<QTimer *>()) timer->stop();
+        int starts = 0;
+        const auto reset = [&] {
+            window.startupPreparationPending_ = true;
+            window.startupPreparationFailed_ = false;
+            window.startupStartAttempted_ = false;
+            window.startupIpcChecked_ = true;
+            window.startupDeadline_ = window.pollClock_.elapsed() + 30000;
+            window.autoConnectAttempted_ = false;
+            window.helloReady_ = false;
+            window.statusNeeded_ = true;
+            window.availabilityFailure_ = CoreClient::Failure::Transport;
+            window.serviceObservation_ = MainWindow::ServiceObservation::Stopped;
+        };
+        reset();
+        window.connectionFailure("hello", CoreClient::Failure::Transport, "initial unavailable");
+        require(!window.autoConnectAttempted_, "initial preparation retains configured auto-connect eligibility");
+        window.advanceStartupPreparation([&] { ++starts; });
+        window.advanceStartupPreparation([&] { ++starts; });
+        require(starts == 1 && window.startupStartAttempted_, "stopped service gets only one startup attempt");
+        window.finishStartupPreparation(false, "permission canceled");
+        window.advanceStartupPreparation([&] { ++starts; });
+        require(starts == 1 && window.autoConnectAttempted_, "cancellation never repeats authorization or auto-connects");
+        reset();
+        window.helloReady_ = true;
+        window.statusNeeded_ = false;
+        window.state_ = "connected";
+        window.advanceStartupPreparation([&] { ++starts; });
+        require(!window.startupPreparationPending_ && !window.startupPreparationFailed_ && starts == 1
+            && window.state_ == "connected", "ready VPN survives normal GUI startup");
+        for (const auto state : {MainWindow::ServiceObservation::Missing, MainWindow::ServiceObservation::Failed}) {
+            reset(); window.serviceObservation_ = state;
+            window.advanceStartupPreparation([&] { ++starts; });
+            require(!window.startupPreparationPending_ && starts == 1, "missing or unknown service is not started/installed automatically");
+        }
+        reset(); window.developerMode_ = true;
+        window.advanceStartupPreparation([&] { ++starts; });
+        require(!window.startupPreparationPending_ && starts == 1, "developer session never auto-starts service");
+        window.developerMode_ = false;
+        reset(); window.cleanupBlocked_ = true;
+        window.advanceStartupPreparation([&] { ++starts; });
+        require(!window.startupPreparationPending_ && starts == 1, "cleanup gate prevents startup");
+        window.cleanupBlocked_ = false;
+        reset(); window.serviceObservation_ = MainWindow::ServiceObservation::Running;
+        window.startupDeadline_ = 0;
+        window.advanceStartupPreparation([&] { ++starts; });
+        require(window.startupPreparationFailed_ && starts == 1, "unresponsive running service times out without restart");
+        window.core_.cancel();
+    }
+
+    static void coreAvailabilityAssessment() {
+        MainWindow window;
+        window.developerMode_ = true;
+        // Service-state scenarios assume components are available independently
+        // of whether this GUI-only test build bundles a Core executable.
+        window.repairSnapshotTest_ = [](ConnectionRepair::Snapshot &snapshot) {
+            snapshot.helperAvailable = true;
+            snapshot.helperTrusted = true;
+        };
+        window.core_.cancel();
+        for (auto *timer : window.findChildren<QTimer *>()) timer->stop();
+        window.startupPreparationPending_ = false;
+        window.helloReady_ = false;
+        window.statusNeeded_ = true;
+        window.availabilityFailure_ = CoreClient::Failure::Transport;
+        const auto assess = [&](MainWindow::ServiceObservation state, const QString &expected) {
+            window.serviceObservation_ = state;
+            window.updateCoreAvailability();
+            require(window.settingsAvailability_->text().contains(expected), "availability explains the observed service state");
+            require(window.connectionLabel_->text() == "Could not prepare connection",
+                    "Profiles and Settings share an availability assessment");
+            require(!window.settingsRetry_->isHidden() && !window.availabilityDetails_->isHidden(),
+                    "unready Core offers retry and details");
+        };
+        assess(MainWindow::ServiceObservation::Missing, "Install and start");
+        require(window.recoveryAction_ == MainWindow::RecoveryAction::Restore, "missing service offers installation");
+        window.serviceStartBlock_ = DevelopmentCore::StartBlock::CleanupUnconfirmed;
+        for (const auto observation : {MainWindow::ServiceObservation::Stopped, MainWindow::ServiceObservation::Failed}) {
+            window.serviceObservation_ = observation;
+            window.updateCoreAvailability();
+            require(window.recoveryAction_ == MainWindow::RecoveryAction::Restore && window.settingsRetry_->isEnabled(),
+                    "abandoned lock requires bounded privileged diagnosis");
+        }
+        window.serviceStartBlock_ = DevelopmentCore::StartBlock::None;
+        for (const auto block : {DevelopmentCore::StartBlock::LockOccupied, DevelopmentCore::StartBlock::LockUnknown,
+                                DevelopmentCore::StartBlock::EndpointOccupied, DevelopmentCore::StartBlock::EndpointAccessDenied}) {
+            window.serviceStartBlock_ = block;
+            window.updateCoreAvailability();
+            require(window.recoveryAction_ == MainWindow::RecoveryAction::Restore,
+                    "unknown owner or inspection failure never authorizes network recovery");
+            require(window.settingsRetry_->text() == "Restore",
+                    "unknown observations retain the one-click repair entry point");
+        }
+        window.serviceStartBlock_ = DevelopmentCore::StartBlock::None;
+        assess(MainWindow::ServiceObservation::Stopped, "Start the service");
+        assess(MainWindow::ServiceObservation::Running, "Restore verifies ownership");
+        window.availabilityFailure_ = CoreClient::Failure::AccessDenied;
+        window.updateCoreAvailability();
+        require(window.coreManagementTitle_->text().contains("current permissions"),
+                "permission failure takes precedence over service state");
+        require(window.connectionLabel_->text() == "Could not prepare connection",
+                "permission guidance agrees across pages");
+        int mutations = 0;
+        window.serviceInstallButton_->disconnect(&window);
+        window.serviceStartButton_->disconnect(&window);
+        QObject::connect(window.serviceInstallButton_, &QPushButton::clicked, &window, [&] { ++mutations; });
+        QObject::connect(window.serviceStartButton_, &QPushButton::clicked, &window, [&] { ++mutations; });
+        window.core_.setEndpoint("recovery-action-" + QUuid::createUuid().toString());
+        for (const auto observation : {MainWindow::ServiceObservation::Missing, MainWindow::ServiceObservation::Stopped}) {
+            for (const auto failure : {CoreClient::Failure::AccessDenied, CoreClient::Failure::Incompatible,
+                                      CoreClient::Failure::PeerMismatch, CoreClient::Failure::InvalidResponse}) {
+                window.availabilityVerificationDeadline_ = 0;
+                window.availabilityVerificationFailed_ = failure == CoreClient::Failure::Timeout;
+                window.serviceObservation_ = observation;
+                window.availabilityFailure_ = failure;
+                window.updateCoreAvailability();
+                require(window.recoveryAction_ == MainWindow::RecoveryAction::Restore, "error remedy never implies install/start");
+                require(window.settingsRetry_->text() == "Restore", "failure retains Restore action");
+                window.core_.cancel();
+                require(mutations == 0, "Check again never launches a privileged service action");
+            }
+            window.availabilityVerificationDeadline_ = 0;
+            window.availabilityVerificationFailed_ = true;
+            window.availabilityFailure_ = CoreClient::Failure::Timeout;
+            window.updateCoreAvailability();
+            require(window.recoveryAction_ == MainWindow::RecoveryAction::Restore,
+                    "timeout does not hide a confirmed install or start remedy");
+            require(window.serviceInstallButton_->isEnabled() && window.serviceStartButton_->isEnabled(), "hidden dispatch remains enabled");
+            require(window.settingsRetry_->text() == "Restore" && mutations == 0, "primary repair does not dispatch legacy service buttons");
+            mutations = 0;
+        }
+        window.manualStartInspection_ = true;
+        window.helloReady_ = true; window.statusNeeded_ = false;
+        require(window.controlBlocked(), "manual service inspection blocks profile activation");
+        window.manualStartInspection_ = false;
+        window.helloReady_ = true;
+        window.statusNeeded_ = false;
+        window.state_ = "disconnected";
+        window.updateCoreAvailability();
+        require(window.availabilityDetails_->isHidden() && window.settingsRetry_->isHidden(),
+                "ready disconnected Core needs no repair banner");
+        require(window.settingsAvailability_->text() == "The service is running and responding.",
+                "VPN disconnection is independent of Core readiness");
+        window.core_.setEndpoint("bimeron-verification-" + QUuid::createUuid().toString());
+        window.beginAvailabilityVerification();
+        window.core_.cancel();
+        require(!window.helloReady_ && window.statusNeeded_ && window.availabilityVerificationDeadline_ > 0,
+                "successful helper operation requires a new hello and status");
+        require(window.settingsAvailability_->text().contains("Waiting for service response"),
+                "helper completion alone is not reported ready");
+        window.helloReady_ = true;
+        window.updateCoreAvailability();
+        require(window.availabilityVerificationDeadline_ > 0 && !window.availabilityDetails_->isHidden(),
+                "hello without authoritative status does not complete verification");
+        window.serviceObservation_ = MainWindow::ServiceObservation::Running;
+        window.availabilityVerificationDeadline_ = window.pollClock_.elapsed() + 1;
+        QThread::msleep(2);
+        window.updateCoreAvailability();
+        require(window.availabilityVerificationFailed_ && !window.availabilityVerificationDeadline_
+                && !window.repairFailure_.isEmpty(),
+                "verification deadline produces an actionable terminal failure");
+        require(!window.settingsRetry_->isHidden(), "verification failure retains retry");
+        window.statusNeeded_ = false;
+        window.updateCoreAvailability();
+        require(!window.availabilityVerificationFailed_ && window.availabilityDetails_->isHidden()
+                && window.settingsAvailability_->text() == "The service is running and responding.",
+                "later authoritative readiness clears obsolete verification failure");
+    }
+
+    static void repairQuitOwnership() {
+        for (bool cleanup : {false, true}) {
+            MainWindow window;
+            window.core_.cancel();
+            for (auto *timer : window.findChildren<QTimer *>()) timer->stop();
+            window.repairSession_ = true;
+            window.development_->restoreService_ = cleanup;
+            window.development_->interruptedRecovery_ = false;
+            require(window.development_->needsCleanup() == cleanup, "quit cleanup precondition");
+            int launches = 0;
+            window.repairCommandTest_ = [&](const QStringList &) { ++launches; };
+            const auto phase = window.development_->phase_;
+            window.requestShutdown();
+            QElapsedTimer elapsed;
+            elapsed.start();
+            waitFor([&] { return elapsed.elapsed() >= 300; });
+            require(window.repairSession_ && !window.quitRequested_ && !window.developmentExit_
+                && !window.development_->busy() && window.development_->phase_ == phase
+                && window.development_->needsCleanup() == cleanup && launches == 0,
+                "quit during pending authorization preserves repair ownership without development transition or elevation");
+            window.development_->restoreService_ = false;
+        }
+    }
     static void run() {
+        repairQuitOwnership();
+        {
+            MainWindow window;
+            window.core_.cancel();
+            window.core_.setEndpoint("repair-terminal-probe-" + QUuid::createUuid().toString());
+            for (auto *timer : window.findChildren<QTimer *>()) timer->stop();
+            window.startupPreparationPending_ = false;
+            window.serviceObservation_ = MainWindow::ServiceObservation::Stopped;
+            window.probeTestMode_ = "valid";
+            window.repairSession_ = true;
+            window.repairSessionDone_ = true;
+            window.repairSessionOK_ = true;
+            window.finishServiceCommand(0);
+            require(window.serviceStatusProcess_, "terminal repair starts fresh service inspection");
+            require(!window.helloReady_ && window.availabilityVerificationDeadline_ > 0,
+                "terminal repair requires independent IPC readiness");
+            window.core_.cancel(); // This fixture exercises service observation, not IPC.
+            require(waitFor([&] { return !window.serviceStatusProcess_; }), "terminal repair service probe completes");
+            require(window.serviceObservation_ == MainWindow::ServiceObservation::Running,
+                "terminal repair replaces stale stopped observation");
+            require(window.serviceStatusLabel_->text() == "Running", "running service header is capitalized");
+            require(!window.helloReady_,
+                "observed running service still requires independent IPC readiness");
+            window.core_.cancel();
+            require(window.log_->toPlainText().contains("Repair steps completed; verifying service readiness.")
+                && !window.log_->toPlainText().contains("Service repair completed: ready to connect."),
+                "helper completion is logged without claiming readiness");
+            window.helloReady_ = true;
+            window.statusNeeded_ = false;
+            window.updateCoreAvailability();
+            require(window.log_->toPlainText().contains("Service repair completed: ready to connect."),
+                "verified repair success reaches Journal");
+            const QString previousLog = window.log_->toPlainText();
+            window.updateCoreAvailability();
+            require(window.log_->toPlainText() == previousLog, "identical service observations do not duplicate Journal entries");
+            window.serviceObservation_ = MainWindow::ServiceObservation::Stopped;
+            window.lastCoreError_ = "password=visible-diagnostic";
+            window.updateCoreAvailability();
+            require(window.log_->toPlainText().contains("Service status: Stopped"), "service changes reach Journal");
+            require(window.coreManagementDetails_->text().contains("password=visible-diagnostic"),
+                "credential-bearing diagnostic details remain visible");
+            require(window.repairReport().value("coreDetails").toString() == "password=visible-diagnostic",
+                "repair report retains displayed diagnostics");
+        }
+        {
+            MainWindow window;
+            window.core_.cancel();
+            window.core_.setEndpoint("single-repair-" + QUuid::createUuid().toString());
+            for (auto *timer : window.findChildren<QTimer *>()) timer->stop();
+            window.startupPreparationPending_ = false;
+            window.helloReady_ = false;
+            window.statusNeeded_ = true;
+            int launches = 0;
+            window.repairCommandTest_ = [&](const QStringList &command) {
+                require(command.size() == 3 && command[0] == "repair-session"
+                    && command[1].size() == 32
+                    && command[2] == QString::number(QCoreApplication::applicationPid()),
+                    "one bounded repair request binds nonce and caller PID");
+                ++launches;
+            };
+            for (auto state : {MainWindow::ServiceObservation::Missing, MainWindow::ServiceObservation::Stopped,
+                               MainWindow::ServiceObservation::Unknown}) {
+                window.availabilityVerificationDeadline_ = 0;
+                window.serviceObservation_ = state;
+                window.startRepairSession();
+                const int before = launches;
+                window.startRepairSession();
+                require(launches == before && window.repairSession_, "repeated Restore never elevates twice");
+                window.coreManagement_->hide();
+                window.openCoreManagement();
+                require(window.repairSession_ && !window.settingsRetry_->isEnabled(), "close and reopen retains session");
+                window.coreManagement_->hide();
+                window.repairSessionDone_ = true;
+                window.repairSessionOK_ = true;
+                window.finishServiceCommand(0);
+                require(launches == before && window.availabilityVerificationDeadline_ > 0
+                    && !window.helloReady_, "session completion verifies readiness without second elevation");
+                window.core_.cancel();
+            }
+            window.availabilityVerificationDeadline_ = 0;
+            window.startRepairSession();
+            const int before = launches;
+            window.repairSessionDone_ = true;
+            window.repairSessionOK_ = false;
+            window.finishServiceCommand(1);
+            require(launches == before && !window.repairSession_ && !window.repairFailure_.isEmpty(),
+                "failed repair or rollback never relaunches elevation");
+            require(window.log_->toPlainText().contains("Service repair failed:"), "terminal repair failure reaches Journal");
+            window.startRepairSession();
+            const int consentLaunches = launches;
+            QLocalServer consentServer;
+            const QString consentEndpoint = "repair-consent-" + QUuid::createUuid().toString(QUuid::Id128);
+            require(consentServer.listen(consentEndpoint), "private consent endpoint");
+            window.repairSocket_ = new QLocalSocket(&window);
+            window.repairSocket_->connectToServer(consentEndpoint);
+            require(waitFor([&] { return consentServer.hasPendingConnections()
+                && window.repairSocket_->state() == QLocalSocket::ConnectedState; }), "consent fixture connects");
+            auto *consentPeer = consentServer.nextPendingConnection();
+            // Authentication is explicitly injected only at this private fixture boundary.
+            window.repairSocket_->setProperty("authenticated", true);
+            consentPeer->write("{\"stage\":\"replace\"}\n");
+            consentPeer->flush();
+            require(waitFor([&] { return window.repairSocket_->bytesAvailable() > 0; }), "repair stage arrives");
+            window.readRepairSession();
+            require(window.log_->toPlainText().contains("Service repair: Replacing service component")
+                && !window.repairSessionDone_, "replacement stage is accepted and logged");
+            for (const QString kind : {QString("disruption"), QString("network-recovery")}) {
+                consentPeer->write(QJsonDocument(QJsonObject{{"consent", kind}}).toJson(QJsonDocument::Compact) + '\n');
+                consentPeer->flush();
+                require(waitFor([&] { return window.repairSocket_->bytesAvailable() > 0; }), "consent event arrives");
+                window.readRepairSession();
+                require(window.repairConsentDialog_ && window.repairSession_ && launches == consentLaunches,
+                    "fresh consent stays inside the original elevated session");
+                require(!window.requestRepairConsent(kind), "duplicate or overlapping challenge rejected");
+                const bool approve = kind == "disruption";
+                window.repairConsentDialog_->button(approve ? QMessageBox::Yes : QMessageBox::No)->click();
+                require(waitFor([&] { return consentPeer->canReadLine(); }), "consent reply arrives");
+                const auto reply = QJsonDocument::fromJson(consentPeer->readLine()).object();
+                require(reply.size() == 2 && reply.value("consent") == kind
+                    && reply.value("approved") == approve && launches == consentLaunches,
+                    "exact consent response preserves approval or denial without elevation");
+            }
+            window.repairSessionDone_ = true;
+            window.repairSessionOK_ = false;
+            window.finishServiceCommand(1);
+            window.coreManagement_->hide();
+            require(launches == consentLaunches && !window.repairSession_, "denial terminates without relaunch");
+#ifdef Q_OS_WIN
+            window.startRepairSession();
+            QLocalServer impostor;
+            require(impostor.listen("Bimeron.Repair." + window.repairNonce_), "private impostor endpoint");
+            window.connectRepairSession();
+            require(waitFor([&] { return window.repairFailure_.contains("identity could not be verified"); }),
+                "GUI rejects a server unrelated to the elevated process");
+            QCoreApplication::processEvents();
+            auto *peer = impostor.nextPendingConnection();
+            // Authentication can abort before Qt delivers the server's accept.
+            require(!peer || peer->bytesAvailable() == 0, "unauthenticated server receives no repair request");
+            window.finishServiceCommand(1);
+#endif
+        }
+        {
+            MainWindow window;
+            window.core_.cancel();
+            for (auto *timer : window.findChildren<QTimer *>()) timer->stop();
+            window.startupPreparationPending_ = false;
+            window.invalidateConnection();
+            for (const QString mode : {QString("failed"), QString("malformed"), QString("valid")}) {
+                window.probeTestMode_ = mode;
+                window.refreshServiceStatus();
+                require(waitFor([&] { return !window.serviceStatusProcess_; }), "fixture probe completes");
+                const auto report = window.repairReport();
+                const QString category = mode == "failed" ? "command-failure" : mode == "malformed" ? "malformed-response" : "observed";
+                require(report.value("probeCategory").toString() == category, "actual probe outcome exported");
+                const QString description = mode == "failed" ? "Service check command failed"
+                    : mode == "malformed" ? "Invalid service check response" : "Service state received";
+                require(window.coreManagementDetails_->text().contains(description), "readable probe outcome rendered");
+                if (mode == "failed") require(QJsonDocument(report).toJson().contains("secret-probe-fixture")
+                    && window.coreManagementDetails_->text().contains("secret-probe-fixture")
+                    && window.log_->toPlainText().contains("secret-probe-fixture"), "actual probe diagnostics retained in details, report and Journal");
+                if (mode == "valid") require(report.value("failedProbe").toObject().value("category").toString() == "malformed-response", "failed probe retained after successful refresh");
+            }
+            for (const QString mode : {QString("starting"), QString("stopping")}) {
+                window.probeTestMode_ = mode;
+                window.refreshServiceStatus();
+                require(waitFor([&] { return !window.serviceStatusProcess_; }), "transitional service probe completes");
+                require(window.log_->toPlainText().contains("Service status: " + mode),
+                    "different pending service states each reach Journal");
+            }
+            for (const QString mode : {QString("missing"), QString("malformed"), QString("stopped"), QString("valid"), QString("missing")}) {
+                window.probeTestMode_ = mode;
+                window.refreshServiceStatus();
+                require(waitFor([&] { return !window.serviceStatusProcess_; }), "advanced probe completes");
+                window.updateCoreAvailability();
+                require(window.serviceStopButton_->isEnabled() && window.serviceUpdateButton_->isEnabled() && window.serviceUninstallButton_->isEnabled(), "idle advanced controls enabled");
+                window.repairCommandPending_ = true;
+                window.updateCoreAvailability();
+                require(!window.serviceStopButton_->isEnabled() && !window.serviceUpdateButton_->isEnabled() && !window.serviceUninstallButton_->isEnabled(), "pending command disables advanced controls");
+                window.repairCommandPending_ = false;
+                window.updateCoreAvailability();
+                require(window.serviceStopButton_->isHidden() == (mode != "valid"), "stop follows observed state");
+                require(window.serviceUpdateButton_->isHidden() == (mode != "valid" && mode != "stopped"), "update follows observed state");
+                require(window.serviceUninstallButton_->isHidden() == (mode != "stopped"), "uninstall follows observed state");
+                require(window.serviceInstallButton_->isHidden() && window.serviceStartButton_->isHidden(), "primary dispatch controls remain hidden");
+                require(window.coreManagement_->findChildren<QDialog *>().isEmpty(), "no nested dialog after state change");
+            }
+            window.core_.cancel();
+        }
+        {
+            MainWindow window;
+            window.core_.cancel();
+            window.core_.setEndpoint("repair-workflow-" + QUuid::createUuid().toString());
+            for (auto *timer : window.findChildren<QTimer *>()) timer->stop();
+            window.startupPreparationPending_ = false;
+            window.helloReady_ = false;
+            window.statusNeeded_ = true;
+            QStringList commands;
+            window.repairCommandTest_ = [&](const QStringList &command) { commands.append(command.join(' ')); };
+            window.repairInspectionTest_ = [](auto done) { done({DevelopmentCore::StartBlock::None, {}}); };
+            window.startServiceAfterInstall_ = true;
+            require(window.runServiceCommand({"service", "install"}, "Installing service"), "fake install begins");
+            require(!window.runServiceCommand({"service", "start"}, "Starting service"), "duplicate command blocked");
+            window.repairWatchdogMs_ = 0;
+            window.updateCoreAvailability();
+            require(window.repairWatchdogExpired_ && window.repairCommandPending_, "never-exiting helper stays tracked after watchdog");
+            window.coreManagement_->hide();
+            window.openCoreManagement();
+            window.updateCoreAvailability();
+            require(window.coreManagementTitle_->text().contains("still running") && !window.settingsRetry_->isEnabled(), "reopened helper retains watchdog and exclusion");
+            require(!window.runServiceCommand({"service", "start"}, "Starting service"), "watchdog never permits overlapping mutation");
+            window.coreManagement_->hide();
+            window.repairWatchdogMs_ = 120000;
+            window.probeCategory_ = "malformed-response";
+            window.probeExitCode_ = 7;
+            window.probeDurationMs_ = 23;
+            window.probeObservedAt_ = 123456;
+            window.updateCoreAvailability();
+            require(window.coreManagementDetails_->text().contains("Invalid service check response"), "readable failed probe category rendered");
+            const auto report = window.repairReport();
+            require(report.value("probeCategory").toString() == "malformed-response" && report.value("probeExitCode").toInt() == 7
+                && report.value("probeObservedAt").toDouble() == 123456, "report preserves structured probe evidence");
+
+            window.finishServiceCommand(0);
+            require(commands == QStringList{"service install", "service start"}, "install performs guarded start");
+            window.finishServiceCommand(0);
+            require(window.availabilityVerificationDeadline_ > 0 && !window.helloReady_ && window.autoConnectAttempted_,
+                    "start success verifies readiness without profile auto-connect");
+            window.core_.cancel();
+            window.availabilityVerificationDeadline_ = 0;
+            commands.clear();
+            window.startAfterRecovery_ = true;
+            require(window.runServiceCommand({"recover"}, "Restoring network"), "authorized fake recovery begins");
+            window.finishServiceCommand(0);
+            require(commands == QStringList{"recover", "service start"}, "recovery performs fresh guarded start");
+            window.finishServiceCommand(5);
+            require(!window.repairFailure_.isEmpty() && !window.repairHistory_.isEmpty(), "failed start keeps step and history");
+            const QString failure = window.repairFailure_;
+            window.updateCoreAvailability();
+            require(window.repairFailure_ == failure, "diagnostic refresh preserves failure");
+            commands.clear();
+            window.startServiceAfterInstall_ = true;
+            window.runServiceCommand({"service", "install"}, "Installing service");
+            window.finishServiceCommand(5);
+            require(commands == QStringList{"service install"}, "failed install never starts service");
+            commands.clear();
+            window.runServiceCommand({"service", "stop"}, "Stopping service");
+            window.finishServiceCommand(5);
+            window.requestServiceStart();
+            require(commands == QStringList{"service stop"}, "failed stop blocks replacement start");
+            window.core_.cancel();
+        }
+        {
+            using namespace ConnectionRepair;
+            Snapshot facts;
+            require(diagnose(facts).action == Action::Restore, "missing helper requires application repair");
+            facts.helperAvailable = true;
+            facts.helperTrusted = false;
+            require(diagnose(facts).cause == Cause::ComponentsUntrusted && diagnose(facts).action == Action::Restore, "present untrusted helper is not missing and does not demand reinstall");
+            facts.helperTrusted = true;
+            for (const auto state : {Service::Unknown, Service::Failed, Service::Paused, Service::Running, Service::Transitional}) {
+                facts.service = state;
+                require(diagnose(facts).action == Action::Restore, "uncertain state retains bounded repair entry point");
+            }
+            facts.service = Service::Missing;
+            require(diagnose(facts).action == Action::Restore, "confirmed missing service selects install workflow");
+            facts.service = Service::Stopped;
+            require(diagnose(facts).action == Action::Restore, "confirmed stopped service selects start workflow");
+            facts.conflict = DevelopmentCore::StartBlock::LockOccupied;
+            require(diagnose(facts).action == Action::Restore, "unknown lock never selects recover");
+            facts.conflict = DevelopmentCore::StartBlock::None;
+            facts.ipcFailure = CoreClient::Failure::Incompatible;
+            require(diagnose(facts).action == Action::Restore, "incompatible IPC selects bounded repair");
+            facts.ipcFailure = CoreClient::Failure::AccessDenied;
+            require(diagnose(facts).action == Action::Restore, "access failure cannot authorize service mutation");
+            facts.ipcFailure = CoreClient::Failure::Transport;
+            facts.interrupted = true;
+            require(diagnose(facts).action == Action::Restore, "interrupted journal selects reconciliation");
+            facts.interrupted = false; facts.cleanup = true;
+            require(diagnose(facts).action == Action::Restore, "confirmed cleanup failure retains repair with explicit consent");
+            facts.cleanup = false; facts.verifying = true;
+            require(diagnose(facts).phase == Phase::Verifying, "verification is distinct from helper completion");
+            facts.verifying = false; facts.ready = true;
+            require(diagnose(facts).cause == Cause::Ready, "authoritative readiness succeeds");
+        }
+        startupPreparation();
+        coreAvailabilityAssessment();
+        serviceProbeSurvivesIpcFailure();
         {
             MainWindow window;
             QTimer::singleShot(0, [&] {
@@ -898,9 +1597,16 @@ struct ConnectionManagementTest {
                 fields[0]->setText("typed text");
                 QCoreApplication::processEvents();
                 require(dialog->size() == original, "Typing retains geometry");
-                QApplication::clipboard()->setText("https://example.invalid:443");
+                // Native clipboard ownership can be transiently held by another application.
+                // Establish the fixture input before testing the UI's response to it.
+                require(waitFor([&] {
+                    if (QApplication::clipboard()->text() == "https://example.invalid:443") return true;
+                    QApplication::clipboard()->setText("https://example.invalid:443");
+                    return QApplication::clipboard()->text() == "https://example.invalid:443";
+                }), "native clipboard accepts supported fixture input");
                 QCoreApplication::processEvents();
-                require(waitFor([&] { return paste->isEnabled() && paste->isVisible(); }), "Supported clipboard shows Paste");
+                const bool clipboardVisible = waitFor([&] { return paste->isEnabled() && paste->isVisible(); });
+                require(clipboardVisible, "Supported clipboard shows Paste");
                 paste->click();
                 QCoreApplication::processEvents();
                 require(dialog->width() == original.width() && dialog->height() > original.height(), "Valid URI reveals name without width change");
@@ -1096,7 +1802,7 @@ struct ConnectionManagementTest {
         window.operation_ = "start";
         require(window.core_.request("start", {{"config", window.profiles_[0].path}}, 30), "ambiguous start request");
         require(waitFor([&] { return starts == 2 && !window.helloReady_; }), "ambiguous start timeout");
-        require(window.connectionLabel_->text() == "Core unavailable", "IPC loss is not disconnected");
+        require(window.connectionLabel_->text() == "Could not prepare connection", "IPC loss is not disconnected");
         window.retryAt_ = 0;
         window.poll();
         require(waitFor(synchronized), "ambiguous start status reconciliation");
@@ -1137,12 +1843,15 @@ struct ConnectionManagementTest {
         failStop = false;
         require(waitFor(synchronized), "failed stop status resync");
         // Cleanup failure remains visible even when the GUI did not initiate it.
+        window.developerMode_ = true; // Isolated helper fixture is not a protected package.
         status = {{"State", "failed"}, {"LastError", "cleanup_failed_run_recover"}};
         request("status");
         window.toggleConnection();
         require(window.cleanupBlocked_ && window.operation_.isEmpty() && starts == 2,
                 "cleanup failure must block a new session");
-        require(window.connectionLabel_->text().contains("failed", Qt::CaseInsensitive), "failed is not disconnected");
+        require(window.connectionLabel_->text() == "Could not prepare connection"
+                && window.recoveryAction_ == MainWindow::RecoveryAction::Restore,
+                "cleanup failure offers recovery instead of disconnected state");
         status = {{"State", "connected"}, {"Session", QJsonObject{{"id", "native"}, {"active", true}, {"backend", "ikev2"}}}};
         request("status");
         require(!window.connectButton_->isEnabled(), "native IKEv2 must not expose packet control");
@@ -1220,7 +1929,7 @@ struct ConnectionManagementTest {
         QTimer dismiss;
         QObject::connect(&dismiss, &QTimer::timeout, [&] {
             if (auto *box = qobject_cast<QMessageBox *>(QApplication::activeModalWidget())) {
-                rejectionShown = box->text().contains("configuration is invalid") && !box->text().contains("SENTINEL");
+                rejectionShown = box->text().contains("configuration is invalid") && box->detailedText().contains("OUTER_SENTINEL");
                 box->accept();
             }
         });
@@ -1230,17 +1939,21 @@ struct ConnectionManagementTest {
         dismiss.stop();
         QFile retained(window.profiles_[0].path);
         require(retained.open(QIODevice::ReadOnly) && retained.readAll() == wrapped, "service rejection preserves profile bytes");
-        require(!window.log_->toPlainText().contains("SENTINEL"), "service rejection redacts secrets");
+        require(window.log_->toPlainText().contains("OUTER_SENTINEL"), "service rejection retains supplied diagnostic detail");
 
         const int before = requests;
         window.coreUpdateCommand_ = true;
         window.poll();
         require(requests == before, "service update must suspend regular polling");
         window.coreUpdateCommand_ = false;
+        window.repairSnapshotTest_ = [](ConnectionRepair::Snapshot &snapshot) {
+            snapshot.helperAvailable = true;
+            snapshot.helperTrusted = true;
+        };
         window.connectionFailure("hello", CoreClient::Failure::AccessDenied, "Access to Core was denied");
-        require(window.connectionLabel_->text() == "Access to Core was denied", "access denial must be distinct");
+        require(window.coreManagementTitle_->text() == "Cannot inspect the service with current permissions", "access denial must be distinct");
         window.connectionFailure("hello", CoreClient::Failure::Incompatible, "incompatible");
-        require(window.connectionLabel_->text().contains("incompatible"), "incompatible IPC must be distinct");
+        require(window.coreManagementTitle_->text() == "Application and service versions differ", "incompatible IPC must be distinct");
         window.core_.cancel();
         QSettings().clear();
     }
