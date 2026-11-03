@@ -53,7 +53,8 @@ private:
     ProfileConnectionInfo profileInfo(int row) const;
     bool activeProxyMode() const;
     void addProfile();
-    void importProfile();
+    bool importProfile(const QString &source);
+    bool createProfile();
     void removeProfile();
     void moveProfile(int delta);
     void toggleConnection();

@@ -242,10 +242,11 @@ QCheckBox *ruleEnabled(QTableWidget *table, int row) {
 
 ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject &capabilities, QWidget *parent,
                                          std::function<bool(const QString &, QString *)> validateRaw,
-                                         const QString &coreExecutable, const QString &profilePath)
+                                         const QString &coreExecutable, const QString &profilePath, bool create)
     : QDialog(parent), coreExecutable_(coreExecutable), profilePath_(profilePath), capabilities_(capabilities),
       originalText_(text), validateRaw_(validateRaw) {
-    setWindowTitle(tr("Profile settings"));
+    creating_ = freshDraft_ = create;
+    setWindowTitle(create ? tr("Create profile") : tr("Profile settings"));
     resize(680, 520);
     setMinimumSize(620, 460);
     auto *layout = new QVBoxLayout(this);
@@ -259,6 +260,7 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
     name_->setObjectName("profileName");
     keySource_ = new HiDpiComboBox(this);
     keySource_->setObjectName("keySource");
+    if (!creating_) {
     keySource_->addItem(tr("ss:// key"), "SS");
     keySource_->addItem(tr("Dynamic ssconf://"), "SSConf");
     keySource_->addItem(tr("Remote socks5://"), "SOCKS5");
@@ -269,6 +271,7 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
         keySource_->addItem(tr("Legacy key"), "Key");
     if (!valueFor(text, "AccessKey", "File").isEmpty())
         keySource_->addItem(tr("Key file"), "File");
+    }
     keySource_->addItem(tr("Explicit Shadowsocks settings"), "Explicit");
     keySource_->addItem(tr("Explicit SOCKS5 settings"), "ExplicitSOCKS5");
     keySource_->addItem(tr("Explicit VLESS settings"), "ExplicitVLESS");
@@ -278,6 +281,15 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
     keySource_->addItem(tr("Explicit HTTPS settings"), "Explicithttps");
     keySource_->addItem(tr("Explicit Naive H2 settings"), "Explicitnaive");
     keySource_->addItem(tr("Explicit MASQUE settings"), "Explicitmasque");
+    if (creating_) {
+        const QStringList labels{"Shadowsocks", "SOCKS5", "VLESS", "SSH", "Trojan", "HTTP", "HTTPS", "Naive HTTPS", "MASQUE"};
+        for (int i = 0; i < labels.size(); ++i) keySource_->setItemText(i, labels[i]);
+        keySource_->addItem("Hysteria2", "GeneratedHysteria2");
+        keySource_->addItem("VMess", "GeneratedVMess");
+        keySource_->addItem("TUIC", "GeneratedTUIC");
+        keySource_->addItem("AnyTLS", "GeneratedAnyTLS");
+        keySource_->addItem("Naive QUIC", "GeneratedNaive");
+    }
     key_ = new QLineEdit;
     auto *keyRow = new QWidget;
     auto *keyLayout = new QHBoxLayout(keyRow);
@@ -292,7 +304,9 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
         if (!path.isEmpty()) { keySource_->setCurrentIndex(keySource_->findData("File")); key_->setText(path); }
     });
     server_ = new QLineEdit;
+    server_->setObjectName("server");
     port_ = new QSpinBox;
+    port_->setObjectName("port");
     port_->setRange(0, 65535);
     port_->setSpecialValueText(QStringLiteral("—"));
     method_ = new HiDpiComboBox;
@@ -302,6 +316,7 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
     password_->setEchoMode(QLineEdit::Password);
     password_->setObjectName("password");
     username_ = new QLineEdit;
+    username_->setObjectName("username");
     sshIdentity_ = new QLineEdit;
     sshIdentity_->setObjectName("sshIdentity");
     sshKnownHosts_ = new QLineEdit;
@@ -337,16 +352,16 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
     prefix_ = new QLineEdit;
     prefix_->setObjectName("prefix");
     mode_ = new HiDpiComboBox;
-    if (capabilities.value("vpn").toBool()) mode_->addItem(tr("System VPN"), "vpn");
-    if (capabilities.value("proxy").toBool()) mode_->addItem(tr("Local SOCKS5"), "proxy");
+    if (creating_ || capabilities.value("vpn").toBool()) mode_->addItem(tr("System VPN"), "vpn");
+    if (creating_ || capabilities.value("proxy").toBool()) mode_->addItem(tr("Local SOCKS5"), "proxy");
     listen_ = new QLineEdit;
     auto *sourceNotice = new QLabel(tr("Changing the key source requires Raw config. Cleared optional fields are removed when saving."));
     sourceNotice->setWordWrap(true);
     sourceNotice->setObjectName("sourceEditRestriction");
-    sourceNotice->setVisible(!coreExecutable_.isEmpty());
+    sourceNotice->setVisible(!creating_ && !coreExecutable_.isEmpty());
     generalForm->addRow(sourceNotice);
     generalForm->addRow(tr("Name"), name_);
-    generalForm->addRow(tr("Key source"), keySource_);
+    generalForm->addRow(creating_ ? tr("Protocol") : tr("Key source"), keySource_);
     generalForm->addRow(tr("Key or path"), keyRow);
     generalForm->addRow(tr("Server"), server_);
     generalForm->addRow(tr("Port"), port_);
@@ -638,13 +653,22 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
         {"ALPN", tr("ALPN")}, {"WSPath", tr("Path")}, {"WSHost", tr("Host")},
         {"GRPCServiceName", tr("gRPC service name")}, {"GRPCAuthority", tr("gRPC authority")},
         {"GRPCMultiMode", tr("gRPC TunMulti")}, {"CAFile", tr("CA file")},
-        {"MASQUEPath", tr("MASQUE UDP path")}};
+        {"MASQUEPath", tr("MASQUE UDP path")}, {"ID", tr("User ID (UUID)")},
+        {"Fingerprint", tr("Fingerprint")}, {"VMessSecurity", tr("VMess encryption")},
+        {"VMessNetwork", tr("VMess transport")}, {"VMessTLS", tr("VMess TLS")},
+        {"VMessPath", tr("Transport path / service name")}, {"VMessHost", tr("Transport host / authority")},
+        {"VMessMode", tr("Transport mode")}, {"VMessExtra", tr("XHTTP extra (JSON)")},
+        {"PublicKey", tr("Reality public key")}, {"ShortID", tr("Reality short ID")}, {"SpiderX", tr("Reality spider path")}};
     for (const auto &entry : labels) {
         auto *edit = new QLineEdit;
         edit->setObjectName("parameter" + entry.first);
         parameters_.insert(entry.first, edit);
         form->addRow(entry.second, edit);
     }
+    parameters_["VMessSecurity"]->setPlaceholderText("auto, aes-128-gcm, chacha20-poly1305");
+    parameters_["VMessNetwork"]->setPlaceholderText("tcp, ws, httpupgrade, grpc, xhttp");
+    parameters_["VMessTLS"]->setPlaceholderText("tls, reality");
+    parameters_["VMessMode"]->setPlaceholderText("auto, packet-up, stream-up, stream-one, multi");
     parameters_["Security"]->setValidator(new QRegularExpressionValidator(QRegularExpression("tls"), this));
     parameters_["GRPCMultiMode"]->setValidator(new QRegularExpressionValidator(QRegularExpression("true|false"), this));
     parameters_["Security"]->setPlaceholderText(tr("Empty uses TLS"));
@@ -747,6 +771,17 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
         }
     });
     loadText(text);
+    if (freshDraft_) {
+        keySource_->setCurrentIndex(keySource_->findData("Explicit"));
+        method_->setCurrentText("aes-128-gcm");
+        mode_->setCurrentIndex(mode_->findData("vpn"));
+        interfaceName_->setText("Bimeron");
+        mtu_->setValue(1420);
+        dns_->setText("1.1.1.1");
+        ipv6_->setCurrentIndex(ipv6_->findData("enable"));
+        listen_->setText("127.0.0.1:1080");
+        defaultRoute_->setCurrentIndex(defaultRoute_->findData("proxy"));
+    }
     connect(GeoDataSelection::instance(), &GeoDataSelection::changed, this, [this] {
         const auto shared = GeoDataSelection::instance()->paths();
         for (const QString &kind : {QString("geoip"), QString("geosite")}) {
@@ -868,7 +903,7 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
         const bool explicitVless = source == "ExplicitVLESS";
         const bool explicitSsh = source == "ExplicitSSH";
         const bool ssh = source == "SSH" || explicitSsh || ((source == "Key") && QUrl(key_->text()).scheme() == "ssh");
-        const bool added = source == "ExplicitTrojan" || QStringList{"Explicithttp", "Explicithttps", "Explicitnaive", "Explicitmasque"}.contains(source);
+        const bool added = source.startsWith("Generated") || source == "ExplicitTrojan" || QStringList{"Explicithttp", "Explicithttps", "Explicitnaive", "Explicitmasque"}.contains(source);
         const bool showParameters = ss || explicitKey || explicitSocks5 || explicitVless || explicitSsh || added;
         mode_->setToolTip(ssh ? tr("SSH VPN carries TCP and captured DNS only; other proxied UDP is dropped.") : QString());
 
@@ -883,10 +918,10 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
         generalForm->setRowVisible(server_, showParameters);
         generalForm->setRowVisible(port_, showParameters);
         generalForm->setRowVisible(method_, ss || explicitKey);
-        generalForm->setRowVisible(username_, explicitSocks5 || explicitSsh || (added && source != "ExplicitTrojan"));
+        generalForm->setRowVisible(username_, explicitSocks5 || explicitSsh || (added && !QStringList{"ExplicitTrojan", "GeneratedHysteria2", "GeneratedAnyTLS", "GeneratedTUIC", "GeneratedVMess"}.contains(source)));
         generalForm->setRowVisible(identityRow, ssh);
         generalForm->setRowVisible(hostsRow, ssh);
-        generalForm->setRowVisible(password_, showParameters && !explicitVless && !explicitSsh);
+        generalForm->setRowVisible(password_, showParameters && !explicitVless && !explicitSsh && source != "GeneratedVMess");
         generalForm->setRowVisible(prefix_, ss || explicitKey);
         generalForm->setRowVisible(ssPlugin_, explicitKey);
         generalForm->setRowVisible(ssPluginOpts_, explicitKey);
@@ -897,6 +932,12 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
         if (explicitSocks5 && port_->value() == 0) port_->setValue(1080);
         if (explicitVless && port_->value() == 0) port_->setValue(443);
         if (explicitSsh && port_->value() == 0) port_->setValue(22);
+        if (added && port_->value() == 0) port_->setValue(443);
+        if (source == "GeneratedVMess") {
+            if (parameters_["VMessTLS"]->text().isEmpty()) parameters_["VMessTLS"]->setText("tls");
+            if (parameters_["VMessNetwork"]->text().isEmpty()) parameters_["VMessNetwork"]->setText("tcp");
+            if (parameters_["VMessSecurity"]->text().isEmpty()) parameters_["VMessSecurity"]->setText("auto");
+        }
         updateVlessControls();
         refreshParameters();
     };
@@ -909,7 +950,7 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
         const QString accessKey = source.startsWith("Explicit")
             ? "Type = " + QString(source == "ExplicitVLESS" ? "vless" : source == "ExplicitSOCKS5" ? "socks5" : source == "ExplicitSSH" ? "ssh" : source == "ExplicitTrojan" ? "trojan" : source == "Explicit" ? "shadowsocks" : source.mid(8))
             : source + " = " + key_->text();
-        keySource_->setEnabled(!bridgeReady_ && !ProfileStore::connectionInfo("[AccessKey]\n" + accessKey).connectable);
+        keySource_->setEnabled(freshDraft_ || (!bridgeReady_ && !ProfileStore::connectionInfo("[AccessKey]\n" + accessKey).connectable));
     };
     connect(keySource_, &QComboBox::currentIndexChanged, this, updateSourceLock);
     connect(key_, &QLineEdit::textChanged, this, [this, applySs](const QString &value) {
@@ -1027,6 +1068,10 @@ ProfileEditorDialog::~ProfileEditorDialog() {
 
 QStringList ProfileEditorDialog::parameterFields() const {
     const QString source = keySource_->currentData().toString();
+    if (source == "GeneratedHysteria2") return {"ServerName", "ALPN", "Fingerprint"};
+    if (source == "GeneratedAnyTLS" || source == "GeneratedNaive") return {"ServerName"};
+    if (source == "GeneratedTUIC") return {"ServerName", "ALPN", "ID"};
+    if (source == "GeneratedVMess") return {"ServerName", "ALPN", "ID", "Fingerprint", "VMessSecurity", "VMessNetwork", "VMessTLS", "VMessPath", "VMessHost", "VMessMode", "VMessExtra", "PublicKey", "ShortID", "SpiderX"};
     if (source == "Explicitnaive") return {"ServerName"};
     if (source == "Explicitmasque") return {"ServerName", "CAFile", "MASQUEPath"};
     if (source != "ExplicitTrojan") return {};
@@ -1043,7 +1088,7 @@ void ProfileEditorDialog::refreshParameters() {
     findChild<QPushButton *>("browseParameterCa")->setVisible(keySource_->currentData() == "Explicitmasque");
     const auto fields = parameterFields();
     for (auto it = parameters_.cbegin(); it != parameters_.cend(); ++it)
-        form->setRowVisible(it.value(), fields.contains(it.key()) || !it.value()->text().isEmpty());
+        form->setRowVisible(it.value(), fields.contains(it.key()) || (!freshDraft_ && !it.value()->text().isEmpty()));
     form->setRowVisible(trojanNetwork_, keySource_->currentData() == "ExplicitTrojan");
     shadowName_->setEnabled(shadowTls_->isChecked());
     shadowPassword_->setEnabled(shadowTls_->isChecked());
@@ -1073,20 +1118,20 @@ void ProfileEditorDialog::refreshParameters() {
             : tr("In VPN mode, captured DNS uses TCP and other proxy-routed UDP is dropped. Explicit direct routes are unchanged."));
     }
     shadowGuidance_->setText(guidance);
-    const bool added = source == "ExplicitTrojan" || source == "Explicitnaive" || source == "Explicitmasque"
+    const bool added = source.startsWith("Generated") || source == "ExplicitTrojan" || source == "Explicitnaive" || source == "Explicitmasque"
         || source == "Explicithttp" || source == "Explicithttps";
     tabs_->setTabVisible(tabs_->indexOf(parameterPage_), added || wrapper || shadowTls_->isChecked());
 }
 
 QString ProfileEditorDialog::parameterError() const {
     const QString source = keySource_->currentData().toString();
-    const bool added = source == "ExplicitTrojan" || QStringList{"Explicithttp", "Explicithttps", "Explicitnaive", "Explicitmasque"}.contains(source);
+    const bool added = source.startsWith("Generated") || source == "ExplicitTrojan" || QStringList{"Explicithttp", "Explicithttps", "Explicitnaive", "Explicitmasque"}.contains(source);
     const auto invalid = [this] { return tr("Unsupported parameter combination. Correct the settings or use protected Raw config; no values were discarded."); };
     if (added) {
         if (server_->text().isEmpty() || port_->value() < 1) return invalid();
         const auto allowed = parameterFields();
         for (auto it = parameters_.cbegin(); it != parameters_.cend(); ++it) {
-            if ((!allowed.contains(it.key()) && !it.value()->text().isEmpty())
+            if ((!freshDraft_ && !allowed.contains(it.key()) && !it.value()->text().isEmpty())
                 || it.value()->text().contains(QRegularExpression("[\\r\\n]"))) return invalid();
         }
         if (source == "ExplicitTrojan") {
@@ -1098,6 +1143,8 @@ QString ProfileEditorDialog::parameterError() const {
             if (network == "grpc" && parameters_["GRPCServiceName"]->text().isEmpty()) return invalid();
             const QString multi = parameters_["GRPCMultiMode"]->text();
             if (!multi.isEmpty() && multi != "true" && multi != "false") return invalid();
+        } else if (source.startsWith("Generated")) {
+            // Core validates protocol-specific fields and credentials.
         } else if (source == "Explicitnaive") {
             if (username_->text().isEmpty() || password_->text().isEmpty()) return invalid();
         } else if (username_->text().isEmpty() != password_->text().isEmpty()) return invalid();
@@ -1424,7 +1471,32 @@ void ProfileEditorDialog::moveRule(int delta) {
 QString ProfileEditorDialog::buildText() const {
     QString accessKey;
     const QString selected = keySource_->currentData().toString();
-    if (selected == "ExplicitTrojan" || QStringList{"Explicithttp", "Explicithttps", "Explicitnaive", "Explicitmasque"}.contains(selected)) {
+    if (selected.startsWith("Generated")) {
+        const QString protocol = selected.mid(9);
+        const auto field = [this](const QString &key) { return parameters_.value(key)->text(); };
+        QString uri;
+        if (protocol == "VMess") {
+            QJsonObject object{{"v", "2"}, {"add", server_->text()}, {"port", QString::number(port_->value())}, {"id", field("ID")}, {"aid", "0"}};
+            const QMap<QString, QString> fields{{"scy", "VMessSecurity"}, {"net", "VMessNetwork"}, {"tls", "VMessTLS"}, {"path", "VMessPath"}, {"host", "VMessHost"}, {"mode", "VMessMode"}, {"extra", "VMessExtra"}, {"sni", "ServerName"}, {"alpn", "ALPN"}, {"fp", "Fingerprint"}, {"pbk", "PublicKey"}, {"sid", "ShortID"}, {"spx", "SpiderX"}};
+            for (auto it = fields.cbegin(); it != fields.cend(); ++it)
+                if (!field(it.value()).isEmpty()) object.insert(it.key(), field(it.value()));
+            uri = "vmess://" + QString::fromLatin1(QJsonDocument(object).toJson(QJsonDocument::Compact).toBase64());
+        } else {
+            const auto encode = [](const QString &value) { return QString::fromLatin1(QUrl::toPercentEncoding(value)); };
+            QString host = server_->text();
+            if (host.contains(':') && !host.startsWith('[')) host = "[" + host + "]";
+            QString user = encode(password_->text());
+            if (protocol == "TUIC") user = encode(field("ID")) + ":" + encode(password_->text());
+            if (protocol == "Naive") user = encode(username_->text()) + ":" + encode(password_->text());
+            uri = (protocol == "Naive" ? QString("naive+quic") : protocol.toLower()) + "://" + user + "@" + host + ":" + QString::number(port_->value());
+            QStringList query;
+            for (const auto &entry : QList<QPair<QString, QString>>{{"sni", "ServerName"}, {"alpn", "ALPN"}, {"fp", "Fingerprint"}})
+                if (parameterFields().contains(entry.second) && !field(entry.second).isEmpty()) query << entry.first + "=" + encode(field(entry.second));
+            if (!query.isEmpty()) uri += "?" + query.join('&');
+        }
+        accessKey = protocol + " = " + uri;
+    }
+    else if (selected == "ExplicitTrojan" || QStringList{"Explicithttp", "Explicithttps", "Explicitnaive", "Explicitmasque"}.contains(selected)) {
         const QString type = selected == "ExplicitTrojan" ? "trojan" : selected.mid(8);
         accessKey = "Type = " + type + "\nServer = " + server_->text() + "\nPort = " + QString::number(port_->value());
         if (type != "trojan" && !username_->text().isEmpty()) accessKey += "\nUsername = " + username_->text();
@@ -1433,7 +1505,8 @@ QString ProfileEditorDialog::buildText() const {
         // Serialize inactive configured values too: the validation guard blocks
         // incompatible edits without silently deleting the user's draft.
         for (auto it = parameters_.cbegin(); it != parameters_.cend(); ++it)
-            if (!it.value()->text().isEmpty()) accessKey += "\n" + it.key() + " = " + it.value()->text();
+            if ((!freshDraft_ || parameterFields().contains(it.key())) && !it.value()->text().isEmpty())
+                accessKey += "\n" + it.key() + " = " + it.value()->text();
     }
     else if (keySource_->currentData().toString() == "ExplicitSSH")
         accessKey = "Type = ssh\nServer = " + server_->text() + "\nPort = " + QString::number(port_->value()) + "\nUsername = " + username_->text();
@@ -1524,6 +1597,12 @@ QString ProfileEditorDialog::buildText() const {
 }
 
 void ProfileEditorDialog::assessRepresentation() {
+    if (freshDraft_) {
+        rawOnly_ = false;
+        bridgeReady_ = false;
+        visualBaseline_ = buildText();
+        return;
+    }
     const QSignalBlocker tabBlocker(tabs_);
     if (refreshControls_) refreshControls_();
     visualBaseline_ = buildText();
@@ -1630,6 +1709,7 @@ bool ProfileEditorDialog::applyRaw() {
             : safeCoreDiagnostic(error.toUtf8()));
         return false;
     }
+    freshDraft_ = false;
     loadText(text);
     assessRepresentation();
     if (rawOnly_) {
@@ -1660,6 +1740,7 @@ QString ProfileEditorDialog::configText() const {
         if (raw_->toPlainText() == normalized) return loadedText_;
         return raw_->toPlainText();
     }
+    if (freshDraft_) return buildText();
     if (rawOnly_) return loadedText_;
     if (bridgeReady_) return documentText();
     if (buildText() == visualBaseline_) return loadedText_;
@@ -1704,7 +1785,7 @@ void ProfileEditorDialog::reject() {
         if (index >= 0 && index < previousIndex) reordered = true;
         if (index >= 0) previousIndex = index;
     }
-    if (reordered || buildText() != visualBaseline_ || configText() != originalText_) {
+    if (reordered || buildText() != visualBaseline_ || (freshDraft_ ? rawDirty_ : configText() != originalText_)) {
         QMessageBox prompt(QMessageBox::Question, tr("Discard changes"), tr("Discard unsaved changes?"), QMessageBox::NoButton, this);
         auto *discard = prompt.addButton(tr("Discard changes"), QMessageBox::DestructiveRole);
         prompt.addButton(tr("Continue editing"), QMessageBox::RejectRole);

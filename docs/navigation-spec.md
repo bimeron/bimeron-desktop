@@ -3,18 +3,18 @@
 The main window opens on Profiles. Its persistent sidebar switches between
 Profiles, Settings, Log, and About, with the active section highlighted.
 The platform command modifier selects Profiles with 1, Settings with comma,
-Log with 3, and About with 4. Command/Control+N opens Add key only on Profiles.
+Log with 3, and About with 4. Command/Control+N opens Add profile only on Profiles.
 
 Selecting a profile highlights it. Shift+Up and Shift+Down move the selected
 profile one row, preserve its selection, and do nothing at either boundary.
 Delete requests confirmation naming that profile. The row pencil edits that
-profile. Add key and Import .conf open their respective dialogs. Connection
+profile. Add profile opens the unified link/file dialog with Create in editor. Connection
 controls follow [connection management](connection-management.md): selection alone
 does not connect; Connect, double-click, Return/Enter and tray activation share
 the same start/stop/switch path. Status and traffic come from the active Core.
 
-Add key keeps its dialog open after a validation or write error; Show/Hide
-controls key visibility and Paste reads the clipboard. The editor has Basic,
+Add profile keeps its input after a validation or write error. Paste accepts
+supported links and absolute file paths. See [profile creation](profile-creation.md). The editor has Basic,
 VLESS, Network, Routing, and Raw config tabs. Routing commands affect rules
 within the profile, and unavailable commands are disabled. Switching from
 edited raw text to a visual tab runs the same core CLI validation used by Save;
