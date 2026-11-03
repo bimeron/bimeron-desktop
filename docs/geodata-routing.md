@@ -165,3 +165,15 @@ matches English and Russian names and the stable code in either UI language. The
 special groups appear before countries within each selection set. Checked groups
 appear first across the entire picker when reopened. GeoSite uses a separate compact section picker; see [the trial specification](geosite-picker-trial.md). Unknown IDs remain visible,
 and labels never replace the original IDs in configuration files.
+
+## New rule focus
+
+Clicking Add selects only the appended rule, makes its Type column current, scrolls it into view and focuses its type selector. Remove must immediately target this new rule. Loading existing rules and rebuilding the table must not steal focus. Acceptance: add with no selection or another row selected, including below the viewport, then remove immediately or change the type with the keyboard.
+
+Validation: Windows amd64 Release GUI build and git diff --check passed. The change is limited to the Add button handler; import and table reconstruction retain their existing behavior. Automated tests were not run by request; interactive acceptance is pending user inspection.
+
+## Removing populated rules
+
+Remove asks for confirmation when the current rule's destination, trimmed of whitespace, is nonempty. GeoIP/GeoSite use their stored group IDs. Empty rules are removed immediately. No is the default confirmation choice; declining or closing preserves the rule and selection. Acceptance: filled CIDR/domain/GeoIP/GeoSite rules prompt, blank/whitespace destinations do not, and confirming removes only the current rule.
+
+Removal validation: Windows amd64 Release build, translation JSON parsing (case-sensitive hashtable) and diff whitespace checks passed. Automated tests were not run by request; confirmation-dialog interaction awaits user inspection.

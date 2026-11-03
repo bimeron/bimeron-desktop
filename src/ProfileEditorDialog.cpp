@@ -497,8 +497,24 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
     connect(rules_->model(), &QAbstractItemModel::rowsInserted, this, updateRuleActions);
     connect(rules_->model(), &QAbstractItemModel::rowsRemoved, this, updateRuleActions);
     updateRuleActions();
-    connect(add, &QPushButton::clicked, this, [this] { addRule(Rule{}); });
-    connect(remove, &QPushButton::clicked, this, [this] { if (rules_->currentRow() >= 0) rules_->removeRow(rules_->currentRow()); refreshRouting(); });
+    connect(add, &QPushButton::clicked, this, [this] {
+        addRule(Rule{});
+        const int row = rules_->rowCount() - 1;
+        rules_->setCurrentCell(row, 1, QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
+        rules_->scrollTo(rules_->model()->index(row, 1));
+        rules_->cellWidget(row, 1)->setFocus(Qt::OtherFocusReason);
+    });
+    connect(remove, &QPushButton::clicked, this, [this] {
+        const int row = rules_->currentRow();
+        if (row < 0) return;
+        if (!tableRule(row).target.trimmed().isEmpty()
+            && QMessageBox::question(this, tr("Remove rule"),
+                tr("This rule has a destination. Remove it?"),
+                QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes)
+            return;
+        rules_->removeRow(row);
+        refreshRouting();
+    });
     connect(up, &QPushButton::clicked, this, [this, updateRuleActions] { moveRule(-1); updateRuleActions(); });
     connect(down, &QPushButton::clicked, this, [this, updateRuleActions] { moveRule(1); updateRuleActions(); });
     for (auto *button : {add, remove, up, down}) ruleButtons->addWidget(button);
@@ -1759,7 +1775,9 @@ void ProfileEditorDialog::selectGroups(QLineEdit *target, QComboBox *type) {
     auto *notice = new QLabel(datasetErrors_.value(kind));
     notice->setWordWrap(true); notice->setTextFormat(Qt::PlainText);
     layout->addWidget(notice);
+    notice->setVisible(!notice->text().isEmpty());
     auto *list = new QListWidget;
+    list->setItemDelegate(new GeoSiteRowDelegate(list));
     list->setFont(QApplication::font());
     list->setStyleSheet(
         "QListWidget::item { min-height: 24px; padding: 2px 4px; border: none; }"
@@ -1780,14 +1798,50 @@ void ProfileEditorDialog::selectGroups(QLineEdit *target, QComboBox *type) {
         auto *item = new QListWidgetItem(label, list);
         item->setData(Qt::UserRole, id);
         item->setData(Qt::UserRole + 1, kind == "geoip" ? geoIPSearchText(id) : label);
+        QString name = geoIPLabel(id, true);
+        const QString suffix = " (" + id.toUpper() + ')';
+        if (name.endsWith(suffix)) name.chop(suffix.size());
+        item->setData(Qt::UserRole + 3, name == id ? QString{} : name);
+        item->setData(Qt::UserRole + 4, datasetGroups_.value(kind).contains(id) ? QString{} : " — " + tr("Unavailable"));
+        item->setData(Qt::UserRole + 7, true);
+        item->setToolTip(label);
         item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
         item->setCheckState(selected.contains(id) ? Qt::Checked : Qt::Unchecked);
     }
-    connect(search, &QLineEdit::textChanged, list, [list](const QString &query) {
-        for (int i = 0; i < list->count(); ++i) list->item(i)->setHidden(!(list->item(i)->text() + '\n' + list->item(i)->data(Qt::UserRole + 1).toString()).contains(query, Qt::CaseInsensitive));
-    });
+    auto *empty = new QLabel;
+    layout->addWidget(empty);
+    auto *footer = new QHBoxLayout;
+    auto *count = new QPushButton;
+    count->setCheckable(true);
+    count->setAutoDefault(false);
+    count->setAccessibleName(tr("Only selected"));
+    count->setToolTip(tr("Show only selected groups; typing searches within the selection"));
+    count->setStyleSheet("QPushButton:checked { color: #1677ff; border-color: #1677ff; }");
+    footer->addWidget(count);
+    footer->addStretch();
+    auto filter = [list, search, count, empty] {
+        const QSignalBlocker blocker(list);
+        int checkedCount = 0, visibleCount = 0;
+        for (int i = 0; i < list->count(); ++i) {
+            auto *item = list->item(i);
+            const bool checked = item->checkState() == Qt::Checked;
+            checkedCount += checked;
+            const bool visible = (!count->isChecked() || checked)
+                && (item->text() + '\n' + item->data(Qt::UserRole + 1).toString()).contains(search->text(), Qt::CaseInsensitive);
+            item->setHidden(!visible);
+            visibleCount += visible;
+        }
+        count->setText((count->isChecked() ? tr("Selected: %1 · Only selected") : tr("Selected: %1")).arg(checkedCount));
+        empty->setText(count->isChecked() ? (search->text().isEmpty() ? tr("No selected groups") : tr("No matching selected groups")) : tr("No matching groups"));
+        empty->setVisible(visibleCount == 0);
+    };
+    connect(search, &QLineEdit::textChanged, list, filter);
+    connect(count, &QPushButton::toggled, list, filter);
+    connect(list, &QListWidget::itemChanged, list, filter);
+    filter();
     auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
-    layout->addWidget(buttons);
+    footer->addWidget(buttons);
+    layout->addLayout(footer);
     connect(buttons, &QDialogButtonBox::accepted, &popup, &QDialog::accept);
     connect(buttons, &QDialogButtonBox::rejected, &popup, &QDialog::reject);
     search->setFocus();

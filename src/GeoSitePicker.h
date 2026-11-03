@@ -35,7 +35,7 @@ public:
         styled.text.clear();
         style->drawControl(QStyle::CE_ItemViewItem, &styled, painter, styled.widget);
         const QFontMetrics metrics(styled.font);
-        const QString idText = " (" + key + ')' + suffix;
+        const QString idText = (index.data(Qt::UserRole + 7).toBool() ? "  " + key : " (" + key + ')') + suffix;
         const int idWidth = qMin(rect.width() / 2, metrics.horizontalAdvance(idText) + 4);
         const int nameWidth = qMin(rect.width() - idWidth, metrics.horizontalAdvance(name) + 4);
         painter->save(); painter->setFont(styled.font);

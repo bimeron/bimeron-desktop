@@ -2539,5 +2539,7 @@
   "Search and Only selected include all sections and topics": "Поиск и режим выбранных охватывают все разделы и темы",
   "No selected groups": "Нет выбранных групп",
   "No matching selected groups": "Нет подходящих выбранных групп",
-  "Clear search": "Очистить поиск"
+  "Clear search": "Очистить поиск",
+  "Remove rule": "Удалить правило",
+  "This rule has a destination. Remove it?": "В этом правиле заполнено назначение. Удалить его?"
 }

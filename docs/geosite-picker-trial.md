@@ -984,3 +984,17 @@ Diff review found no additional taxonomy, ID, routing or serialization changes i
 this follow-up; fixed AI/Other row mapping is retained. `git diff --check` passed.
 Historical reports remain intact. Build/packaging workflow is unchanged; no
 settings, installed Core/service, commit, push or PR changes were made.
+
+## GeoIP picker presentation follow-up
+
+Accepted scope: render the localized name and original ID separately, with a muted
+ID without parentheses; retain unknown and unavailable selections. Add a checkable
+Selected count button that intersects selection filtering with bilingual search.
+Hide the database notice when empty, preserving real errors. Keep ordering,
+OK/Cancel semantics and routing values unchanged; do not change GeoSite behavior.
+Acceptance: inspect ordinary/search/selected/empty/unavailable/error states,
+long labels, light/dark appearance and native DPI. Build Windows amd64 Release
+and launch for user visual acceptance. Automated tests are not run by request;
+packaging, benchmarks and the release matrix are not applicable.
+
+Implementation: reused the row delegate with an opt-in unparenthesized ID role; GeoSite keeps its existing rendering. Windows amd64 Release GUI build and git diff --check passed. Automated tests were not run. Native visual/DPI acceptance is pending user inspection; no packages or release artifacts were produced.
