@@ -14,3 +14,7 @@ See [Protocol URI import](protocol-uri-import.md) for stage 5 URI coverage, Raw 
 
 Unknown-protocol rows draw the name and warning exactly once within the row;
 the styled item background must not repaint the original multiline text.
+
+The unified Add profile dialog also accepts file paths. Those keep the name row
+hidden. The Browse button stays on the right of the input, and Create in editor
+is available without entering a link or path. See [profile creation](profile-creation.md).

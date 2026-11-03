@@ -55,3 +55,11 @@ Stage 6 adds explicit Trojan, HTTP(S), Naive H2 and MASQUE forms and a separate
 ShadowTLS v3 block for represented compatible explicit profiles. URI sources and
 extended XHTTP remain protected Raw. See [Parameter forms and ShadowTLS](parameter-forms-and-shadowtls.md).
 This does not change the bundled Core or establish runtime interoperability.
+
+## Unified creation follow-up
+
+The unified Add profile dialog supersedes the URI-only input described above.
+It also accepts configuration paths, provides Browse on the right, and hides
+the name for file input. Create in editor offers parameter-based protocol choices
+without URI sources; protocol-backed URIs are generated internally where required
+by Core. See [the creation specification](profile-creation.md).

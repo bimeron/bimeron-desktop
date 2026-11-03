@@ -639,8 +639,7 @@ QWidget *MainWindow::profilesPage() {
     layout->addWidget(profileList_, 1);
 #endif
     auto *buttons = new QHBoxLayout;
-    auto *add = new QPushButton(tr("+  Add key"));
-    auto *import = new QPushButton(tr("Import .conf"));
+    auto *add = new QPushButton(tr("+  Add profile"));
     auto *remove = new QPushButton(tr("Remove"));
     removeProfileButton_ = remove;
     remove->setEnabled(false);
@@ -650,11 +649,9 @@ QWidget *MainWindow::profilesPage() {
     connectButton_->setProperty("mode", "connect");
     connectButton_->setEnabled(false);
     connect(add, &QPushButton::clicked, this, &MainWindow::addProfile);
-    connect(import, &QPushButton::clicked, this, &MainWindow::importProfile);
     connect(remove, &QPushButton::clicked, this, &MainWindow::removeProfile);
     connect(connectButton_, &QPushButton::clicked, this, &MainWindow::toggleConnection);
     buttons->addWidget(add);
-    buttons->addWidget(import);
     buttons->addWidget(remove);
     buttons->addStretch();
     buttons->addWidget(connectButton_);
@@ -1162,7 +1159,8 @@ void MainWindow::addProfile() {
     dialog.setWindowFlag(Qt::MSWindowsFixedSizeDialogHint);
     dialog.setMinimumWidth(440);
     auto *layout = new QVBoxLayout(&dialog);
-    auto *hint = new QLabel(tr("Enter a supported protocol URI"));
+    auto *hint = new QLabel(tr("Paste a connection link or add a configuration file"));
+    hint->setWordWrap(true);
     auto *hintRow = new QHBoxLayout;
     auto *uriHelp = new QToolButton(&dialog);
     uriHelp->setText("?");
@@ -1170,14 +1168,13 @@ void MainWindow::addProfile() {
     uriHelp->setAccessibleName(tr("Supported protocol URIs"));
     connect(uriHelp, &QToolButton::clicked, &dialog, [uriHelp] {
         QToolTip::showText(uriHelp->mapToGlobal(QPoint(0, uriHelp->height())),
-            QStringLiteral("ss://, ssconf://, socks5://, vless://,\nhysteria2://, hy2://, vmess://, trojan://, tuic://,\nhttp://, https://, anytls://,\nnaive+https://, naive+quic://, masque://, ssh://"), uriHelp, uriHelp->rect());
+            QStringLiteral("ss://, ssconf://, socks5://, vless://,\nhysteria2://, hy2://, vmess://, trojan://, tuic://,\nhttp://, https://, anytls://,\nnaive+https://, naive+quic://, masque://, ssh://") + "\n\n" + tr("Files: .conf, .ssconf. Choose a file or enter its absolute path."), uriHelp, uriHelp->rect());
     });
-    hintRow->addWidget(hint);
+    hintRow->addWidget(hint, 1);
     hintRow->addWidget(uriHelp);
-    hintRow->addStretch();
     auto *key = new QLineEdit;
     key->setObjectName("profileUri");
-    key->setPlaceholderText(tr("Protocol URI"));
+    key->setPlaceholderText(tr("Connection link or file path"));
     key->setMinimumHeight(30);
     auto *paste = new QPushButton;
     paste->setText(tr("Paste"));
@@ -1217,14 +1214,32 @@ void MainWindow::addProfile() {
     nameLabel->hide();
     name->hide();
     layout->addLayout(hintRow);
-    layout->addWidget(key);
+    auto *inputRow = new QHBoxLayout;
+    auto *browseConfig = new QPushButton(tr("Choose file…"));
+    browseConfig->setObjectName("browseProfileFile");
+    inputRow->addWidget(key, 1);
+    inputRow->addWidget(browseConfig);
+    layout->addLayout(inputRow);
+    connect(browseConfig, &QPushButton::clicked, &dialog, [&] {
+        const QString path = QFileDialog::getOpenFileName(&dialog, tr("Import configuration"), {}, tr("Bimeron (*.conf *.ssconf);;All files (*)"));
+        if (!path.isEmpty()) key->setText(QFileInfo(path).absoluteFilePath());
+    });
     layout->addWidget(paste);
     layout->addWidget(sshFiles);
     QDialogButtonBox buttons(QDialogButtonBox::Save | QDialogButtonBox::Cancel);
     buttons.button(QDialogButtonBox::Save)->setText(tr("Save"));
     buttons.button(QDialogButtonBox::Cancel)->setText(tr("Cancel"));
     buttons.button(QDialogButtonBox::Save)->setEnabled(false);
-    layout->addWidget(&buttons);
+    auto *create = new QPushButton(tr("Create in editor…"));
+    create->setObjectName("createProfileInEditor");
+    connect(create, &QPushButton::clicked, &dialog, [&] {
+        if (createProfile()) dialog.done(2);
+    });
+    auto *footer = new QHBoxLayout;
+    footer->addWidget(create);
+    footer->addStretch();
+    footer->addWidget(&buttons);
+    layout->addLayout(footer);
     layout->activate();
     dialog.setFixedWidth(440);
     dialog.setFixedHeight(dialog.sizeHint().height());
@@ -1271,15 +1286,26 @@ void MainWindow::addProfile() {
         const QUrl endpoint("ss://" + body.mid(body.lastIndexOf('@') + 1));
         return !endpoint.host().isEmpty() && endpoint.port() > 0;
     };
+    const auto filePath = [](QString value) {
+        value = value.trimmed();
+        if (value.size() > 1 && value.front() == '"' && value.back() == '"') value = value.mid(1, value.size() - 2);
+        if (value.startsWith("file:", Qt::CaseInsensitive)) {
+            const QUrl url(value);
+            if (!url.isValid() || !url.isLocalFile() || url.hasQuery() || url.hasFragment()) return QString();
+            value = url.toLocalFile();
+        } else if (value.contains("://")) return QString();
+        if (value.startsWith("~/")) value = QDir::homePath() + value.mid(1);
+        return QFileInfo(value).isAbsolute() ? QDir::cleanPath(value) : QString();
+    };
     bool nameEdited = false;
     bool keyValid = false;
     const auto updateSave = [&] {
         const QString uriHosts = QUrlQuery(QUrl(key->text())).queryItemValue("known_hosts", QUrl::FullyDecoded);
         const bool sshHostsReady = QFileInfo(hosts->text()).isAbsolute()
             || (hosts->text().isEmpty() && QFileInfo(uriHosts).isAbsolute());
-        buttons.button(QDialogButtonBox::Save)->setEnabled(keyValid && !name->text().trimmed().isEmpty()
+        buttons.button(QDialogButtonBox::Save)->setEnabled(!filePath(key->text()).isEmpty() || (keyValid && !name->text().trimmed().isEmpty()
             && (!key->text().startsWith("ssh://") || (sshHostsReady
-                && (identity->text().isEmpty() || QFileInfo(identity->text()).isAbsolute()))));
+                && (identity->text().isEmpty() || QFileInfo(identity->text()).isAbsolute())))));
     };
     connect(name, &QLineEdit::textEdited, &dialog, [&] { nameEdited = true; });
     connect(name, &QLineEdit::textChanged, &dialog, updateSave);
@@ -1287,6 +1313,7 @@ void MainWindow::addProfile() {
     connect(identity, &QLineEdit::textChanged, &dialog, updateSave);
     connect(key, &QLineEdit::textChanged, &dialog, [&](const QString &value) {
         keyValid = isKey(value);
+        key->setToolTip(!value.trimmed().isEmpty() && !keyValid && filePath(value).isEmpty() ? tr("Enter an absolute file path or a supported connection link.") : QString());
         nameLabel->setVisible(keyValid);
         name->setVisible(keyValid);
         sshFiles->setVisible(keyValid && value.startsWith("ssh://"));
@@ -1300,11 +1327,11 @@ void MainWindow::addProfile() {
     });
     auto updatePaste = [&] {
         const QString clipboardKey = QApplication::clipboard()->text().trimmed();
-        paste->setEnabled(isKey(clipboardKey));
+        paste->setEnabled(isKey(clipboardKey) || !filePath(clipboardKey).isEmpty());
         paste->setVisible(paste->isEnabled());
         if (paste->isEnabled()) {
             const QString suggested = keyName(clipboardKey);
-            paste->setText(suggested.isEmpty() ? tr("Paste key") : tr("Paste key #%1").arg(suggested));
+            paste->setText(!filePath(clipboardKey).isEmpty() ? tr("Paste file path") : suggested.isEmpty() ? tr("Paste key") : tr("Paste key #%1").arg(suggested));
         } else paste->setText(tr("Paste"));
         layout->invalidate();
         layout->activate();
@@ -1318,10 +1345,15 @@ void MainWindow::addProfile() {
     });
     updatePaste();
     connect(&buttons, &QDialogButtonBox::accepted, &dialog, [&] {
-        if (keyValid && !name->text().trimmed().isEmpty()) dialog.accept();
+        if (!filePath(key->text()).isEmpty() || (keyValid && !name->text().trimmed().isEmpty())) dialog.accept();
     });
     connect(&buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
     while (dialog.exec() == QDialog::Accepted) {
+        const QString source = filePath(key->text());
+        if (!source.isEmpty()) {
+            if (importProfile(source)) break;
+            continue;
+        }
         QString error;
         const QString path = store_.createConfig(name->text(), key->text(), &error, identity->text(), hosts->text());
         if (path.isEmpty()) {
@@ -1351,35 +1383,54 @@ void MainWindow::addProfile() {
     }
 }
 
-void MainWindow::importProfile() {
-    const QString source = QFileDialog::getOpenFileName(this, tr("Import configuration"), {}, tr("Bimeron (*.conf *.ssconf);;All files (*)"));
-    if (source.isEmpty()) return;
+bool MainWindow::createProfile() {
+    QTemporaryDir directory;
+    if (!directory.isValid()) { QMessageBox::warning(this, tr("Error"), tr("Cannot create a protected import draft directory.")); return false; }
+    const QString path = directory.filePath("New profile.conf");
+    const auto validate = [this, path](const QString &text, QString *error) {
+        if (!ProfileStore::writeConfig(path, text.toUtf8(), error)) return false;
+        return ProfileStore::importReferencesSafe(text.toUtf8(), error) && validateConfig(path, error);
+    };
+    ProfileEditorDialog editor({}, capabilities_, this, validate, validationExecutable_, path, true);
+    while (editor.exec() == QDialog::Accepted) {
+        QString error;
+        if (!ProfileStore::writeConfig(path, editor.configText().toUtf8(), &error)) {
+            QMessageBox::warning(&editor, tr("Error"), error);
+            continue;
+        }
+        if (importProfile(path)) return true;
+    }
+    return false;
+}
+
+bool MainWindow::importProfile(const QString &source) {
+    if (source.isEmpty()) return false;
     QString error;
     QString importSource = source;
     QString correctionPath;
     QTemporaryDir correctionDirectory;
-    if (!correctionDirectory.isValid()) { QMessageBox::warning(this, tr("Import failed"), tr("Cannot create a protected import draft directory.")); return; }
+    if (!correctionDirectory.isValid()) { QMessageBox::warning(this, tr("Import failed"), tr("Cannot create a protected import draft directory.")); return false; }
     QFile input(source);
-    if (!input.open(QIODevice::ReadOnly)) { QMessageBox::warning(this, tr("Import failed"), input.errorString()); return; }
+    if (!input.open(QIODevice::ReadOnly)) { QMessageBox::warning(this, tr("Import failed"), input.errorString()); return false; }
     const QByteArray imported = input.read(64 * 1024 + 1);
     input.close();
-    if (imported.size() > 64 * 1024) { QMessageBox::warning(this, tr("Import failed"), tr("The profile exceeds the 64 KiB limit.")); return; }
+    if (imported.size() > 64 * 1024) { QMessageBox::warning(this, tr("Import failed"), tr("The profile exceeds the 64 KiB limit.")); return false; }
     if (QString::fromUtf8(imported).toUtf8() != imported) {
-        QMessageBox::warning(this, tr("Import failed"), tr("The profile must be valid UTF-8 and at most 64 KiB.")); return;
+        QMessageBox::warning(this, tr("Import failed"), tr("The profile must be valid UTF-8 and at most 64 KiB.")); return false;
     }
     const QString sharedDraft = GeoDataSelection::materialize(QString::fromUtf8(imported), source,
         validationExecutable_, GeoDataSelection::instance()->paths(), &error, correctionDirectory.path());
     if (error.isEmpty() && sharedDraft.toUtf8() != imported) {
         correctionPath = correctionDirectory.filePath("shared.conf");
         if (!correctionDirectory.isValid() || !ProfileStore::writeConfig(correctionPath, sharedDraft.toUtf8(), &error)) {
-            QMessageBox::warning(this, tr("Import failed"), error); return;
+            QMessageBox::warning(this, tr("Import failed"), error); return false;
         }
         importSource = correctionPath;
     }
     if (!error.isEmpty() || !ProfileStore::importReferencesSafe(sharedDraft.toUtf8(), &error) || !validateConfig(importSource, &error)) {
         QMessageBox::information(this, tr("Import needs correction"),
             error + "\n\n" + tr("The original file is unchanged. Correct this draft before importing. Relative database paths must be made portable explicitly or replaced with host-local absolute paths."));
-        if (!correctionDirectory.isValid()) { QMessageBox::warning(this, tr("Import failed"), tr("Cannot create a protected import draft directory.")); return; }
+        if (!correctionDirectory.isValid()) { QMessageBox::warning(this, tr("Import failed"), tr("Cannot create a protected import draft directory.")); return false; }
         correctionPath = correctionDirectory.filePath("corrected.conf");
         const auto validateImport = [this, correctionPath, source](const QString &text, QString *details) {
             const QString prepared = GeoDataSelection::materialize(text, source,
@@ -1397,7 +1448,7 @@ void MainWindow::importProfile() {
         ProfileEditorDialog draft(error.isEmpty() ? sharedDraft : QString::fromUtf8(imported), capabilities_, this, validateImport,
             validationExecutable_, source);
         while (true) {
-            if (draft.exec() != QDialog::Accepted) { QFile::remove(correctionPath); return; }
+            if (draft.exec() != QDialog::Accepted) { QFile::remove(correctionPath); return false; }
             const QString prepared = GeoDataSelection::materialize(draft.configText(), source,
                 validationExecutable_, GeoDataSelection::instance()->paths(), &error, correctionDirectory.path());
             if (error.isEmpty() && validateImport(prepared, &error)
@@ -1406,25 +1457,29 @@ void MainWindow::importProfile() {
         }
         importSource = correctionPath;
     }
+    QString importedName = ProfileStore::displayName(importSource);
+    if (!correctionPath.isEmpty() && importedName == QFileInfo(importSource).completeBaseName())
+        importedName = ProfileStore::displayName(source);
     const QString path = store_.importConfig(importSource, &error);
     if (!correctionPath.isEmpty()) QFile::remove(correctionPath);
     if (path.isEmpty()) {
         QMessageBox::warning(this, tr("Import failed"), error);
-        return;
+        return false;
     }
     if (!prepareSharedGeoData(path, &error) || !validateConfig(path, &error)) {
         QFile::remove(path);
         QMessageBox::warning(this, tr("Import failed"), error);
-        return;
+        return false;
     }
-    profiles_.append({ProfileStore::identity(path), ProfileStore::displayName(path), path});
+    profiles_.append({ProfileStore::identity(path), importedName, path});
     if (!store_.save(profiles_, &error)) {
         profiles_.removeLast();
         QFile::remove(path);
         QMessageBox::warning(this, tr("Import failed"), error);
-        return;
+        return false;
     }
     refreshProfiles();
+    return true;
 }
 
 void MainWindow::removeProfile() {
