@@ -9,6 +9,7 @@
 #include "RoutingCompatibility.h"
 
 #include <QApplication>
+#include <QAccessible>
 #include <QScrollArea>
 #include <QAction>
 #include <QElapsedTimer>
@@ -23,6 +24,7 @@
 #include <QDialogButtonBox>
 #include <QFile>
 #include <QLineEdit>
+#include <QLabel>
 #include <QMessageBox>
 #include <QPlainTextEdit>
 #include <QProcess>
@@ -96,8 +98,6 @@ static void preservationRegressions(const QString &directory) {
         base + "Password = DUPLICATE_SENTINEL\n",
         base + "Key = future://SENTINEL\n",
         "[Profile]\nVersion = 1\nName = Mixed\n[AccessKey]\nSS = ss://aes-256-gcm:secret@example.invalid:443\nPlugin = v2ray-plugin\n",
-        base + "Plugin = v2ray-plugin\nPluginOpts = \"quoted-options\"\n",
-        QString(base).replace("Password = SENTINEL", "Password = \" padded=secret;# \""),
         base + "[Interface]\nMTU = 2000\n",
         base + "[Routing]\nDefault = future\n",
         base + "[Rule]\nDomain = example.invalid\nAction = future\n",
@@ -458,6 +458,24 @@ static void parameterForms(const QString &directory) {
         require(reopened.configText() == output);
         check(output, {"Name = Edited"}, core, directory + "/parameters-" + QString::number(index++) + ".conf");
         require(editor.findChild<QLineEdit *>("shadowPassword")->echoMode() == QLineEdit::Password);
+        const auto *accessibleName = QAccessible::queryAccessibleInterface(editor.findChild<QLineEdit *>("shadowName"));
+        const auto *accessiblePassword = QAccessible::queryAccessibleInterface(editor.findChild<QLineEdit *>("shadowPassword"));
+        require(accessibleName && accessibleName->text(QAccessible::Name) == "Handshake server name");
+        require(accessiblePassword && accessiblePassword->text(QAccessible::Name) == "ShadowTLS password");
+        const QString guidance = editor.findChild<QLabel *>("shadowGuidance")->text();
+        require(!guidance.contains("SENTINEL"));
+        if (access.contains("[ShadowTLS]")) {
+            require(guidance.contains("captured DNS uses TCP"));
+            require(guidance.contains("direct routes are unchanged"));
+        }
+        if (access.startsWith("Type = shadowsocks")) {
+            editor.findChild<QComboBox *>("method")->setCurrentText("aes-192-gcm");
+            const QString incompatible = editor.findChild<QLabel *>("shadowGuidance")->text();
+            require(incompatible.contains("AES-192-GCM"));
+            require(!incompatible.contains("captured DNS uses TCP"));
+            require(editor.findChild<QCheckBox *>("shadowTls")->isChecked());
+            require(editor.findChild<QLineEdit *>("shadowPassword")->text() == "OUTER_SENTINEL");
+        }
         if (access.startsWith("Type = trojan") || access.startsWith("Type = naive"))
             check(output + wrapper, {"INNER_SENTINEL", "OUTER_SENTINEL"}, core, directory + "/wrapped-" + QString::number(index++) + ".conf");
     }
@@ -507,6 +525,11 @@ static void parameterForms(const QString &directory) {
     require(ca.configText().contains("CAFile = relative.pem"));
     ProfileEditorDialog conflict(head + inputs.first(), caps);
     conflict.findChild<QCheckBox *>("shadowTls")->setChecked(true);
+    require(conflict.findChild<QLabel *>("shadowGuidance")->text().contains("UDP-over-stream"));
+    conflict.findChild<QCheckBox *>("shadowTls")->setChecked(false);
+    require(!conflict.findChild<QLabel *>("shadowGuidance")->text().contains("UDP-over-stream"));
+    conflict.findChild<QCheckBox *>("shadowTls")->setChecked(true);
+    require(!conflict.findChild<QLabel *>("shadowGuidance")->text().contains("installed Core service"));
     conflict.findChild<QLineEdit *>("shadowName")->setText("outer.invalid");
     conflict.findChild<QLineEdit *>("shadowPassword")->setText("OUTER_SENTINEL");
     require(conflict.configText().contains("[ShadowTLS]"));
@@ -585,6 +608,109 @@ static void routingHostRegressions(const QString &directory) {
 }
 // Optional native editor integration: set BIMERON_GEODATA_CORE to a Core
 // executable implementing docs/DESKTOP_DOCUMENT_API.MD (protocol 1).
+static void shadowSerialization(const QString &core = {}) {
+    const QJsonObject caps{{"vpn", true}, {"proxy", true}};
+    const QString base = "[Profile]\r\nVersion = 1\r\nName = Keep\r\n[AccessKey]\r\nType = shadowsocks\r\nServer = example.invalid\r\nPort = 443\r\nMethod = aes-256-gcm\r\nPassword = inner\r\n# keep comment\r\n[ShadowTLS]\r\nServerName=\"outer.invalid\"\r\nPassword=\"outer\"\r\n";
+    ProfileEditorDialog editor(base, caps, nullptr, {}, core);
+    require(editor.findChild<QTabWidget *>()->isTabEnabled(0));
+    editor.findChild<QCheckBox *>("shadowTls")->setChecked(false);
+    const QString disabled = editor.configText();
+    require(disabled.contains("# [ShadowTLS]\r\n# ServerName = outer.invalid\r\n# Password = outer\r\n"));
+    require(disabled.contains("# keep comment\r\n"));
+    ProfileEditorDialog reopened(disabled, caps, nullptr, {}, core);
+    require(!reopened.findChild<QCheckBox *>("shadowTls")->isChecked());
+    require(reopened.findChild<QLineEdit *>("shadowPassword")->text() == "outer");
+    require(reopened.configText() == disabled);
+    reopened.findChild<QCheckBox *>("shadowTls")->setChecked(true);
+    require(reopened.configText().contains("[ShadowTLS]\r\nServerName = outer.invalid\r\nPassword = outer\r\n"));
+    reopened.findChild<QCheckBox *>("shadowTls")->setChecked(false);
+    reopened.findChild<QLineEdit *>("shadowName")->clear();
+    const QString partial = reopened.configText();
+    require(!partial.contains("ServerName"));
+    require(partial.contains("# Password = outer"));
+    reopened.findChild<QLineEdit *>("shadowPassword")->clear();
+    require(!reopened.configText().contains("ShadowTLS"));
+    reopened.findChild<QLineEdit *>("shadowPassword")->setText(" space ");
+    ProfileEditorDialog spaced(reopened.configText(), caps, nullptr, {}, core);
+    require(spaced.findChild<QLineEdit *>("shadowPassword")->text() == " space ");
+    spaced.findChild<QLineEdit *>("profileName")->setText("Edited");
+    require(spaced.configText().contains("Name = Edited"));
+    const QString unwrapped = base.left(base.indexOf("[ShadowTLS]"));
+    ProfileEditorDialog fresh(unwrapped, caps, nullptr, {}, core);
+    require(fresh.configText() == unwrapped);
+    fresh.findChild<QLineEdit *>("shadowPassword")->setText(QString::fromUtf8(" пароль=;#\\\" "));
+    const QString newDraft = fresh.configText();
+    require(newDraft.contains("# [ShadowTLS]"));
+    require(!newDraft.contains("ServerName"));
+    ProfileEditorDialog newReopened(newDraft, caps, nullptr, {}, core);
+    require(newReopened.findChild<QLineEdit *>("shadowPassword")->text() == fresh.findChild<QLineEdit *>("shadowPassword")->text());
+    fresh.findChild<QLineEdit *>("shadowPassword")->setText("second");
+    require(fresh.configText().contains("# Password = second"));
+    fresh.findChild<QCheckBox *>("shadowTls")->setChecked(true);
+    bool blocked = false;
+    QTimer::singleShot(0, [&] {
+        if (auto *message = qobject_cast<QMessageBox *>(QApplication::activeModalWidget())) { blocked = true; message->accept(); }
+    });
+    fresh.findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Save)->click();
+    require(blocked && fresh.result() != QDialog::Accepted);
+    const QString commented = base + "# Password = historical\r\n# note = keep\r\n";
+    ProfileEditorDialog comments(commented, caps, nullptr, {}, core);
+    comments.findChild<QCheckBox *>("shadowTls")->setChecked(false);
+    require(comments.configText().contains("# # Password = historical"));
+    ProfileEditorDialog commentsAgain(comments.configText(), caps, nullptr, {}, core);
+    require(commentsAgain.findChild<QTabWidget *>()->isTabEnabled(0));
+    commentsAgain.findChild<QCheckBox *>("shadowTls")->setChecked(true);
+    require(commentsAgain.configText().contains("# Password = historical\r\n# note = keep"));
+    ProfileEditorDialog optional(unwrapped + "Prefix = prefix\r\n", caps, nullptr, {}, core);
+    optional.findChild<QLineEdit *>("prefix")->clear();
+    const QString cleared = optional.configText();
+    require(!cleared.contains("Prefix ="));
+    optional.findChild<QLineEdit *>("password")->setText(" leading\\path=;#\" ");
+    ProfileEditorDialog secretAgain(optional.configText(), caps, nullptr, {}, core);
+    require(secretAgain.findChild<QLineEdit *>("password")->text() == " leading\\path=;#\" ");
+    const QString ssh = "[Profile]\nVersion = 1\nName = SSH\n[AccessKey]\nType = ssh\nServer = example.invalid\nPort = 22\nUsername = user\n# [ShadowTLS]\n# ServerName = outer.invalid\n# Password = draft\n";
+    ProfileEditorDialog sshEditor(ssh, caps, nullptr, {}, core);
+    sshEditor.findChild<QLineEdit *>("sshIdentity")->setText("C:/synthetic/key");
+    const QString identity = sshEditor.configText();
+    require(identity.indexOf("IdentityFile =") < identity.indexOf("# [ShadowTLS]"));
+    ProfileEditorDialog sshAgain(identity, caps, nullptr, {}, core);
+    require(sshAgain.findChild<QTabWidget *>()->isTabEnabled(0));
+    require(!sshAgain.findChild<QCheckBox *>("shadowTls")->isChecked());
+
+    const QString wrapper = "[ShadowTLS]\nServerName = outer.invalid\nPassword = outer\n";
+    QString routingBase = unwrapped;
+    routingBase.replace("\r\n", "\n");
+    const QStringList boundaryInputs{
+        QString(QChar::ByteOrderMark) + wrapper + routingBase,
+        routingBase + wrapper + "# keep"
+    };
+    for (const QString &input : boundaryInputs) {
+        ProfileEditorDialog boundary(input, {{"vpn", true}, {"proxy", true}, {"ip_split", true}}, nullptr, {}, core);
+        require(boundary.findChild<QTabWidget *>()->isTabEnabled(0));
+        require(boundary.configText() == input);
+        QCheckBox *bypass = nullptr;
+        for (auto *box : boundary.findChildren<QCheckBox *>())
+            if (box->text() == "Bypass the VPN for local networks") bypass = box;
+        require(bypass && bypass->isEnabled());
+        bypass->setChecked(true);
+        const QString output = boundary.configText();
+        require(output.contains("[Rule]"));
+        if (input.startsWith(QChar::ByteOrderMark)) {
+            require(output.startsWith(QChar::ByteOrderMark));
+            require(output.count(QChar::ByteOrderMark) == 1);
+        }
+        require(output.contains("ServerName = outer.invalid"));
+        require(output.contains("Password = outer"));
+        if (input.endsWith("# keep")) {
+            require(output.contains("# keep\n"));
+            require(!output.contains("# keep["));
+        }
+        ProfileEditorDialog boundaryAgain(output, {{"vpn", true}, {"proxy", true}, {"ip_split", true}}, nullptr, {}, core);
+        require(boundaryAgain.findChild<QTabWidget *>()->isTabEnabled(0));
+        require(boundaryAgain.configText() == output);
+    }
+}
+
 static void geodataBridgeRegressions(const QString &directory) {
     const QString core = qEnvironmentVariable("BIMERON_GEODATA_CORE");
     if (core.isEmpty()) return;
@@ -808,7 +934,7 @@ static void geodataBridgeRegressions(const QString &directory) {
     const QString edited = editor.configText();
     const QString editedExpected = QString(source)
         .replace("Default=proxy\r\n[Rule]", "Default=proxy\r\n\r\n[Rule]")
-        .replace("GeoSite=github\r\nAction=block", "GeoSite=github\r\nAction=direct")
+        .replace("GeoSite=github\r\nAction=block", "GeoSite = github\r\nAction = direct")
         .replace("# attached site comment\r\n# [Rule]", "# attached site comment\r\n\r\n# [Rule]");
     require(edited == editedExpected);
     require(inspect(edited).value("rules").toArray().at(2).toObject().value("matcher") == "CIDR");
@@ -1651,6 +1777,8 @@ int main(int argc, char **argv) {
     }
     routingHostRegressions(temporary.path());
     parameterForms(temporary.path());
+    shadowSerialization();
+    if (!qEnvironmentVariable("BIMERON_GEODATA_CORE").isEmpty()) shadowSerialization(qEnvironmentVariable("BIMERON_GEODATA_CORE"));
     preservationRegressions(temporary.path());
     sshProfiles(temporary.path());
     ProfileStore uriStore(temporary.path() + "/uri-import");

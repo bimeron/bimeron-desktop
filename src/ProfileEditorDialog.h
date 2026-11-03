@@ -67,6 +67,7 @@ private:
     QCheckBox *shadowTls_ = nullptr;
     QLineEdit *shadowName_ = nullptr;
     QLineEdit *shadowPassword_ = nullptr;
+    QLabel *shadowGuidance_ = nullptr;
     QWidget *parameterPage_ = nullptr;
 
     QTabWidget *tabs_ = nullptr;

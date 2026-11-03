@@ -607,7 +607,21 @@ struct ConnectionManagementTest {
             translator.strings = QJsonDocument::fromJson(translations.readAll()).object();
             app.installTranslator(&translator);
         }
+        QSettings().setValue("app/theme", app.arguments().contains("--preview-dark") ? "dark" : "light");
+        applyThemePalette(app);
         MainWindow window;
+        if (app.arguments().contains("--shadowtls-preview")) {
+            window.core_.cancel();
+            for (auto *timer : window.findChildren<QTimer *>()) timer->stop();
+            ProfileEditorDialog editor("[Profile]\nName = Example\n[AccessKey]\nType = shadowsocks\nServer = example.invalid\nPort = 443\nMethod = aes-256-gcm\nPassword = synthetic\n[ShadowTLS]\nServerName = www.example.com\nPassword = synthetic\n", {{"proxy", true}, {"vpn", true}}, &window);
+            auto *tabs = editor.findChild<QTabWidget *>();
+            tabs->setCurrentIndex(tabs->count() - 2);
+            editor.resize(720, 600);
+            editor.show();
+            app.processEvents();
+            require(editor.grab().save(destination), "styled ShadowTLS preview");
+            return 0;
+        }
         if (app.arguments().contains("--ssh-preview")) {
             window.state_ = "connecting";
             window.handleSSHAuthentication({{"id", "preview"}, {"kind", "keyboard_interactive"},
@@ -868,25 +882,25 @@ struct ConnectionManagementTest {
             QTimer::singleShot(0, [&] {
                 auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
                 require(dialog, "Add dialog opened");
-                const QSize original = dialog->size();
                 const QList<QLineEdit *> fields{dialog->findChild<QLineEdit *>("profileUri"), dialog->findChild<QLineEdit *>("profileName")};
                 require(fields.size() == 2, "URI and name fields");
                 QPushButton *paste = nullptr;
                 for (auto *button : dialog->findChildren<QPushButton *>()) {
-                    if (button->text() == "Paste") paste = button;
+                    if (button->text().startsWith("Paste")) paste = button;
                 }
                 require(paste, "Paste control");
                 require(fields[1]->isHidden() && fields[0]->echoMode() == QLineEdit::Normal, "Name initially hidden and URI visible");
                 const QString previous = QApplication::clipboard()->text();
                 QApplication::clipboard()->setText("unsupported clipboard");
                 QCoreApplication::processEvents();
-                require(!paste->isVisible(), "Unsupported clipboard hides Paste");
+                require(waitFor([&] { return !paste->isVisible(); }), "Unsupported clipboard hides Paste");
+                const QSize original = dialog->size();
                 fields[0]->setText("typed text");
                 QCoreApplication::processEvents();
                 require(dialog->size() == original, "Typing retains geometry");
                 QApplication::clipboard()->setText("https://example.invalid:443");
                 QCoreApplication::processEvents();
-                require(paste->isEnabled() && paste->isVisible(), "Supported clipboard shows Paste");
+                require(waitFor([&] { return paste->isEnabled() && paste->isVisible(); }), "Supported clipboard shows Paste");
                 paste->click();
                 QCoreApplication::processEvents();
                 require(dialog->width() == original.width() && dialog->height() > original.height(), "Valid URI reveals name without width change");
@@ -937,7 +951,7 @@ struct ConnectionManagementTest {
             {"id", "existing"}, {"active", true}, {"profile_id", window.profiles_[0].id}, {"mode", "proxy"}}}};
         int starts = 0, stops = 0, requests = 0;
         qint64 bytes = 100;
-        bool holdStart = false, holdStop = false, dropped = false, invalidCursor = false, failStop = false;
+        bool holdStart = false, holdStop = false, dropped = false, invalidCursor = false, failStop = false, failStart = false;
         QPointer<QLocalSocket> stopSocket;
         QJsonObject stopRequest;
         const auto respond = [&](QLocalSocket *socket, const QJsonObject &request, QJsonObject extra = {}) {
@@ -959,6 +973,11 @@ struct ConnectionManagementTest {
                 QJsonObject extra;
                 if (command == "start") {
                     ++starts;
+                    if (failStart) {
+                        status = {{"State", "disconnected"}};
+                        respond(socket, request, {{"error", "invalid_configuration"}, {"detail", "OUTER_SENTINEL"}});
+                        return;
+                    }
                     status = {{"State", "connecting"}, {"Session", QJsonObject{
                         {"id", QString::number(starts)}, {"active", true}, {"mode", "proxy"},
                         {"profile_id", ProfileStore::identity(request.value("config").toString())}}}};
@@ -1192,6 +1211,26 @@ struct ConnectionManagementTest {
         window.poll();
         require(waitFor(synchronized) && starts == 4 && window.reconnectResultProfileId_.isEmpty(),
                 "unconnectable update target must finish with cancellation, not hang reconnecting");
+
+        const QByteArray wrapped("[Profile]\nName = Wrapped\n[AccessKey]\nType = shadowsocks\nServer = example.invalid\nPort = 443\nMethod = aes-256-gcm\nPassword = INNER_SENTINEL\n[ShadowTLS]\nServerName = outer.invalid\nPassword = OUTER_SENTINEL\n");
+        write(window.profiles_[0].path, wrapped);
+        window.profileList_->setCurrentRow(0);
+        failStart = true;
+        bool rejectionShown = false;
+        QTimer dismiss;
+        QObject::connect(&dismiss, &QTimer::timeout, [&] {
+            if (auto *box = qobject_cast<QMessageBox *>(QApplication::activeModalWidget())) {
+                rejectionShown = box->text().contains("configuration is invalid") && !box->text().contains("SENTINEL");
+                box->accept();
+            }
+        });
+        dismiss.start(10);
+        window.toggleConnection();
+        require(waitFor([&] { return rejectionShown && window.operation_.isEmpty(); }), "service rejection after CLI acceptance is displayed");
+        dismiss.stop();
+        QFile retained(window.profiles_[0].path);
+        require(retained.open(QIODevice::ReadOnly) && retained.readAll() == wrapped, "service rejection preserves profile bytes");
+        require(!window.log_->toPlainText().contains("SENTINEL"), "service rejection redacts secrets");
 
         const int before = requests;
         window.coreUpdateCommand_ = true;

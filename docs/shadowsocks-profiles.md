@@ -11,7 +11,7 @@ The plugin selector offers no plugin, `v2ray-plugin`, and `obfs-local` (the Core
 - v2ray-plugin accepts `mode=websocket`, presence flag `tls`, `host`, `path`, `mux`; defaults are `cloudfront.com`, `/`, and `1`. Mux `0` disables multiplexing. Omitting options retains Core defaults.
 - obfs-local requires `obfs=http|tls`; `obfs-host` defaults to `cloudfront.net`. Only HTTP accepts `obfs-uri` and `http-method` (defaults `/` and `GET`). Unknown/duplicate options, malformed escapes, executable paths and plugin + ShadowTLS are rejected by Core.
 
-SS2022 rejects Prefix. Invalid combinations retain their draft. Unknown methods/plugins, mixed sources and ShadowTLS remain protected Raw configurations. No-op saves preserve bytes; validation or atomic-write failure preserves the original. Secrets remain masked and diagnostics redacted.
+SS2022 rejects Prefix. Invalid combinations retain their draft. Unknown methods/plugins and mixed sources remain protected Raw configurations. Compatible explicit profiles expose ShadowTLS in Protocol; see [parameter forms](parameter-forms-and-shadowtls.md). No-op saves preserve bytes; validation or atomic-write failure preserves the original. Secrets remain masked and diagnostics redacted.
 
 Acceptance: round-trip all seven ciphers, AES identity chains, plugin options and escapes; preserve URI encoding and source; reject incompatible configurations through Core; retain Raw guards and existing connection lifecycle. Test with the exact reviewed Core via BIMERON_PRESERVATION_CORE. The bundled v0.2.0-beta.1 does not support these extensions. CLI acceptance is not runtime interoperability evidence.
 
