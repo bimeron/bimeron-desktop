@@ -13,6 +13,7 @@
 #include <QJsonDocument>
 #include <QProcess>
 #include <QSettings>
+#include <QSet>
 #include <QUuid>
 
 namespace {
@@ -91,7 +92,7 @@ QStringList GeoDataSelection::inspect(const QString &core, const QString &kind, 
 }
 
 QString GeoDataSelection::materialize(const QString &text, const QString &profilePath, const QString &core,
-                                     const Paths &paths, QString *error) {
+                                     const Paths &paths, QString *error, const QString &validationDirectory) {
     QString local;
     if (!error) error = &local;
     error->clear();
@@ -128,7 +129,8 @@ QString GeoDataSelection::materialize(const QString &text, const QString &profil
     if (!error->isEmpty()) return {};
     const QString result = patched.value("profile").toString();
     if (result.toUtf8().size() > 65536) { *error = tr("The profile exceeds the 64 KiB limit."); return {}; }
-    const QString temporary = QFileInfo(profilePath).absoluteDir().filePath(
+    if (!validationDirectory.isEmpty() && !ProfileStore::importReferencesSafe(result.toUtf8(), error)) return {};
+    const QString temporary = (validationDirectory.isEmpty() ? QFileInfo(profilePath).absoluteDir() : QDir(validationDirectory)).filePath(
         ".bimeron-geodata-" + QUuid::createUuid().toString(QUuid::WithoutBraces) + ".conf");
     if (!ProfileStore::writeConfig(temporary, result.toUtf8(), error)) return {};
     const auto validation = run(core, {"validate", "--json", temporary}, {}, error);
@@ -142,12 +144,22 @@ bool GeoDataSelection::apply(const Paths &paths, const QString &core, const QLis
     QString local;
     if (!error) error = &local;
     error->clear();
+    QMap<QString, QSet<QString>> inspectedGroups;
+    const auto groupsFor = [&](const QString &kind, const QString &path) {
+        const QString absolute = QDir::cleanPath(QFileInfo(path).absoluteFilePath());
+        const QString key = kind + '\n' + absolute;
+        if (!inspectedGroups.contains(key)) {
+            const auto groups = inspect(core, kind, absolute, error);
+            inspectedGroups.insert(key, QSet<QString>(groups.cbegin(), groups.cend()));
+        }
+        return inspectedGroups.value(key);
+    };
     Paths candidate;
     for (const auto &kind : {QString("geoip"), QString("geosite")}) candidate[kind] = paths.value(kind);
     for (auto it = candidate.cbegin(); it != candidate.cend(); ++it) {
         if (it.value().isEmpty()) continue;
         // Relative manual selections are checked in each affected profile's directory.
-        if (QDir::isAbsolutePath(it.value())) inspect(core, it.key(), it.value(), error);
+        if (QDir::isAbsolutePath(it.value())) groupsFor(it.key(), it.value());
         else if (profiles.isEmpty()) *error = tr("Relative database paths require a managed profile.");
         if (!error->isEmpty()) return false;
     }
@@ -170,7 +182,7 @@ bool GeoDataSelection::apply(const Paths &paths, const QString &core, const QLis
             const QString selected = candidate.value(kind);
             if (selected.isEmpty()) { *error = tr("No shared %1 database is selected.").arg(kind); break; }
             const QString absolute = QDir::isAbsolutePath(selected) ? selected : QFileInfo(profile.path).dir().absoluteFilePath(selected);
-            const auto groups = inspect(core, kind, absolute, error);
+            const auto groups = groupsFor(kind, absolute);
             if (!error->isEmpty()) break;
             for (const auto &id : rule.value("value").toString().split(',')) if (!groups.contains(id.trimmed().toLower())) {
                 *error = tr("The %1 database does not contain active group %2.").arg(kind, id.trimmed()); break;
@@ -227,7 +239,7 @@ void GeoDataSelection::cancelCatalog(const QString &key) {
         process->disconnect(this); process->kill(); process->waitForFinished(1000); process->deleteLater();
     }
     if (it->watcher) delete it->watcher;
-    it->watcher = nullptr; it->identity.clear(); it->groups.clear(); it->error.clear();
+    catalogs_.erase(it);
 }
 void GeoDataSelection::requestCatalog(const QString &core, const QString &kind, const QString &path, bool force) {
     const QString key = catalogKey(core, kind, path);
@@ -239,8 +251,8 @@ void GeoDataSelection::requestCatalog(const QString &core, const QString &kind, 
         const quint64 generation = catalog.generation;
         const auto groups = catalog.groups; const QString error = catalog.error;
         QTimer::singleShot(0, this, [this, key, generation, identity, groups, error] {
-            const auto &current = catalogs_[key];
-            if (current.generation == generation && !current.process && current.identity == identity)
+            const auto current = catalogs_.constFind(key);
+            if (current != catalogs_.cend() && current->generation == generation && !current->process && current->identity == identity)
                 emit catalogResult(key, groups, error);
         });
         return;

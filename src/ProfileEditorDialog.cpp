@@ -1560,7 +1560,14 @@ QString ProfileEditorDialog::configText() const {
 }
 
 void ProfileEditorDialog::reject() {
-    if (configText() != originalText_) {
+    bool reordered = false;
+    int previousIndex = -1;
+    for (int row = 0; row < rules_->rowCount(); ++row) {
+        const int index = tableRule(row).index;
+        if (index >= 0 && index < previousIndex) reordered = true;
+        if (index >= 0) previousIndex = index;
+    }
+    if (reordered || buildText() != visualBaseline_ || configText() != originalText_) {
         QMessageBox prompt(QMessageBox::Question, tr("Discard changes"), tr("Discard unsaved changes?"), QMessageBox::NoButton, this);
         auto *discard = prompt.addButton(tr("Discard changes"), QMessageBox::DestructiveRole);
         prompt.addButton(tr("Continue editing"), QMessageBox::RejectRole);
@@ -1672,13 +1679,13 @@ QString ProfileEditorDialog::routingError() const {
         const QString kind = rule.matcher == "GeoIP" ? "geoip" : "geosite";
         if (!datasetErrors_.value(kind).isEmpty()) return prefix + datasetErrors_.value(kind);
         for (const auto &id : rule.target.split(','))
-            if (!datasetGroups_.value(kind).contains(id.trimmed())) return prefix + tr("Dataset group is unavailable: %1").arg(id.trimmed());
+            if (!routingGroupContains(datasetGroups_.value(kind), id)) return prefix + tr("Dataset group is unavailable: %1").arg(id.trimmed());
     }
     return {};
 }
 
 QString ProfileEditorDialog::matcherError(const QString &matcher) const {
-    if (loadedText_.contains("[IKEv2]")) return tr("IKEv2 does not support split routing.");
+    if (routingHasSection(loadedText_, "IKEv2")) return tr("IKEv2 does not support split routing.");
     if (mode_->currentData() == "vpn" && killSwitch_->isChecked() && matcher != "CIDR")
         return tr("The VPN kill switch permits CIDR rules only. Disable the conflicting rules or explicitly turn off the kill switch.");
     const QString flag = matcher == "CIDR" ? "ip_split" : matcher == "Domain" ? "domain_split" : matcher == "GeoIP" ? "geoip_split" : "geosite_split";
@@ -1788,13 +1795,13 @@ void ProfileEditorDialog::selectGroups(QLineEdit *target, QComboBox *type) {
     QStringList selected = target->property("groupIds").toString().split(',', Qt::SkipEmptyParts);
     for (auto &id : selected) id = id.trimmed();
     QStringList groups = datasetGroups_.value(kind);
-    for (const auto &id : selected) if (!groups.contains(id)) groups.append(id);
+    groups = routingGroupRows(groups, selected);
     if (kind == "geoip")
         std::stable_partition(groups.begin(), groups.end(), [](const QString &id) { return !geoIPSpecialName(id).isEmpty(); });
-    std::stable_partition(groups.begin(), groups.end(), [&selected](const QString &id) { return selected.contains(id); });
+    std::stable_partition(groups.begin(), groups.end(), [&selected](const QString &id) { return routingGroupContains(selected, id); });
     for (const auto &id : groups) {
         QString label = groupLabel(id, kind == "geoip");
-        if (!datasetGroups_.value(kind).contains(id)) label += " — " + tr("Unavailable");
+        if (!routingGroupContains(datasetGroups_.value(kind), id)) label += " — " + tr("Unavailable");
         auto *item = new QListWidgetItem(label, list);
         item->setData(Qt::UserRole, id);
         item->setData(Qt::UserRole + 1, kind == "geoip" ? geoIPSearchText(id) : label);
@@ -1802,11 +1809,11 @@ void ProfileEditorDialog::selectGroups(QLineEdit *target, QComboBox *type) {
         const QString suffix = " (" + id.toUpper() + ')';
         if (name.endsWith(suffix)) name.chop(suffix.size());
         item->setData(Qt::UserRole + 3, name == id ? QString{} : name);
-        item->setData(Qt::UserRole + 4, datasetGroups_.value(kind).contains(id) ? QString{} : " — " + tr("Unavailable"));
+        item->setData(Qt::UserRole + 4, routingGroupContains(datasetGroups_.value(kind), id) ? QString{} : " — " + tr("Unavailable"));
         item->setData(Qt::UserRole + 7, true);
         item->setToolTip(label);
         item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
-        item->setCheckState(selected.contains(id) ? Qt::Checked : Qt::Unchecked);
+        item->setCheckState(routingGroupContains(selected, id) ? Qt::Checked : Qt::Unchecked);
     }
     auto *empty = new QLabel;
     layout->addWidget(empty);
@@ -1849,7 +1856,7 @@ void ProfileEditorDialog::selectGroups(QLineEdit *target, QComboBox *type) {
         QStringList ids;
         for (int i = 0; i < list->count(); ++i)
             if (list->item(i)->checkState() == Qt::Checked) ids.append(list->item(i)->data(Qt::UserRole).toString());
-        showGroupSummary(target, ids.join(','));
+        showGroupSummary(target, routingRetainedGroups(ids, selected).join(','));
         refreshRouting();
     }
 }

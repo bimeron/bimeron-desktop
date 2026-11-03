@@ -145,6 +145,8 @@ struct ConnectionManagementTest {
                     require(manager && QFile::exists(path), "catalog cancellation owns candidate");
                     const QString key = GeoDataSelection::catalogKey(core, kind, path);
                     manager->findChild<QPushButton *>("geoipCancel")->click();
+                    QStringList canceledGroups; QString canceledError;
+                    require(!selection->cachedCatalog(core, kind, path, &canceledGroups, &canceledError), "cancellation erases candidate cache");
                     require(!QFile::exists(path) && !download.busy(kind) && !selection->catalogsBusy(), "catalog cancellation stops process and removes candidate");
                     manager->findChild<QPushButton *>("geoipDownload")->click();
                     selection->catalogResult(key, {"ru"}, {}); // Late result from canceled validation.
@@ -161,6 +163,31 @@ struct ConnectionManagementTest {
             manageSharedGeoData(&parent, core, QString(), {}, &download);
             QObject::disconnect(observer);
             require(!staged.isEmpty() && !QFile::exists(staged) && selection->paths() == expected, "catalog cancel preserves previous selection");
+            for (const bool valid : {true, false}) {
+                const QByteArray candidate = valid ? bytes : QByteArray("invalid protobuf");
+                network.responses = {{metadata()}, {checksum(candidate)}, {candidate}};
+                QString completedPath;
+                const auto capture = QObject::connect(&download, &GeoDataDownload::candidateReady, &parent,
+                    [&](QString, QString path, QString) { completedPath = path; });
+                QTimer::singleShot(500, &parent, [&] {
+                    auto *manager = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+                    require(manager && waitFor([&] { return !selection->catalogsBusy(); }), "prior catalog settled");
+                    manager->findChild<QPushButton *>("geoipDownload")->click();
+                    require(waitFor([&] { return !completedPath.isEmpty() && !download.busy("geoip") && !selection->catalogsBusy(); }), "candidate completion");
+                    QApplication::processEvents();
+                    QStringList groups; QString failure;
+                    require(!selection->cachedCatalog(core, "geoip", completedPath, &groups, &failure), "completed candidate catalog released");
+                    require(!QFile::exists(completedPath), "completed candidate removed");
+                    const QString status = manager->findChild<QLabel *>("geoipStatus")->text();
+                    if (!status.startsWith(valid ? QObject::tr("Ready") : QObject::tr("Download failed")))
+                        fprintf(stderr, "Completion valid=%d status=%s\n", int(valid), qPrintable(status));
+                    require(status.startsWith(valid ? QObject::tr("Ready") : QObject::tr("Download failed")), "completion result shown");
+                    manager->reject();
+                });
+                manageSharedGeoData(&parent, core, QString(), {}, &download);
+                QObject::disconnect(capture);
+                require(selection->paths() == expected, "completion without Apply preserves selection");
+            }
             QFile file(manual); require(file.open(QIODevice::ReadOnly) && file.readAll() == bytes, "cancel/failure preserves manual bytes");
             QString error; require(selection->apply(previous, core, {}, &error), "restore prior test selection");
         }

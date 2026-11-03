@@ -645,6 +645,62 @@ static void geodataBridgeRegressions(const QString &directory) {
     const QString base = "[Profile]\nVersion=1\nName=Bridge\n[AccessKey]\nType=shadowsocks\n"
         "Server=example.invalid\nPort=443\nMethod=aes-256-gcm\nPassword=SYNTHETIC\n"
         "[GeoData]\nGeoIPFile=geoip.dat\nGeoSiteFile=geosite.dat\n[Routing]\nDefault=proxy\n";
+    // Integration acceptance: imported IDs and commented sections survive a name-only save.
+    for (const QString &rule : {QString("[Rule]\nGeoIP=RU\nAction=direct\n"), QString("# [IKEv2]\n[Rule]\nDomain=example.org\nAction=direct\n")}) {
+        ProfileEditorDialog dialog(base + rule, caps, nullptr, {}, core, path);
+        settle(dialog);
+        dialog.findChild<QLineEdit *>("profileName")->setText("Renamed");
+        bool warned = false;
+        QTimer guard;
+        QObject::connect(&guard, &QTimer::timeout, [&] {
+            if (auto *box = qobject_cast<QMessageBox *>(QApplication::activeModalWidget())) { warned = true; box->accept(); }
+        });
+        guard.start(10);
+        dialog.findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Save)->click();
+        guard.stop();
+        require(!warned && dialog.result() == QDialog::Accepted);
+        const auto result = inspect(dialog.configText());
+        require(result.value("fields").toObject().value("Profile/Name") == "Renamed");
+        if (rule.contains("GeoIP")) require(result.value("rules").toArray().first().toObject().value("value") == "RU");
+    }
+    {
+        GeoSitePicker picker(nullptr, {"youtube", "github"}, {"YOUTUBE", "youtube", "YouTube"}, {});
+        auto *list = picker.findChild<QListWidget *>("geoSiteGroups");
+        int checked = 0;
+        for (int row = 0; row < list->count(); ++row) {
+            auto *item = list->item(row);
+            if (item->checkState() != Qt::Checked) continue;
+            ++checked;
+            require(item->data(Qt::UserRole) == "youtube");
+            require(!item->data(Qt::UserRole + 2).toBool());
+        }
+        require(checked == 1);
+        picker.findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Ok)->click();
+        require(picker.selectedIds() == QStringList{"YOUTUBE"});
+    }
+    {
+        const QString source = QString(base).replace("Password=SYNTHETIC", "Password=SYNTHETIC\nPlugin=v2ray-plugin\nPluginOpts=tls;host=example.invalid");
+        ProfileEditorDialog dialog(source, caps, nullptr, {}, core, path);
+        settle(dialog); dialog.show();
+        auto *name = dialog.findChild<QLineEdit *>("profileName");
+        auto *options = dialog.findChild<QLineEdit *>("ssPluginOpts");
+        require(name && options && !options->text().isEmpty());
+        name->setText("Unsaved name"); options->clear();
+        for (bool discard : {false, true}) {
+            bool prompted = false;
+            QTimer::singleShot(0, [&] {
+                auto *box = qobject_cast<QMessageBox *>(QApplication::activeModalWidget());
+                require(box); prompted = true;
+                for (auto *button : box->buttons())
+                    if (box->buttonRole(button) == (discard ? QMessageBox::DestructiveRole : QMessageBox::RejectRole)) { button->click(); return; }
+                require(false);
+            });
+            dialog.findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Cancel)->click();
+            require(prompted && name->text() == "Unsaved name" && options->text().isEmpty());
+            require(dialog.isVisible() != discard);
+        }
+        require(dialog.result() == QDialog::Rejected);
+    }
     {
         QString quoted = base;
         quoted.replace("Password=SYNTHETIC", "Password=\"sec\\x72et\"");
@@ -882,7 +938,7 @@ static void geodataBridgeRegressions(const QString &directory) {
         popup->findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Ok)->click();
     });
     target->actions().first()->trigger();
-    require(target->property("groupIds").toString() == "cloudflare,private,ru");
+    require(target->property("groupIds").toString() == "ru,cloudflare,private");
     require(target->text().contains("Russia (RU)"));
     target->setProperty("groupIds", "ru");
     QTimer::singleShot(0, [&] {
@@ -1411,6 +1467,14 @@ static void geoSiteClassificationTest() {
 }
 
 int main(int argc, char **argv) {
+    require(routingGroupContains({"us", "google"}, " US "));
+    require(routingGroupRows({"google", "GOOGLE", "us"}, {" Google ", "US"})
+        == QStringList({"google", "us"}));
+    require(routingRetainedGroups({"us", "google", "new"}, {" Google ", "US"})
+        == QStringList({" Google ", "US", "new"}));
+    require(!routingHasSection("# [IKEv2]\n; [IKEv2]\nName = \"[IKEv2]\"\n", "IKEv2"));
+    require(routingHasSection(QString(QChar::ByteOrderMark) + " [IKEv2]\n", "IKEv2"));
+
     QApplication app(argc, argv);
     geoSiteClassificationTest();
     {

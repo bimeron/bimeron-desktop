@@ -4,6 +4,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QSettings>
+#include <QFileSystemWatcher>
 #include <QTemporaryDir>
 #include <QElapsedTimer>
 #include <QEventLoop>
@@ -27,6 +28,14 @@ static void waitFor(const std::function<bool()> &done) {
 
 int main(int argc, char **argv) {
     QCoreApplication app(argc, argv);
+    if (app.arguments().value(1) == "geodata" && !qEnvironmentVariable("BIMERON_COUNT_LOG").isEmpty()) {
+        QFile log(qEnvironmentVariable("BIMERON_COUNT_LOG"));
+        require(log.open(QIODevice::Append)); log.write("catalog\n");
+        std::puts("{\"version\":1,\"groups\":[\"ru\"]}"); return 0;
+    }
+    if (app.arguments().value(1) == "document" && !qEnvironmentVariable("BIMERON_COUNT_LOG").isEmpty()) {
+        std::puts("{\"version\":1,\"profile\":\"fixture\",\"rules\":[{\"enabled\":true,\"matcher\":\"GeoIP\",\"value\":\"ru\"},{\"enabled\":true,\"matcher\":\"GeoIP\",\"value\":\"ru\"}]}"); return 0;
+    }
     QTemporaryDir directory;
     require(directory.isValid());
     QCoreApplication::setOrganizationName("BimeronSelectionTest");
@@ -39,6 +48,19 @@ int main(int argc, char **argv) {
     int changes = 0;
     QObject::connect(selection, &GeoDataSelection::changed, [&] { ++changes; });
     const auto previous = selection->paths();
+    const QString countLog = directory.filePath("count.log");
+    const QString countData = directory.filePath("count.dat");
+    const QString countProfile = directory.filePath("count.conf");
+    write(countData, "fixture"); write(countProfile, "[Rule]\nGeoIP=ru\n");
+    qputenv("BIMERON_COUNT_LOG", countLog.toUtf8());
+    require(selection->apply({{"geoip", countData}}, app.applicationFilePath(),
+        {{"a", "A", countProfile}, {"b", "B", countProfile}}, &error));
+    require(read(countLog) == "catalog\n");
+    require(selection->apply({{"geoip", countData}}, app.applicationFilePath(),
+        {{"a", "A", countProfile}}, &error));
+    require(read(countLog) == "catalog\ncatalog\n"); // Cache lifetime is one Apply.
+    qunsetenv("BIMERON_COUNT_LOG");
+    require(selection->apply(previous, {}, {}, &error)); changes = 0;
     // A file occupying the settings directory forces sync failure on every host.
     const QString blocked = directory.filePath("blocked");
     write(blocked, "file");
@@ -102,6 +124,12 @@ int main(int argc, char **argv) {
     waitFor([&] { return missingDone; });
     require(selection->cachedCatalog(core, "geoip", missing, &cachedGroups, &cachedError));
     require(cachedGroups.isEmpty() && !cachedError.isEmpty() && !QFile::exists(missing));
+    for (const QString path : {ip, missing}) {
+        const int watchers = selection->findChildren<QFileSystemWatcher *>().size();
+        selection->cancelCatalog(GeoDataSelection::catalogKey(core, "geoip", path));
+        require(!selection->cachedCatalog(core, "geoip", path, &cachedGroups, &cachedError));
+        require(selection->findChildren<QFileSystemWatcher *>().size() == watchers - 1);
+    }
     const QString bang = directory.filePath("bang-geosite.dat");
     write(bang, group("CATEGORY-GAMES-!CN", QByteArray::fromHex("0802") + field(0x12, "example.com")));
     require(GeoDataSelection::inspect(core, "geosite", bang, &error) == QStringList{"category-games-!cn"} && error.isEmpty());
@@ -150,6 +178,15 @@ int main(int argc, char **argv) {
     require(patched.contains("GeoIPFile=") && !patched.contains("GeoSiteFile="));
     require(read(first) == source.toUtf8());
     require(GeoDataSelection::materialize(base + disabled, first, core, {}, &error) == base + disabled && error.isEmpty());
+    QTemporaryDir validation;
+    require(validation.isValid());
+    const QString unavailableSource = directory.filePath("absent/source.conf");
+    require(!GeoDataSelection::materialize(source, unavailableSource, core, paths, &error, validation.path()).isEmpty());
+    require(error.isEmpty() && !QFile::exists(unavailableSource));
+    require(GeoDataSelection::materialize(source, first, core, {{"geoip", "geoip.dat"}}, &error, validation.path()).isEmpty());
+    require(!error.isEmpty() && read(first) == source.toUtf8());
+    require(GeoDataSelection::materialize(source, first, "missing-core", paths, &error, validation.path()).isEmpty());
+    require(QDir(validation.path()).entryList(QDir::Files | QDir::Hidden | QDir::NoDotAndDotDot).isEmpty());
     const auto relative = GeoDataSelection::materialize(source, first, core, {{"geoip", "geoip.dat"}}, &error);
     require(!relative.isEmpty() && error.isEmpty());
     require(relative.contains("GeoIPFile=\"geoip.dat\""));

@@ -132,6 +132,7 @@ void manageSharedGeoData(QWidget *parent, const QString &core, const QString &pr
             if (generations.value(kind) != generation) return;
             QObject::disconnect(catalogConnections.take(kind));
             ownedCatalogs.remove(kind);
+            if (downloaded) QTimer::singleShot(0, selection, [selection, key] { selection->cancelCatalog(key); });
             pending[kind] = false; transfers[kind] = false; progress[kind]->hide();
             bool success = catalogError.isEmpty() && !groups.isEmpty();
             QString error;

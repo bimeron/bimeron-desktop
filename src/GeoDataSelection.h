@@ -19,7 +19,8 @@ public:
                QString *error = nullptr);
     // Never writes profilePath. Empty return plus nonempty error means failure.
     static QString materialize(const QString &text, const QString &profilePath,
-                               const QString &core, const Paths &paths, QString *error = nullptr);
+                               const QString &core, const Paths &paths, QString *error = nullptr,
+                               const QString &validationDirectory = {});
     // path must be absolute; relative selections are resolved per profile by materialize.
     static QStringList inspect(const QString &core, const QString &kind, const QString &path,
                                QString *error = nullptr);

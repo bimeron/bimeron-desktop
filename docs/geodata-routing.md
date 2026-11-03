@@ -177,3 +177,31 @@ Validation: Windows amd64 Release GUI build and git diff --check passed. The cha
 Remove asks for confirmation when the current rule's destination, trimmed of whitespace, is nonempty. GeoIP/GeoSite use their stored group IDs. Empty rules are removed immediately. No is the default confirmation choice; declining or closing preserves the rule and selection. Acceptance: filled CIDR/domain/GeoIP/GeoSite rules prompt, blank/whitespace destinations do not, and confirming removes only the current rule.
 
 Removal validation: Windows amd64 Release build, translation JSON parsing (case-sensitive hashtable) and diff whitespace checks passed. Automated tests were not run by request; confirmation-dialog interaction awaits user inspection.
+
+### Apply and import validation acceptance
+
+Apply remains synchronous. Each invocation inspects each database kind and resolved absolute path at most once, including the initial absolute selection check, and uses set membership for active groups. No catalog survives between Apply invocations.
+
+Unique download-attempt catalogs and watchers are released after success, failure, or cancellation, after signal arguments are no longer referenced. Shared catalogs remain cached. Import validation resolves references against the source but writes protected drafts only in writable temporary storage. Relative references are refused before validation in relocated drafts; source files and directories remain untouched.
+
+### Review-fix verification (2026-11-03)
+
+Windows amd64 Release and Linux amd64 builds passed. CTest passed 5/5 on
+Windows (25.89 s) and Linux (17.26 s), with the reviewed sibling desktop-bridge
+Core set through BIMERON_GEODATA_CORE and offscreen Qt. Regression coverage
+includes uppercase GeoIP name-only saves, commented IKEv2 headers, mixed-case
+GeoSite selection, Cancel/Continue/Discard after clearing PluginOpts, one catalog
+process for repeated rules/profiles per Apply, fresh inspection on the next
+Apply, completed download success/failure cleanup through the actual manager,
+cancellation eviction, alternate import validation storage, relative-reference
+refusal and temporary-file cleanup. The first run exposed obsolete GeoIP ordering
+expectations and an English-only status assertion; both were corrected to the
+accepted preservation contract and active translation before the passing run.
+
+The process-count fixture proves elimination of repeated catalog decoding; it is
+not a production latency benchmark. Failed-bridge timeout cancellation and OS ACL
+read-only import were not independently exercised: field-removal failure and an
+absent source directory cover the relevant dirty-state and validation-location
+paths. Diff review and whitespace checks passed. No packaging, release, service
+changes or commits were performed. ARM64 builds/runtime were not repeated for
+this non-release fix; cross-platform runtime evidence is Windows/Linux amd64.

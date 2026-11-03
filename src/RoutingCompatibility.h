@@ -7,6 +7,47 @@
 #include <QJsonArray>
 #include <QRegularExpression>
 
+inline QString routingGroupIdentity(const QString &id) { return id.trimmed().toLower(); }
+inline bool routingHasSection(const QString &text, const QString &name) {
+    for (QString line : text.split('\n')) {
+        line = line.trimmed();
+        if (line.startsWith(QChar::ByteOrderMark)) line.remove(0, 1);
+        line = line.trimmed();
+        if (line.startsWith('[') && line.endsWith(']')
+            && line.mid(1, line.size() - 2).trimmed() == name) return true;
+    }
+    return false;
+}
+inline bool routingGroupContains(const QStringList &ids, const QString &id) {
+    for (const auto &candidate : ids)
+        if (routingGroupIdentity(candidate) == routingGroupIdentity(id)) return true;
+    return false;
+}
+inline QSet<QString> routingGroupSet(const QStringList &ids) {
+    QSet<QString> result;
+    for (const auto &id : ids) result.insert(routingGroupIdentity(id));
+    return result;
+}
+inline QStringList routingGroupRows(const QStringList &available, const QStringList &selected) {
+    QStringList result;
+    QSet<QString> seen;
+    for (const auto &id : available + selected) {
+        const auto key = routingGroupIdentity(id);
+        if (!seen.contains(key)) { seen.insert(key); result.append(id); }
+    }
+    return result;
+}
+inline QStringList routingRetainedGroups(QStringList checked, const QStringList &original) {
+    QStringList result;
+    auto remaining = routingGroupSet(checked);
+    for (const auto &id : original)
+        if (remaining.remove(routingGroupIdentity(id))) result.append(id);
+    checked.sort();
+    for (const auto &id : checked)
+        if (remaining.remove(routingGroupIdentity(id))) result.append(id);
+    return result;
+}
+
 // Decode the JSON-compatible quoted values emitted by Core section patches.
 // Unsupported Go escape syntax remains unavailable to host interpretation.
 inline QString routingInterfaceValue(const QString &text, const QString &key, const QString &fallback = {}) {

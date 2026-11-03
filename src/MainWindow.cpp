@@ -1358,6 +1358,7 @@ void MainWindow::importProfile() {
     QString importSource = source;
     QString correctionPath;
     QTemporaryDir correctionDirectory;
+    if (!correctionDirectory.isValid()) { QMessageBox::warning(this, tr("Import failed"), tr("Cannot create a protected import draft directory.")); return; }
     QFile input(source);
     if (!input.open(QIODevice::ReadOnly)) { QMessageBox::warning(this, tr("Import failed"), input.errorString()); return; }
     const QByteArray imported = input.read(64 * 1024 + 1);
@@ -1367,7 +1368,7 @@ void MainWindow::importProfile() {
         QMessageBox::warning(this, tr("Import failed"), tr("The profile must be valid UTF-8 and at most 64 KiB.")); return;
     }
     const QString sharedDraft = GeoDataSelection::materialize(QString::fromUtf8(imported), source,
-        validationExecutable_, GeoDataSelection::instance()->paths(), &error);
+        validationExecutable_, GeoDataSelection::instance()->paths(), &error, correctionDirectory.path());
     if (error.isEmpty() && sharedDraft.toUtf8() != imported) {
         correctionPath = correctionDirectory.filePath("shared.conf");
         if (!correctionDirectory.isValid() || !ProfileStore::writeConfig(correctionPath, sharedDraft.toUtf8(), &error)) {
@@ -1382,7 +1383,7 @@ void MainWindow::importProfile() {
         correctionPath = correctionDirectory.filePath("corrected.conf");
         const auto validateImport = [this, correctionPath, source](const QString &text, QString *details) {
             const QString prepared = GeoDataSelection::materialize(text, source,
-                validationExecutable_, GeoDataSelection::instance()->paths(), details);
+                validationExecutable_, GeoDataSelection::instance()->paths(), details, QFileInfo(correctionPath).absolutePath());
             if (details && !details->isEmpty()) return false;
             if (!ProfileStore::importReferencesSafe(prepared.toUtf8(), details)) return false;
             if (!ProfileStore::writeConfig(correctionPath, prepared.toUtf8(), details)) return false;
@@ -1398,7 +1399,7 @@ void MainWindow::importProfile() {
         while (true) {
             if (draft.exec() != QDialog::Accepted) { QFile::remove(correctionPath); return; }
             const QString prepared = GeoDataSelection::materialize(draft.configText(), source,
-                validationExecutable_, GeoDataSelection::instance()->paths(), &error);
+                validationExecutable_, GeoDataSelection::instance()->paths(), &error, correctionDirectory.path());
             if (error.isEmpty() && validateImport(prepared, &error)
                 && ProfileStore::writeConfig(correctionPath, prepared.toUtf8(), &error)) break;
             QMessageBox::warning(&draft, tr("Import needs correction"), error);

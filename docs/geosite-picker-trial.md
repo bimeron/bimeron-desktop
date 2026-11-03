@@ -998,3 +998,16 @@ and launch for user visual acceptance. Automated tests are not run by request;
 packaging, benchmarks and the release matrix are not applicable.
 
 Implementation: reused the row delegate with an opt-in unparenthesized ID role; GeoSite keeps its existing rendering. Windows amd64 Release GUI build and git diff --check passed. Automated tests were not run. Native visual/DPI acceptance is pending user inspection; no packages or release artifacts were produced.
+
+## Accepted routing editor corrections
+
+Lookup identity for GeoIP and GeoSite is trimmed lowercase. Pickers show one row
+per identity; unchanged selections retain original spelling and order, while new
+selections use catalog IDs. Validation uses the same identity. Discard detection
+must retain visual changes even when document serialization fails (including an
+empty PluginOpts and a changed name); Continue editing preserves the draft.
+Only actual IKEv2 section headers trigger the routing restriction: comments,
+string values and a leading BOM must not produce false positives.
+Acceptance fixtures cover mixed-case catalog/selection identity, retained IDs,
+and real versus commented/quoted/BOM section headers. Parent runs builds/tests
+serially; this implementation task does not run them or prepare a release.

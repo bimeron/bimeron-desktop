@@ -1,5 +1,6 @@
 #pragma once
 #include "GeoSiteLabels.h"
+#include "RoutingCompatibility.h"
 #include <QApplication>
 #include <QDialog>
 #include <QDialogButtonBox>
@@ -115,10 +116,9 @@ public:
         results->addWidget(list_, 1);
         body->addLayout(results, 1);
         layout->addLayout(body, 1);
-        QStringList groups = available;
-        groups.removeDuplicates();
-        for (const auto &id : selected) if (!groups.contains(id)) groups.append(id);
-        const QSet<QString> availableSet(available.begin(), available.end());
+        QStringList groups = routingGroupRows(available, selected);
+        const auto availableSet = routingGroupSet(available);
+        const auto selectedSet = routingGroupSet(selected);
         QSet<int> populatedSections;
         for (const auto &id : availableSet) {
             const auto entry = geoSiteEntries().constFind(id);
@@ -137,20 +137,20 @@ public:
         for (const auto &id : groups) {
             const QString name = geoSiteName(id);
             QString label = name.isEmpty() ? id : name + " (" + id + ')';
-            if (!availableSet.contains(id)) label += " — " + tr("Unavailable");
+            if (!availableSet.contains(routingGroupIdentity(id))) label += " — " + tr("Unavailable");
             auto *item = new GeoSiteListItem(label, list_);
             item->rank = rank++;
             item->setToolTip(label);
             item->setData(Qt::UserRole + 3, name);
-            item->setData(Qt::UserRole + 4, availableSet.contains(id) ? QString{} : " — " + tr("Unavailable"));
+            item->setData(Qt::UserRole + 4, availableSet.contains(routingGroupIdentity(id)) ? QString{} : " — " + tr("Unavailable"));
             item->setData(Qt::UserRole, id);
             const auto it = geoSiteEntries().constFind(id);
             item->setData(Qt::UserRole + 1, it == geoSiteEntries().cend() ? -1 : it->section);
-            item->setData(Qt::UserRole + 2, !availableSet.contains(id));
+            item->setData(Qt::UserRole + 2, !availableSet.contains(routingGroupIdentity(id)));
             item->setData(Qt::UserRole + 5, it == geoSiteEntries().cend() || !it->topic ? QString{} : QString::fromUtf8(it->topic));
             item->setData(Qt::UserRole + 6, geoSiteSearchText(id));
             item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
-            item->setCheckState(selected.contains(id) ? Qt::Checked : Qt::Unchecked);
+            item->setCheckState(selectedSet.contains(routingGroupIdentity(id)) ? Qt::Checked : Qt::Unchecked);
         }
         // Keep all potential headings; visibility follows their matching rows.
         for (int section = 0; section < 10; ++section) {
@@ -292,11 +292,7 @@ public:
             if (item->data(Qt::UserRole).isValid() && item->checkState() == Qt::Checked)
                 checked.append(item->data(Qt::UserRole).toString());
         }
-        QStringList result;
-        for (const auto &id : original_) if (checked.contains(id) && !result.contains(id)) result.append(id);
-        checked.sort();
-        for (const auto &id : checked) if (!result.contains(id)) result.append(id);
-        return result;
+        return routingRetainedGroups(checked, original_);
     }
 private:
     QString browseTopic_;
