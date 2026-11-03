@@ -151,11 +151,10 @@ static void preservationRegressions(const QString &directory) {
         require(!tabs->isTabEnabled(0));
         require(tabs->currentIndex() == tabs->count() - 1);
         require(editor.configText() == input);
-        const bool native = routingHasSection(input, "IKEv2");
-        require(raw->isHidden() == native);
+        require(!raw->isHidden());
         require(raw->toPlainText() == input);
-        require(bool(editor.findChild<QPushButton *>("showRaw")) == native);
-        require(bool(editor.findChild<QPushButton *>("useVisual")) == native);
+        require(!editor.findChild<QPushButton *>("showRaw"));
+        require(!editor.findChild<QPushButton *>("useVisual"));
         editor.findChild<QLineEdit *>("profileName")->setText("programmatic visual overwrite");
         require(editor.configText() == input);
         raw->appendPlainText("# intentional Raw edit");
@@ -545,6 +544,29 @@ static void nativeRegressions(const QString &directory) {
         require(tabs->isTabEnabled(0));
         require(editor.configText() == input);
         require(editor.findChild<QCheckBox *>("nativeKillSwitch")->isChecked() == protection);
+        auto *authMethod = editor.findChild<QComboBox *>("nativeAuthMethod");
+        auto *authSource = editor.findChild<QComboBox *>("nativeAuthSource");
+        auto *saveAuth = editor.findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Save);
+        for (int method = 0; method < 3; ++method) {
+            authMethod->setCurrentIndex(method);
+            require(saveAuth->isEnabled() == (method == 0));
+            require(editor.configText() == input);
+        }
+        authMethod->setCurrentIndex(0);
+        authSource->setCurrentIndex(1);
+        require(!saveAuth->isEnabled());
+        require(editor.findChild<QLineEdit *>("nativeAuthUsername")->isEnabled());
+        editor.findChild<QLineEdit *>("nativeAuthUsername")->setText("synthetic-user");
+        editor.findChild<QCheckBox *>("nativeAuthAsk")->setChecked(false);
+        require(editor.findChild<QLineEdit *>("nativeAuthPassword")->isEnabled());
+        editor.findChild<QLineEdit *>("nativeAuthPassword")->setText("synthetic-secret");
+        require(editor.configText() == input);
+        editor.findChild<QCheckBox *>("nativeAuthAsk")->setChecked(true);
+        require(editor.findChild<QLineEdit *>("nativeAuthPassword")->text().isEmpty());
+        require(!editor.findChild<QLineEdit *>("nativeAuthPassword")->isEnabled());
+        require(editor.findChild<QLineEdit *>("nativeAuthPassword")->echoMode() == QLineEdit::Password);
+        authSource->setCurrentIndex(0);
+        require(saveAuth->isEnabled() && editor.configText() == input);
         tabs->setCurrentIndex(tabs->count() - 1);
         tabs->setCurrentIndex(0);
         require(editor.configText() == input);
@@ -573,7 +595,7 @@ static void nativeRegressions(const QString &directory) {
             QString(base).replace("ServerName = vpn.example.invalid", "ServerName = vpn.example.invalid\nServerName = other.invalid")}) {
         ProfileEditorDialog editor(input, caps);
         require(!editor.findChild<QTabWidget *>()->isTabEnabled(0));
-        require(editor.findChild<QPlainTextEdit *>("rawConfig")->isHidden());
+        require(!editor.findChild<QPlainTextEdit *>("rawConfig")->isHidden());
         editor.findChild<QLineEdit *>("windowsProfile")->setText("Do not overwrite");
         require(editor.configText() == input);
     }
@@ -639,6 +661,7 @@ static void nativeRegressions(const QString &directory) {
         *error = "Rejected selected CLI validation";
         return false;
     });
+    rejected.findChild<QTabWidget *>()->setCurrentIndex(rejected.findChild<QTabWidget *>()->count() - 1);
     rejected.findChild<QPlainTextEdit *>("rawConfig")->appendPlainText("# draft");
     const QString draft = rejected.configText();
     QTimer::singleShot(0, [] {
@@ -646,13 +669,14 @@ static void nativeRegressions(const QString &directory) {
         require(box);
         box->accept();
     });
-    rejected.findChild<QPushButton *>("useVisual")->click();
+    rejected.findChild<QTabWidget *>()->setCurrentIndex(0);
     require(rejected.configText() == draft);
     bool validated = false;
     ProfileEditorDialog transition(base, caps, nullptr, [&](const QString &, QString *) { validated = true; return true; });
     const QString packet = "[Profile]\nName = Packet\n[AccessKey]\nSSH = ssh://alice@example.invalid\n[Interface]\nMode = proxy\n";
+    transition.findChild<QTabWidget *>()->setCurrentIndex(transition.findChild<QTabWidget *>()->count() - 1);
     transition.findChild<QPlainTextEdit *>("rawConfig")->setPlainText(packet);
-    transition.findChild<QPushButton *>("useVisual")->click();
+    transition.findChild<QTabWidget *>()->setCurrentIndex(0);
     require(validated && transition.findChild<QTabWidget *>()->isTabEnabled(0));
     require(transition.configText() == packet);
     transition.findChild<QLineEdit *>("profileName")->setText("Packet edit");

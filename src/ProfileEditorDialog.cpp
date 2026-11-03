@@ -358,6 +358,92 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
     sourceNotice->setVisible(!coreExecutable_.isEmpty());
     generalForm->addRow(sourceNotice);
     generalForm->addRow(tr("Name"), name_);
+    auto *auth = new QWidget;
+    nativeAuthentication_ = auth;
+    auth->setObjectName("nativeAuthentication");
+    auto *authForm = new QFormLayout(auth);
+    authForm->setContentsMargins(0, 0, 0, 0);
+    auto *authTitle = new QLabel(tr("Authentication"));
+    authTitle->setObjectName("sectionTitle");
+    authForm->addRow(authTitle);
+    nativeAuthMethod_ = new HiDpiComboBox;
+    nativeAuthMethod_->setObjectName("nativeAuthMethod");
+    nativeAuthMethod_->addItems({tr("Username and password"), tr("Client certificate"), tr("Smart card")});
+    authForm->addRow(tr("Method"), nativeAuthMethod_);
+    nativeAuthSource_ = new HiDpiComboBox;
+    nativeAuthSource_->setObjectName("nativeAuthSource");
+    nativeAuthSource_->addItems({tr("Use saved Windows credentials"), tr("Enter credentials")});
+    authForm->addRow(tr("Credentials"), nativeAuthSource_);
+    auto *authName = new QLineEdit;
+    authName->setObjectName("nativeAuthUsername");
+    auto *authPassword = new QLineEdit;
+    authPassword->setObjectName("nativeAuthPassword");
+    authPassword->setEchoMode(QLineEdit::Password);
+    authForm->addRow(tr("Username"), authName);
+    authForm->addRow(tr("Password"), authPassword);
+    auto *ask = new HiDpiCheckBox(tr("Ask at connection"));
+    ask->setChecked(true);
+    auto *remember = new HiDpiCheckBox(tr("Remember in Windows"));
+    authForm->addRow(ask);
+    authForm->addRow(remember);
+    auto *identity = new QLabel(tr("No identity selected"));
+    authForm->addRow(identity);
+    auto *choose = new QPushButton(tr("Choose…"));
+    authForm->addRow(choose);
+    auto *notice = new QLabel;
+    notice->setWordWrap(true);
+    notice->setTextFormat(Qt::PlainText);
+    authForm->addRow(notice);
+    choose->setEnabled(false);
+    ask->setObjectName("nativeAuthAsk");
+    remember->setObjectName("nativeAuthRemember");
+    connect(ask, &QCheckBox::toggled, this, [authPassword](bool checked) {
+        authPassword->clear();
+        authPassword->setEnabled(!checked);
+    });
+    generalForm->addRow(nativeAuthentication_);
+    refreshNativeAuthentication_ = [this, authForm, authName, authPassword, ask, remember, identity, choose, notice] {
+        const bool password = nativeAuthMethod_->currentIndex() == 0;
+        const bool enter = password && nativeAuthSource_->currentIndex() == 1;
+        nativeAuthPreview_ = !password || enter;
+        authName->clear(); authPassword->clear();
+        ask->setChecked(true); remember->setChecked(false);
+        authPassword->setEnabled(false);
+        authForm->setRowVisible(nativeAuthSource_, password);
+        for (QWidget *widget : QList<QWidget *>{authName, authPassword, ask, remember}) authForm->setRowVisible(widget, enter);
+        authForm->setRowVisible(identity, !password);
+        authForm->setRowVisible(choose, !password);
+        notice->setText(nativeAuthPreview_
+            ? tr("UI draft only: credentials are not saved or sent.")
+            : tr("Authentication setup is not available in this build. Saved Windows credentials have not been checked."));
+        if (auto *box = findChild<QDialogButtonBox *>()) {
+            box->button(QDialogButtonBox::Save)->setEnabled(!native_ || !nativeAuthPreview_);
+        }
+    };
+    connect(nativeAuthMethod_, &QComboBox::currentIndexChanged, this, [this] { refreshNativeAuthentication_(); });
+    connect(nativeAuthSource_, &QComboBox::currentIndexChanged, this, [this] { refreshNativeAuthentication_(); });
+    connect(windowsProfile_, &QLineEdit::textChanged, this, [this] { nativeAuthMethod_->setCurrentIndex(0); nativeAuthSource_->setCurrentIndex(0); });
+    connect(nativeServerName_, &QLineEdit::textChanged, this, [this] { nativeAuthMethod_->setCurrentIndex(0); nativeAuthSource_->setCurrentIndex(0); });
+    nativeProfileActions_ = new QWidget;
+    nativeProfileActions_->setObjectName("nativeProfileActions");
+    auto *nativeActions = new QVBoxLayout(nativeProfileActions_);
+    nativeActions->setContentsMargins(0, 0, 0, 0);
+
+    auto *nativeNotice = new QLabel(tr("Windows profile operations are not enabled in this build."));
+    nativeNotice->setWordWrap(true);
+    nativeNotice->setTextFormat(Qt::PlainText);
+    nativeActions->addWidget(nativeNotice);
+    auto *nativeActionRow = new QHBoxLayout;
+    for (const auto &text : {tr("Review changes…"), tr("Remove Windows profile…")}) {
+        auto *button = new QPushButton(text);
+        button->setEnabled(false);
+        nativeActionRow->addWidget(button);
+    }
+    nativeActions->addLayout(nativeActionRow);
+    int serverRow = 0;
+    QFormLayout::ItemRole serverRole;
+    generalForm->getWidgetPosition(nativeServerName_, &serverRow, &serverRole);
+    generalForm->insertRow(serverRow + 1, nativeProfileActions_);
     generalForm->addRow(tr("Key source"), keySource_);
     generalForm->addRow(tr("Key or path"), keyRow);
     generalForm->addRow(tr("Server"), server_);
@@ -373,7 +459,19 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
     generalForm->addRow(tr("Mode"), mode_);
     generalForm->addRow(tr("SOCKS5 address"), listen_);
     auto *keyLabel = qobject_cast<QLabel *>(generalForm->labelForField(keyRow));
-    tabs_->addTab(general, tr("General"));
+    if (routingHasSection(text, "IKEv2")) {
+        auto *nativeGeneralScroll = new QScrollArea;
+        nativeGeneralScroll->setWidgetResizable(true);
+        nativeGeneralScroll->setFrameShape(QFrame::NoFrame);
+        generalForm->setFormAlignment(Qt::AlignTop);
+        nativeGeneralScroll->setWidget(general);
+        general->setAutoFillBackground(false);
+        nativeGeneralScroll->viewport()->setAutoFillBackground(false);
+        nativeGeneralScroll->setAutoFillBackground(false);
+        tabs_->addTab(nativeGeneralScroll, tr("General"));
+    } else {
+        tabs_->addTab(general, tr("General"));
+    }
 
     auto *vlessPage = new QWidget;
     auto *vlessForm = new QFormLayout(vlessPage);
@@ -587,22 +685,6 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
     auto *rawNotice = new QLabel(tr("Raw config contains credentials."));
     rawNotice->setWordWrap(true);
     rawLayout->addWidget(rawNotice);
-    if (routingHasSection(text, "IKEv2")) {
-        auto *showRaw = new QPushButton(tr("Show/Edit raw config"));
-        showRaw->setObjectName("showRaw");
-        raw_->hide();
-        rawLayout->addWidget(showRaw);
-        auto *useVisual = new QPushButton(tr("Validate and use visual editor"));
-        useVisual->setObjectName("useVisual");
-        rawLayout->addWidget(useVisual);
-        connect(useVisual, &QPushButton::clicked, this, [this] {
-            if (applyRaw()) tabs_->setCurrentIndex(0);
-        });
-        connect(showRaw, &QPushButton::clicked, this, [this, showRaw] {
-            raw_->setVisible(!raw_->isVisible());
-            showRaw->setText(raw_->isVisible() ? tr("Hide raw config") : tr("Show/Edit raw config"));
-        });
-    }
     rawLayout->addWidget(raw_);
     tabs_->addTab(rawPage, tr("Raw config"));
     for (int index = 0; index < tabs_->count(); ++index) {
@@ -622,6 +704,7 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
     buttons->button(QDialogButtonBox::Save)->setDefault(true);
     buttons->button(QDialogButtonBox::Cancel)->setText(tr("Cancel"));
     connect(buttons, &QDialogButtonBox::accepted, this, [this] {
+        if (native_ && nativeAuthPreview_) return;
         if (rawOnly_ && tabs_->currentIndex() != tabs_->count() - 1) {
             tabs_->setCurrentIndex(tabs_->count() - 1);
             return;
@@ -1492,12 +1575,18 @@ void ProfileEditorDialog::assessRepresentation() {
     general->setRowVisible(nativeServerName_, native_);
     general->setRowVisible(nativeKillSwitch_, native_);
     general->setRowVisible(nativeMode_, native_);
+    general->setRowVisible(nativeProfileActions_, native_);
+    general->setRowVisible(nativeAuthentication_, native_);
+    nativeAuthMethod_->setCurrentIndex(0);
+    nativeAuthSource_->setCurrentIndex(0);
+    refreshNativeAuthentication_();
     if (native_) {
         for (int row = 0; row < general->rowCount(); ++row) {
             auto *item = general->itemAt(row, QFormLayout::FieldRole);
             auto *widget = item ? item->widget() : nullptr;
             general->setRowVisible(row, widget == name_ || widget == windowsProfile_
-                || widget == nativeServerName_ || widget == nativeKillSwitch_ || widget == nativeMode_);
+                || widget == nativeServerName_ || widget == nativeKillSwitch_ || widget == nativeMode_
+                || widget == nativeProfileActions_ || widget == nativeAuthentication_);
         }
     }
     for (int i = 1; i < tabs_->count() - 1; ++i)
@@ -1949,4 +2038,44 @@ void ProfileEditorDialog::manageDatabases() {
         active.append(QJsonObject{{"matcher", rule.matcher}, {"value", rule.target}, {"enabled", rule.enabled}});
     }
     manageSharedGeoData(this, coreExecutable_, profilePath_, active);
+}
+
+QDialog *ProfileEditorDialog::nativeConfirmation(QWidget *parent, const QString &profile,
+                                                const QString &server, const QString &action, bool reviewable) {
+    auto *dialog = new QDialog(parent);
+    dialog->setWindowTitle(tr("Windows profile"));
+    auto *layout = new QVBoxLayout(dialog);
+    const bool valid = reviewable && !profile.isEmpty() && !server.isEmpty()
+        && (action == "create" || action == "remove" || action == "unchanged");
+    auto *summary = new QLabel(!valid ? tr("The Windows profile changes cannot be confirmed.")
+        : action == "remove" ? tr("Remove this Windows VPN profile? The local configuration will be kept.")
+        : action == "create" ? tr("Create this Windows VPN profile? This will not connect the VPN.")
+        : tr("No Windows profile changes are needed."));
+    summary->setTextFormat(Qt::PlainText);
+    summary->setWordWrap(true);
+    layout->addWidget(summary);
+    auto *form = new QFormLayout;
+    for (const auto &field : {qMakePair(tr("Windows VPN profile"), profile), qMakePair(tr("Server name"), server)}) {
+        auto *value = new QLabel(field.second);
+        value->setTextFormat(Qt::PlainText);
+        value->setWordWrap(true);
+        value->setMaximumWidth(360);
+        form->addRow(field.first, value);
+    }
+    layout->addLayout(form);
+    auto *buttons = new QDialogButtonBox(dialog);
+    auto *cancel = buttons->addButton(valid && action != "unchanged" ? QDialogButtonBox::Cancel : QDialogButtonBox::Close);
+    cancel->setDefault(true);
+    cancel->setFocus();
+    connect(buttons, &QDialogButtonBox::rejected, dialog, &QDialog::reject);
+    if (valid && action != "unchanged") {
+        auto *confirm = buttons->addButton(action == "create" ? tr("Create") : tr("Remove"), QDialogButtonBox::AcceptRole);
+        confirm->setAutoDefault(false);
+        connect(confirm, &QPushButton::clicked, dialog, [dialog, confirm] {
+            confirm->setEnabled(false);
+            dialog->accept(); // Local consent only; no Core or OS operation.
+        });
+    }
+    layout->addWidget(buttons);
+    return dialog;
 }

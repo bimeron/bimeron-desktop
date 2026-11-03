@@ -1477,7 +1477,7 @@ bool MainWindow::packetProfile(int row) const {
 }
 
 QString MainWindow::nativeUnavailableReason() const {
-    return tr("Native IKEv2 connect, preview, apply and remove are unavailable. Final Core artifact approval, protected installation and MSI safety evidence, and Windows enrollment are pending. Native capabilities and owner/protection absence have not been verified. Statistics are unavailable. Automatic connection and reconnection are disabled.");
+    return tr("Native IKEv2 is not available in this build. Connection and Windows profile operations are not enabled.");
 }
 
 void MainWindow::bindNativeController(NativeIKEv2Session *controller) {
@@ -1505,10 +1505,22 @@ void MainWindow::showNativeSnapshot(const NativeIKEv2Session::Snapshot &snapshot
         if (value == "inactive") return tr("Inactive");
         return tr("Unknown");
     };
-    nativeStatusLabel_->setText(tr("Native IKEv2 protection requested: %1. WFP: %2. DNS: %3. Cleanup and owner closure require authoritative confirmation. Statistics are unavailable.")
-        .arg(snapshot.requested ? tr("Yes") : tr("No"),
-             protection(snapshot.authoritative ? snapshot.wfp : QString{}),
-             protection(snapshot.authoritative ? snapshot.dns : QString{})));
+    QString state = tr("Connection state is unknown.");
+    if (snapshot.ownerClosed) state = tr("Connection ended. Owner closure confirmed.");
+    else if (snapshot.closureAccepted) state = tr("Connection ended. Waiting for owner closure.");
+    else if (snapshot.authoritative) {
+        if (snapshot.state == "connecting") state = tr("Connecting…");
+        else if (snapshot.state == "connected") state = tr("Connected");
+        else if (snapshot.state == "stopping") state = tr("Disconnecting…");
+        else if (snapshot.state == "failed") state = tr("Native connection failed.");
+        else if (snapshot.state == "disconnected") state = tr("Connection ended. Cleanup and closure must be confirmed.");
+    }
+    QString detail = tr("Traffic protection: %1. DNS protection: %2. Statistics are unavailable.")
+        .arg(protection(snapshot.authoritative ? snapshot.wfp : QString{}),
+             protection(snapshot.authoritative ? snapshot.dns : QString{}));
+    if (snapshot.recoveryRequired) detail += " " + tr("Cleanup requires attention. New connections are blocked.");
+    if (!snapshot.safeError.isEmpty()) detail += " " + tr("The native operation could not be completed.");
+    nativeStatusLabel_->setText(state + "\n" + detail);
     nativeStatusLabel_->show();
     connectionLabel_->setText(nativeStatusLabel_->text());
     if (tray_) {

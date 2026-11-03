@@ -600,6 +600,8 @@ struct ConnectionManagementTest {
         return 0;
     }
     static int preview(QApplication &app, const QString &destination, const QString &language) {
+        QSettings().setValue("app/theme", app.arguments().contains("--ui-dark") ? "dark" : "light");
+        applyThemePalette(app);
         class Translator final : public QTranslator {
         public:
             QJsonObject strings;
@@ -657,6 +659,61 @@ struct ConnectionManagementTest {
             }
             window.show();
             QCoreApplication::processEvents();
+            const int uiState = app.arguments().indexOf("--native-ui-state");
+            if (uiState >= 0) {
+                NativeIKEv2Session::Snapshot snapshot;
+                snapshot.state = app.arguments().value(uiState + 1);
+                snapshot.authoritative = snapshot.state != "unknown";
+                snapshot.wfp = snapshot.dns = snapshot.state == "connected" ? "active" : "unknown";
+                snapshot.recoveryRequired = snapshot.state == "retained";
+                if (snapshot.recoveryRequired) { snapshot.state = "failed"; snapshot.wfp = "retained"; }
+                window.showNativeSnapshot(snapshot);
+                require(!window.connectButton_->isEnabled(), "presentation never enables native connection");
+                QCoreApplication::processEvents();
+            }
+            if (app.arguments().contains("--native-editor-preview")) {
+                ProfileEditorDialog editor(QString::fromUtf8("[Profile]\nName = Native\n[IKEv2]\nWindowsProfile = Fixture\nServerName = vpn.invalid\n[Interface]\nMode = vpn\n"), {}, &window);
+                editor.show();
+                if (app.arguments().contains("--ui-minimum")) editor.resize(620, 460);
+                QCoreApplication::processEvents();
+                require(editor.grab().save(destination), "native editor capture");
+                auto *authMethod = editor.findChild<QComboBox *>("nativeAuthMethod");
+                auto *authSource = editor.findChild<QComboBox *>("nativeAuthSource");
+                for (int method = 0; method < 3; ++method) {
+                    authMethod->setCurrentIndex(method);
+                    for (int source = 0; source < (method == 0 ? 2 : 1); ++source) {
+                        authSource->setCurrentIndex(source);
+                        QCoreApplication::processEvents();
+                        require(editor.grab().save(destination + QString(".auth-%1-%2.png").arg(method).arg(source)), "authentication capture");
+                    }
+                }
+                authMethod->setCurrentIndex(0); authSource->setCurrentIndex(0);
+                auto *actions = editor.findChild<QWidget *>("nativeProfileActions");
+                require(actions && actions->isVisible(), "native actions visible");
+                for (auto *button : actions->findChildren<QPushButton *>()) require(!button->isEnabled(), "native actions disabled");
+                for (const auto &action : {QString("create"), QString("remove"), QString("unchanged"), QString("invalid")}) {
+                    auto *confirmation = ProfileEditorDialog::nativeConfirmation(&editor, "<b>Fixture</b>", "vpn.invalid", action, true);
+                    confirmation->show();
+                    QCoreApplication::processEvents();
+                    auto *box = confirmation->findChild<QDialogButtonBox *>();
+                    require(box, "confirmation buttons");
+                    int accepts = 0;
+                    for (auto *button : box->buttons()) if (box->buttonRole(button) == QDialogButtonBox::AcceptRole) ++accepts;
+                    require(accepts == (action == "create" || action == "remove" ? 1 : 0), "only reviewed mutations can confirm");
+                    for (auto *label : confirmation->findChildren<QLabel *>())
+                        if (label->text().contains("<b>")) require(label->textFormat() == Qt::PlainText, "preview markup is literal");
+                    require(confirmation->grab().save(destination + "." + action + ".png"), "confirmation capture");
+                    confirmation->reject();
+                    require(confirmation->result() == QDialog::Rejected, "local cancellation");
+                    delete confirmation;
+                }
+                ProfileEditorDialog packet("[Profile]\nName = Packet\n[AccessKey]\nSOCKS5 = socks5://localhost:1080\n[Interface]\nMode = proxy\n", {{"proxy", true}}, &window);
+                packet.show();
+                QCoreApplication::processEvents();
+                require(!packet.findChild<QWidget *>("nativeProfileActions")->isVisible(), "packet editor has no native actions");
+                require(!packet.findChild<QWidget *>("nativeAuthentication")->isVisible(), "packet editor has no native authentication");
+                return 0;
+            }
             require(window.grab().save(destination), "native unavailable preview image");
             return 0;
         }
@@ -891,6 +948,21 @@ struct ConnectionManagementTest {
     }
 
     static void run() {
+        {
+            for (const bool reviewable : {false, true}) {
+                for (const QString action : {"create", "remove", "unchanged", "invalid"}) {
+                    auto *dialog = ProfileEditorDialog::nativeConfirmation(nullptr, "Fixture", "vpn.invalid", action, reviewable);
+                    auto *buttons = dialog->findChild<QDialogButtonBox *>();
+                    QPushButton *accept = nullptr;
+                    for (auto *button : buttons->buttons())
+                        if (buttons->buttonRole(button) == QDialogButtonBox::AcceptRole) accept = qobject_cast<QPushButton *>(button);
+                    require(bool(accept) == (reviewable && (action == "create" || action == "remove")), "confirmation requires reviewed mutation");
+                    if (accept) { accept->click(); require(dialog->result() == QDialog::Accepted && !accept->isEnabled(), "one local confirmation"); }
+                    else { dialog->reject(); require(dialog->result() == QDialog::Rejected, "no mutation confirmation"); }
+                    delete dialog;
+                }
+            }
+        }
         {
             MainWindow window;
             QTimer::singleShot(0, [&] {
@@ -1237,8 +1309,8 @@ struct ConnectionManagementTest {
                 "native unavailable label is not replaced by unknown protocol");
         window.profileList_->setCurrentRow(nativeRow);
         window.updateConnectionButton();
-        require(!window.connectButton_->isEnabled() && window.nativeStatusLabel_->text().contains("approval"),
-                "native action disabled with approval explanation");
+        require(!window.connectButton_->isEnabled() && window.nativeStatusLabel_->text().contains("not available"),
+                "native action disabled with unavailable explanation");
         const auto settingsKeys = QSettings().allKeys();
         const auto startupProfile = QSettings().value("app/autoConnectProfile");
         window.toggleConnection();
