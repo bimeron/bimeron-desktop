@@ -2,6 +2,184 @@
 
 Planning snapshot: 2026-11-04. The user subsequently authorized the UI-only stage below. Native enablement remains outside scope.
 
+## Post-D3 bounded runtime backlog (2026-11-04)
+
+This is the current planning boundary and supersedes older next-step suggestions
+below. D1 and D3 are complete offline increments, not work to repeat. This update
+authorizes no implementation, production composition, gate/pin change or native
+operation. Only this English plan document changes; build/packaging flow is unchanged.
+
+### Exact source and evidence boundary
+
+Desktop HEAD is `4edb869b644568e5cbdbe3f49fe94b1237cc30ec`, following D1
+`49263d5b273f9a3420cef27056a16f942739272b`. The worktree was clean before this
+update. T3 and Git both bind this work to `plan/ikev2-gui-integration` at
+`C:/Users/PC/.t3/worktrees/bimeron-desktop/plan-ikev2-gui-integration`;
+the planning selection is `codex_petr/gpt-6-astra`, MEDIUM.
+
+Core was inspected read-only in `feat/ikev2-auth-contract`, HEAD
+`498596eabe4ec734cb0bda72059dd74a66c9dc49`, with uncommitted auth work. This is
+a source snapshot, not an approved binary or the active lab's working source.
+The concurrent Core writer owns further corrections and commit preparation.
+Exact checkout SHA-256 references for the auth delta inspected here:
+
+- `docs/IKEV2_AUTH_CONTRACT.md`: `30367457f19ec4f615e453bf652029d61074adaf20460a756b17d4222cd4e239`
+- `core/capabilities.go`: `4247f26be1d20c2d196b529d8280eabc98590b360f0149380931648c3289c11f`
+- `internal/control/ikev2_auth.go`: `8909063adc8bdca89692c649d35316bf6baaccd5a816cea853a3f9156a108a37`
+- `internal/control/foreground.go`: `83172aa42e7c761a5cc295bea0228cf4716aab5755e842e0711536a31a53e833`
+- `internal/control/server.go`: `a513ed5a05c47d43417ad4acd09e3c82fdb9038976bc8151becd5c64824f66fa`
+
+Provisioning, native config and RAS references in this checkout remain at that
+Core HEAD. Its Windows protection capability initializer retains baseline true
+values; the five new auth flags default to false. This differs from the historical
+dirty lab protection-flags observation below. Neither value approves protected
+activation or demonstrates live capability. Reconcile the eventual accepted Core
+revision and exact artifacts before any consumer pin changes.
+
+Use the recorded D3 Windows amd64 Release/offline CTest 4/4 result (15.67 seconds)
+and Qt fixture captures below as saved GUI evidence, without rerunning them for
+this documentation change. Core's auth document records focused tests/vet/race
+checks; these were not rerun or independently certified here. Supplied lab C1
+finite-12/exact-2 PASS does not establish exact-pair approval, owner-death recovery,
+live IKE or product readiness. First Connect/Stop remains under HIGH review at
+this planning snapshot; no outcome is assumed. The active lab checkout, VM,
+services, network, credentials and GeoData work are outside this task.
+
+### Actual API to GUI obligations
+
+1. **Admission and Connect.** `NativeIKEv2Session::connectProfile(absolutePath,
+   reviewedSha256)` exists; `NativeIKEv2Actions` has no Connect method and its
+   private `bind` accepts only a fixture Session. MainWindow has no production
+   caller. `launchAllowed()` consumes four gates per attempt and still pins
+   revision `66d84d8f4dcfc6ada625eb11894b19feea51b7ba`. Transport `Approval`
+   describes executable/hash/revision/architecture, not an approval producer.
+   Required inputs are independently approved exact Core/Desktop artifacts,
+   authoritative fresh managed-host compatibility/inactivity, owner/protection
+   absence, protected-installation admission, and selected-Core validation of the
+   exact configuration bytes whose digest Transport rechecks. Define the producer,
+   lifetime and invalidation of each input before composition. Core/profile/byte
+   changes, intervening operations, cancellation and uncertainty must invalidate
+   pending authority; no cached bool, successful local Save, static capability,
+   missing process or missing pipe grants it. No new wire/schema is selected here.
+2. **Windows-profile review and mutation.** Actions `select` -> `preview` delegates
+   Session `previewProfile(name, server, "apply"|"remove")`; Transport launches
+   the provisioning owner and `hello` begins its one-shot preview. `review()`
+   exposes local consent; `confirm(consent)` delegates `confirmPreview(token)`.
+   The existing request sends command `apply`/`remove`, `accept_revision`, bound
+   `instance` and `plan_token` equal to preview `state_token`. Review all public
+   fields: action, windows_profile, server_name, authentication, ipsec, ipv6_routes,
+   credentials and trust. D3 already binds generation, selection, instance, token
+   and the complete plan and consumes confirmation before dispatch. Core rechecks
+   the token before mutation. Stale preview needs a new explicit review with a
+   fresh admitted owner; there is no same-owner re-preview or automatic retry.
+3. **Cancel, rollback and close.** Actions `cancel()` delegates local
+   `cancelExchange()` only. Provisioning has no Stop command; Core mutation runs
+   through rollback and rejects `close_owner` during previewing/applying. Terminal
+   failed provisioning can close without proving repair. Keep rolled-back failure,
+   incomplete rollback, journal/manifest cleanup failure and unknown outcomes
+   visible after closure. D3 preserves those safe codes; do not repeat its completed
+   allowlist work or display raw elevated diagnostics. Missing ownership/conflict
+   detail may receive a separately bounded safe-code mapping, with generic fallback.
+4. **Foreground Stop and observation.** Session `stop()` suppresses activation
+   and queues Stop while launch/exchange is pending; discovery is read-only
+   `hello`, followed by status/events, never replayed activation. Actions exposes
+   `stop`, `rediscover` and `closeOwner`, but no product controls invoke them.
+   MainWindow's packet eligibility/Stop/quit routes must later select the native
+   lifecycle explicitly without routing native commands through packet CoreClient.
+   Process creation or hello is not Connected. Event loss requires status refresh;
+   IPC loss/cancel remains unknown, with no replacement launch or automatic retry.
+5. **Closure versus readmission.** Transport `processState()` uses its retained
+   launched handle or authenticated discovered-peer process handle. Discovery
+   therefore can observe exit; absence without such a handle is Unknown. Session
+   requires accepted close plus observed exit; lost close reply plus exit cannot
+   fabricate closure. Foreground close additionally requires its terminal cleanup
+   checks; provisioning terminality has the narrower meaning above. MainWindow
+   `showNativeSnapshot()` keeps `nativeOwnerBlocked_` true even on `ownerClosed`,
+   and `requestShutdown()` refuses unresolved native exit. A contract for fresh
+   admission/recovery must precede clearing that block, returning to packet use,
+   or constructing a new one-attempt controller. Neither UI destruction nor peer
+   exit proves global owner/protection absence or surviving rollback completion.
+6. **Authentication remains unavailable.** Core `beginIKEAuth`/`answerIKEAuth`
+   are private in-process fixture seams, not callable Desktop APIs. All five
+   `auth_submission`, `auth_attempt_only`, `auth_windows_persistence`,
+   `auth_certificate_selection` and `auth_smart_card_interaction` flags are false.
+   The seam binds installation/instance/session/attempt/request/profile/server
+   plus private exchange authority, uses bounded expiry and one-shot consumption,
+   and retires on lifecycle/authority loss. Its synchronous fixture acceptance is
+   neither authentication success nor storage success. Native routes still reject
+   generic challenge/answers; no credential wire, config key or production consumer
+   exists. Existing saved Windows credentials/EAP-26 identity use does not prove
+   attempt-only input. Keep local GUI drafts unsaved/unsubmitted and preview Save
+   blocking. Before enabling prompts, Core must establish supported Windows method
+   UI or credential preparation, correct user/thread context, protected authority
+   across exchanges, cancellation and separate storage consent/result semantics.
+   Remember defaults off; unsupported persistence must not silently save, and a
+   save failure cannot report remembered credentials. Certificate/card selection
+   remains a separate later capability. No PIN field, arbitrary EAP blob, secret
+   IPC extension, private-key export or promise of QString zeroization is proposed.
+
+### Dependency-ordered slices and acceptance
+
+These are proposed later tasks, not implementation authorization. Keep each slice
+small and amend its acceptance before code if a contract changes.
+
+1. **Independent disabled/offline slice.** Preserve D3 and the unavailable default.
+   The smallest useful follow-up is a focused fixture/readout change for one
+   demonstrated gap, such as safe ownership-conflict presentation or false/missing
+   auth capability refusal. First inspect existing fixtures and add only missing
+   cases. Acceptance: no live controller, native request, OS chooser, credential
+   storage or serialization; missing/false auth flags never enable submission;
+   unknown codes remain generic; stale/cancelled consent never revives. Existing
+   one-shot and closure cases are saved coverage, not unfinished implementation.
+   This can proceed independently of lab/Core work after separate authorization.
+2. **Authority contract handoff (runtime prerequisite).** Parent/Core owners must
+   deliver exact approved artifacts and revision compatibility, admission freshness
+   and invalidation rules, exact-byte validation/digest provenance, and authoritative
+   closure/recovery/readmission evidence. Acceptance is source-backed producer and
+   consumer mapping with expired, changed-artifact/config, conflicting-owner and
+   unknown-protection refusal cases. A mock demonstrating these rules is not a
+   native authority producer. Retain consumer-B scope; no mandatory managed-host
+   installation or installer redesign is inferred from legacy gate names.
+3. **Provisioning runtime slice (after 2).** Add only the narrow approved production
+   composition and editor preview/confirm/remove bindings using the D3 adapter.
+   Review the fixture-only bind restriction explicitly; do not merely remove it
+   to enable runtime. Acceptance: admitted create/unchanged/remove and ownership
+   conflict, one exact consent, token change, selection/cancel/late callback,
+   interrupted apply, rollback failure, close refusal while busy, and terminal
+   closure without false recovery. A second preview requires fresh admission and
+   a fresh controller; failure cannot unlock Connect. Actual native acceptance is
+   a separately authorized parent-owned step, not an offline fixture claim.
+4. **Foreground lifecycle and recovery slice (after 2 and accepted Core lifecycle
+   review; provisioning 3 only if that workflow is required).** Add the missing
+   Connect delegation and bind button/double-click/Enter/tray/Stop/startup discovery
+   to one native eligibility path. Keep saved-Windows authentication as the only
+   existing path; new input is not a prerequisite if approved Core supports the
+   preconfigured path. Before enablement, accept Stop during launch/hello/connect,
+   single activation, status after dropped events, identity mismatch, IPC loss,
+   retained protection, accepted-close-only, exit-only, lost close reply, discovered
+   peer exit and unresolved recovery. Prove approved readmission before releasing
+   the sticky block; preserve packet Stop while native is merely selected, no
+   auto-reconnect, no native statistics, and explicit quit/close-to-tray behavior.
+   First Connect/Stop review and owner-death evidence remain distinct gates.
+5. **Optional auth runtime slice (after 2/4 and a separately accepted callable Core
+   auth contract).** Integrate only supported methods. Acceptance binds prompt and
+   reply to exact attempt/profile/authority, with missing/rejected credentials,
+   expiry, cancellation, duplicate/late answer, selection change, Stop and IPC
+   loss. Verify attempt-only semantics or explicitly return the persistence-only
+   constraint for product decision; test remember off/on/failure independently of
+   authentication outcome. Synthetic secrets must not appear in config, settings,
+   logs, arguments, previews or captures. Private seam tests do not satisfy native
+   provider/storage acceptance. Certificate/card integration follows its own
+   capability/eligibility/provider contract, without blocking a supported saved path.
+
+For a later implementation, run focused existing fixtures for changed behavior
+and relevant CI-equivalent checks, with actual Qt captures only for presentation
+changes. No full release matrix, live capture, build or native call is needed for
+this plan update. Benchmarking/profiling are inapplicable. Documentation validation
+is source mapping, exact Git/T3 identity, snapshot hashes, scope review and
+`git diff --check`; no release readiness is claimed. Proposed commit scope, for
+later authorization only: `docs(ikev2): bound post-D3 runtime wiring backlog`.
+
 ## D2 source resolution and D3 offline specification (2026-11-04)
 
 This section supersedes the earlier unanswered D2 list only where source evidence
