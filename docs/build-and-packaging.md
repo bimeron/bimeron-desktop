@@ -1459,3 +1459,23 @@ stylesheet as the full editor fixture, waits for native clear-button animation,
 and does not run or replace editor geometry acceptance. Normal CTest continues
 to exercise the full editor/manager fixtures. The fixture anchors the picker to the primary screen. Use fresh `order-screen-*`
 basenames and read `.catalog.json` for measured DPR. Build/package flow is unchanged.
+
+## Optional offline MSI inventory
+
+The supported build/package flow is unchanged. With standard-library Python on
+Windows, run `python -B scripts/msi_inventory.py inspect <source.msi>` and redirect
+JSON to a fresh file under ignored `build/msi-inventory/`. The utility opens only a
+READONLY database, hashes embedded Binary streams and preserves authored metadata;
+it never starts an installer session. Run `python -B scripts/msi_inventory.py check
+<projection.json>` on any Python host to validate a saved projection. Exit 0 means
+structural inventory success only: compatibility remains unresolved and native
+eligibility remains false. Unknown tables/actions and all conditions require review.
+Absent optional tables appear only in table_names when present; read failures abort.
+Run `python -B -m unittest discover -s tests -p test_msi_inventory.py` for focused
+checks. See [scope and observed artifacts](ikev2-msi-compatibility.md); this procedure
+does not replace release/runtime acceptance or establish installed/cache state.
+
+Inventory projections now require exact supported observed table layouts and
+Summary WordCount flags. Unsupported layouts fail closed. WordCount and cabinet
+metadata do not authenticate releases or establish installed/cache state; extracted
+stage sources remain derived artifacts. See the tracked per-hash source ledger.
