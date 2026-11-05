@@ -332,6 +332,12 @@ paths. It verifies both fixture SHA-256 values, so `.gitattributes` marks them
 platform plugin, network, Core or native API and adds no package payload; the
 parser is not wired into Transport, Session, UI or capabilities.
 
+`msi-inventory-test` runs the standard-library unit tests for
+`scripts/msi_inventory.py` against saved projection fixtures. It needs a Python 3
+interpreter found by CMake (GitHub's Ubuntu 24.04 and Windows runners provide one),
+opens no MSI database and adds no package payload; see
+[Optional offline MSI inventory](#optional-offline-msi-inventory).
+
 After the complete script, `dist` should have exactly four current files:
 
 ```text
@@ -1493,7 +1499,11 @@ structural inventory success only: compatibility remains unresolved and native
 eligibility remains false. Unknown tables/actions and all conditions require review.
 Absent optional tables appear only in table_names when present; read failures abort.
 Run `python -B -m unittest discover -s tests -p test_msi_inventory.py` for focused
-checks. See [scope and observed artifacts](ikev2-msi-compatibility.md); this procedure
+checks. CTest registers the same command as `msi-inventory-test` (source-tree
+working directory, no bytecode) when CMake finds a Python 3 interpreter; otherwise
+configuration prints a status message and skips only this test, because Python is
+not a build or packaging dependency. The checks use saved fixtures and pass on
+Linux and Windows. See [scope and observed artifacts](ikev2-msi-compatibility.md); this procedure
 does not replace release/runtime acceptance or establish installed/cache state.
 
 Inventory projections now require exact supported observed table layouts and
