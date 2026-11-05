@@ -1820,7 +1820,9 @@ void ProfileEditorDialog::assessRepresentation() {
     }
     // This is a conservative serializer guard, not a second Core validator.
     // Compare configured tokens with the actual serializer, including ordered rules.
-    const auto tokens = [](const QString &text, bool *valid) {
+    // Native IKEv2 editing predates the decoded-value contract and has no
+    // quote-preserving serializer, so any quoted native value stays Raw-only.
+    const auto tokens = [native = native_](const QString &text, bool *valid) {
         QMap<QString, QString> result;
         QSet<QString> sections;
         QString section;
@@ -1851,6 +1853,7 @@ void ProfileEditorDialog::assessRepresentation() {
             const QString key = section + "/" + line.left(equal).trimmed();
             QString value;
             if (!ProfileTextEdit::decode(line.mid(equal + 1), &value)) *valid = false;
+            if (native && line.mid(equal + 1).trimmed().startsWith('"')) *valid = false;
             if (result.contains(key)) *valid = false;
             result.insert(key, value);
         }

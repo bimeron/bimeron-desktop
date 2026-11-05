@@ -2334,8 +2334,8 @@ struct ConnectionManagementTest {
         window.toggleConnection();
         require(waitFor([&] { return rejectionShown && window.operation_.isEmpty(); }), "service rejection after CLI acceptance is displayed");
         dismiss.stop();
-        QFile retained(window.profiles_[0].path);
-        require(retained.open(QIODevice::ReadOnly) && retained.readAll() == wrapped, "service rejection preserves profile bytes");
+        QFile retainedProfile(window.profiles_[0].path);
+        require(retainedProfile.open(QIODevice::ReadOnly) && retainedProfile.readAll() == wrapped, "service rejection preserves profile bytes");
         require(window.log_->toPlainText().contains("OUTER_SENTINEL"), "service rejection retains supplied diagnostic detail");
 
         // Native profiles remain displayable but can never use packet lifecycle paths.
