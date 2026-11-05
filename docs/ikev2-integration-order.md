@@ -127,3 +127,34 @@ checks; product tests, CI builds, four-target packages, benchmarks/profiling and
 release work are inapplicable to this documentation-only task. No runtime or
 integration success is claimed. Proposed future commit title:
 `docs(ikev2): record committed branch integration order`.
+
+## Integration record (2026-11-05)
+
+Local branch `integrate/ikev2-desktop`, intended as a fast-forward of
+`origin/plan/stage-8-ikev2` (`943c92d`); nothing is pushed by this record.
+
+- `chore/ikev2-plans-errors-commits` (`dbcf2dc`..`3962951`) is the base.
+- `chore/ikev2-msi-history-commit` (`a3b8558`, containing `e26e2f7`) and
+  `feat/ikev2-safe-update-msi` (`0093248`) were added with two `--no-ff` merge
+  commits. Both merged without conflicts; the only shared file,
+  `docs/build-and-packaging.md`, received disjoint hunks.
+- Pending: `fix/ikev2-test-teardown-geodata-exclude` (tip `bf78f85` when
+  recorded) is still in progress in another thread. Merge its final tip into
+  this branch with a normal merge commit once accepted; a dry run of the
+  recorded tip merged without conflicts.
+
+Offline verification at merge commit `81d39f1` (GUI-only, no Core fetch):
+
+- Windows x64 (VS 2026 Build Tools, Qt 6.8.3): build passed; CTest 5/6.
+  `developer-mode-test` aborts at "Supported clipboard shows Paste" (native
+  clipboard fixture from `dbcf2dc`); unchanged by the MSI merges.
+- Linux amd64 (WSL Ubuntu 24.04, Qt 6.4.2): build passed; CTest 4/6.
+  `developer-mode-test` and `profile-vless-test` crash with SIGSEGV during
+  widget destruction, before their remaining checks run. Local bisection:
+  `943c92d` and `da6ecac` pass, merge `38e020e` crashes (developer-mode-test
+  3/3, profile-vless-test 1/3), so the defect comes from combining the main and
+  IKEv2 sides, not from the MSI merges. CI has not run `38e020e` yet.
+- `tests/test_msi_inventory.py` passed with `python -B` and `python -B -O`; it is
+  not part of CTest or Desktop CI.
+
+No package, ARM64 build, benchmark or release work was performed.
