@@ -124,3 +124,9 @@ unchanged since HIGH code acceptance. Shared-corpus parity covers the original
 15 and supplemental 33 synthetic cases only; no production wire, live native,
 full CI or complete cross-platform acceptance is claimed. Changes remain unstaged
 and uncommitted. Thread settlement retains history and review evidence.
+
+CTest registration follow-up: the harness is now the `offline-ikev2-failure-test`
+CTest target (Qt Core only), receiving both fixture paths from the source tree and
+excluded from the MSI install tree. Fixtures are marked `-text` so the verified
+hashes hold on fresh Windows checkouts. Production Transport, Session, UI,
+capabilities and packaging payload remain unchanged.

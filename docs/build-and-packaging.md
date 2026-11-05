@@ -233,7 +233,7 @@ The `stage/windows-amd64` or `stage/windows-arm64` tree is the source of the MSI
 - `THIRD_PARTY_NOTICES.txt`.
 - `MONOCYPHER-LICENSE.txt` and `MINIZ-LICENSE.txt`.
 
-The install rule excludes `core-update-test.exe`, `core-update.lib`, `profile-vless-test.exe`, and `developer-mode-test.exe` from the MSI even though they share the Visual Studio output directory with the GUI. Use a fresh `stage/upgrade-windows-*` prefix for local upgrade-test packages so previously staged test artifacts cannot survive an incremental install.
+The install rule excludes `core-update-test.exe`, `core-update.lib`, `profile-vless-test.exe`, `developer-mode-test.exe`, and `offline-ikev2-failure-test.exe` from the MSI even though they share the Visual Studio output directory with the GUI. Use a fresh `stage/upgrade-windows-*` prefix for local upgrade-test packages so previously staged test artifacts cannot survive an incremental install.
 
 Wintun is not downloaded during installation or application launch: the required `wintun.dll` is included in the MSI in advance. ARM64 MSI uses the DLL from the ARM64 core release archive.
 
@@ -322,6 +322,15 @@ private local endpoints and the test executable as a validation CLI, not the
 installed Core or system network. Test extensions require no additional build
 target or package payload. See [connection management](connection-management.md)
 for the runtime and separately authorized live-check boundaries.
+
+`offline-ikev2-failure-test` links only Qt Core and runs the disconnected
+header-only parser from [the offline failure parser](ikev2-offline-error-parser.md)
+against `tests/fixtures/ikev2-error-draft-v1.json` and
+`tests/fixtures/ikev2-error-raw-addendum-v1.json`, passed as absolute source-tree
+paths. It verifies both fixture SHA-256 values, so `.gitattributes` marks them
+`-text` to keep checkout bytes exact under `core.autocrlf=true`. It needs no
+platform plugin, network, Core or native API and adds no package payload; the
+parser is not wired into Transport, Session, UI or capabilities.
 
 After the complete script, `dist` should have exactly four current files:
 

@@ -162,6 +162,13 @@ if(BUILD_TESTING)
     if(NOT WIN32)
         set_tests_properties(profile-vless-test PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
     endif()
+    # Disconnected parser for the frozen offline IKEv2 failure draft; Qt Core only.
+    add_executable(offline-ikev2-failure-test tests/OfflineIKEv2FailureTest.cpp
+        src/OfflineIKEv2Failure.h src/OfflineIKEv2FailureRaw.h)
+    target_link_libraries(offline-ikev2-failure-test PRIVATE Qt6::Core)
+    add_test(NAME offline-ikev2-failure-test COMMAND offline-ikev2-failure-test
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/ikev2-error-draft-v1.json"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/ikev2-error-raw-addendum-v1.json")
 endif()
 
 include(cmake/core-release.cmake)
@@ -242,7 +249,8 @@ if(WIN32)
         USE_SOURCE_PERMISSIONS
         PATTERN "core-update*" EXCLUDE
         PATTERN "profile-vless-test*" EXCLUDE
-        PATTERN "developer-mode-test*" EXCLUDE)
+        PATTERN "developer-mode-test*" EXCLUDE
+        PATTERN "offline-ikev2-failure-test*" EXCLUDE)
     set(CMAKE_INSTALL_SYSTEM_RUNTIME_DESTINATION ".")
     set(CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS_SKIP TRUE)
     include(InstallRequiredSystemLibraries)
