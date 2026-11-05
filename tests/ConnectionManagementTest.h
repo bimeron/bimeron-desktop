@@ -2338,6 +2338,7 @@ struct ConnectionManagementTest {
         require(retainedProfile.open(QIODevice::ReadOnly) && retainedProfile.readAll() == wrapped, "service rejection preserves profile bytes");
         require(window.log_->toPlainText().contains("OUTER_SENTINEL"), "service rejection retains supplied diagnostic detail");
 
+        const int nativeStarts = starts;
         // Native profiles remain displayable but can never use packet lifecycle paths.
         const QString nativePath = directory.filePath("native.conf");
         write(nativePath, "[Profile]\nName = Native\n[IKEv2]\nWindowsProfile = Fixture\nServerName = vpn.invalid\n[Interface]\nMode = vpn\n");
@@ -2366,17 +2367,17 @@ struct ConnectionManagementTest {
         window.startReadyPath_ = nativePath;
         window.operation_ = "start";
         window.poll();
-        require(window.operation_.isEmpty() && starts == 4, "stale dispatch cannot send native daemon start");
+        require(window.operation_.isEmpty() && starts == nativeStarts, "stale dispatch cannot send native daemon start");
         QSettings().setValue("app/autoConnectProfile", native.id);
         QSettings().setValue("app/autoConnect", true);
         window.autoConnectAttempted_ = false;
         window.completeSynchronization();
-        require(window.autoConnectAttempted_ && starts == 4 && window.operation_.isEmpty(), "stale native autostart is ignored");
+        require(window.autoConnectAttempted_ && starts == nativeStarts && window.operation_.isEmpty(), "stale native autostart is ignored");
         window.coreUpdateAwaitingResult_ = true;
         window.expectedCoreVersionAfterUpdate_ = version;
         window.reconnectProfileAfterUpdate_ = native.id;
         window.completeSynchronization();
-        require(!window.coreUpdateAwaitingResult_ && window.reconnectResultProfileId_.isEmpty() && starts == 4,
+        require(!window.coreUpdateAwaitingResult_ && window.reconnectResultProfileId_.isEmpty() && starts == nativeStarts,
                 "native never restored by packet updater");
         // Selection must not strand the authoritative packet session. Neither an
         // unsupported packet profile nor native selection is a switch target.
@@ -2396,7 +2397,7 @@ struct ConnectionManagementTest {
                 window.toggleConnection();
                 require(waitFor([&] { return stops == previousStops + 1 && synchronized() && window.operation_.isEmpty(); }),
                         "unavailable selection sends exactly one packet stop");
-                require(starts == 4 && window.pendingStartPath_.isEmpty() && !window.nativeSession_,
+                require(starts == nativeStarts && window.pendingStartPath_.isEmpty() && !window.nativeSession_,
                         "disconnect never starts native or switches backend");
             }
         }
@@ -2545,7 +2546,7 @@ struct ConnectionManagementTest {
         require(!window.quitRequested_ && !window.canActivateProfile(0), "settings and restart cannot bypass native block");
         window.poll();
         window.toggleConnection();
-        require(requests == nativeRequests && starts == 4 && !window.connectButton_->isEnabled(),
+        require(requests == nativeRequests && starts == nativeStarts && !window.connectButton_->isEnabled(),
                 "native ownership blocks polling and packet activation");
 
         window.core_.cancel();
