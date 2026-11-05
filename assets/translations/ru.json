@@ -2584,6 +2584,7 @@
   "Connection state is unknown.": "Состояние соединения неизвестно.",
   "Connection ended. Owner closure confirmed.": "Соединение завершено. Закрытие процесса VPN подтверждено.",
   "Connection ended. Waiting for owner closure.": "Соединение завершено. Ожидается закрытие процесса VPN.",
+  "Connection failed with Windows error 775. The local cause is unknown.": "Соединение завершилось с ошибкой Windows 775. Локальная причина неизвестна.",
   "Native connection failed.": "Не удалось установить соединение IKEv2.",
   "Connection ended. Cleanup and closure must be confirmed.": "Соединение завершено. Очистка и закрытие ещё должны быть подтверждены.",
   "Traffic protection: %1. DNS protection: %2. Statistics are unavailable.": "Защита трафика: %1. Защита DNS: %2. Статистика недоступна.",

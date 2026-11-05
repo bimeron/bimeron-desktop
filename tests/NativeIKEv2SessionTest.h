@@ -365,6 +365,9 @@ struct NativeIKEv2SessionTest {
         }
         {
             Fixture f; f.launch(); check(f.calls.size()==1 && f.calls.back().fields.isEmpty(),"first hello read only");
+            for (int intent = 0; intent < 3; ++intent)
+                check(!f.controller.connectProfile(QDir::rootPath()+"fixture.conf",QString(64,'c')), "repeated connect intent rejected");
+            check(f.launches == 1 && f.calls.size() == 1, "repeated intents cause no launch or request");
             f.deliver(f.reply()); check(f.calls.size()==2 && f.calls.back().fields.value("accept_revision")==approval().revision,"one reviewed activation");
             f.controller.failed("hello",T::Failure::Timeout); f.controller.poll();
             check(f.calls.back().command=="status","ambiguous activation reconciles status");

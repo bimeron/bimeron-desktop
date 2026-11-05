@@ -1,5 +1,102 @@
 # Disabled IKEv2 GUI integration plan
 
+## Authorized offline connection outcome slice (2026-11-05)
+
+Specification recorded before implementation. This separate Desktop worktree is
+`feat/ikev2-gui-connection-feedback`, based on local
+`plan/ikev2-gui-integration` at `1fb7157e6cb51b17d87a79bd85ca2e1d3c16892d`,
+including D3 `4edb869`. Initial Git state was clean and T3 binding matched.
+
+Existing MainWindow presentation already covers connecting, connected, stopping,
+failed, unknown protection and owner closure. Session already prevents repeated
+activation; MainWindow retains its sticky block even after closure. Reuse these
+paths and their fixtures instead of adding a connection state machine or adapter.
+
+The missing bounded presentation is Windows error 775 with unknown local cause.
+Transport currently strips LastError/ErrorStage and has no supported structured
+775 or EAP-UI-required result. Do not parse diagnostics or extend the wire schema,
+safe-code transport allowlist, Session contract or capabilities. A hypothetical
+775 snapshot injected directly by the private MainWindow fixture may exercise a
+literal presentation-only branch; clearly label that branch and captures as
+fixture-only, unreachable through the current transport. Say that the connection
+failed with Windows error 775 and its local cause is unknown; do not assert wrong
+password, server rejection or a need for EAP UI. No supported explicit EAP UI
+evidence exists in this Desktop contract, so no EAP-required presentation is added.
+
+Acceptance:
+
+- Assert existing connecting/connected/disconnecting/failed labels through the
+  Session-to-MainWindow fixture path, with disabled Connect and no packet dispatch.
+- Exercise repeated Connect intents during an attempt without another launch or
+  activation, and preserve unknown-cleanup blocking after error and controller loss.
+- Check the hypothetical 775 text in English and Russian, unknown-code fallback,
+  no raw diagnostic leakage, no EAP/password/server-rejection inference, and no
+  request, retry, cleanup or readmission caused by rendering it.
+- Capture and inspect actual Qt 775 presentation using the existing preview seam;
+  keep generated evidence under ignored build/. Preserve native OFF, packet and
+  GeoData behavior. Run focused Windows amd64 Release build/CTest and translation
+  and whitespace checks; report untested targets honestly. No performance-sensitive
+  work is planned, so benchmarks/profiling are not applicable.
+
+No Core/lab/VM/server/network/service/credential access, other-worktree changes,
+runtime wiring, OS prompts, package/release work, staging or commits are authorized.
+The supported build/packaging flow is unchanged.
+
+### Offline outcome implementation and validation
+
+The only product delta is a guarded literal 775 presentation in
+`MainWindow::showNativeSnapshot` and its Russian translation. It requires a
+fixture-injected authoritative failed snapshot. Unknown/stale snapshots retain
+generic unknown presentation, and arbitrary diagnostics retain the generic error.
+Transport and Session production sources, Actions, wire fields, approval gates,
+capabilities and packet/GeoData code are unchanged. There is no 775 producer in
+the current transport, and this presentation is not runtime error handling.
+
+`ConnectionManagementTest.h` now verifies existing Session-to-window transitions,
+disabled Connect/direct toggle refusal, exact EN/RU 775 text, no authentication
+diagnosis, stale evidence and generic fallback, and no rendering-induced requests.
+`NativeIKEv2SessionTest.h` adds repeated Connect intents during the existing
+one-activation fixture. Existing cleanup/retained-protection/controller-loss,
+closure, D3 provisioning, packet and GeoData regressions remain in the suites.
+
+One implementation child ran with confirmed `codex_petr/gpt-6-astra`, reasoning
+`low`, service tier `default`; coordinator review completed bilingual/state
+acceptance assertions. No provider fallback or additional worker was used.
+
+Local Windows amd64, Qt 6.8.3 / MSVC 19.51 Release checks passed:
+
+- Configure: `cmake --preset windows-amd64-release -DBIMERON_REQUIRE_CORE=OFF
+  -DBIMERON_DEPLOY_QT=OFF -DBUILD_TESTING=ON`.
+- Build: `cmake --build --preset windows-amd64-release --target bimeron-desktop
+  developer-mode-test profile-vless-test geodata-selection-test
+  geodata-download-test --parallel 2`.
+- Focused CTest with `-C Release --output-on-failure --timeout 60`:
+  developer-mode-test 10.16 s; profile-vless-test 3.51 s;
+  geodata-selection-test 5.21 s; geodata-download-test 5.20 s. These are
+  CI-equivalent focused targets, not the complete CI/platform matrix.
+- Tests used Qt bin on PATH, the matching platform plugin directory,
+  `QT_QPA_PLATFORM=offscreen`, `QT_QPA_FONTDIR=C:/Windows/Fonts`, and cleared
+  optional `BIMERON_*CORE` / `BIMERON_GEOSITE_IDS` inputs.
+- Strict UTF-8 Python JSON parsing and `git diff --check` passed.
+
+Four actual Qt 720x600 offscreen images were generated and inspected under
+ignored `build/ui-evidence/fixture-775-{en,ru}-{light,dark}.png`. The existing
+capture invocation is `developer-mode-test --visual-check --connection-preview
+<png> en|ru --native-preview --native-ui-state fixture-775`, with `--ui-dark`
+for dark captures. Text wraps within the existing labels and Connect is disabled.
+These hypothetical fixture images do not establish native Windows DPI or VPN
+behavior. A shell-loop capture command was blocked by execution policy before
+running; explicit individual fixture invocations succeeded.
+
+Final review found no raw diagnostic disclosure, new authority, retry, cleanup,
+readmission, secret persistence, package or shared-style changes. No performance
+path changed; benchmarks/profiling are not applicable. Linux and ARM64 builds or
+runtimes were not exercised in this bounded Windows offline slice and are not
+claimed unaffected or release-validated. Full CI, packaging and live native
+acceptance remain outstanding for future release work. Core, active lab, VM,
+services, credentials and other worktrees were not accessed. No staging, commit,
+push, merge or release was performed.
+
 Planning snapshot: 2026-11-04. The user subsequently authorized the UI-only stage below. Native enablement remains outside scope.
 
 ## Post-D3 bounded runtime backlog (2026-11-04)

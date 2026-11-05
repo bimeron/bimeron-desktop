@@ -1596,7 +1596,10 @@ void MainWindow::showNativeSnapshot(const NativeIKEv2Session::Snapshot &snapshot
         .arg(protection(snapshot.authoritative ? snapshot.wfp : QString{}),
              protection(snapshot.authoritative ? snapshot.dns : QString{}));
     if (snapshot.recoveryRequired) detail += " " + tr("Cleanup requires attention. New connections are blocked.");
-    if (!snapshot.safeError.isEmpty()) detail += " " + tr("The native operation could not be completed.");
+    // Hypothetical private fixture only: current transport cannot emit error 775.
+    if (snapshot.authoritative && snapshot.state == "failed" && snapshot.safeError == "775")
+        detail += " " + tr("Connection failed with Windows error 775. The local cause is unknown.");
+    else if (!snapshot.safeError.isEmpty()) detail += " " + tr("The native operation could not be completed.");
     if (nativeActions_.provisioning() || QStringList{"previewing", "previewed", "applying", "succeeded"}.contains(snapshot.operation)) {
         switch (nativeActions_.state()) {
         case NativeIKEv2Actions::State::Previewing: state = tr("Preparing Windows profile review..."); break;

@@ -701,6 +701,7 @@ struct ConnectionManagementTest {
             if (uiState >= 0) {
                 NativeIKEv2Session::Snapshot snapshot;
                 snapshot.state = app.arguments().value(uiState + 1);
+                if (snapshot.state == "fixture-775") { snapshot.state = "failed"; snapshot.safeError = "775"; }
                 snapshot.authoritative = snapshot.state != "unknown";
                 snapshot.wfp = snapshot.dns = snapshot.state == "connected" ? "active" : "unknown";
                 snapshot.recoveryRequired = snapshot.state == "retained";
@@ -986,6 +987,58 @@ struct ConnectionManagementTest {
     }
 
     static void run() {
+        {
+            MainWindow window;
+            NativeIKEv2SessionTest::Fixture fixture;
+            fixture.discover();
+            window.bindNativeController(&fixture.controller);
+            for (const auto &state : {QString("connecting"), QString("connected"), QString("stopping"), QString("failed")}) {
+                fixture.observe(fixture.sessionReply(state));
+                const QString expected = state == "connecting" ? MainWindow::tr("Connecting…")
+                    : state == "connected" ? MainWindow::tr("Connected")
+                    : state == "stopping" ? MainWindow::tr("Disconnecting…") : MainWindow::tr("Native connection failed.");
+                require(window.connectionLabel_->text().startsWith(expected), "controller outcome reaches GUI");
+                const auto before = fixture.calls.size();
+                window.connectButton_->click();
+                window.toggleConnection();
+                require(!window.connectButton_->isEnabled() && !window.core_.busy()
+                    && fixture.calls.size() == before && fixture.launches == 0,
+                    "native outcome prevents repeated GUI Connect and packet dispatch");
+            }
+            const auto calls = fixture.calls.size();
+            NativeIKEv2Session::Snapshot snapshot;
+            snapshot.authoritative = true;
+            snapshot.state = "failed";
+            snapshot.safeError = "775"; // Private hypothetical fixture, not a transport contract.
+            JsonTranslator translator;
+            require(translator.load(QFileInfo(QString::fromUtf8(__FILE__)).dir().filePath("../assets/translations/ru.json")), "775 Russian catalog");
+            for (bool russian : {false, true}) {
+                if (russian) QCoreApplication::installTranslator(&translator);
+                window.showNativeSnapshot(snapshot);
+                const QString expected = russian
+                    ? QString::fromUtf8("Соединение завершилось с ошибкой Windows 775. Локальная причина неизвестна.")
+                    : QString("Connection failed with Windows error 775. The local cause is unknown.");
+                const QString text = window.nativeStatusLabel_->text();
+                require(text.contains(expected), "775 explicitly localized with unknown local cause");
+                for (const auto &unsupported : {QString("EAP"), QString("password"), QString("server rejection"),
+                        QString::fromUtf8("парол"), QString::fromUtf8("отказ сервер")})
+                    require(!text.contains(unsupported, Qt::CaseInsensitive), "775 makes no authentication diagnosis");
+                if (russian) QCoreApplication::removeTranslator(&translator);
+            }
+            snapshot.authoritative = false;
+            window.showNativeSnapshot(snapshot);
+            require(!window.nativeStatusLabel_->text().contains("775")
+                && window.connectionLabel_->text().startsWith("Connection state is unknown."),
+                "stale 775 never becomes an authoritative outcome");
+            snapshot.authoritative = true;
+            snapshot.safeError = "raw diagnostic EAP password server rejection";
+            window.showNativeSnapshot(snapshot);
+            require(!window.nativeStatusLabel_->text().contains(snapshot.safeError)
+                && window.nativeStatusLabel_->text().contains("The native operation could not be completed."),
+                "unknown diagnostic uses generic fallback");
+            require(fixture.calls.size() == calls && fixture.launches == 0 && window.nativeOwnerBlocked_
+                && !window.connectButton_->isEnabled(), "rendering never dispatches or readmits");
+        }
         for (int scenario = 0; scenario < 3; ++scenario) {
             MainWindow reviewWindow;
             require(reviewWindow.nativeUnavailableReason().contains("Core/Desktop"), "concrete approval reason");
