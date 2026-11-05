@@ -244,13 +244,13 @@ if(EXISTS "${BIMERON_CORE_EXECUTABLE}")
 endif()
 
 if(WIN32)
+    # Test targets share the GUI output directory. Every test executable must be
+    # named *-test so this rule keeps it and its linker byproducts out of the MSI.
     install(DIRECTORY "$<TARGET_FILE_DIR:bimeron-desktop>/"
         DESTINATION .
         USE_SOURCE_PERMISSIONS
         PATTERN "core-update*" EXCLUDE
-        PATTERN "profile-vless-test*" EXCLUDE
-        PATTERN "developer-mode-test*" EXCLUDE
-        PATTERN "offline-ikev2-failure-test*" EXCLUDE)
+        PATTERN "*-test*" EXCLUDE)
     set(CMAKE_INSTALL_SYSTEM_RUNTIME_DESTINATION ".")
     set(CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS_SKIP TRUE)
     include(InstallRequiredSystemLibraries)

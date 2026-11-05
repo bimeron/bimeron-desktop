@@ -233,7 +233,7 @@ The `stage/windows-amd64` or `stage/windows-arm64` tree is the source of the MSI
 - `THIRD_PARTY_NOTICES.txt`.
 - `MONOCYPHER-LICENSE.txt` and `MINIZ-LICENSE.txt`.
 
-The install rule excludes `core-update-test.exe`, `core-update.lib`, `profile-vless-test.exe`, `developer-mode-test.exe`, and `offline-ikev2-failure-test.exe` from the MSI even though they share the Visual Studio output directory with the GUI. Use a fresh `stage/upgrade-windows-*` prefix for local upgrade-test packages so previously staged test artifacts cannot survive an incremental install.
+The install rule excludes `core-update.lib` and every file matching `*-test*` (all test executables, such as `core-update-test.exe`, `developer-mode-test.exe`, `profile-vless-test.exe`, `geodata-download-test.exe`, `geodata-selection-test.exe` and `offline-ikev2-failure-test.exe`, plus any linker byproducts) from the MSI even though they share the Visual Studio output directory with the GUI. Name every new test target `*-test` so this rule covers it; no shipped file may match that pattern. Use a fresh `stage/upgrade-windows-*` prefix for local upgrade-test packages so previously staged test artifacts cannot survive an incremental install.
 
 Wintun is not downloaded during installation or application launch: the required `wintun.dll` is included in the MSI in advance. ARM64 MSI uses the DLL from the ARM64 core release archive.
 
