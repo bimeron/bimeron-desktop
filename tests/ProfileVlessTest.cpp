@@ -6,6 +6,7 @@
 #include <QCryptographicHash>
 #include "GeoDataSelection.h"
 #include "ProfileStore.h"
+#include "QtPlatformPreflight.h"
 #include "CoreDiagnostic.h"
 #include "RoutingCompatibility.h"
 
@@ -1776,6 +1777,7 @@ int main(int argc, char **argv) {
     require(!routingHasSection("# [IKEv2]\n; [IKEv2]\nName = \"[IKEv2]\"\n", "IKEv2"));
     require(routingHasSection(QString(QChar::ByteOrderMark) + " [IKEv2]\n", "IKEv2"));
 
+    if (!QtPlatformPreflight::requestedPlatformAvailable()) return 1;
     QApplication app(argc, argv);
     geoSiteClassificationTest();
     {

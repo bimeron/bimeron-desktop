@@ -1,6 +1,7 @@
 #include "CoreClient.h"
 #include "DevelopmentCore.h"
 #include "MainWindow.h"
+#include "QtPlatformPreflight.h"
 #include <QApplication>
 #include <QComboBox>
 #include <QElapsedTimer>
@@ -124,6 +125,7 @@ int main(int argc, char **argv) {
         state.write(std::strcmp(argv[2], "start") == 0 ? "4" : "1");
         return 0;
     }
+    if (!QtPlatformPreflight::requestedPlatformAvailable()) return 1;
     QApplication app(argc, argv);
     app.setQuitOnLastWindowClosed(false);
     QTemporaryDir temporary;
