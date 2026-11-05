@@ -6,6 +6,7 @@
 #include <QScrollArea>
 #include <QPlainTextEdit>
 #include <QClipboard>
+#include <QMimeData>
 #include <QPointer>
 #include <QCloseEvent>
 #include <QSystemTrayIcon>
@@ -1219,25 +1220,56 @@ struct ConnectionManagementTest {
                 }
                 require(paste, "Paste control");
                 require(fields[1]->isHidden() && fields[0]->echoMode() == QLineEdit::Normal, "Name initially hidden and URI visible");
-                const QString previous = QApplication::clipboard()->text();
-                QApplication::clipboard()->setText("unsupported clipboard");
-                QCoreApplication::processEvents();
-                require(!paste->isVisible(), "Unsupported clipboard hides Paste");
+                // The native clipboard is shared with every process in the session. Snapshot the
+                // user's content and restore it before any failure, because require() aborts.
+                QMimeData *previous = new QMimeData;
+                if (const QMimeData *current = QApplication::clipboard()->mimeData()) {
+                    if (current->hasImage()) previous->setImageData(current->imageData());
+                    for (const QString &format : current->formats())
+                        if (format != "application/x-qt-image") previous->setData(format, current->data(format));
+                }
+                const auto restoreClipboard = [&] {
+                    if (previous) QApplication::clipboard()->setMimeData(previous);
+                    previous = nullptr;
+                };
+                const auto check = [&](bool condition, const char *message) {
+                    if (!condition) restoreClipboard();
+                    require(condition, message);
+                };
+                // Another process can hold the clipboard open, so the OS may reject a write.
+                // Retry within a deadline and report that apart from the dialog's reaction,
+                // which arrives asynchronously through QClipboard::dataChanged.
+                const auto setClipboard = [&](const QString &text) {
+                    QElapsedTimer timer;
+                    timer.start();
+                    qint64 lastWrite = -1000;
+                    const bool written = waitFor([&] {
+                        if (QApplication::clipboard()->text() == text) return true;
+                        if (timer.elapsed() - lastWrite >= 250) {
+                            QApplication::clipboard()->setText(text);
+                            lastWrite = timer.elapsed();
+                        }
+                        return false;
+                    }, 5000);
+                    check(written, "Fixture could not write the system clipboard; another process may hold it open");
+                };
+                setClipboard("unsupported clipboard");
+                check(waitFor([&] { return !paste->isVisible() && !paste->isEnabled(); }, 5000), "Unsupported clipboard hides Paste");
                 fields[0]->setText("typed text");
                 QCoreApplication::processEvents();
-                require(dialog->size() == original, "Typing retains geometry");
-                QApplication::clipboard()->setText("https://example.invalid:443");
-                QCoreApplication::processEvents();
-                require(paste->isEnabled() && paste->isVisible(), "Supported clipboard shows Paste");
+                check(dialog->size() == original, "Typing retains geometry");
+                setClipboard("https://example.invalid:443");
+                check(waitFor([&] { return paste->isEnabled() && paste->isVisible(); }, 5000), "Supported clipboard shows Paste");
                 paste->click();
                 QCoreApplication::processEvents();
-                require(dialog->width() == original.width() && dialog->height() > original.height(), "Valid URI reveals name without width change");
-                require(fields[1]->isVisible() && fields[1]->y() < fields[0]->y(), "Name appears above URI");
+                check(fields[0]->text() == "https://example.invalid:443", "Paste fills the URI field");
+                check(dialog->width() == original.width() && dialog->height() > original.height(), "Valid URI reveals name without width change");
+                check(fields[1]->isVisible() && fields[1]->y() < fields[0]->y(), "Name appears above URI");
                 fields[0]->setText("ssh://alice@example.invalid");
                 QCoreApplication::processEvents();
-                require(fields[1]->isVisible() && dialog->width() == original.width(), "SSH retains name and dialog width");
-                require(dialog->findChildren<QLineEdit *>().size() == 4, "SSH identity and known hosts retained");
-                QApplication::clipboard()->setText(previous);
+                check(fields[1]->isVisible() && dialog->width() == original.width(), "SSH retains name and dialog width");
+                check(dialog->findChildren<QLineEdit *>().size() == 4, "SSH identity and known hosts retained");
+                restoreClipboard();
                 dialog->reject();
             });
             window.addProfile();
