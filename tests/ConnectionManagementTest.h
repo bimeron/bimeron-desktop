@@ -1836,6 +1836,7 @@ struct ConnectionManagementTest {
                 if (scenario == 2) require(QDir().mkdir(directory.filePath("profiles.json")), "index write failure fixture");
                 window.validationExecutable_ = available ? QCoreApplication::applicationFilePath() : directory.filePath("missing-core");
                 bool submitted = false;
+                bool submitPending = false;
                 bool errorShown = false;
                 bool cancelling = false;
                 QTimer timer;
@@ -1851,7 +1852,9 @@ struct ConnectionManagementTest {
                         }
                         if (!discarded) message->accept();
                     } else if (auto *editor = qobject_cast<ProfileEditorDialog *>(QApplication::activeModalWidget())) {
-                        if (cancelling) return;
+                        // Ticks that piled up while the editor opened may run before the
+                        // queued Save click; wait until that click has actually happened.
+                        if (cancelling || submitPending) return;
                         if (submitted) {
                             require(errorShown && editor->findChild<QLineEdit *>("windowsProfile")->text() == "Fixture", "failed save preserves draft");
                             cancelling = true;
@@ -1861,8 +1864,12 @@ struct ConnectionManagementTest {
                             editor->findChild<QLineEdit *>("windowsProfile")->setText("Fixture");
                             editor->findChild<QLineEdit *>("nativeServerName")->setText("vpn.invalid");
                             submitted = true;
+                            submitPending = true;
                             auto *save = editor->findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Save);
-                            QTimer::singleShot(0, save, &QPushButton::click);
+                            QTimer::singleShot(0, save, [&submitPending, save] {
+                                submitPending = false;
+                                save->click();
+                            });
                         }
                     }
                 });
