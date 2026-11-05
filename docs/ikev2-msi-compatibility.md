@@ -234,3 +234,54 @@ The fixture contains 81 columns and 378 representative rows. No installer sessio
 or action API is used. Generated Python caches remain untracked: automatic command
 policy rejected their cleanup. They are not deliverables and must not be committed.
 Source authenticity, installed state and runtime maintenance safety remain unproved.
+
+## Bounded historical-artifact follow-up (2026-11-05)
+
+### Scope and acceptance
+
+This documentation-only follow-up checks for additional saved historical inputs
+without repeating the six-hash inventory. Accept either a new exact source
+identity suitable for the existing read-only utility, or an explicit missing-input
+report with the inspected paths and exclusions. No new tool code is justified
+without a concrete artifact the existing utility cannot inventory.
+
+The isolated audit checkout is `audit/ikev2-historical-packages`, starting clean
+at `e26e2f71d723ce20b6631e583452da44545500ab`, equal to the local
+`feat/ikev2-maintenance-compatibility` base. T3 binding confirms this path and
+codex_petr / gpt-6.1-sol / medium. Other worktrees are restricted to committed
+sources by the current task; their ignored artifacts are outside this follow-up.
+No active Core installation-contract checkout or lab state may be inspected.
+
+Acceptance requires bounded path checks, existing stdlib tests, explicit static
+limits and a whitespace/diff review. No runtime implementation, installer action,
+installed-product/cache query, helper execution, network, VM or service operation
+belongs to this follow-up. Native eligibility remains false.
+
+### Result and missing evidence
+
+The audit checkout has no `dist`, `stage`, `build/msi-inventory` or `.tools/core`
+path. Its committed tree contains no `.msi`, `.mst` or `.msp` files. No additional
+artifact was available inside these permitted bounds, so no new source hash,
+provenance, schema, action sequence or embedded-helper identity can be reported.
+The preceding six identities and their authored action/schema findings remain
+prior committed evidence, not fresh reinspection results. No new deduplicated
+identity was added and no MSI database API was called.
+
+Precisely missing here are historical 0.1.x source MSI bytes, saved installed-cache
+MSI bytes, transforms/patches with their application order and base bindings, and
+historical helper bytes bound to exact packages. Documentation mentions versions
+0.1.0 through 0.1.5 but does not supply those bytes or authenticate a release.
+The sanitized schema-1 fixture is parser evidence, not an additional package or
+an effective installed-state snapshot. No claim of machine-wide artifact absence
+is made: other worktree artifacts, Windows Installer cache and user data were not
+searched. There were no downloads or recursive user-data searches.
+
+Existing five focused tests pass with `python -B -m unittest discover -s tests
+-p test_msi_inventory.py` and again with `python -B -O -m unittest discover -s
+tests -p test_msi_inventory.py`. These check fixture structure/refusal and current
+package definitions without installer execution. No code or supported packaging
+flow changed; product build/package matrix, benchmarks and profiling are not
+applicable to this documentation-only result. Static inventory cannot establish
+runtime harmlessness, native eligibility, lifecycle closure or successful IKEv2.
+The supplied error 775 remains unresolved and error 668 normal cleanup failed;
+neither outcome was retested here. Native product operation remains OFF.
