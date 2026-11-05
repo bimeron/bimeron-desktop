@@ -1,5 +1,6 @@
 #include "GeoIPLabels.h"
 #include "ProfileEditorDialog.h"
+#include "FormRowVisibility.h"
 #include "GeoSitePicker.h"
 #include <QSettings>
 #include <QCryptographicHash>
@@ -523,6 +524,91 @@ static void parameterForms(const QString &directory) {
     conflict.findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Save)->click();
     require(blocked && conflict.result() != QDialog::Accepted);
     require(conflict.configText().contains("WSPath = /retained"));
+}
+
+static void formRowVisibility() {
+    // On Qt < 6.4.3 the editor's row-visibility helper re-inserts hidden rows to
+    // avoid QTBUG-109237. It must keep row order, roles, label buddies, parents,
+    // and visibility intact across layout passes in a height-for-width form.
+    // The memory error itself depends on allocator layout; nativeRegressions()
+    // exercises the editor sequence that corrupted the heap on Qt 6.4.2.
+    QWidget page;
+    auto *form = new QFormLayout(&page);
+    auto *notice = new QLabel(QStringLiteral("A long word-wrapped notice keeps this form height-for-width."));
+    notice->setWordWrap(true);
+    form->addRow(notice);
+    QList<QLineEdit *> fields;
+    for (int i = 0; i < 8; ++i) {
+        fields.append(new QLineEdit);
+        form->addRow(QStringLiteral("Field %1").arg(i), fields.last());
+    }
+    auto *button = new QPushButton(QStringLiteral("Action"));
+    form->addRow(button);
+    QList<QWidget *> labels;
+    for (QLineEdit *field : fields) labels.append(form->labelForField(field));
+    // Start without a visible height-for-width item, as the packet editor does.
+    setFormRowVisible(form, notice, false);
+    page.resize(320, 480);
+    page.show();
+    QApplication::processEvents();
+    const auto settle = [&](int width) {
+        page.resize(width, 480);
+        form->activate();
+        QApplication::processEvents();
+    };
+    const auto verify = [&](const QList<bool> &visible) {
+        require(form->rowCount() == 10);
+        QFormLayout::ItemRole role;
+        int row = -1;
+        form->getWidgetPosition(notice, &row, &role);
+        require(row == 0 && role == QFormLayout::SpanningRole);
+        form->getWidgetPosition(button, &row, &role);
+        require(row == 9 && role == QFormLayout::SpanningRole);
+        for (int i = 0; i < fields.size(); ++i) {
+            form->getWidgetPosition(fields[i], &row, &role);
+            require(row == i + 1 && role == QFormLayout::FieldRole);
+            require(form->labelForField(fields[i]) == labels[i]);
+            require(qobject_cast<QLabel *>(labels[i])->buddy() == fields[i]);
+            require(fields[i]->parentWidget() == &page && labels[i]->parentWidget() == &page);
+        }
+        for (int r = 0; r < form->rowCount(); ++r) {
+            require(form->isRowVisible(r) == visible[r]);
+            QLayoutItem *item = form->itemAt(r, r == 0 || r == 9 ? QFormLayout::SpanningRole : QFormLayout::FieldRole);
+            require(item && item->widget() && item->widget()->isVisible() == visible[r]);
+        }
+    };
+    QList<bool> visible(10, true);
+    visible[0] = false;
+    verify(visible);
+    for (int width : {320, 280}) {
+        setFormRowVisible(form, notice, true);
+        visible[0] = true;
+        for (int r = 1; r < 10; ++r) {
+            setFormRowVisible(form, r, false);
+            visible[r] = false;
+        }
+        settle(width);
+        verify(visible);
+        for (int r = 1; r < 10; r += 2) {
+            setFormRowVisible(form, r, true);
+            visible[r] = true;
+        }
+        settle(width + 20);
+        verify(visible);
+        setFormRowVisible(form, button, false);
+        visible[9] = false;
+        setFormRowVisible(form, fields[1], true);
+        visible[2] = true;
+        settle(width - 20);
+        verify(visible);
+        for (int r = 1; r < 10; ++r) {
+            setFormRowVisible(form, r, true);
+            visible[r] = true;
+        }
+        settle(width);
+        verify(visible);
+        require(fields.last()->geometry().bottom() < button->geometry().top());
+    }
 }
 
 static void nativeRegressions(const QString &directory) {
@@ -1866,6 +1952,7 @@ int main(int argc, char **argv) {
     }
     routingHostRegressions(temporary.path());
     parameterForms(temporary.path());
+    formRowVisibility();
     nativeRegressions(temporary.path());
     preservationRegressions(temporary.path());
     sshProfiles(temporary.path());
