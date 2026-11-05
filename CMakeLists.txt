@@ -170,8 +170,14 @@ if(BUILD_TESTING)
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/ikev2-error-draft-v1.json"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/ikev2-error-raw-addendum-v1.json")
     # Standard-library checks for the optional offline MSI inventory utility.
-    # Python is not a build or packaging dependency, so a missing interpreter only skips this test.
-    find_package(Python3 COMPONENTS Interpreter QUIET)
+    # Python is not a build or packaging dependency, so a missing interpreter only skips this test
+    # unless BIMERON_REQUIRE_PYTHON_TESTS is ON (CI sets it so the test cannot silently disappear).
+    option(BIMERON_REQUIRE_PYTHON_TESTS "Fail configuration when Python tests cannot be registered" OFF)
+    if(BIMERON_REQUIRE_PYTHON_TESTS)
+        find_package(Python3 COMPONENTS Interpreter REQUIRED)
+    else()
+        find_package(Python3 COMPONENTS Interpreter QUIET)
+    endif()
     if(Python3_Interpreter_FOUND)
         add_test(NAME msi-inventory-test
             COMMAND "${Python3_EXECUTABLE}" -B -m unittest discover -s tests -p test_msi_inventory.py

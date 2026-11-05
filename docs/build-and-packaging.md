@@ -334,7 +334,8 @@ parser is not wired into Transport, Session, UI or capabilities.
 
 `msi-inventory-test` runs the standard-library unit tests for
 `scripts/msi_inventory.py` against saved projection fixtures. It needs a Python 3
-interpreter found by CMake (GitHub's Ubuntu 24.04 and Windows runners provide one),
+interpreter found by CMake (GitHub's Ubuntu 24.04 and Windows runners provide one;
+CI requires it with `BIMERON_REQUIRE_PYTHON_TESTS=ON`),
 opens no MSI database and adds no package payload; see
 [Optional offline MSI inventory](#optional-offline-msi-inventory).
 
@@ -1502,7 +1503,9 @@ Run `python -B -m unittest discover -s tests -p test_msi_inventory.py` for focus
 checks. CTest registers the same command as `msi-inventory-test` (source-tree
 working directory, no bytecode) when CMake finds a Python 3 interpreter; otherwise
 configuration prints a status message and skips only this test, because Python is
-not a build or packaging dependency. The checks use saved fixtures and pass on
+not a build or packaging dependency. CI configures with
+`-DBIMERON_REQUIRE_PYTHON_TESTS=ON`, which turns a missing interpreter into a
+configuration error so the test cannot silently drop out of CI. The checks use saved fixtures and pass on
 Linux and Windows. See [scope and observed artifacts](ikev2-msi-compatibility.md); this procedure
 does not replace release/runtime acceptance or establish installed/cache state.
 
