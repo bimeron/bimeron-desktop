@@ -3650,7 +3650,8 @@ void MainWindow::updateCoreAvailability() {
              serviceObservation_ == ServiceObservation::Running ? tr("Running") : serviceObservation_ == ServiceObservation::Stopped ? tr("Stopped") : serviceObservation_ == ServiceObservation::Missing ? tr("Not installed") : tr("Not established"),
              ready ? tr("Responding") : tr("Not established")));
     if (repairRefresh_) repairRefresh_->setEnabled(!busy);
-    if (!ready) {
+    // A native owner snapshot is the authoritative connection presentation.
+    if (!ready && !nativeOwnerBlocked_) {
         connectionLabel_->setText(startupPreparationPending_ || availabilityVerificationDeadline_
             ? tr("Preparing connection…") : tr("Could not prepare connection"));
         connectionLabel_->setStyleSheet(themedStyle(startupPreparationPending_ || availabilityVerificationDeadline_
