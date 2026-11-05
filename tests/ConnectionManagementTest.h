@@ -2338,6 +2338,8 @@ struct ConnectionManagementTest {
         require(retainedProfile.open(QIODevice::ReadOnly) && retainedProfile.readAll() == wrapped, "service rejection preserves profile bytes");
         require(window.log_->toPlainText().contains("OUTER_SENTINEL"), "service rejection retains supplied diagnostic detail");
 
+        // The selection checks below need row 0 to stay an unsupported packet profile.
+        write(window.profiles_[0].path, "[Profile]\nName = Unsupported\n[AccessKey]\nType = future\n");
         const int nativeStarts = starts;
         // Native profiles remain displayable but can never use packet lifecycle paths.
         const QString nativePath = directory.filePath("native.conf");
@@ -2437,10 +2439,13 @@ struct ConnectionManagementTest {
         const quint64 beforeDevelopmentChange = window.connectionGeneration_;
         window.development_->select("relative-invalid-core");
         require(window.connectionGeneration_ > beforeDevelopmentChange
-                && window.connectionLabel_->text() == "Core unavailable"
+                && window.connectionLabel_->text() == "Could not prepare connection"
                 && window.developmentStatus_->text() == window.development_->status()
                 && !window.development_->busy() && window.development_->failed(),
                 "unbound Development failure still resets packet state and updates controls");
+        // Return to the system backend so the failed selection does not mask IPC diagnostics.
+        window.development_->select({});
+        require(!window.development_->busy() && !window.development_->failed(), "Development failure clears on system backend");
         window.core_.setEndpoint(server.serverName());
 
         window.repairSnapshotTest_ = [](ConnectionRepair::Snapshot &snapshot) {
