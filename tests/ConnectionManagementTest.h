@@ -2284,6 +2284,26 @@ struct ConnectionManagementTest {
         window.poll();
         require(waitFor(synchronized), "backend invalidation must resynchronize");
         require(starts == 2 && !window.validationProcess_, "stale CLI must not start after invalidation");
+        // Core failures invalidate from event callbacks; the discarded CLI must
+        // be deleted only after its exit is reported, never while still running.
+        write(window.profiles_[0].path, config + "# fixture-delay\n");
+        window.toggleConnection();
+        const QPointer<QProcess> discarded = window.validationProcess_;
+        require(discarded, "delayed validation must be running before callback invalidation");
+        static QtMessageHandler previousHandler = nullptr;
+        static int destroyedRunning = 0;
+        destroyedRunning = 0;
+        previousHandler = qInstallMessageHandler([](QtMsgType type, const QMessageLogContext &context, const QString &message) {
+            if (message.startsWith("QProcess: Destroyed while process")) ++destroyedRunning;
+            if (previousHandler) previousHandler(type, context, message);
+        });
+        QTimer::singleShot(0, &window, [&window] { window.invalidateConnection(); });
+        const bool reaped = waitFor([&] { return !discarded; });
+        qInstallMessageHandler(previousHandler);
+        require(reaped && destroyedRunning == 0, "callback invalidation must reap the discarded CLI before deleting it");
+        write(window.profiles_[0].path, config);
+        window.poll();
+        require(waitFor(synchronized) && starts == 2 && !window.validationProcess_, "callback invalidation must resynchronize");
 
         QSettings().setValue("app/autoConnectProfile", "removed-profile");
         window.autoConnectAttempted_ = false;

@@ -355,6 +355,33 @@ QIcon statusDot(const QColor &color) {
     return QIcon(canvas);
 }
 
+// Deleting a killed QProcess before Qt observes its exit warns "Destroyed while
+// process is still running" and blocks in waitForFinished(). Delete it only
+// after the exit (or failed start) has been reported.
+void discardProcess(QProcess *process, QObject *owner) {
+    process->disconnect(owner);
+    if (process->state() == QProcess::NotRunning) {
+        process->deleteLater();
+        return;
+    }
+    QObject::connect(process, &QProcess::finished, process, &QObject::deleteLater);
+    QObject::connect(process, &QProcess::errorOccurred, process, [process](QProcess::ProcessError error) {
+        if (error == QProcess::FailedToStart) process->deleteLater();
+    });
+    process->kill();
+}
+
+}
+
+MainWindow::~MainWindow() {
+    // Children are destroyed after this body; stop callbacks and reap running
+    // helpers here so their destructors never see a live process.
+    for (auto *process : findChildren<QProcess *>(QString(), Qt::FindDirectChildrenOnly)) {
+        if (process->state() == QProcess::NotRunning) continue;
+        process->disconnect();
+        process->kill();
+        process->waitForFinished();
+    }
 }
 
 MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), core_(this) {
@@ -1887,17 +1914,13 @@ void MainWindow::invalidateConnection(bool preserveServiceProbe) {
     sshAuthSupported_ = true;
     ++connectionGeneration_;
     if (validationProcess_) {
-        validationProcess_->disconnect(this);
-        validationProcess_->kill();
-        validationProcess_->deleteLater();
+        discardProcess(validationProcess_, this);
         validationProcess_ = nullptr;
     }
     core_.cancel();
     if (!preserveServiceProbe) ++serviceProbeGeneration_;
     if (!preserveServiceProbe && serviceStatusProcess_) {
-        serviceStatusProcess_->disconnect(this);
-        serviceStatusProcess_->kill();
-        serviceStatusProcess_->deleteLater();
+        discardProcess(serviceStatusProcess_, this);
         serviceStatusProcess_ = nullptr;
     }
     operation_.clear();
