@@ -1,5 +1,6 @@
 #include "ProfileEditorDialog.h"
 #include "HiDpiCheckBox.h"
+#include "FormRowVisibility.h"
 #include "HiDpiComboBox.h"
 #include "ProfileStore.h"
 #include "GeoDataSelection.h"
@@ -409,10 +410,10 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
         authName->clear(); authPassword->clear();
         ask->setChecked(true); remember->setChecked(false);
         authPassword->setEnabled(false);
-        authForm->setRowVisible(nativeAuthSource_, password);
-        for (QWidget *widget : QList<QWidget *>{authName, authPassword, ask, remember}) authForm->setRowVisible(widget, enter);
-        authForm->setRowVisible(identity, !password);
-        authForm->setRowVisible(choose, !password);
+        setFormRowVisible(authForm, nativeAuthSource_, password);
+        for (QWidget *widget : QList<QWidget *>{authName, authPassword, ask, remember}) setFormRowVisible(authForm, widget, enter);
+        setFormRowVisible(authForm, identity, !password);
+        setFormRowVisible(authForm, choose, !password);
         notice->setText(nativeAuthPreview_
             ? tr("UI draft only: credentials are not saved or sent.")
             : tr("Authentication setup is not available in this build. Saved Windows credentials have not been checked."));
@@ -787,11 +788,11 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
     tabs_->insertTab(tabs_->count() - 1, parameterPage_, tr("Parameters / ShadowTLS"));
     connect(trojanNetwork_, &QComboBox::currentTextChanged, this, [this] { refreshParameters(); });
     connect(shadowTls_, &QCheckBox::toggled, this, [this] { refreshParameters(); });
-    connect(keySource_, &QComboBox::currentIndexChanged, this, [this, browseCa] {
+    connect(keySource_, &QComboBox::currentIndexChanged, this, [this, form, browseCa] {
         refreshParameters();
-        browseCa->setVisible(keySource_->currentData() == "Explicitmasque");
+        setFormRowVisible(form, browseCa, keySource_->currentData() == "Explicitmasque");
     });
-    browseCa->setVisible(valueFor(text, "AccessKey", "Type") == "masque");
+    setFormRowVisible(form, browseCa, valueFor(text, "AccessKey", "Type") == "masque");
     connect(GeoDataSelection::instance(), &GeoDataSelection::catalogResult, this,
         [this](const QString &key, const QStringList &groups, const QString &error) {
             for (const QString &kind : {QString("geoip"), QString("geosite")}) if (datasetKeys_.value(kind) == key) {
@@ -834,8 +835,8 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
         const bool uriVless = (source == "VLESS" || source == "Key") && url.scheme() == "vless"
             && ProfileStore::connectionInfo("[AccessKey]\nKey = " + key_->text()).connectable;
         if (!explicitVless && !uriVless) return;
-        vlessForm->setRowVisible(vlessEndpoint, uriVless);
-        vlessForm->setRowVisible(vlessEncryption, uriVless);
+        setFormRowVisible(vlessForm, vlessEndpoint, uriVless);
+        setFormRowVisible(vlessForm, vlessEncryption, uriVless);
         if (uriVless) {
             const QUrlQuery query(url);
             const auto field = [&query](const QString &name) { return query.queryItemValue(name, QUrl::FullyDecoded); };
@@ -898,19 +899,19 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
             }
             vlessXhttpMode_->setCurrentIndex(index);
         }
-        vlessForm->setRowVisible(vlessFlow_, (network == "tcp" && reality) || !vlessFlow_->currentText().isEmpty());
-        vlessForm->setRowVisible(vlessPublicKey_, reality || !vlessPublicKey_->text().isEmpty());
-        vlessForm->setRowVisible(vlessShortId_, reality || !vlessShortId_->text().isEmpty());
-        vlessForm->setRowVisible(vlessSpiderX_, reality || !vlessSpiderX_->text().isEmpty());
-        vlessForm->setRowVisible(vlessAlpn_, !(network == "tcp" && reality));
-        vlessForm->setRowVisible(vlessPath_, network == "ws" || network == "xhttp");
-        vlessForm->setRowVisible(vlessHost_, network == "ws" || network == "xhttp");
-        vlessForm->setRowVisible(vlessEarlyData_, network == "ws" || vlessEarlyData_->value() != 0);
-        vlessForm->setRowVisible(vlessServiceName_, network == "grpc" || !vlessServiceName_->text().isEmpty());
-        vlessForm->setRowVisible(vlessAuthority_, network == "grpc" || !vlessAuthority_->text().isEmpty());
-        vlessForm->setRowVisible(vlessMultiMode_, network == "grpc" || vlessMultiModeConfigured_ || vlessMultiMode_->isChecked());
-        vlessForm->setRowVisible(vlessXhttpMode_, network == "xhttp");
-        vlessForm->setRowVisible(vlessExtra, uriVless && network == "xhttp" && !vlessExtra->toPlainText().isEmpty());
+        setFormRowVisible(vlessForm, vlessFlow_, (network == "tcp" && reality) || !vlessFlow_->currentText().isEmpty());
+        setFormRowVisible(vlessForm, vlessPublicKey_, reality || !vlessPublicKey_->text().isEmpty());
+        setFormRowVisible(vlessForm, vlessShortId_, reality || !vlessShortId_->text().isEmpty());
+        setFormRowVisible(vlessForm, vlessSpiderX_, reality || !vlessSpiderX_->text().isEmpty());
+        setFormRowVisible(vlessForm, vlessAlpn_, !(network == "tcp" && reality));
+        setFormRowVisible(vlessForm, vlessPath_, network == "ws" || network == "xhttp");
+        setFormRowVisible(vlessForm, vlessHost_, network == "ws" || network == "xhttp");
+        setFormRowVisible(vlessForm, vlessEarlyData_, network == "ws" || vlessEarlyData_->value() != 0);
+        setFormRowVisible(vlessForm, vlessServiceName_, network == "grpc" || !vlessServiceName_->text().isEmpty());
+        setFormRowVisible(vlessForm, vlessAuthority_, network == "grpc" || !vlessAuthority_->text().isEmpty());
+        setFormRowVisible(vlessForm, vlessMultiMode_, network == "grpc" || vlessMultiModeConfigured_ || vlessMultiMode_->isChecked());
+        setFormRowVisible(vlessForm, vlessXhttpMode_, network == "xhttp");
+        setFormRowVisible(vlessForm, vlessExtra, uriVless && network == "xhttp" && !vlessExtra->toPlainText().isEmpty());
     };
     connect(vlessNetwork_, &QComboBox::currentIndexChanged, this, updateVlessControls);
     connect(vlessSecurity_, &QComboBox::currentIndexChanged, this, updateVlessControls);
@@ -931,22 +932,22 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
 
         keyLabel->setText(file ? tr("File path") : tr("URL"));
         key_->setEnabled(true);
-        generalForm->setRowVisible(keyRow, !explicitKey && !explicitSocks5 && !explicitVless && !explicitSsh && !added);
+        setFormRowVisible(generalForm, keyRow, !explicitKey && !explicitSocks5 && !explicitVless && !explicitSsh && !added);
         key_->setVisible(file || keyRevealed_);
         browse->setVisible(file);
         reveal->setVisible(ss || ssconf || socks5 || source == "VLESS" || source == "Hysteria2" || source == "SSH" || source == "Key");
         reveal->setText(keyRevealed_ ? tr("Hide") : tr("Show"));
 
-        generalForm->setRowVisible(server_, showParameters);
-        generalForm->setRowVisible(port_, showParameters);
-        generalForm->setRowVisible(method_, ss || explicitKey);
-        generalForm->setRowVisible(username_, explicitSocks5 || explicitSsh || (added && source != "ExplicitTrojan"));
-        generalForm->setRowVisible(identityRow, ssh);
-        generalForm->setRowVisible(hostsRow, ssh);
-        generalForm->setRowVisible(password_, showParameters && !explicitVless && !explicitSsh);
-        generalForm->setRowVisible(prefix_, ss || explicitKey);
-        generalForm->setRowVisible(ssPlugin_, explicitKey);
-        generalForm->setRowVisible(ssPluginOpts_, explicitKey);
+        setFormRowVisible(generalForm, server_, showParameters);
+        setFormRowVisible(generalForm, port_, showParameters);
+        setFormRowVisible(generalForm, method_, ss || explicitKey);
+        setFormRowVisible(generalForm, username_, explicitSocks5 || explicitSsh || (added && source != "ExplicitTrojan"));
+        setFormRowVisible(generalForm, identityRow, ssh);
+        setFormRowVisible(generalForm, hostsRow, ssh);
+        setFormRowVisible(generalForm, password_, showParameters && !explicitVless && !explicitSsh);
+        setFormRowVisible(generalForm, prefix_, ss || explicitKey);
+        setFormRowVisible(generalForm, ssPlugin_, explicitKey);
+        setFormRowVisible(generalForm, ssPluginOpts_, explicitKey);
         for (auto *widget : {static_cast<QWidget *>(server_), static_cast<QWidget *>(port_), static_cast<QWidget *>(method_), static_cast<QWidget *>(username_), static_cast<QWidget *>(password_), static_cast<QWidget *>(prefix_)})
             widget->setEnabled(explicitKey || explicitSocks5 || explicitVless || explicitSsh || added);
         if (ss) applySs(key_->text());
@@ -1097,11 +1098,11 @@ QStringList ProfileEditorDialog::parameterFields() const {
 void ProfileEditorDialog::refreshParameters() {
     if (!parameterPage_) return;
     auto *form = qobject_cast<QFormLayout *>(parameters_.first()->parentWidget()->layout());
-    findChild<QPushButton *>("browseParameterCa")->setVisible(keySource_->currentData() == "Explicitmasque");
+    setFormRowVisible(form, findChild<QPushButton *>("browseParameterCa"), keySource_->currentData() == "Explicitmasque");
     const auto fields = parameterFields();
     for (auto it = parameters_.cbegin(); it != parameters_.cend(); ++it)
-        form->setRowVisible(it.value(), fields.contains(it.key()) || !it.value()->text().isEmpty());
-    form->setRowVisible(trojanNetwork_, keySource_->currentData() == "ExplicitTrojan");
+        setFormRowVisible(form, it.value(), fields.contains(it.key()) || !it.value()->text().isEmpty());
+    setFormRowVisible(form, trojanNetwork_, keySource_->currentData() == "ExplicitTrojan");
     shadowName_->setEnabled(shadowTls_->isChecked());
     shadowPassword_->setEnabled(shadowTls_->isChecked());
     const QString source = keySource_->currentData().toString();
@@ -1588,15 +1589,15 @@ void ProfileEditorDialog::assessRepresentation() {
     }
     tabs_->setCurrentIndex(currentTab);
     auto *general = qobject_cast<QFormLayout *>(name_->parentWidget()->layout());
-    for (int row = 0; row < general->rowCount(); ++row) general->setRowVisible(row, true);
+    for (int row = 0; row < general->rowCount(); ++row) setFormRowVisible(general, row, true);
     for (int i = 1; i < tabs_->count() - 1; ++i) tabs_->setTabVisible(i, true);
     if (refreshControls_) refreshControls_();
-    general->setRowVisible(windowsProfile_, native_);
-    general->setRowVisible(nativeServerName_, native_);
-    general->setRowVisible(nativeKillSwitch_, native_);
-    general->setRowVisible(nativeMode_, native_);
-    general->setRowVisible(nativeProfileActions_, native_);
-    general->setRowVisible(nativeAuthentication_, native_);
+    setFormRowVisible(general, windowsProfile_, native_);
+    setFormRowVisible(general, nativeServerName_, native_);
+    setFormRowVisible(general, nativeKillSwitch_, native_);
+    setFormRowVisible(general, nativeMode_, native_);
+    setFormRowVisible(general, nativeProfileActions_, native_);
+    setFormRowVisible(general, nativeAuthentication_, native_);
     nativeAuthMethod_->setCurrentIndex(0);
     nativeAuthSource_->setCurrentIndex(0);
     refreshNativeAuthentication_();
@@ -1604,7 +1605,7 @@ void ProfileEditorDialog::assessRepresentation() {
         for (int row = 0; row < general->rowCount(); ++row) {
             auto *item = general->itemAt(row, QFormLayout::FieldRole);
             auto *widget = item ? item->widget() : nullptr;
-            general->setRowVisible(row, widget == name_ || widget == windowsProfile_
+            setFormRowVisible(general, row, widget == name_ || widget == windowsProfile_
                 || widget == nativeServerName_ || widget == nativeKillSwitch_ || widget == nativeMode_
                 || widget == nativeProfileActions_ || widget == nativeAuthentication_);
         }
