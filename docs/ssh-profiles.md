@@ -72,7 +72,7 @@ no new transport or Core API is required. Keep shared regression fixtures.
 Stage 7 completes independently on top of stages 1-4; stage 5 integrates SSH
 branches afterward. Stage 5 completion is not a prerequisite for stage 7.
 Ownership recommendations require coordination before overlapping implementation.
-ShadowTLS remains protected Raw; no wrapper editor is added here.
+Explicit SSH profiles expose ShadowTLS in Protocol; URI sources remain protected Raw. See [parameter forms](parameter-forms-and-shadowtls.md).
 
 ## Acceptance and verification
 

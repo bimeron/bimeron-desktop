@@ -133,7 +133,7 @@ requires a selected CLI accepting the profile; it does not imply safe visual sav
 | Hysteria2/hy2 | Yes | Conditional; bundle CLI rejects it | URI source; no explicit form |
 | VMess, Trojan, AnyTLS, TUIC, HTTP/HTTPS, Naive, MASQUE | Yes, with target Core validation | Conditional; old bundle CLI rejects them | Protected Raw; source and protocol labels recognized; no new visual forms |
 | SSH | Yes, with target Core validation | Conditional; old bundle CLI rejects it | URI and explicit forms, identity/known_hosts and transient authentication; see SSH profiles |
-| ShadowTLS section | Only as part of a profile, not a standalone URI | Conditional; bundle CLI rejects it | Not represented; current warning-based save risks dropping the section |
+| ShadowTLS section | Only as part of a profile, not a standalone URI | Selected CLI validates; installed service must independently support it | Compatible explicit SS/VLESS/Trojan/Naive H2/SSH forms; other sources retain protected Raw |
 | Native IKEv2 | No | Rejected by current AccessKey import requirement | No form; outside the packet connection flow |
 
 Common URI rules are protocol-specific: SOCKS5/HTTP require explicit ports;

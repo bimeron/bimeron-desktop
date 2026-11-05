@@ -1469,6 +1469,76 @@ and does not run or replace editor geometry acceptance. Normal CTest continues
 to exercise the full editor/manager fixtures. The fixture anchors the picker to the primary screen. Use fresh `order-screen-*`
 basenames and read `.catalog.json` for measured DPR. Build/package flow is unchanged.
 
+### Repair broker development payload
+
+The one-session repair implementation adds an independently installed broker path:
+`repair/bimeron-repair.exe` under the Windows MSI installation directory, and
+`/usr/libexec/bimeron/repair/bimeron-repair` on Linux. MSI records its installation
+directory in HKLM `Software\Bimeron Network\Repair`; desktop discovery never uses
+HKCU, PATH or an environment override and requires protected executable ancestry.
+Windows includes the verified bundle's Wintun DLL and license beside the broker.
+Manual protected development staging must also create this machine registration
+when a separate GUI in `build/` is expected to discover the staged broker.
+Copying the protected files alone does not register their location. The GUI
+revalidates the registered executable and its ancestry before use.
+
+For isolated development staging, set `BIMERON_REPAIR_BROKER` to a reviewed native
+Core build with the repair-session API, and `BIMERON_REPAIR_BROKER_SHA256` to its
+reviewed digest. Configuration rejects missing or mismatched payloads. Select the
+matching architecture explicitly; configuration verifies PE machine or ELF64 machine identifiers and rejects a mismatch.
+The current pinned release does not supply this broker. Leaving the option empty
+retains the existing package payload and does not provide one-click repair support.
+A release must pin reviewed broker bytes for all four targets before claiming that
+support. No package or installed-service validation has been performed for this
+new payload layout. A wholly absent protected installation cannot bootstrap from
+an unsigned writable download: the missing trust root is an explicit failure.
+
+Existing older MSI/DEB installations have no separate broker. Discovery alone does
+not retrofit them. Missing-adjacent-helper repair is available only after a package
+containing the separate protected broker has been installed. A copied GUI can
+use that installation; a machine with only an older package still lacks the
+required broker trust root. This remains an unmet migration requirement.
+
+### Embedded protected-GUI repair bootstrap
+
+When BIMERON_REPAIR_BROKER and its reviewed hash are configured, the target broker
+is also embedded in the GUI resource. Windows embeds the package Wintun DLL and
+`WINTUN-LICENSE.txt`; service installation requires both adjacent to the broker.
+If the separate broker is missing, a protected GUI containing that resource can
+be elevated once with the same bounded repair-session arguments. Its headless
+entry runs before QApplication, settings and plugins. It provisions embedded
+bytes into a digest-named protected directory, refuses mismatched existing bytes,
+and launches the broker without another elevation. Linux exec preserves PID;
+Windows retains the child and authenticates ancestry, creation time, protected
+image and embedded digest before sending consent. Cache directories currently
+remain across upgrades; no garbage collection is claimed.
+
+This requires a protected updated GUI built with the reviewed payload. Old GUIs
+and wholly writable portable installations cannot supply that entry point.
+The existing Ed25519 update public key is available; Authenticode publisher
+bootstrap trust is a distinct requirement. Cached older MSI repair cannot add
+files absent from that MSI, and cached databases need not contain payload cabinets.
+See [Microsoft installer source documentation](https://devblogs.microsoft.com/setup/resolving-prompts-for-source/).
+The existing release pins are unchanged. Real UAC/polkit acceptance is outstanding.
+
+Independent bootstrap negative fixtures: `python tests/RepairPayloadNegativeTest.py`
+executes the production CMake validation block in temporary script mode with inert
+PE/ELF header bytes. Twenty cases cover absent payload, wrong digest, wrong target
+architecture, truncated headers, and bytes changed after the reviewed digest was
+computed, for both supported architectures on both formats. No fixture is executed
+or embedded. This is configure-gate evidence, not native executable validation or
+verification/use race protection. There are no production test switches.
+
+Outstanding audit concerns: Linux bootstrap closes its verified file before
+`execl(path)`, so these tests do not establish rejection of concurrent privileged
+path replacement. Windows `authenticatedChild` closes its temporary child handle
+before returning; retained identity through consent needs separate review and
+native process tests. Alternate-credential UAC attribution, PID reuse, retained
+handle lifetime, and one-dispatch behavior across failure/close/reopen remain
+unproven by this fixture. Real positive embedding awaits fresh reviewed four-target
+Core paths, hashes, revision and dirty qualification; real UAC/polkit acceptance
+remains pending. No package or release validation is implied.
+
 ## Optional offline MSI inventory
 
 The supported build/package flow is unchanged. With standard-library Python on

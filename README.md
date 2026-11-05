@@ -117,6 +117,9 @@ The profile dialog accepts `ss://`, `ssconf://`, `socks5://`, `vless://`, `hyste
 
 See [Shadowsocks extensions](docs/shadowsocks-profiles.md) for SS2022 and embedded plugin editor support and Core requirements.
 
+For other platform implementations, see the [GUI profile editing contract](docs/gui-profile-editing-contract.md)
+for field formatting, disabled drafts, preservation and save/reopen acceptance cases.
+
 SSH integration targets Core v0.3.0-beta.1; see [SSH profiles](docs/ssh-profiles.md)
 for Desktop behavior, the older bundled Core limitation and verification scope.
 See [Protocol URI import](docs/protocol-uri-import.md) for stage 5 URI coverage, Raw editing and target Core requirements.

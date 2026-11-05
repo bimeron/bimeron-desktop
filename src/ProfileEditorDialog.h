@@ -20,7 +20,7 @@ class ProfileEditorDialog final : public QDialog {
 public:
     explicit ProfileEditorDialog(const QString &text, const QJsonObject &capabilities, QWidget *parent = nullptr,
                                  std::function<bool(const QString &, QString *)> validateRaw = {},
-                                 const QString &coreExecutable = {}, const QString &profilePath = {});
+                                 const QString &coreExecutable = {}, const QString &profilePath = {}, bool create = false);
     ~ProfileEditorDialog() override;
     QString configText() const;
 
@@ -76,6 +76,7 @@ private:
     QCheckBox *shadowTls_ = nullptr;
     QLineEdit *shadowName_ = nullptr;
     QLineEdit *shadowPassword_ = nullptr;
+    QLabel *shadowGuidance_ = nullptr;
     QWidget *parameterPage_ = nullptr;
 
     bool native_ = false;
@@ -125,6 +126,8 @@ private:
     QComboBox *defaultRoute_ = nullptr;
     QTableWidget *rules_ = nullptr;
     QPlainTextEdit *raw_ = nullptr;
+    bool creating_ = false;
+    bool freshDraft_ = false;
     bool rawDirty_ = false;
     bool hasUnknownSettings_ = false;
     bool rawOnly_ = false;

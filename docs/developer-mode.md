@@ -53,6 +53,26 @@ Use a small explicit state model: System, Switching, Local, and Failed. Keep bac
 
 Abrupt GUI termination or OS failure cannot guarantee cleanup using the current foreground-daemon contract. A subsequent normal GUI launch must still hide Development and select the system service; it must not adopt or kill an unrelated leftover daemon. Report a conflict when service startup fails. Parent-death supervision requiring Core changes is outside this first implementation and must be documented as a limitation, not claimed as solved.
 
+Interrupted switches now leave an atomic, versioned `core-recovery.json` record
+in per-user application data. It records only transition identity, stage and the
+original service state; it contains no executable authority, profile or credentials.
+The record is written before stopping a service or launching a local daemon and
+removed only after normal cleanup/restoration succeeds. Persistence failure blocks
+further transition changes. Normal startup detects a leftover record and blocks
+backend control until explicit recovery, without unlocking Development.
+
+Recovery never adopts a journal PID/path or sends shutdown to a leftover process.
+The user must close any remaining local daemon. Endpoint absence and a free VPN
+lock do not prove network cleanup. Interrupted recovery requires separately
+confirmed Emergency network recovery; only a successful trusted Core `recover`
+command persists the cleanup-confirmed stage before service restoration. Failure
+or cancellation preserves the journal and blocks startup. Originally stopped/absent
+services are not started; invalid journals default to leaving the service stopped.
+Linux can reconcile an already restored healthy service without interrupting its
+VPN: query live systemd MainPID, require that PID as the OS IPC peer for compatible
+hello and authoritative healthy status with a stable instance, and recheck MainPID
+before clearing the stale journal. Unknown or foreign peers remain blocked.
+
 An elevated service command that outlives its two-minute watchdog remains tracked, with a visible waiting status and switching disabled until it exits. The GUI does not kill a privileged helper mid-operation or abandon its handle and start a conflicting rollback. Startup probes and daemon readiness/cleanup have bounded timers. On Linux an already-root process launches directly; ordinary GUI sessions use polkit with an explicit control-owner UID. Windows elevation under a different account is rejected and may require manually closing the launched console daemon before retrying.
 
 After a failed transition, the error remains visible and normal polling stays suspended until the developer explicitly retries or applies System service. This prevents a local-core failure from silently turning into a connection through the system service.

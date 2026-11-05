@@ -1,6 +1,7 @@
 #include "CoreUpdate.h"
 #include "CoreUpdater.h"
 #include "TrustedCore.h"
+#include "RepairBootstrap.h"
 #include "monocypher-ed25519.h"
 #include "miniz.h"
 
@@ -31,6 +32,10 @@ int main(int argc, char **argv) {
         for (int i = 3; i < argc; ++i) received.append(QString::fromLocal8Bit(argv[i]));
         return record.open(QIODevice::WriteOnly) && record.write(QJsonDocument(received).toJson()) > 0 ? 0 : 1;
     }
+    require(!RepairBootstrap::available(), "test binary must not embed privileged payload");
+    require(!RepairBootstrap::authenticatedChild(0, 0), "bootstrap rejects absent parent/process identity");
+    require(!TrustedCore::protectedDirectory("relative/path"), "bootstrap rejects relative output directory");
+    require(!TrustedCore::protectedDirectory(QCoreApplication::applicationFilePath()), "bootstrap rejects regular file as directory");
     CoreUpdater configured;
     const QByteArray configuredKey = QByteArray::fromBase64(BIMERON_CORE_UPDATE_PUBLIC_KEY);
     require(configured.available() == (configuredKey.size() == 32), "configured signing key availability is wrong");

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "CoreClient.h"
+#include "ConnectionRepair.h"
 #include "CoreUpdater.h"
 #include "ProfileStore.h"
 #include "DevelopmentCore.h"
@@ -30,6 +31,8 @@ class QTimer;
 class QToolButton;
 class QComboBox;
 class QLineEdit;
+class QLocalSocket;
+class QMessageBox;
 
 class MainWindow final : public QMainWindow {
     Q_OBJECT
@@ -43,6 +46,7 @@ protected:
 
 private:
     friend struct ConnectionManagementTest;
+    friend struct StartupPreparationTest;
     QWidget *profilesPage();
     QWidget *settingsPage();
     QWidget *logPage();
@@ -60,7 +64,8 @@ private:
     QString nativeUnavailableReason() const;
     void addProfile();
     void createNativeProfile();
-    void importProfile();
+    bool importProfile(const QString &source);
+    bool createProfile();
     void removeProfile();
     void moveProfile(int delta);
     void toggleConnection();
@@ -86,7 +91,8 @@ private:
     bool controlBlocked() const;
     bool cleanDisconnected() const;
     bool canActivateProfile(int row) const;
-    void invalidateConnection();
+    void invalidateConnection(bool preserveServiceProbe = false);
+    quint64 serviceProbeGeneration_ = 0;
     void resetMeasurements();
     void connectionFailure(const QString &command, CoreClient::Failure reason, const QString &message);
     void completeSynchronization();
@@ -94,11 +100,96 @@ private:
     void updateCoreIdentity();
     void requestShutdown();
     void saveDiagnostics();
-    bool runServiceCommand(const QStringList &arguments, const QString &description);
+    bool runServiceCommand(const QStringList &arguments, const QString &description, bool startup = false);
     bool coreUpdatePrerequisite();
     void pollServiceCommand();
     void finishServiceCommand(int exitCode, const QString &details = {});
     void refreshServiceStatus();
+    void requestServiceStart();
+    bool manualStartInspection_ = false;
+    DevelopmentCore::StartBlock serviceStartBlock_ = DevelopmentCore::StartBlock::None;
+    void updateCoreAvailability();
+    void openCoreManagement();
+    void startRepairSession();
+    void connectRepairSession();
+    void readRepairSession();
+    bool requestRepairConsent(const QString &kind);
+    QPointer<QMessageBox> repairConsentDialog_;
+    QSet<QString> repairConsentRequests_;
+    QLocalSocket *repairSocket_ = nullptr;
+    QString repairNonce_;
+    QByteArray repairInput_;
+    bool repairSession_ = false;
+    bool repairSessionDone_ = false;
+    bool repairSessionOK_ = false;
+    bool repairDisruption_ = false;
+    bool repairNetworkRecovery_ = false;
+    int repairEventCount_ = 0;
+    using RecoveryAction = ConnectionRepair::Action;
+    ConnectionRepair::Snapshot repairSnapshot_;
+    std::function<void(ConnectionRepair::Snapshot &)> repairSnapshotTest_;
+    ConnectionRepair::Diagnosis repairDiagnosis_{ConnectionRepair::Cause::Checking, RecoveryAction::None, ConnectionRepair::Phase::Diagnosing};
+    bool startAfterRecovery_ = false;
+    bool restoreAndStart_ = false;
+    bool repairStopFailed_ = false;
+    QStringList repairCommand_;
+    std::function<void(const QStringList &)> repairCommandTest_;
+    std::function<void(std::function<void(DevelopmentCore::StartInspection)>)> repairInspectionTest_;
+    bool repairCommandPending_ = false;
+    int repairWatchdogMs_ = 120000;
+    qint64 ipcObservedAt_ = 0;
+    QJsonObject repairReport() const;
+    qint64 repairCommandStarted_ = -1;
+    bool repairWatchdogExpired_ = false;
+    QJsonObject failedProbe_;
+    QString probeTestMode_;
+    QString probeCategory_;
+    QString probeDiagnostic_;
+    bool serviceStateLogged_ = false;
+    ConnectionRepair::Service loggedServiceState_ = ConnectionRepair::Service::Unknown;
+    QString serviceStateCode_;
+    QString loggedServiceStateCode_;
+    bool repairVerificationPending_ = false;
+    qint64 probeObservedAt_ = 0;
+    qint64 probeDurationMs_ = 0;
+    int probeExitCode_ = 0;
+    QString repairFailure_;
+    QStringList repairHistory_;
+    void saveRepairReport();
+    QLabel *repairFindings_ = nullptr;
+    QPushButton *repairRefresh_ = nullptr;
+    RecoveryAction recoveryAction_ = RecoveryAction::None;
+    QDialog *coreManagement_ = nullptr;
+    QPushButton *coreManagementClose_ = nullptr;
+    void retryCoreAvailability();
+    void beginAvailabilityVerification(bool preserveAutoConnect = false);
+    void advanceStartupPreparation(std::function<void()> start = {});
+    void finishStartupPreparation(bool success, const QString &diagnostic = {});
+    bool startupPreparationPending_ = false;
+    bool startupPreparationFailed_ = false;
+    bool startupStartAttempted_ = false;
+    bool startupIpcChecked_ = false;
+    bool startupServiceCommand_ = false;
+    bool servicePermissionCanceled_ = false;
+    qint64 startupDeadline_ = 0;
+    QString startupDiagnostic_;
+    qint64 availabilityVerificationDeadline_ = 0;
+    bool availabilityVerificationFailed_ = false;
+    bool verifyServiceCommand_ = false;
+    bool verifyInterruptedRecovery_ = false;
+    using ServiceObservation = ConnectionRepair::Service;
+    ServiceObservation serviceObservation_ = ServiceObservation::Unknown;
+    CoreClient::Failure availabilityFailure_ = CoreClient::Failure::Transport;
+    QLabel *coreManagementTitle_ = nullptr;
+    QLabel *coreManagementDetails_ = nullptr;
+    QLabel *settingsAvailability_ = nullptr;
+    QPushButton *settingsRetry_ = nullptr;
+    QPushButton *availabilityDetails_ = nullptr;
+    QPushButton *settingsNavigation_ = nullptr;
+    QPushButton *profilesNavigation_ = nullptr;
+    QPushButton *interruptedRecoveryButton_ = nullptr;
+    qint64 nextServiceInspection_ = 0;
+    qint64 serviceTransitionSince_ = -1;
     void refreshCoreAfterUpdate();
     void reportCoreUpdateResult(const QString &message);
     void recoverNetwork();
@@ -144,7 +235,7 @@ private:
     QMenu *trayMenu_ = nullptr;
     QAction *trayStatusAction_ = nullptr;
     QAction *trayTrafficAction_ = nullptr;
-    QString trayTraffic_ = tr("Traffic: —");
+    QString trayTraffic_ = tr("Traffic: РІР‚вЂќ");
     QStackedWidget *pages_ = nullptr;
     QString state_ = "unknown";
     QString activeFileProtocol_;
