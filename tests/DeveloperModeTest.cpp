@@ -331,6 +331,9 @@ int main(int argc, char **argv) {
         if (text.contains("fixture-delay")) QThread::msleep(200);
         return text.contains("fixture-reject") ? 1 : 0;
     }
+    // The fixture CLI behaves like a Core without the error catalog
+    // (`errors --json`), so the GUI keeps its legacy validation flow.
+    if (argc == 3 && std::strcmp(argv[1], "errors") == 0) return 1;
     if (argc == 2 && std::strcmp(argv[1], "version") == 0) {
         printf("integration-fixture\n");
         return 0;
