@@ -9,6 +9,9 @@
 #include "GeoIPLabels.h"
 #include "GeoSitePicker.h"
 #include "CoreDiagnostic.h"
+#include "CoreProblems.h"
+#include <QToolButton>
+#include <QTextBlock>
 #include <algorithm>
 #include <QApplication>
 #include <memory>
@@ -253,7 +256,7 @@ QCheckBox *ruleEnabled(QTableWidget *table, int row) {
 }
 
 ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject &capabilities, QWidget *parent,
-                                         std::function<bool(const QString &, QString *)> validateRaw,
+                                         std::function<bool(const QString &, CoreFailure *)> validateRaw,
                                          const QString &coreExecutable, const QString &profilePath, bool create)
     : QDialog(parent), coreExecutable_(coreExecutable), profilePath_(profilePath), capabilities_(capabilities),
       originalText_(text), validateRaw_(validateRaw) {
@@ -573,6 +576,7 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
     auto *network = new QWidget;
     auto *networkForm = new QFormLayout(network);
     interfaceName_ = new QLineEdit;
+    interfaceName_->setObjectName("interfaceName");
     mtu_ = new QSpinBox;
     mtu_->setRange(1280, 1500);
     dns_ = new QLineEdit;
@@ -741,19 +745,18 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
             QMessageBox::warning(this, tr("Error"), tr("SS2022 does not support Prefix. Clear Prefix before saving."));
             return;
         }
-        if (!native_ && !rawOnly_ && !rawDirty_ && !parameterError().isEmpty()) {
-            QMessageBox::warning(this, tr("Error"), parameterError());
-            return;
-        }
         const QString draft = configText();
-        QString error = (rawDirty_ || rawOnly_ || !bridgeReady_) ? QString() : bridgeError_;
-        if (error.isEmpty()) error = routingError();
-        if (!native_ && error.isEmpty() && validateRaw_ && !validateRaw_(draft, &error) && error.isEmpty())
-            error = tr("Core validation failed. The draft has been retained.");
-        if (!error.isEmpty()) {
-            QMessageBox box(QMessageBox::Warning, tr("Error"), safeCoreDiagnostic(error.toUtf8()), QMessageBox::Ok, this);
-            box.setTextFormat(Qt::PlainText);
-            box.exec();
+        const bool checkParameters = !native_ && !rawOnly_ && !rawDirty_;
+        CoreFailure failure;
+        failure.text = (rawDirty_ || rawOnly_ || !bridgeReady_) ? QString() : bridgeError_;
+        if (failure.text.isEmpty()) failure.text = routingError();
+        // Core problems name the exact field, so they take precedence over the
+        // editor's own combination check, which only reports a generic message.
+        if (!native_ && failure.text.isEmpty() && validateRaw_ && !validateRaw_(draft, &failure) && failure.isEmpty())
+            failure.text = tr("Core validation failed. The draft has been retained.");
+        if (failure.isEmpty() && checkParameters && !parameterError().isEmpty()) failure.text = parameterError();
+        if (!failure.isEmpty()) {
+            showProblems(failure);
             return;
         }
         if (configText() != originalText_
@@ -1899,13 +1902,10 @@ void ProfileEditorDialog::assessRepresentation() {
 
 bool ProfileEditorDialog::applyRaw() {
     const QString text = configText();
-    QString error;
-    if (!validateRaw_ || !validateRaw_(text, &error)) {
-        QMessageBox box(QMessageBox::Warning, tr("Error"), error.isEmpty()
-            ? tr("The selected Core CLI must validate this configuration before visual editing.")
-            : safeCoreDiagnostic(error.toUtf8()), QMessageBox::Ok, this);
-        box.setTextFormat(Qt::PlainText);
-        box.exec();
+    CoreFailure failure;
+    if (!validateRaw_ || !validateRaw_(text, &failure)) {
+        if (failure.isEmpty()) failure.text = tr("The selected Core CLI must validate this configuration before visual editing.");
+        showProblems(failure);
         return false;
     }
     freshDraft_ = false;
@@ -2367,4 +2367,230 @@ QDialog *ProfileEditorDialog::nativeConfirmation(QWidget *parent, const QString 
     }
     layout->addWidget(buttons);
     return dialog;
+}
+
+// --- Core problem presentation ------------------------------------------------
+// Maps Core problem locations (docs/ERRORS.MD in Core) to editor widgets. Several
+// widgets can represent one canonical field; the first visible one wins, then the
+// URI/key field that held the value, then the Raw config line.
+
+namespace {
+
+int tabOf(QTabWidget *tabs, QWidget *widget) {
+    for (int i = 0; tabs && widget && i < tabs->count(); ++i)
+        if (tabs->widget(i) == widget || tabs->widget(i)->isAncestorOf(widget)) return i;
+    return -1;
+}
+
+bool shownInEditor(QTabWidget *tabs, QWidget *widget) {
+    const int tab = tabOf(tabs, widget);
+    return tab >= 0 && tabs->isTabVisible(tab) && widget->isVisibleTo(tabs->widget(tab)) && widget->isEnabled();
+}
+
+} // namespace
+
+QWidget *ProfileEditorDialog::problemWidget(const CoreProblem &problem) const {
+    QMultiMap<QString, QWidget *> targets;
+    const auto add = [&targets](const QString &key, QWidget *widget) { if (widget) targets.insert(key, widget); };
+    // QMultiMap::values returns the most recently inserted value first, so insert
+    // generic fallbacks before protocol-specific widgets.
+    for (auto it = parameters_.cbegin(); it != parameters_.cend(); ++it) add("AccessKey." + it.key(), it.value());
+    add("Profile.Name", name_);
+    add("Interface.Mode", mode_);
+    add("Interface.Listen", listen_);
+    add("Interface.Name", interfaceName_);
+    add("Interface.MTU", mtu_);
+    add("Interface.DNS", dns_);
+    add("Interface.IPv6", ipv6_);
+    add("Interface.KillSwitch", killSwitch_);
+    add("Routing.Default", defaultRoute_);
+    add("AccessKey.Type", keySource_);
+    add("AccessKey.Server", server_);
+    add("AccessKey.Port", port_);
+    add("AccessKey.Method", method_);
+    add("AccessKey.Password", password_);
+    add("AccessKey.Username", username_);
+    add("AccessKey.Prefix", prefix_);
+    add("AccessKey.Plugin", ssPlugin_);
+    add("AccessKey.PluginOpts", ssPluginOpts_);
+    add("AccessKey.IdentityFile", sshIdentity_);
+    add("AccessKey.KnownHostsFile", sshKnownHosts_);
+    add("AccessKey.Network", trojanNetwork_);
+    add("AccessKey.ID", vlessId_);
+    add("AccessKey.Network", vlessNetwork_);
+    add("AccessKey.Security", vlessSecurity_);
+    add("AccessKey.Flow", vlessFlow_);
+    add("AccessKey.ServerName", vlessServerName_);
+    add("AccessKey.Fingerprint", vlessFingerprint_);
+    add("AccessKey.PublicKey", vlessPublicKey_);
+    add("AccessKey.ShortID", vlessShortId_);
+    add("AccessKey.SpiderX", vlessSpiderX_);
+    add("AccessKey.ALPN", vlessAlpn_);
+    add("AccessKey.WSPath", vlessPath_);
+    add("AccessKey.XHTTPPath", vlessPath_);
+    add("AccessKey.WSHost", vlessHost_);
+    add("AccessKey.XHTTPHost", vlessHost_);
+    add("AccessKey.WSEarlyData", vlessEarlyData_);
+    add("AccessKey.GRPCServiceName", vlessServiceName_);
+    add("AccessKey.GRPCAuthority", vlessAuthority_);
+    add("AccessKey.GRPCMultiMode", vlessMultiMode_);
+    add("AccessKey.XHTTPMode", vlessXhttpMode_);
+    add("ShadowTLS.ServerName", shadowName_);
+    add("ShadowTLS.Password", shadowPassword_);
+    add("IKEv2.WindowsProfile", windowsProfile_);
+    add("IKEv2.ServerName", nativeServerName_);
+    add("IKEv2.KillSwitch", nativeKillSwitch_);
+    QStringList keys{problem.fieldKey()};
+    for (const QString &related : problem.related) keys << problem.section + '.' + related;
+    for (const QString &key : keys)
+        for (QWidget *widget : targets.values(key))
+            if (shownInEditor(tabs_, widget)) return widget;
+    if (!problem.source.isEmpty() && shownInEditor(tabs_, key_)) return key_;
+    if (problem.section == "AccessKey" && problem.field.isEmpty() && shownInEditor(tabs_, key_)) return key_;
+    return nullptr;
+}
+
+QString ProfileEditorDialog::problemLabel(QWidget *widget) const {
+    if (!widget) return {};
+    if (auto *check = qobject_cast<QCheckBox *>(widget)) return check->text();
+    for (QWidget *parent = widget->parentWidget(); parent; parent = parent->parentWidget()) {
+        if (auto *form = qobject_cast<QFormLayout *>(parent->layout())) {
+            QWidget *field = widget;
+            while (field && field->parentWidget() != parent) field = field->parentWidget();
+            if (auto *label = qobject_cast<QLabel *>(form->labelForField(field)))
+                return label->text().remove('&').remove(QRegularExpression(QStringLiteral(":\\s*$"))).trimmed();
+            if (auto *label = qobject_cast<QLabel *>(form->labelForField(widget)))
+                return label->text().remove('&').remove(QRegularExpression(QStringLiteral(":\\s*$"))).trimmed();
+        }
+    }
+    return {};
+}
+
+void ProfileEditorDialog::markProblemField(QWidget *widget) {
+    if (!widget) return;
+    widget->setProperty("coreProblem", true);
+    widget->style()->unpolish(widget);
+    widget->style()->polish(widget);
+    const auto clear = [widget] {
+        widget->setProperty("coreProblem", false);
+        widget->style()->unpolish(widget);
+        widget->style()->polish(widget);
+    };
+    if (auto *edit = qobject_cast<QLineEdit *>(widget)) connect(edit, &QLineEdit::textEdited, widget, clear, Qt::SingleShotConnection);
+    else if (auto *combo = qobject_cast<QComboBox *>(widget)) connect(combo, &QComboBox::currentIndexChanged, widget, clear, Qt::SingleShotConnection);
+    else if (auto *spin = qobject_cast<QSpinBox *>(widget)) connect(spin, &QSpinBox::valueChanged, widget, clear, Qt::SingleShotConnection);
+    else if (auto *check = qobject_cast<QCheckBox *>(widget)) connect(check, &QCheckBox::toggled, widget, clear, Qt::SingleShotConnection);
+    else if (auto *text = qobject_cast<QPlainTextEdit *>(widget)) connect(text, &QPlainTextEdit::textChanged, widget, clear, Qt::SingleShotConnection);
+}
+
+void ProfileEditorDialog::focusProblem(const CoreProblem &problem) {
+    if (QWidget *widget = problemWidget(problem)) {
+        tabs_->setCurrentIndex(tabOf(tabs_, widget));
+        for (QWidget *parent = widget->parentWidget(); parent; parent = parent->parentWidget())
+            if (auto *scroll = qobject_cast<QScrollArea *>(parent)) { scroll->ensureWidgetVisible(widget); break; }
+        markProblemField(widget);
+        widget->setFocus(Qt::OtherFocusReason);
+        if (auto *edit = qobject_cast<QLineEdit *>(widget)) edit->selectAll();
+        return;
+    }
+    if (problem.rule > 0 && rules_ && shownInEditor(tabs_, rules_)) {
+        // Core numbers active rules only; disabled rows are not counted.
+        int active = 0;
+        for (int row = 0; row < rules_->rowCount(); ++row) {
+            if (!tableRule(row).enabled || ++active != problem.rule) continue;
+            tabs_->setCurrentIndex(tabOf(tabs_, rules_));
+            rules_->setCurrentCell(row, 2);
+            if (QWidget *target = rules_->cellWidget(row, 2)) {
+                markProblemField(target);
+                target->setFocus(Qt::OtherFocusReason);
+            }
+            return;
+        }
+    }
+    if (problem.line > 0 && raw_) {
+        tabs_->setCurrentIndex(tabs_->count() - 1);
+        const QTextBlock block = raw_->document()->findBlockByNumber(problem.line - 1);
+        if (block.isValid()) {
+            QTextCursor cursor(block);
+            cursor.movePosition(QTextCursor::EndOfBlock, QTextCursor::KeepAnchor);
+            raw_->setTextCursor(cursor);
+            raw_->centerCursor();
+        }
+        raw_->setFocus(Qt::OtherFocusReason);
+    }
+}
+
+void ProfileEditorDialog::showProblems(const CoreFailure &failure) {
+    if (failure.problems.isEmpty()) {
+        QMessageBox box(QMessageBox::Warning, tr("Error"), safeCoreDiagnostic(failure.text.toUtf8()), QMessageBox::Ok, this);
+        box.setTextFormat(Qt::PlainText);
+        box.exec();
+        return;
+    }
+    const CoreErrorCatalog catalog = CoreErrorCatalog::forExecutable(coreExecutable_);
+    QDialog dialog(this);
+    dialog.setObjectName("coreProblemDialog");
+    dialog.setWindowTitle(tr("Cannot save profile"));
+    auto *layout = new QVBoxLayout(&dialog);
+    auto *message = new QLabel;
+    message->setObjectName("coreProblemText");
+    message->setTextFormat(Qt::PlainText);
+    message->setWordWrap(true);
+    message->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    message->setMinimumWidth(420);
+    layout->addWidget(message);
+    // Secret values are masked; Show reveals the value from this editor only.
+    QWidget *secretWidget = nullptr;
+    QString secretValue;
+    bool revealed = false;
+    const CoreProblem &first = failure.problems.first();
+    QWidget *firstWidget = problemWidget(first);
+    if (catalog.isSecret(first.field) && first.value == "present") {
+        if (auto *edit = qobject_cast<QLineEdit *>(firstWidget)) { secretWidget = edit; secretValue = edit->text(); }
+    }
+    const auto render = [&] {
+        QStringList lines;
+        for (const auto &problem : failure.problems) {
+            QWidget *widget = problemWidget(problem);
+            QString label = problemLabel(widget);
+            if (label.isEmpty() && problem.rule > 0) label = tr("Rule %1").arg(problem.rule);
+            QString line = describeCoreProblem(problem, catalog, label);
+            if (revealed && &problem == &first && secretWidget) line.replace(coreSecretMask(), secretValue);
+            if (!widget && problem.rule == 0 && problem.line > 0) line += '\n' + tr("Line %1 of the profile.").arg(problem.line);
+            lines << line;
+        }
+        message->setText(lines.join("\n\n"));
+    };
+    render();
+    QStringList details;
+    for (const auto &problem : failure.problems) details << coreProblemDetails(problem);
+    auto *detailsText = new QPlainTextEdit(details.join("\n\n"));
+    detailsText->setObjectName("coreProblemDetails");
+    detailsText->setReadOnly(true);
+    detailsText->setMaximumHeight(120);
+    detailsText->setVisible(false);
+    layout->addWidget(detailsText);
+    auto *buttons = new QDialogButtonBox;
+    auto *detailsButton = buttons->addButton(tr("Details"), QDialogButtonBox::ActionRole);
+    detailsButton->setObjectName("coreProblemDetailsButton");
+    detailsButton->setCheckable(true);
+    connect(detailsButton, &QPushButton::toggled, detailsText, &QWidget::setVisible);
+    if (secretWidget) {
+        auto *show = buttons->addButton(tr("Show value"), QDialogButtonBox::ActionRole);
+        show->setObjectName("coreProblemReveal");
+        connect(show, &QPushButton::clicked, &dialog, [&, show] { revealed = !revealed; show->setText(revealed ? tr("Hide value") : tr("Show value")); render(); });
+    }
+    QPushButton *go = nullptr;
+    if (firstWidget || first.rule > 0 || first.line > 0) {
+        go = buttons->addButton(tr("Go to field"), QDialogButtonBox::AcceptRole);
+        go->setObjectName("coreProblemGo");
+        go->setDefault(true);
+    }
+    auto *close = buttons->addButton(QDialogButtonBox::Close);
+    close->setText(tr("Close"));
+    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    connect(close, &QPushButton::clicked, &dialog, &QDialog::reject);
+    layout->addWidget(buttons);
+    if (dialog.exec() == QDialog::Accepted && go) focusProblem(first);
+    else if (firstWidget) markProblemField(firstWidget);
 }

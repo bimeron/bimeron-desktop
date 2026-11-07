@@ -6,6 +6,8 @@
 #include <QMap>
 #include <functional>
 
+#include "CoreProblems.h"
+
 class QCheckBox;
 class QComboBox;
 class QLabel;
@@ -19,7 +21,7 @@ class ProfileEditorDialog final : public QDialog {
     Q_OBJECT
 public:
     explicit ProfileEditorDialog(const QString &text, const QJsonObject &capabilities, QWidget *parent = nullptr,
-                                 std::function<bool(const QString &, QString *)> validateRaw = {},
+                                 std::function<bool(const QString &, CoreFailure *)> validateRaw = {},
                                  const QString &coreExecutable = {}, const QString &profilePath = {}, bool create = false);
     ~ProfileEditorDialog() override;
     QString configText() const;
@@ -137,5 +139,11 @@ private:
     QString loadedText_;
     QString visualBaseline_;
     std::function<void()> refreshControls_;
-    std::function<bool(const QString &, QString *)> validateRaw_;
+    std::function<bool(const QString &, CoreFailure *)> validateRaw_;
+    // Problem presentation: maps Core locations to editor fields.
+    QWidget *problemWidget(const CoreProblem &problem) const;
+    QString problemLabel(QWidget *widget) const;
+    void showProblems(const CoreFailure &failure);
+    void focusProblem(const CoreProblem &problem);
+    void markProblemField(QWidget *widget);
 };

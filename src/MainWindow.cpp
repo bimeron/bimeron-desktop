@@ -484,6 +484,8 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), core_(this) {
         QComboBox[popupOpen="true"] { border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
         QLineEdit:hover, QComboBox:hover, QSpinBox:hover { border-color: #77aef4; }
         QLineEdit:focus, QComboBox:focus, QSpinBox:focus { border-color: #1677ff; }
+        QLineEdit[coreProblem="true"], QComboBox[coreProblem="true"], QSpinBox[coreProblem="true"], QPlainTextEdit[coreProblem="true"] { border: 1px solid #d13438; }
+        QCheckBox[coreProblem="true"] { color: #b42318; }
         QLineEdit:disabled, QComboBox:disabled, QSpinBox:disabled { color: #95a2b2; background: #edf1f5; border-color: #d6dee7; }
         QComboBox::drop-down { subcontrol-origin: padding; subcontrol-position: top right; width: 26px; border: 0; }
         QComboBox::down-arrow { image: url(:/icons/chevron-down.xpm); width: 9px; height: 5px; }
@@ -1272,7 +1274,8 @@ void MainWindow::editProfile(int row) {
     if (originalData.size() > 65536 || QString::fromUtf8(originalData).toUtf8() != originalData) {
         QMessageBox::warning(this, tr("Profile could not be opened"), tr("The profile must be valid UTF-8 and at most 64 KiB.")); return;
     }
-    const auto validateDraft = [this, row](const QString &text, QString *error) {
+    const auto validateDraft = [this, row](const QString &text, CoreFailure *failure) {
+        QString *error = failure ? &failure->text : nullptr;
         const QString prepared = GeoDataSelection::materialize(text, profiles_[row].path,
             validationExecutable_, GeoDataSelection::instance()->paths(), error);
         if (error && !error->isEmpty()) return false;
@@ -1282,7 +1285,7 @@ void MainWindow::editProfile(int row) {
         const QFileInfo profileInfo(profiles_[row].path);
         const QString temporary = profileInfo.dir().filePath(QString(".bimeron-validate-%1.conf").arg(QUuid::createUuid().toString(QUuid::WithoutBraces)));
         if (!ProfileStore::writeConfig(temporary, data, error)) return false;
-        const bool valid = validateConfig(temporary, error);
+        const bool valid = validateConfig(temporary, failure);
         if (!QFile::remove(temporary)) {
             if (error) *error = tr("Cannot remove the protected validation draft; the original profile was retained.");
             return false;
@@ -1297,8 +1300,9 @@ void MainWindow::editProfile(int row) {
         if (!error.isEmpty()) { QMessageBox::warning(&dialog, tr("Error"), error); continue; }
         const QByteArray data = prepared.toUtf8();
         if (data == originalData) break;
-        if (!validateDraft(prepared, &error)) {
-            QMessageBox::warning(&dialog, tr("Error"), error, QMessageBox::Ok);
+        CoreFailure failure;
+        if (!validateDraft(prepared, &failure)) {
+            QMessageBox::warning(&dialog, tr("Error"), failure.text, QMessageBox::Ok);
             continue;
         }
         QFile current(profiles_[row].path);
@@ -1574,10 +1578,11 @@ void MainWindow::createNativeProfile() {
         return;
     }
     const QString draftPath = directory.filePath("draft.conf");
-    const auto validateDraft = [this, draftPath](const QString &text, QString *error) {
+    const auto validateDraft = [this, draftPath](const QString &text, CoreFailure *failure) {
+        QString *error = failure ? &failure->text : nullptr;
         if (!ProfileStore::importReferencesSafe(text.toUtf8(), error)
             || !ProfileStore::writeConfig(draftPath, text.toUtf8(), error)) return false;
-        const bool valid = validateConfig(draftPath, error);
+        const bool valid = validateConfig(draftPath, failure);
         if (!QFile::remove(draftPath)) {
             if (error) *error = tr("Cannot remove the protected validation draft; the original profile was retained.");
             return false;
@@ -1590,8 +1595,10 @@ void MainWindow::createNativeProfile() {
         QString error;
         const QString text = GeoDataSelection::materialize(editor.configText(), draftPath,
             validationExecutable_, GeoDataSelection::instance()->paths(), &error, directory.path());
-        if (!error.isEmpty() || !validateDraft(text, &error)
-            || !ProfileStore::writeConfig(draftPath, text.toUtf8(), &error)) {
+        CoreFailure failure;
+        if (error.isEmpty() && !validateDraft(text, &failure))
+            error = failure.text.isEmpty() ? tr("Core validation failed. The draft has been retained.") : failure.text;
+        if (!error.isEmpty() || !ProfileStore::writeConfig(draftPath, text.toUtf8(), &error)) {
             QMessageBox::warning(&editor, tr("Cannot save profile"), error);
             continue;
         }
@@ -1623,9 +1630,10 @@ bool MainWindow::createProfile() {
     QTemporaryDir directory;
     if (!directory.isValid()) { QMessageBox::warning(this, tr("Error"), tr("Cannot create a protected import draft directory.")); return false; }
     const QString path = directory.filePath("New profile.conf");
-    const auto validate = [this, path](const QString &text, QString *error) {
+    const auto validate = [this, path](const QString &text, CoreFailure *failure) {
+        QString *error = failure ? &failure->text : nullptr;
         if (!ProfileStore::writeConfig(path, text.toUtf8(), error)) return false;
-        return ProfileStore::importReferencesSafe(text.toUtf8(), error) && validateConfig(path, error);
+        return ProfileStore::importReferencesSafe(text.toUtf8(), error) && validateConfig(path, failure);
     };
     ProfileEditorDialog editor({}, capabilities_, this, validate, validationExecutable_, path, true);
     while (editor.exec() == QDialog::Accepted) {
@@ -1668,13 +1676,14 @@ bool MainWindow::importProfile(const QString &source) {
             error + "\n\n" + tr("The original file is unchanged. Correct this draft before importing. Relative database paths must be made portable explicitly or replaced with host-local absolute paths."));
         if (!correctionDirectory.isValid()) { QMessageBox::warning(this, tr("Import failed"), tr("Cannot create a protected import draft directory.")); return false; }
         correctionPath = correctionDirectory.filePath("corrected.conf");
-        const auto validateImport = [this, correctionPath, source](const QString &text, QString *details) {
+        const auto validateImport = [this, correctionPath, source](const QString &text, CoreFailure *failure) {
+            QString *details = failure ? &failure->text : nullptr;
             const QString prepared = GeoDataSelection::materialize(text, source,
                 validationExecutable_, GeoDataSelection::instance()->paths(), details, QFileInfo(correctionPath).absolutePath());
             if (details && !details->isEmpty()) return false;
             if (!ProfileStore::importReferencesSafe(prepared.toUtf8(), details)) return false;
             if (!ProfileStore::writeConfig(correctionPath, prepared.toUtf8(), details)) return false;
-            const bool valid = validateConfig(correctionPath, details);
+            const bool valid = validateConfig(correctionPath, failure);
             if (!QFile::remove(correctionPath)) {
                 if (details) *details = tr("Cannot remove the protected validation draft; the original profile was retained.");
                 return false;
@@ -1687,8 +1696,10 @@ bool MainWindow::importProfile(const QString &source) {
             if (draft.exec() != QDialog::Accepted) { QFile::remove(correctionPath); return false; }
             const QString prepared = GeoDataSelection::materialize(draft.configText(), source,
                 validationExecutable_, GeoDataSelection::instance()->paths(), &error, correctionDirectory.path());
-            if (error.isEmpty() && validateImport(prepared, &error)
-                && ProfileStore::writeConfig(correctionPath, prepared.toUtf8(), &error)) break;
+            CoreFailure failure;
+            const bool valid = error.isEmpty() && validateImport(prepared, &failure);
+            if (!valid && error.isEmpty()) error = failure.text;
+            if (valid && ProfileStore::writeConfig(correctionPath, prepared.toUtf8(), &error)) break;
             QMessageBox::warning(&draft, tr("Import needs correction"), error);
         }
         importSource = correctionPath;
@@ -2500,7 +2511,12 @@ void MainWindow::handleStatus(const QJsonObject &status) {
     const QString lastError = status.value("LastError").toString();
     if (lastError != lastCoreError_) {
         lastCoreError_ = lastError;
-        if (!lastError.isEmpty()) appendLog(tr("Core: %1").arg(safeCoreDiagnostic(lastError.toUtf8())));
+        if (!lastError.isEmpty()) {
+            // Connection failures are catalog codes; show the human text and keep the code.
+            const QString text = coreCodeText(errorCatalog(), lastError);
+            appendLog(text.isEmpty() ? tr("Core: %1").arg(safeCoreDiagnostic(lastError.toUtf8()))
+                                     : tr("Core: %1 (%2)").arg(text, lastError));
+        }
     }
     if (state_ == "failed" && previousState != "failed" && lastError == "access_key_unavailable")
         QMessageBox::warning(this, tr("Key unavailable"),
@@ -2574,8 +2590,18 @@ void MainWindow::updateProfileAppearance() {
 void MainWindow::showCoreError(const QJsonObject &response) {
     const QString code = response.value("error").toString();
     const QHash<QString, QString> messages{{"unsupported_protocol", tr("The GUI and core protocol versions are incompatible")}, {"absolute_config_path_required", tr("Core requires an absolute profile path")}, {"invalid_configuration", tr("The profile configuration is invalid")}, {"session_already_running", tr("A session is already running")}, {"session_start_failed", tr("Failed to start the session")}, {"session_stop_failed", tr("Failed to fully clean up network settings")}, {"daemon_shutting_down", tr("Core is shutting down")}};
-    const QString message = messages.value(code, tr("Core error: %1").arg(code.left(16384)));
-    const QString details = safeCoreDiagnostic(response.value("detail").toString().toUtf8());
+    const CoreErrorCatalog catalog = errorCatalog();
+    const QString catalogText = coreCodeText(catalog, code);
+    QString message = !catalogText.isEmpty() ? catalogText : messages.value(code, tr("Core error: %1").arg(code.left(16384)));
+    QString details = safeCoreDiagnostic(response.value("detail").toString().toUtf8());
+    // A rejected start explains the configuration problem; see Core docs/ERRORS.MD.
+    const QList<CoreProblem> problems = parseCoreProblems(response.value("problems"));
+    QStringList problemDetails;
+    for (const auto &problem : problems) {
+        message += "\n\n" + describeCoreProblem(problem, catalog, coreFieldLabel(problem));
+        problemDetails << coreProblemDetails(problem);
+    }
+    if (!problemDetails.isEmpty()) details = QStringList{details, problemDetails.join("\n\n")}.filter(QRegularExpression(".+")).join("\n\n");
     appendLog(QStringList{message, details}.filter(QRegularExpression(".+")).join("\n"));
     QMessageBox box(QMessageBox::Warning, tr("Error"), message, QMessageBox::Ok, this);
     box.setTextFormat(Qt::PlainText);
@@ -2609,6 +2635,21 @@ bool MainWindow::prepareSharedGeoData(const QString &path, QString *error) {
 }
 
 bool MainWindow::validateConfig(const QString &path, QString *error) const {
+    CoreFailure failure;
+    const bool valid = validateConfig(path, &failure);
+    if (error) *error = failure.text;
+    return valid;
+}
+
+CoreErrorCatalog MainWindow::errorCatalog() const {
+    return CoreErrorCatalog::forExecutable(validationExecutable_);
+}
+
+bool MainWindow::validateConfig(const QString &path, CoreFailure *failure) const {
+    CoreFailure local;
+    if (!failure) failure = &local;
+    failure->clear();
+    QString *error = &failure->text;
     QFile profile(path);
     if (!profile.open(QIODevice::ReadOnly)) { if (error) *error = profile.errorString(); return false; }
     const QByteArray bytes = profile.read(64 * 1024 + 1);
@@ -2622,9 +2663,13 @@ bool MainWindow::validateConfig(const QString &path, QString *error) const {
     }
     QProcess process;
     process.setProgram(executable);
+    // Cores that publish an error catalog return structured problems from
+    // validate --json for every profile; older cores keep the previous flow.
+    const CoreErrorCatalog catalog = errorCatalog();
     const bool geoValidation = QRegularExpression(R"((?m)^\s*Geo(?:IP|Site)\s*=)").match(QString::fromUtf8(bytes)).hasMatch();
-    process.setArguments(geoValidation ? QStringList{"validate", "--json", QFileInfo(path).absoluteFilePath()}
-                                       : QStringList{"validate", QFileInfo(path).absoluteFilePath()});
+    const bool structured = catalog.available();
+    process.setArguments(geoValidation || structured ? QStringList{"validate", "--json", QFileInfo(path).absoluteFilePath()}
+                                                     : QStringList{"validate", QFileInfo(path).absoluteFilePath()});
     process.setProcessChannelMode(QProcess::SeparateChannels);
     process.start();
     if (!process.waitForStarted(5000) || !process.waitForFinished(20000)) {
@@ -2632,7 +2677,20 @@ bool MainWindow::validateConfig(const QString &path, QString *error) const {
         if (error) *error = tr("Core did not finish validating the profile in time");
         return false;
     }
-    if (geoValidation && process.exitStatus() == QProcess::NormalExit && process.exitCode() == 0) {
+    if (structured && process.exitStatus() == QProcess::NormalExit && process.exitCode() == 0) {
+        const QByteArray output = process.readAllStandardOutput();
+        const auto result = QJsonDocument::fromJson(output.left(256 * 1024)).object();
+        if (result.value("version").toInt() == 1 && result.contains("problems")) {
+            failure->problems = parseCoreProblems(result.value("problems"));
+            if (failure->problems.isEmpty() && result.value("error").toString().isEmpty()) return true;
+            QStringList lines;
+            for (const auto &problem : failure->problems) lines << describeCoreProblem(problem, catalog, coreFieldLabel(problem));
+            *error = lines.isEmpty() ? tr("Core rejected the configuration. Check the key and profile settings.") : lines.join('\n');
+            return false;
+        }
+        const QString conflict = geoDataValidationError(output);
+        if (!conflict.isEmpty()) { *error = conflict; return false; }
+    } else if (geoValidation && process.exitStatus() == QProcess::NormalExit && process.exitCode() == 0) {
         const QString conflict = geoDataValidationError(process.readAllStandardOutput());
         if (!conflict.isEmpty()) { if (error) *error = conflict; return false; }
     }

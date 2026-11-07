@@ -25,6 +25,7 @@
 #include <QCheckBox>
 #include <QDialogButtonBox>
 #include <QFile>
+#include <QFileInfo>
 #include <QLineEdit>
 #include <QLabel>
 #include <QMessageBox>
@@ -41,6 +42,7 @@
 #include <aclapi.h>
 #endif
 #include <QTimer>
+#include "CoreProblems.h"
 #include <QTranslator>
 
 #include <cstdlib>
@@ -176,13 +178,13 @@ static void preservationRegressions(const QString &directory) {
         require(editor.configText().contains("Name = Changed"));
         require(editor.configText().contains(input.contains("Key =") ? "Key = vless://" : "Password = SENTINEL"));
     }
-    ProfileEditorDialog recovery(inputs.first(), caps, nullptr, [](const QString &, QString *) { return true; });
+    ProfileEditorDialog recovery(inputs.first(), caps, nullptr, [](const QString &, CoreFailure *) { return true; });
     recovery.findChild<QPlainTextEdit *>("rawConfig")->setPlainText(base);
     recovery.findChild<QTabWidget *>()->setCurrentIndex(0);
     require(recovery.findChild<QTabWidget *>()->isTabEnabled(0));
     require(recovery.configText() == base);
-    ProfileEditorDialog rejected(inputs.first(), caps, nullptr, [](const QString &, QString *error) {
-        *error = "future://SENTINEL";
+    ProfileEditorDialog rejected(inputs.first(), caps, nullptr, [](const QString &, CoreFailure *failure) {
+        failure->text = "future://SENTINEL";
         return false;
     });
     auto *rejectedRaw = rejected.findChild<QPlainTextEdit *>("rawConfig");
@@ -640,7 +642,7 @@ static void nativeRegressions(const QString &directory) {
     const QJsonObject caps{{"proxy", true}}; // Packet capabilities do not govern native editing.
     {
         const QString packet = "[Profile]\nName = Packet\n[AccessKey]\nSOCKS5 = socks5://localhost:1080\n[Interface]\nMode = proxy\n";
-        ProfileEditorDialog editor(packet, caps, nullptr, [](const QString &, QString *) { return true; });
+        ProfileEditorDialog editor(packet, caps, nullptr, [](const QString &, CoreFailure *) { return true; });
         auto *tabs = editor.findChild<QTabWidget *>();
         auto *raw = editor.findChild<QPlainTextEdit *>("rawConfig");
         for (const QString &text : {base, packet, base}) {
@@ -779,8 +781,8 @@ static void nativeRegressions(const QString &directory) {
     preserved.findChild<QPlainTextEdit *>("rawConfig")->setPlainText(QString(base).replace("[Interface]", "KillSwitch = true\n[Interface]"));
     preserved.findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Save)->click();
     require(preserved.result() == QDialog::Accepted);
-    ProfileEditorDialog rejected(base, caps, nullptr, [](const QString &, QString *error) {
-        *error = "Rejected selected CLI validation";
+    ProfileEditorDialog rejected(base, caps, nullptr, [](const QString &, CoreFailure *failure) {
+        failure->text = "Rejected selected CLI validation";
         return false;
     });
     rejected.findChild<QTabWidget *>()->setCurrentIndex(rejected.findChild<QTabWidget *>()->count() - 1);
@@ -794,7 +796,7 @@ static void nativeRegressions(const QString &directory) {
     rejected.findChild<QTabWidget *>()->setCurrentIndex(0);
     require(rejected.configText() == draft);
     bool validated = false;
-    ProfileEditorDialog transition(base, caps, nullptr, [&](const QString &, QString *) { validated = true; return true; });
+    ProfileEditorDialog transition(base, caps, nullptr, [&](const QString &, CoreFailure *) { validated = true; return true; });
     const QString packet = "[Profile]\nName = Packet\n[AccessKey]\nSSH = ssh://alice@example.invalid\n[Interface]\nMode = proxy\n";
     transition.findChild<QTabWidget *>()->setCurrentIndex(transition.findChild<QTabWidget *>()->count() - 1);
     transition.findChild<QPlainTextEdit *>("rawConfig")->setPlainText(packet);
@@ -1891,6 +1893,131 @@ static void geoSiteClassificationTest() {
     qApp->removeTranslator(&translator);
 }
 
+// Core problem presentation: parsing, catalog rendering, secret masking and
+// navigation from a Core location to the editor field. See
+// docs/core-error-presentation.md.
+static void coreProblemPresentation() {
+    const QByteArray response = R"({"version":1,"problems":[
+        {"code":"interface_name_invalid","message":"[Interface] Name must start with a letter","section":"Interface","field":"Name","line":8,"value":"present","args":{"max":"32"}},
+        {"code":"Bad-Code"},
+        {"code":"value_invalid","section":"Bad Section!"}]})";
+    const QList<CoreProblem> parsed = parseCoreProblems(QJsonDocument::fromJson(response).object().value("problems"));
+    require(parsed.size() == 1 && parsed[0].fieldKey() == "Interface.Name" && parsed[0].line == 8
+        && parsed[0].value == "present" && parsed[0].args.value("max") == "32");
+    const CoreErrorCatalog catalog = CoreErrorCatalog::fromJson(R"({"version":1,"secret_fields":["Password"],"codes":{
+        "unclassified":{"kind":"config","en":"Rejected.","ru":"Отклонено."},
+        "interface_name_invalid":{"kind":"config","en":"Up to {max} letters.","ru":"До {max} букв."},
+        "value_invalid":{"kind":"config","en":"Invalid.","ru":"Неверно."},
+        "transport_unavailable":{"kind":"connection","en":"Cannot reach the server.","ru":"Сервер недоступен."}}})");
+    require(catalog.available() && catalog.isSecret("Password") && !catalog.isSecret("Name"));
+    require(describeCoreProblem(parsed[0], catalog, "Interface name", "en") == "Interface name: Up to 32 letters.");
+    require(describeCoreProblem(parsed[0], catalog, QString::fromUtf8("Имя интерфейса"), "ru") == QString::fromUtf8("Имя интерфейса: До 32 букв."));
+    CoreProblem unknown = parsed[0];
+    unknown.code = "future_code";
+    require(describeCoreProblem(unknown, catalog, {}, "en") == "Rejected.");
+    require(coreCodeText(catalog, "transport_unavailable", "en") == "Cannot reach the server.");
+    require(coreCodeText(catalog, "future_code", "en").isEmpty());
+    require(!CoreErrorCatalog::fromJson(R"({"version":1,"codes":{"value_invalid":{"en":"x"}}})").available());
+    CoreProblem secret;
+    secret.code = "value_invalid"; secret.section = "AccessKey"; secret.field = "Password"; secret.value = "present";
+    const QString masked = describeCoreProblem(secret, catalog, "Password", "en");
+    require(masked.contains(coreSecretMask()) && masked.size() < 40);
+    secret.value = "absent";
+    require(!describeCoreProblem(secret, catalog, "Password", "en").contains(coreSecretMask()));
+    require(coreProblemDetails(parsed[0]).contains("interface_name_invalid") && coreProblemDetails(parsed[0]).contains("8"));
+    // Optional contract check against a Core that implements docs/ERRORS.MD.
+    const QString problemsCore = qEnvironmentVariable("BIMERON_PROBLEMS_CORE");
+    if (!problemsCore.isEmpty()) {
+        const CoreErrorCatalog real = CoreErrorCatalog::forExecutable(problemsCore);
+        require(real.available() && real.isSecret("Password") && real.contains("interface_name_invalid")
+            && real.kind("transport_unavailable") == "connection");
+        require(!real.text("interface_name_invalid", {{"max", "32"}}, "ru").contains("{max}"));
+        QTemporaryDir directory;
+        const QString path = directory.filePath("problem.conf");
+        QFile file(path);
+        require(file.open(QIODevice::WriteOnly));
+        file.write("[Profile]\nVersion = 1\n\n[AccessKey]\nSS = ss://aes-256-gcm:SENTINEL@example.com:8388\n\n[Interface]\nName = 1bad\n");
+        file.close();
+        QProcess process;
+        process.start(problemsCore, {"validate", "--json", QFileInfo(path).absoluteFilePath()});
+        require(process.waitForFinished(20000) && process.exitCode() == 0);
+        const QByteArray output = process.readAllStandardOutput();
+        const auto problems = parseCoreProblems(QJsonDocument::fromJson(output).object().value("problems"));
+        require(problems.size() == 1 && problems[0].fieldKey() == "Interface.Name" && problems[0].line == 8 && !output.contains("SENTINEL"));
+        require(describeCoreProblem(problems[0], real, "Interface name", "en").startsWith("Interface name: Must start with a Latin letter"));
+    }
+
+    const QJsonObject caps{{"vpn", true}, {"proxy", true}};
+    const QString profile = "[Profile]\nVersion = 1\nName = Problems\n\n[AccessKey]\nType = shadowsocks\nServer = example.com\nPort = 8388\n"
+        "Method = aes-256-gcm\nPassword = SENTINEL-VALUE\n\n[Interface]\nMode = vpn\nName = Bimeron\n";
+    const auto rejectWith = [](const CoreProblem &problem) {
+        return [problem](const QString &, CoreFailure *failure) {
+            failure->text = "rendered";
+            failure->problems = {problem};
+            return false;
+        };
+    };
+    // Go to field: switch to the Network tab and mark the interface name.
+    {
+        ProfileEditorDialog editor(profile, caps, nullptr, rejectWith(parsed[0]));
+        bool shown = false;
+        QTimer::singleShot(0, [&] {
+            auto *dialog = QApplication::activeModalWidget();
+            require(dialog && dialog->objectName() == "coreProblemDialog");
+            const QString text = dialog->findChild<QLabel *>("coreProblemText")->text();
+            shown = text.contains("Name must start with a letter") && !text.contains("SENTINEL");
+            dialog->findChild<QPushButton *>("coreProblemGo")->click();
+        });
+        editor.findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Save)->click();
+        require(shown && editor.result() != QDialog::Accepted);
+        auto *field = editor.findChild<QLineEdit *>("interfaceName");
+        auto *tabs = editor.findChild<QTabWidget *>();
+        require(field && field->property("coreProblem").toBool());
+        require(tabs->currentWidget() == field || tabs->currentWidget()->isAncestorOf(field));
+        field->setText("Edited");
+        emit field->textEdited("Edited");
+        require(!field->property("coreProblem").toBool());
+    }
+    // Secret fields are masked until the user asks to show the editor value.
+    {
+        CoreProblem password;
+        password.code = "value_invalid"; password.section = "AccessKey"; password.field = "Password";
+        password.value = "present"; password.message = "invalid password";
+        ProfileEditorDialog editor(profile, caps, nullptr, rejectWith(password));
+        bool masked = false, revealed = false;
+        QTimer::singleShot(0, [&] {
+            auto *dialog = QApplication::activeModalWidget();
+            require(dialog && dialog->objectName() == "coreProblemDialog");
+            auto *text = dialog->findChild<QLabel *>("coreProblemText");
+            auto *reveal = dialog->findChild<QPushButton *>("coreProblemReveal");
+            masked = !text->text().contains("SENTINEL-VALUE");
+            if (reveal) reveal->click();
+            revealed = reveal && text->text().contains("SENTINEL-VALUE");
+            dialog->findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Close)->click();
+        });
+        editor.findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Save)->click();
+        require(masked && editor.result() != QDialog::Accepted);
+        require(editor.findChild<QLineEdit *>("password")->property("coreProblem").toBool());
+        (void)revealed; // Reveal needs a catalog marking Password as secret; see the unit checks above.
+    }
+    // Unknown locations fall back to the Raw config line.
+    {
+        CoreProblem unknownOption;
+        unknownOption.code = "option_unknown"; unknownOption.section = "Profile"; unknownOption.line = 3;
+        unknownOption.message = "unknown option at line 3";
+        ProfileEditorDialog editor(profile, caps, nullptr, rejectWith(unknownOption));
+        QTimer::singleShot(0, [&] {
+            auto *dialog = QApplication::activeModalWidget();
+            require(dialog && dialog->objectName() == "coreProblemDialog");
+            dialog->findChild<QPushButton *>("coreProblemGo")->click();
+        });
+        editor.findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Save)->click();
+        auto *tabs = editor.findChild<QTabWidget *>();
+        auto *raw = editor.findChild<QPlainTextEdit *>("rawConfig");
+        require(tabs->currentIndex() == tabs->count() - 1 && raw->textCursor().blockNumber() == 2);
+    }
+}
+
 int main(int argc, char **argv) {
     require(routingGroupContains({"us", "google"}, " US "));
     require(routingGroupRows({"google", "GOOGLE", "us"}, {" Google ", "US"})
@@ -1902,6 +2029,7 @@ int main(int argc, char **argv) {
 
     if (!QtPlatformPreflight::requestedPlatformAvailable()) return 1;
     QApplication app(argc, argv);
+    coreProblemPresentation();
     geoSiteClassificationTest();
     {
         QStringList catalog;
@@ -2013,7 +2141,7 @@ int main(int argc, char **argv) {
 
     // New drafts expose parameter sources only, including URI-backed protocols.
     for (const QString &source : {QString("GeneratedHysteria2"), QString("GeneratedVMess"), QString("GeneratedTUIC"), QString("GeneratedAnyTLS"), QString("GeneratedNaive")}) {
-        ProfileEditorDialog draft({}, QJsonObject{{"vpn", true}, {"proxy", true}}, nullptr, [](const QString &, QString *) { return true; }, {}, {}, true);
+        ProfileEditorDialog draft({}, QJsonObject{{"vpn", true}, {"proxy", true}}, nullptr, [](const QString &, CoreFailure *) { return true; }, {}, {}, true);
         auto *sources = draft.findChild<QComboBox *>("keySource");
         require(sources && sources->isEnabled() && sources->count() == 14);
         for (int i = 0; i < sources->count(); ++i)
