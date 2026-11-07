@@ -2498,6 +2498,24 @@ void ProfileEditorDialog::clearProblemMarks() {
 }
 
 void ProfileEditorDialog::focusProblem(const CoreProblem &problem) {
+    // An unapplied Raw config draft is what Core validated; the visual fields
+    // still show the previous values and leaving Raw would re-validate it.
+    // Stay in Raw config and select the reported line instead.
+    const bool rawDraft = rawOnly_ || rawDirty_;
+    if (rawDraft) {
+        tabs_->setCurrentIndex(tabs_->count() - 1);
+        if (problem.line > 0) {
+            const QTextBlock block = raw_->document()->findBlockByNumber(problem.line - 1);
+            if (block.isValid()) {
+                QTextCursor cursor(block);
+                cursor.movePosition(QTextCursor::EndOfBlock, QTextCursor::KeepAnchor);
+                raw_->setTextCursor(cursor);
+                raw_->centerCursor();
+            }
+        }
+        raw_->setFocus(Qt::OtherFocusReason);
+        return;
+    }
     if (QWidget *widget = problemWidget(problem)) {
         tabs_->setCurrentIndex(tabOf(tabs_, widget));
         for (QWidget *parent = widget->parentWidget(); parent; parent = parent->parentWidget())
@@ -2595,8 +2613,9 @@ void ProfileEditorDialog::showProblems(const CoreFailure &failure) {
         connect(show, &QPushButton::clicked, &dialog, [&, show] { revealed = !revealed; show->setText(revealed ? tr("Hide value") : tr("Show value")); render(); });
     }
     QPushButton *go = nullptr;
-    if (firstWidget || first.rule > 0 || first.line > 0) {
-        go = buttons->addButton(tr("Go to field"), QDialogButtonBox::AcceptRole);
+    const bool rawDraft = rawOnly_ || rawDirty_;
+    if (rawDraft ? first.line > 0 : (firstWidget || first.rule > 0 || first.line > 0)) {
+        go = buttons->addButton(rawDraft ? tr("Go to line") : tr("Go to field"), QDialogButtonBox::AcceptRole);
         go->setObjectName("coreProblemGo");
         go->setDefault(true);
     }
@@ -2606,5 +2625,5 @@ void ProfileEditorDialog::showProblems(const CoreFailure &failure) {
     connect(close, &QPushButton::clicked, &dialog, &QDialog::reject);
     layout->addWidget(buttons);
     if (dialog.exec() == QDialog::Accepted && go) focusProblem(first);
-    else if (firstWidget) markProblemField(firstWidget);
+    else if (firstWidget && !rawDraft) markProblemField(firstWidget);
 }

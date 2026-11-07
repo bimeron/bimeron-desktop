@@ -2020,6 +2020,35 @@ static void coreProblemPresentation() {
         require(editor.findChild<QLineEdit *>("password")->property("coreProblem").toBool());
         (void)revealed; // Reveal needs a catalog marking Password as secret; see the unit checks above.
     }
+    // A Raw config draft stays in Raw config: Go to line must not open the
+    // visual tab, which would re-validate the draft and loop.
+    {
+        ProfileEditorDialog editor(profile, caps, nullptr, rejectWith(parsed[0]));
+        auto *tabs = editor.findChild<QTabWidget *>();
+        auto *raw = editor.findChild<QPlainTextEdit *>("rawConfig");
+        tabs->setCurrentIndex(tabs->count() - 1);
+        raw->setPlainText(QString(profile).replace("Name = Bimeron", "Name = B imeron"));
+        int dialogs = 0;
+        QString goText;
+        // Each answer schedules the next one, so a re-validation loop would be
+        // answered and counted instead of blocking the fixture.
+        std::function<void()> answer;
+        answer = [&] {
+            auto *dialog = QApplication::activeModalWidget();
+            if (!dialog || dialog->objectName() != "coreProblemDialog" || dialogs > 3) return;
+            ++dialogs;
+            auto *go = dialog->findChild<QPushButton *>("coreProblemGo");
+            goText = go ? go->text() : QString();
+            QTimer::singleShot(0, answer);
+            if (go) go->click();
+        };
+        QTimer::singleShot(0, answer);
+        editor.findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Save)->click();
+        QApplication::processEvents();
+        require(dialogs == 1 && goText == "Go to line");
+        require(tabs->currentIndex() == tabs->count() - 1 && raw->textCursor().blockNumber() == 7);
+        require(!editor.findChild<QLineEdit *>("interfaceName")->property("coreProblem").toBool());
+    }
     // Unknown locations fall back to the Raw config line.
     {
         CoreProblem unknownOption;
