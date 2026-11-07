@@ -28,6 +28,15 @@ protected:
     void reject() override;
 
 private:
+    friend class MainWindow;
+    friend struct ConnectionManagementTest;
+    static QDialog *nativeConfirmation(QWidget *parent, const QString &profile,
+                                       const QString &server, const QString &action, bool reviewable, const QJsonObject &plan = {});
+    QWidget *nativeProfileActions_ = nullptr;
+    QWidget *nativeAuthentication_ = nullptr;
+    QComboBox *nativeAuthMethod_ = nullptr, *nativeAuthSource_ = nullptr;
+    bool nativeAuthPreview_ = false;
+    std::function<void()> refreshNativeAuthentication_;
     struct Rule { QString target; QString action; bool enabled = true; QString matcher = "CIDR"; int index = -1; bool editable = true; QString error; };
     Rule tableRule(int row) const;
     QJsonObject document(const QJsonArray &operations, QString *error) const;
@@ -70,6 +79,11 @@ private:
     QLabel *shadowGuidance_ = nullptr;
     QWidget *parameterPage_ = nullptr;
 
+    bool native_ = false;
+    QLineEdit *windowsProfile_ = nullptr;
+    QLineEdit *nativeServerName_ = nullptr;
+    QLabel *nativeMode_ = nullptr;
+    QCheckBox *nativeKillSwitch_ = nullptr;
     QTabWidget *tabs_ = nullptr;
     QLineEdit *name_ = nullptr;
     QComboBox *keySource_ = nullptr;

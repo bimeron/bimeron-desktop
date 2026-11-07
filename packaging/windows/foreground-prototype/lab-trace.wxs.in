@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Product Id="@LAB_PRODUCT@" Name="Bimeron LABTRACEONLY @variant@" Language="1033" Version="0.0.1" Manufacturer="Bimeron" UpgradeCode="@LAB_UPGRADE@">
+    <Package Id="*" InstallerVersion="500" Compressed="yes" InstallScope="perMachine" Platform="@WIX_ARCH@" />
+    <Media Id="1" />
+    <EnsureTable Id="Component" />
+    <EnsureTable Id="FeatureComponents" />
+    <Binary Id="LabTraceBinary" SourceFile="@LAB_DLL@" />
+    <CustomAction Id="ObservationPreflight" BinaryKey="LabTraceBinary" DllEntry="ObservationPreflight" Execute="immediate" Return="check" />
+    <CustomAction Id="ObservationRollback" BinaryKey="LabTraceBinary" DllEntry="ObservationRollback" Execute="rollback" Impersonate="no" Return="check" />
+    <CustomAction Id="ObservationDeferredBegin" BinaryKey="LabTraceBinary" DllEntry="ObservationDeferredBegin" Execute="deferred" Impersonate="no" Return="check" />
+    <CustomAction Id="ObservationCommit" BinaryKey="LabTraceBinary" DllEntry="ObservationCommit" Execute="commit" Impersonate="no" Return="check" />
+    <CustomAction Id="ObservationPostFinalize" BinaryKey="LabTraceBinary" DllEntry="ObservationPostFinalize" Execute="immediate" Return="check" />
+    <InstallExecuteSequence>
+      <Custom Action="ObservationPreflight" Sequence="1499">NOT Installed</Custom>
+      <Custom Action="ObservationRollback" Sequence="1501">NOT Installed</Custom>
+      <Custom Action="ObservationDeferredBegin" Sequence="1502">NOT Installed</Custom>
+      <Custom Action="ObservationCommit" Sequence="1503">NOT Installed</Custom>
+      <Custom Action="ObservationPostFinalize" Sequence="6601">NOT Installed</Custom>
+    </InstallExecuteSequence>
+    <Directory Id="TARGETDIR" Name="SourceDir" />
+    <Feature Id="EmptyLab" Title="LABTRACEONLY" Level="1" />
+  </Product>
+</Wix>

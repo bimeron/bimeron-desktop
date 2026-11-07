@@ -1,1 +1,3 @@
 *.sh text eol=lf
+# Hash-verified shared fixtures must keep exact bytes on every checkout.
+tests/fixtures/ikev2-error-*.json -text

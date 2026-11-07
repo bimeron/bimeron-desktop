@@ -4,6 +4,7 @@
 #include <QLocalSocket>
 #include "DevelopmentCore.h"
 #include "MainWindow.h"
+#include "QtPlatformPreflight.h"
 #include <QApplication>
 #include <QComboBox>
 #include <QElapsedTimer>
@@ -57,6 +58,8 @@ static bool waitFor(const std::function<bool()> &condition, int timeout = 3000) 
 }
 
 #include "ConnectionManagementTest.h"
+#include "NativeIKEv2TransportTest.h"
+#include "NativeIKEv2SessionTest.h"
 
 struct DevelopmentRecoveryTest {
     static void brokerFinalization(DevelopmentCore &backend) {
@@ -348,6 +351,7 @@ int main(int argc, char **argv) {
         state.write(std::strcmp(argv[2], "start") == 0 ? "4" : "1");
         return 0;
     }
+    if (!QtPlatformPreflight::requestedPlatformAvailable()) return 1;
     QApplication app(argc, argv);
     app.setQuitOnLastWindowClosed(false);
     QTemporaryDir temporary;
@@ -523,6 +527,8 @@ int main(int argc, char **argv) {
         return 0;
     }
     testRouting();
+    NativeIKEv2TransportTest::run();
+    NativeIKEv2SessionTest::run();
     ConnectionManagementTest::profileGeometry(app, temporary.filePath("profile-geometry.png"));
     ConnectionManagementTest::run();
     ConnectionManagementTest::sharedGeoDataPreparation();

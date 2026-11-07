@@ -334,6 +334,13 @@ runtime evidence. Local SSH proxy does not automatically reconnect after failure
 
 ### Native IKEv2 boundary
 
+The accepted [stage 8 specification](ikev2-profiles.md) extends this boundary
+with a separate experimental Desktop foreground backend and explicit profile
+preparation/removal. It is not implemented support. Full GUI implementation is
+blocked on a protected Core foreground API and verification of a new agreed
+immutable SHA; the reviewed beta.1 remains the original baseline. Existing
+packet/daemon guards remain in force until that prerequisite is satisfied.
+
 [IKEv2](https://github.com/bimeron/bimeron-core/blob/9f527efe0a4959786084675f1ff795edb8a0d910/docs/IKEV2.MD)
 is an experimental Windows foreground backend using a pre-provisioned current-user
 RAS profile, saved Windows credentials/EAP identity and Windows certificate trust.

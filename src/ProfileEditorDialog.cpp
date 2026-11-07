@@ -1,6 +1,7 @@
 #include "ProfileEditorDialog.h"
 #include "ProfileTextEdit.h"
 #include "HiDpiCheckBox.h"
+#include "FormRowVisibility.h"
 #include "HiDpiComboBox.h"
 #include "ProfileStore.h"
 #include "GeoDataSelection.h"
@@ -160,7 +161,7 @@ QString valueFor(const QString &text, const QString &section, const QString &key
     QString current;
     for (const QString &line : text.split('\n')) {
         const QString trimmed = QString(line).remove(QChar(0xfeff)).trimmed();
-        if (trimmed.startsWith('[') && trimmed.endsWith(']')) current = trimmed.mid(1, trimmed.size() - 2);
+        if (trimmed.startsWith('[') && trimmed.endsWith(']')) current = ProfileStore::sectionName(trimmed);
         else if (current == section) {
             const auto match = QRegularExpression(QString("^%1\\s*=\\s*(.*)$").arg(QRegularExpression::escape(key))).match(trimmed);
             if (match.hasMatch()) {
@@ -170,6 +171,17 @@ QString valueFor(const QString &text, const QString &section, const QString &key
         }
     }
     return {};
+}
+
+enum class ProtectionIntent { Disabled, Enabled, Unknown };
+
+ProtectionIntent nativeProtectionIntent(const QString &text) {
+    const QString value = valueFor(text, "IKEv2", "KillSwitch");
+    if (value.isEmpty() || value == "false" || value == "\"false\"") return ProtectionIntent::Disabled;
+    if (value == "true" || value == "\"true\"") return ProtectionIntent::Enabled;
+    // Core decodes Go escapes. Leave other spellings to authoritative validation;
+    // never treat an unrecognized candidate as safely disabled or imported consent.
+    return ProtectionIntent::Unknown;
 }
 
 QString normalizedCidrs(const QString &value) {
@@ -355,12 +367,109 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
     if (creating_ || capabilities.value("vpn").toBool()) mode_->addItem(tr("System VPN"), "vpn");
     if (creating_ || capabilities.value("proxy").toBool()) mode_->addItem(tr("Local SOCKS5"), "proxy");
     listen_ = new QLineEdit;
+    windowsProfile_ = new QLineEdit;
+    windowsProfile_->setObjectName("windowsProfile");
+    nativeServerName_ = new QLineEdit;
+    nativeServerName_->setObjectName("nativeServerName");
+    nativeKillSwitch_ = new HiDpiCheckBox(tr("Request native traffic and DNS protection"));
+    nativeKillSwitch_->setObjectName("nativeKillSwitch");
+    generalForm->addRow(tr("Windows VPN profile"), windowsProfile_);
+    generalForm->addRow(tr("Server name"), nativeServerName_);
+    generalForm->addRow(nativeKillSwitch_);
+    nativeMode_ = new QLabel(tr("System VPN (vpn)"));
+    generalForm->addRow(tr("Mode"), nativeMode_);
     auto *sourceNotice = new QLabel(tr("Changing the key source requires Raw config. Cleared optional fields are removed when saving."));
     sourceNotice->setWordWrap(true);
     sourceNotice->setObjectName("sourceEditRestriction");
     sourceNotice->setVisible(!creating_ && !coreExecutable_.isEmpty());
     generalForm->addRow(sourceNotice);
     generalForm->addRow(tr("Name"), name_);
+    auto *auth = new QWidget;
+    nativeAuthentication_ = auth;
+    auth->setObjectName("nativeAuthentication");
+    auto *authForm = new QFormLayout(auth);
+    authForm->setContentsMargins(0, 0, 0, 0);
+    auto *authTitle = new QLabel(tr("Authentication"));
+    authTitle->setObjectName("sectionTitle");
+    authForm->addRow(authTitle);
+    nativeAuthMethod_ = new HiDpiComboBox;
+    nativeAuthMethod_->setObjectName("nativeAuthMethod");
+    nativeAuthMethod_->addItems({tr("Username and password"), tr("Client certificate"), tr("Smart card")});
+    authForm->addRow(tr("Method"), nativeAuthMethod_);
+    nativeAuthSource_ = new HiDpiComboBox;
+    nativeAuthSource_->setObjectName("nativeAuthSource");
+    nativeAuthSource_->addItems({tr("Use saved Windows credentials"), tr("Enter credentials")});
+    authForm->addRow(tr("Credentials"), nativeAuthSource_);
+    auto *authName = new QLineEdit;
+    authName->setObjectName("nativeAuthUsername");
+    auto *authPassword = new QLineEdit;
+    authPassword->setObjectName("nativeAuthPassword");
+    authPassword->setEchoMode(QLineEdit::Password);
+    authForm->addRow(tr("Username"), authName);
+    authForm->addRow(tr("Password"), authPassword);
+    auto *ask = new HiDpiCheckBox(tr("Ask at connection"));
+    ask->setChecked(true);
+    auto *remember = new HiDpiCheckBox(tr("Remember in Windows"));
+    authForm->addRow(ask);
+    authForm->addRow(remember);
+    auto *identity = new QLabel(tr("No identity selected"));
+    authForm->addRow(identity);
+    auto *choose = new QPushButton(tr("Choose…"));
+    authForm->addRow(choose);
+    auto *notice = new QLabel;
+    notice->setWordWrap(true);
+    notice->setTextFormat(Qt::PlainText);
+    authForm->addRow(notice);
+    choose->setEnabled(false);
+    ask->setObjectName("nativeAuthAsk");
+    remember->setObjectName("nativeAuthRemember");
+    connect(ask, &QCheckBox::toggled, this, [authPassword](bool checked) {
+        authPassword->clear();
+        authPassword->setEnabled(!checked);
+    });
+    generalForm->addRow(nativeAuthentication_);
+    refreshNativeAuthentication_ = [this, authForm, authName, authPassword, ask, remember, identity, choose, notice] {
+        const bool password = nativeAuthMethod_->currentIndex() == 0;
+        const bool enter = password && nativeAuthSource_->currentIndex() == 1;
+        nativeAuthPreview_ = !password || enter;
+        authName->clear(); authPassword->clear();
+        ask->setChecked(true); remember->setChecked(false);
+        authPassword->setEnabled(false);
+        setFormRowVisible(authForm, nativeAuthSource_, password);
+        for (QWidget *widget : QList<QWidget *>{authName, authPassword, ask, remember}) setFormRowVisible(authForm, widget, enter);
+        setFormRowVisible(authForm, identity, !password);
+        setFormRowVisible(authForm, choose, !password);
+        notice->setText(nativeAuthPreview_
+            ? tr("UI draft only: credentials are not saved or sent.")
+            : tr("Authentication setup is not available in this build. Saved Windows credentials have not been checked."));
+        if (auto *box = findChild<QDialogButtonBox *>()) {
+            box->button(QDialogButtonBox::Save)->setEnabled(!native_ || !nativeAuthPreview_);
+        }
+    };
+    connect(nativeAuthMethod_, &QComboBox::currentIndexChanged, this, [this] { refreshNativeAuthentication_(); });
+    connect(nativeAuthSource_, &QComboBox::currentIndexChanged, this, [this] { refreshNativeAuthentication_(); });
+    connect(windowsProfile_, &QLineEdit::textChanged, this, [this] { nativeAuthMethod_->setCurrentIndex(0); nativeAuthSource_->setCurrentIndex(0); });
+    connect(nativeServerName_, &QLineEdit::textChanged, this, [this] { nativeAuthMethod_->setCurrentIndex(0); nativeAuthSource_->setCurrentIndex(0); });
+    nativeProfileActions_ = new QWidget;
+    nativeProfileActions_->setObjectName("nativeProfileActions");
+    auto *nativeActions = new QVBoxLayout(nativeProfileActions_);
+    nativeActions->setContentsMargins(0, 0, 0, 0);
+
+    auto *nativeNotice = new QLabel(tr("Windows profile operations are not enabled in this build."));
+    nativeNotice->setWordWrap(true);
+    nativeNotice->setTextFormat(Qt::PlainText);
+    nativeActions->addWidget(nativeNotice);
+    auto *nativeActionRow = new QHBoxLayout;
+    for (const auto &text : {tr("Review changes…"), tr("Remove Windows profile…")}) {
+        auto *button = new QPushButton(text);
+        button->setEnabled(false);
+        nativeActionRow->addWidget(button);
+    }
+    nativeActions->addLayout(nativeActionRow);
+    int serverRow = 0;
+    QFormLayout::ItemRole serverRole;
+    generalForm->getWidgetPosition(nativeServerName_, &serverRow, &serverRole);
+    generalForm->insertRow(serverRow + 1, nativeProfileActions_);
     generalForm->addRow(creating_ ? tr("Protocol") : tr("Key source"), keySource_);
     generalForm->addRow(tr("Key or path"), keyRow);
     generalForm->addRow(tr("Server"), server_);
@@ -376,7 +485,19 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
     generalForm->addRow(tr("Mode"), mode_);
     generalForm->addRow(tr("SOCKS5 address"), listen_);
     auto *keyLabel = qobject_cast<QLabel *>(generalForm->labelForField(keyRow));
-    tabs_->addTab(general, tr("General"));
+    if (routingHasSection(text, "IKEv2")) {
+        auto *nativeGeneralScroll = new QScrollArea;
+        nativeGeneralScroll->setWidgetResizable(true);
+        nativeGeneralScroll->setFrameShape(QFrame::NoFrame);
+        generalForm->setFormAlignment(Qt::AlignTop);
+        nativeGeneralScroll->setWidget(general);
+        general->setAutoFillBackground(false);
+        nativeGeneralScroll->viewport()->setAutoFillBackground(false);
+        nativeGeneralScroll->setAutoFillBackground(false);
+        tabs_->addTab(nativeGeneralScroll, tr("General"));
+    } else {
+        tabs_->addTab(general, tr("General"));
+    }
 
     auto *vlessPage = new QWidget;
     auto *vlessForm = new QFormLayout(vlessPage);
@@ -609,6 +730,7 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
     buttons->button(QDialogButtonBox::Save)->setDefault(true);
     buttons->button(QDialogButtonBox::Cancel)->setText(tr("Cancel"));
     connect(buttons, &QDialogButtonBox::accepted, this, [this] {
+        if (native_ && nativeAuthPreview_) return;
         if (rawOnly_ && tabs_->currentIndex() != tabs_->count() - 1) {
             tabs_->setCurrentIndex(tabs_->count() - 1);
             return;
@@ -619,20 +741,27 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
             QMessageBox::warning(this, tr("Error"), tr("SS2022 does not support Prefix. Clear Prefix before saving."));
             return;
         }
-        if (!rawOnly_ && !rawDirty_ && !parameterError().isEmpty()) {
+        if (!native_ && !rawOnly_ && !rawDirty_ && !parameterError().isEmpty()) {
             QMessageBox::warning(this, tr("Error"), parameterError());
             return;
         }
         const QString draft = configText();
         QString error = (rawDirty_ || rawOnly_ || !bridgeReady_) ? QString() : bridgeError_;
         if (error.isEmpty()) error = routingError();
-        if (error.isEmpty() && validateRaw_ && !validateRaw_(draft, &error) && error.isEmpty())
+        if (!native_ && error.isEmpty() && validateRaw_ && !validateRaw_(draft, &error) && error.isEmpty())
             error = tr("Core validation failed. The draft has been retained.");
         if (!error.isEmpty()) {
             QMessageBox box(QMessageBox::Warning, tr("Error"), safeCoreDiagnostic(error.toUtf8()), QMessageBox::Ok, this);
             box.setTextFormat(Qt::PlainText);
             box.exec();
             return;
+        }
+        if (configText() != originalText_
+            && nativeProtectionIntent(configText()) != ProtectionIntent::Disabled
+            && nativeProtectionIntent(originalText_) != ProtectionIntent::Enabled) {
+            if (QMessageBox::question(this, tr("Native protection"),
+                tr("Initial connection bootstrap is unprotected. Native protection blocks ordinary LAN access. A crash or failed cleanup can retain WFP and DNS protection and leave this computer offline until explicit administrative recovery. Enable it?"),
+                QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes) return;
         }
         accept();
     });
@@ -756,11 +885,11 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
     tabs_->insertTab(tabs_->count() - 1, parameterPage_, tr("Protocol"));
     connect(trojanNetwork_, &QComboBox::currentTextChanged, this, [this] { refreshParameters(); });
     connect(shadowTls_, &QCheckBox::toggled, this, [this] { refreshParameters(); });
-    connect(keySource_, &QComboBox::currentIndexChanged, this, [this, browseCa] {
+    connect(keySource_, &QComboBox::currentIndexChanged, this, [this, form, browseCa] {
         refreshParameters();
-        browseCa->setVisible(keySource_->currentData() == "Explicitmasque");
+        setFormRowVisible(form, browseCa, keySource_->currentData() == "Explicitmasque");
     });
-    browseCa->setVisible(valueFor(text, "AccessKey", "Type") == "masque");
+    setFormRowVisible(form, browseCa, valueFor(text, "AccessKey", "Type") == "masque");
     connect(GeoDataSelection::instance(), &GeoDataSelection::catalogResult, this,
         [this](const QString &key, const QStringList &groups, const QString &error) {
             for (const QString &kind : {QString("geoip"), QString("geosite")}) if (datasetKeys_.value(kind) == key) {
@@ -814,8 +943,8 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
         const bool uriVless = (source == "VLESS" || source == "Key") && url.scheme() == "vless"
             && ProfileStore::connectionInfo("[AccessKey]\nKey = " + key_->text()).connectable;
         if (!explicitVless && !uriVless) return;
-        vlessForm->setRowVisible(vlessEndpoint, uriVless);
-        vlessForm->setRowVisible(vlessEncryption, uriVless);
+        setFormRowVisible(vlessForm, vlessEndpoint, uriVless);
+        setFormRowVisible(vlessForm, vlessEncryption, uriVless);
         if (uriVless) {
             const QUrlQuery query(url);
             const auto field = [&query](const QString &name) { return query.queryItemValue(name, QUrl::FullyDecoded); };
@@ -878,19 +1007,19 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
             }
             vlessXhttpMode_->setCurrentIndex(index);
         }
-        vlessForm->setRowVisible(vlessFlow_, (network == "tcp" && reality) || !vlessFlow_->currentText().isEmpty());
-        vlessForm->setRowVisible(vlessPublicKey_, reality || !vlessPublicKey_->text().isEmpty());
-        vlessForm->setRowVisible(vlessShortId_, reality || !vlessShortId_->text().isEmpty());
-        vlessForm->setRowVisible(vlessSpiderX_, reality || !vlessSpiderX_->text().isEmpty());
-        vlessForm->setRowVisible(vlessAlpn_, !(network == "tcp" && reality));
-        vlessForm->setRowVisible(vlessPath_, network == "ws" || network == "xhttp");
-        vlessForm->setRowVisible(vlessHost_, network == "ws" || network == "xhttp");
-        vlessForm->setRowVisible(vlessEarlyData_, network == "ws" || vlessEarlyData_->value() != 0);
-        vlessForm->setRowVisible(vlessServiceName_, network == "grpc" || !vlessServiceName_->text().isEmpty());
-        vlessForm->setRowVisible(vlessAuthority_, network == "grpc" || !vlessAuthority_->text().isEmpty());
-        vlessForm->setRowVisible(vlessMultiMode_, network == "grpc" || vlessMultiModeConfigured_ || vlessMultiMode_->isChecked());
-        vlessForm->setRowVisible(vlessXhttpMode_, network == "xhttp");
-        vlessForm->setRowVisible(vlessExtra, uriVless && network == "xhttp" && !vlessExtra->toPlainText().isEmpty());
+        setFormRowVisible(vlessForm, vlessFlow_, (network == "tcp" && reality) || !vlessFlow_->currentText().isEmpty());
+        setFormRowVisible(vlessForm, vlessPublicKey_, reality || !vlessPublicKey_->text().isEmpty());
+        setFormRowVisible(vlessForm, vlessShortId_, reality || !vlessShortId_->text().isEmpty());
+        setFormRowVisible(vlessForm, vlessSpiderX_, reality || !vlessSpiderX_->text().isEmpty());
+        setFormRowVisible(vlessForm, vlessAlpn_, !(network == "tcp" && reality));
+        setFormRowVisible(vlessForm, vlessPath_, network == "ws" || network == "xhttp");
+        setFormRowVisible(vlessForm, vlessHost_, network == "ws" || network == "xhttp");
+        setFormRowVisible(vlessForm, vlessEarlyData_, network == "ws" || vlessEarlyData_->value() != 0);
+        setFormRowVisible(vlessForm, vlessServiceName_, network == "grpc" || !vlessServiceName_->text().isEmpty());
+        setFormRowVisible(vlessForm, vlessAuthority_, network == "grpc" || !vlessAuthority_->text().isEmpty());
+        setFormRowVisible(vlessForm, vlessMultiMode_, network == "grpc" || vlessMultiModeConfigured_ || vlessMultiMode_->isChecked());
+        setFormRowVisible(vlessForm, vlessXhttpMode_, network == "xhttp");
+        setFormRowVisible(vlessForm, vlessExtra, uriVless && network == "xhttp" && !vlessExtra->toPlainText().isEmpty());
     };
     connect(vlessNetwork_, &QComboBox::currentIndexChanged, this, updateVlessControls);
     connect(vlessSecurity_, &QComboBox::currentIndexChanged, this, updateVlessControls);
@@ -911,22 +1040,22 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
 
         keyLabel->setText(file ? tr("File path") : tr("URL"));
         key_->setEnabled(true);
-        generalForm->setRowVisible(keyRow, !explicitKey && !explicitSocks5 && !explicitVless && !explicitSsh && !added);
+        setFormRowVisible(generalForm, keyRow, !explicitKey && !explicitSocks5 && !explicitVless && !explicitSsh && !added);
         key_->setVisible(file || keyRevealed_);
         browse->setVisible(file);
         reveal->setVisible(ss || ssconf || socks5 || source == "VLESS" || source == "Hysteria2" || source == "SSH" || source == "Key");
         reveal->setText(keyRevealed_ ? tr("Hide") : tr("Show"));
 
-        generalForm->setRowVisible(server_, showParameters);
-        generalForm->setRowVisible(port_, showParameters);
-        generalForm->setRowVisible(method_, ss || explicitKey);
-        generalForm->setRowVisible(username_, explicitSocks5 || explicitSsh || (added && !QStringList{"ExplicitTrojan", "GeneratedHysteria2", "GeneratedAnyTLS", "GeneratedTUIC", "GeneratedVMess"}.contains(source)));
-        generalForm->setRowVisible(identityRow, ssh);
-        generalForm->setRowVisible(hostsRow, ssh);
-        generalForm->setRowVisible(password_, showParameters && !explicitVless && !explicitSsh && source != "GeneratedVMess");
-        generalForm->setRowVisible(prefix_, ss || explicitKey);
-        generalForm->setRowVisible(ssPlugin_, explicitKey);
-        generalForm->setRowVisible(ssPluginOpts_, explicitKey);
+        setFormRowVisible(generalForm, server_, showParameters);
+        setFormRowVisible(generalForm, port_, showParameters);
+        setFormRowVisible(generalForm, method_, ss || explicitKey);
+        setFormRowVisible(generalForm, username_, explicitSocks5 || explicitSsh || (added && !QStringList{"ExplicitTrojan", "GeneratedHysteria2", "GeneratedAnyTLS", "GeneratedTUIC", "GeneratedVMess"}.contains(source)));
+        setFormRowVisible(generalForm, identityRow, ssh);
+        setFormRowVisible(generalForm, hostsRow, ssh);
+        setFormRowVisible(generalForm, password_, showParameters && !explicitVless && !explicitSsh && source != "GeneratedVMess");
+        setFormRowVisible(generalForm, prefix_, ss || explicitKey);
+        setFormRowVisible(generalForm, ssPlugin_, explicitKey);
+        setFormRowVisible(generalForm, ssPluginOpts_, explicitKey);
         for (auto *widget : {static_cast<QWidget *>(server_), static_cast<QWidget *>(port_), static_cast<QWidget *>(method_), static_cast<QWidget *>(username_), static_cast<QWidget *>(password_), static_cast<QWidget *>(prefix_)})
             widget->setEnabled(explicitKey || explicitSocks5 || explicitVless || explicitSsh || added);
         if (ss) applySs(key_->text());
@@ -1087,11 +1216,11 @@ QStringList ProfileEditorDialog::parameterFields() const {
 void ProfileEditorDialog::refreshParameters() {
     if (!parameterPage_) return;
     auto *form = qobject_cast<QFormLayout *>(parameters_.first()->parentWidget()->layout());
-    findChild<QPushButton *>("browseParameterCa")->setVisible(keySource_->currentData() == "Explicitmasque");
+    setFormRowVisible(form, findChild<QPushButton *>("browseParameterCa"), keySource_->currentData() == "Explicitmasque");
     const auto fields = parameterFields();
     for (auto it = parameters_.cbegin(); it != parameters_.cend(); ++it)
-        form->setRowVisible(it.value(), fields.contains(it.key()) || (!freshDraft_ && !it.value()->text().isEmpty()));
-    form->setRowVisible(trojanNetwork_, keySource_->currentData() == "ExplicitTrojan");
+        setFormRowVisible(form, it.value(), fields.contains(it.key()) || (!freshDraft_ && !it.value()->text().isEmpty()));
+    setFormRowVisible(form, trojanNetwork_, keySource_->currentData() == "ExplicitTrojan");
     shadowName_->setEnabled(shadowTls_->isChecked());
     shadowPassword_->setEnabled(shadowTls_->isChecked());
     const QString source = keySource_->currentData().toString();
@@ -1183,10 +1312,16 @@ void ProfileEditorDialog::loadText(const QString &text) {
             blockers.push_back(std::make_unique<QSignalBlocker>(widget));
     }
     loadedText_ = text;
+    native_ = false;
+    for (const auto &line : text.split('\n'))
+        native_ = native_ || ProfileStore::sectionName(line) == "IKEv2";
+    windowsProfile_->setText(valueFor(text, "IKEv2", "WindowsProfile"));
+    nativeServerName_->setText(valueFor(text, "IKEv2", "ServerName"));
+    nativeKillSwitch_->setChecked(nativeProtectionIntent(text) != ProtectionIntent::Disabled);
     populatingRules_ = true;
     QString inspectionError;
     QJsonObject inspection;
-    if (!coreExecutable_.isEmpty()) inspection = document({}, &inspectionError);
+    if (!native_ && !coreExecutable_.isEmpty()) inspection = document({}, &inspectionError);
     documentFields_ = inspection.value("fields").toObject();
     const auto fieldValue = [this, &text](const QString &section, const QString &key) {
         const QString id = section + "/" + key;
@@ -1273,7 +1408,7 @@ void ProfileEditorDialog::loadText(const QString &text) {
         rawOnly_ = true;
     const QString configuredMode = fieldValue("Interface", "Mode");
     const int modeIndex = mode_->findData(configuredMode);
-    if (!configuredMode.isEmpty() && modeIndex < 0) hasUnknownSettings_ = true;
+    if (!native_ && !configuredMode.isEmpty() && modeIndex < 0) hasUnknownSettings_ = true;
     mode_->setCurrentIndex(qMax(0, modeIndex));
     listen_->setText(fieldValue("Interface", "Listen").isEmpty() ? "127.0.0.1:1080" : fieldValue("Interface", "Listen"));
     interfaceName_->setText(fieldValue("Interface", "Name").isEmpty() ? "Bimeron" : fieldValue("Interface", "Name"));
@@ -1297,25 +1432,29 @@ void ProfileEditorDialog::loadText(const QString &text) {
         QString trimmed = line.trimmed();
         const bool commented = trimmed.startsWith('#');
         if (commented) trimmed = trimmed.mid(1).trimmed();
-        if (trimmed == "[Rule]") { finishRule(rule); rule = {}; rule.enabled = !commented; section = "Rule"; }
+        if (ProfileStore::sectionName(trimmed) == "Rule") { finishRule(rule); rule = {}; rule.enabled = !commented; section = "Rule"; }
         else if (trimmed.startsWith('[')) section.clear();
         else if (section == "Rule" && trimmed.startsWith("CIDR")) { rule.target = trimmed.mid(trimmed.indexOf('=') + 1).trimmed(); rule.matcher = "CIDR"; }
         else if (section == "Rule" && trimmed.startsWith("Domain")) { rule.target = trimmed.mid(trimmed.indexOf('=') + 1).trimmed(); rule.matcher = "Domain"; }
         else if (section == "Rule" && trimmed.startsWith("Action")) rule.action = trimmed.mid(trimmed.indexOf('=') + 1).trimmed();
     }
     finishRule(rule);
-    const QHash<QString, QSet<QString>> known{
+    const QHash<QString, QSet<QString>> packetKnown{
         {"Profile", {"Version", "Name"}},
         {"AccessKey", {"SS", "SSConf", "SOCKS5", "VLESS", "Hysteria2", "SSH", "Key", "File", "Type", "Server", "Port", "Method", "Username", "Password", "Prefix", "Plugin", "PluginOpts", "IdentityFile", "KnownHostsFile", "CAFile", "MASQUEPath", "ID", "Encryption", "Flow", "Network", "Security", "ServerName", "PublicKey", "ShortID", "Fingerprint", "SpiderX", "ALPN", "WSPath", "WSHost", "WSEarlyData", "GRPCServiceName", "GRPCAuthority", "GRPCMultiMode", "XHTTPPath", "XHTTPHost", "XHTTPMode"}},
         {"ShadowTLS", {"ServerName", "Password"}},
         {"Interface", {"Mode", "Name", "MTU", "DNS", "IPv6", "KillSwitch", "Listen"}},
         {"Routing", {"Default"}}, {"Rule", {"CIDR", "Domain", "Action"}}};
+    const QHash<QString, QSet<QString>> known = native_
+        ? QHash<QString, QSet<QString>>{{"Profile", {"Version", "Name"}},
+            {"IKEv2", {"WindowsProfile", "ServerName", "KillSwitch"}}, {"Interface", {"Mode"}}}
+        : packetKnown;
     QString currentSection;
     for (const QString &sourceLine : text.split('\n')) {
         const QString line = QString(sourceLine).remove(QChar(0xfeff)).trimmed();
         if (line.isEmpty() || line.startsWith('#') || line.startsWith(';')) continue;
         if (line.startsWith('[') && line.endsWith(']')) {
-            currentSection = line.mid(1, line.size() - 2).trimmed();
+            currentSection = ProfileStore::sectionName(line);
             if (!known.contains(currentSection)) hasUnknownSettings_ = true;
         } else if (line.contains('=')) {
             const QString key = line.left(line.indexOf('=')).trimmed();
@@ -1328,7 +1467,7 @@ void ProfileEditorDialog::loadText(const QString &text) {
     bridgeReady_ = false;
     cachedVisual_.clear(); cachedDocument_.clear(); bridgeError_.clear();
     localRule_ = -1;
-    if (!coreExecutable_.isEmpty()) {
+    if (!native_ && !coreExecutable_.isEmpty()) {
         const auto result = inspection;
         if (inspectionError.isEmpty()) {
             bridgeReady_ = true;
@@ -1471,6 +1610,14 @@ void ProfileEditorDialog::moveRule(int delta) {
 }
 
 QString ProfileEditorDialog::buildText() const {
+    if (native_) {
+        QString text = "[Profile]\nVersion = 1\nName = " + name_->text()
+            + "\n\n[IKEv2]\nWindowsProfile = " + windowsProfile_->text()
+            + "\nServerName = " + nativeServerName_->text();
+        if (nativeKillSwitch_->isChecked() || !valueFor(loadedText_, "IKEv2", "KillSwitch").isEmpty())
+            text += "\nKillSwitch = " + QString(nativeKillSwitch_->isChecked() ? "true" : "false");
+        return text + "\n\n[Interface]\nMode = vpn\n";
+    }
     QString accessKey;
     const QString selected = keySource_->currentData().toString();
     if (selected.startsWith("Generated")) {
@@ -1606,7 +1753,50 @@ void ProfileEditorDialog::assessRepresentation() {
         return;
     }
     const QSignalBlocker tabBlocker(tabs_);
+    auto *generalPage = name_->parentWidget();
+    auto *scroll = qobject_cast<QScrollArea *>(tabs_->widget(0));
+    const int currentTab = tabs_->currentIndex();
+    if (native_ && !scroll) {
+        tabs_->removeTab(0);
+        scroll = new QScrollArea;
+        scroll->setWidgetResizable(true);
+        scroll->setFrameShape(QFrame::NoFrame);
+        scroll->setWidget(generalPage);
+        generalPage->setAutoFillBackground(false);
+        scroll->viewport()->setAutoFillBackground(false);
+        scroll->setAutoFillBackground(false);
+        tabs_->insertTab(0, scroll, tr("General"));
+    } else if (!native_ && scroll) {
+        scroll->takeWidget();
+        tabs_->removeTab(0);
+        tabs_->insertTab(0, generalPage, tr("General"));
+        delete scroll;
+    }
+    tabs_->setCurrentIndex(currentTab);
+    auto *general = qobject_cast<QFormLayout *>(name_->parentWidget()->layout());
+    for (int row = 0; row < general->rowCount(); ++row) setFormRowVisible(general, row, true);
+    for (int i = 1; i < tabs_->count() - 1; ++i) tabs_->setTabVisible(i, true);
     if (refreshControls_) refreshControls_();
+    setFormRowVisible(general, windowsProfile_, native_);
+    setFormRowVisible(general, nativeServerName_, native_);
+    setFormRowVisible(general, nativeKillSwitch_, native_);
+    setFormRowVisible(general, nativeMode_, native_);
+    setFormRowVisible(general, nativeProfileActions_, native_);
+    setFormRowVisible(general, nativeAuthentication_, native_);
+    nativeAuthMethod_->setCurrentIndex(0);
+    nativeAuthSource_->setCurrentIndex(0);
+    refreshNativeAuthentication_();
+    if (native_) {
+        for (int row = 0; row < general->rowCount(); ++row) {
+            auto *item = general->itemAt(row, QFormLayout::FieldRole);
+            auto *widget = item ? item->widget() : nullptr;
+            setFormRowVisible(general, row, widget == name_ || widget == windowsProfile_
+                || widget == nativeServerName_ || widget == nativeKillSwitch_ || widget == nativeMode_
+                || widget == nativeProfileActions_ || widget == nativeAuthentication_);
+        }
+    }
+    for (int i = 1; i < tabs_->count() - 1; ++i)
+        if (native_) tabs_->setTabVisible(i, false);
     visualBaseline_ = buildText();
     if (bridgeReady_) {
         // Older adapters expose only decoded rules. Keep quoted section values
@@ -1630,7 +1820,9 @@ void ProfileEditorDialog::assessRepresentation() {
     }
     // This is a conservative serializer guard, not a second Core validator.
     // Compare configured tokens with the actual serializer, including ordered rules.
-    const auto tokens = [](const QString &text, bool *valid) {
+    // Native IKEv2 editing predates the decoded-value contract and has no
+    // quote-preserving serializer, so any quoted native value stays Raw-only.
+    const auto tokens = [native = native_](const QString &text, bool *valid) {
         QMap<QString, QString> result;
         QSet<QString> sections;
         QString section;
@@ -1641,15 +1833,15 @@ void ProfileEditorDialog::assessRepresentation() {
             if (line.isEmpty() || line.startsWith(';')) continue;
             if (line.startsWith('#')) {
                 line = line.mid(1).trimmed();
-                if (line != "[Rule]" && !section.startsWith("DisabledRule")) continue;
-                if (line == "[Rule]") {
+                if (ProfileStore::sectionName(line) != "Rule" && !section.startsWith("DisabledRule")) continue;
+                if (ProfileStore::sectionName(line) == "Rule") {
                     section = "DisabledRule" + QString::number(++rule);
                     result.insert(section + "/", {});
                     continue;
                 }
             }
             if (line.startsWith('[') && line.endsWith(']')) {
-                section = line.mid(1, line.size() - 2);
+                section = ProfileStore::sectionName(line);
                 if (section == "Rule") section += QString::number(++rule);
                 else if (sections.contains(section)) *valid = false;
                 sections.insert(section);
@@ -1661,6 +1853,7 @@ void ProfileEditorDialog::assessRepresentation() {
             const QString key = section + "/" + line.left(equal).trimmed();
             QString value;
             if (!ProfileTextEdit::decode(line.mid(equal + 1), &value)) *valid = false;
+            if (native && line.mid(equal + 1).trimmed().startsWith('"')) *valid = false;
             if (result.contains(key)) *valid = false;
             result.insert(key, value);
         }
@@ -1692,7 +1885,9 @@ void ProfileEditorDialog::assessRepresentation() {
         if (QStringList{"Profile/", "AccessKey/", "Interface/", "Routing/"}.contains(it.key())) continue;
         if (!defaults.contains(it.key()) || defaults.value(it.key()) != it.value()) valid = false;
     }
-    rawOnly_ = rawOnly_ || hasUnknownSettings_ || !valid || !parameterError().isEmpty();
+    rawOnly_ = rawOnly_ || hasUnknownSettings_ || !valid || (!native_ && !parameterError().isEmpty());
+    // Missing native values are editable drafts; selected-Core validation still
+    // guards persistence. Raw-only is reserved for unrepresentable documents.
     const int rawIndex = tabs_->count() - 1;
     for (int i = 0; i < rawIndex; ++i) tabs_->setTabEnabled(i, !rawOnly_);
     tabs_->widget(1)->setEnabled(!rawOnly_ && keySource_->currentData().toString() == "ExplicitVLESS");
@@ -2108,4 +2303,68 @@ void ProfileEditorDialog::manageDatabases() {
         active.append(QJsonObject{{"matcher", rule.matcher}, {"value", rule.target}, {"enabled", rule.enabled}});
     }
     manageSharedGeoData(this, coreExecutable_, profilePath_, active);
+}
+
+QDialog *ProfileEditorDialog::nativeConfirmation(QWidget *parent, const QString &profile,
+                                                const QString &server, const QString &action, bool reviewable, const QJsonObject &plan) {
+    auto *dialog = new QDialog(parent);
+    dialog->setWindowTitle(tr("Windows profile"));
+    auto *layout = new QVBoxLayout(dialog);
+    const bool valid = reviewable && !profile.isEmpty() && !server.isEmpty()
+        && (action == "create" || action == "remove" || action == "unchanged");
+    auto *summary = new QLabel(!valid ? tr("The Windows profile changes cannot be confirmed.")
+        : action == "remove" ? tr("Remove this Windows VPN profile? The local configuration will be kept.")
+        : action == "create" ? tr("Create this Windows VPN profile? This will not connect the VPN.")
+        : tr("No Windows profile changes are needed."));
+    summary->setTextFormat(Qt::PlainText);
+    summary->setWordWrap(true);
+    layout->addWidget(summary);
+    auto *form = new QFormLayout;
+    for (const auto &field : {qMakePair(tr("Windows VPN profile"), profile), qMakePair(tr("Server name"), server)}) {
+        auto *value = new QLabel(field.second);
+        value->setTextFormat(Qt::PlainText);
+        value->setWordWrap(true);
+        value->setMaximumWidth(360);
+        form->addRow(field.first, value);
+    }
+    if (plan.isEmpty()) {
+        layout->addLayout(form);
+    } else {
+        const QList<QPair<QString, QString>> fields = {
+            {tr("Action"), action}, {tr("Authentication"), plan.value("authentication").toString()},
+            {tr("IPsec"), plan.value("ipsec").toString()},
+            {tr("IPv6 routes"), [&plan] { QStringList routes; for (const auto &v : plan.value("ipv6_routes").toArray()) routes << v.toString(); return routes.join("\n"); }()},
+            {tr("Credentials"), plan.value("credentials").toString()}, {tr("Trust"), plan.value("trust").toString()}};
+        for (const auto &field : fields) {
+            auto *value = new QLabel(field.second);
+            value->setTextFormat(Qt::PlainText);
+            value->setWordWrap(true);
+            value->setMaximumWidth(360);
+            form->addRow(field.first, value);
+        }
+        auto *content = new QWidget;
+        content->setLayout(form);
+        auto *scroll = new QScrollArea(dialog);
+        scroll->setWidgetResizable(true);
+        scroll->setWidget(content);
+        scroll->setMinimumHeight(240);
+        scroll->setMaximumHeight(420);
+        layout->addWidget(scroll);
+        dialog->resize(540, 520);
+    }
+    auto *buttons = new QDialogButtonBox(dialog);
+    auto *cancel = buttons->addButton(valid && action != "unchanged" ? QDialogButtonBox::Cancel : QDialogButtonBox::Close);
+    cancel->setDefault(true);
+    cancel->setFocus();
+    connect(buttons, &QDialogButtonBox::rejected, dialog, &QDialog::reject);
+    if (valid && action != "unchanged") {
+        auto *confirm = buttons->addButton(action == "create" ? tr("Create") : tr("Remove"), QDialogButtonBox::AcceptRole);
+        confirm->setAutoDefault(false);
+        connect(confirm, &QPushButton::clicked, dialog, [dialog, confirm] {
+            confirm->setEnabled(false);
+            dialog->accept(); // Local consent only; no Core or OS operation.
+        });
+    }
+    layout->addWidget(buttons);
+    return dialog;
 }

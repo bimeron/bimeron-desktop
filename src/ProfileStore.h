@@ -11,10 +11,12 @@ struct Profile {
 };
 
 struct ProfileConnectionInfo {
+    enum class Backend { Packet, NativeIKEv2, Unknown };
+    Backend backend = Backend::Unknown;
     QString protocol;
     QString interfaceMode;
     QString keyFile;
-    bool connectable = false;
+    bool connectable = false; // Packet start eligibility; native sessions use a separate controller.
 };
 
 class ProfileStore {
@@ -26,6 +28,7 @@ public:
     QString createConfig(const QString &name, const QString &key, QString *error = nullptr,
                          const QString &identityFile = {}, const QString &knownHostsFile = {}) const;
     static bool sshFilesReadable(const QString &configText, const QString &profilePath, QString *error = nullptr);
+    static QString sectionName(const QString &line);
     static QString uriSourceField(const QString &uri);
     static QString identity(const QString &absolutePath);
     static QString displayName(const QString &configPath);

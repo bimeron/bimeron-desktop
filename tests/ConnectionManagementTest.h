@@ -6,10 +6,18 @@
 #include <QScrollArea>
 #include <QPlainTextEdit>
 #include <QClipboard>
+#include <QMimeData>
 #include <QPointer>
 #include <QCloseEvent>
 #include <QSystemTrayIcon>
 #include <QTranslator>
+#include <QMenu>
+#include "NativeIKEv2SessionTest.h"
+
+// Compile the application translator itself; never invoke its renamed entry point.
+#define main bimeronApplicationEntryForTranslationTest
+#include "../src/main.cpp"
+#undef main
 #include "ProfileEditorDialog.h"
 #include "GeoDataSelection.h"
 #include "WindowsTheme.h"
@@ -594,6 +602,44 @@ struct ConnectionManagementTest {
         const int themeArgument = app.arguments().indexOf("--geometry-theme");
         if (themeArgument >= 0) QSettings().setValue("app/theme", app.arguments().value(themeArgument + 1));
         applyThemePalette(app);
+        if (app.arguments().contains("--d3-only")) {
+            MainWindow window;
+            auto plan = NativeIKEv2SessionTest::publicPlan();
+            plan.insert("authentication", "IKEv2 only; EAP-MSCHAPv2; no automatic redial");
+            plan.insert("ipsec", "IKE AES256/SHA256/DH14; ESP AES256/SHA256; no PFS");
+            plan.insert("credentials", "Profile preparation does not read or write credentials.");
+            plan.insert("trust", "Administrator-managed CA validation; no trust policy changes.");
+            plan.insert("ipv6_routes", QJsonArray{"::/1", "8000::/1"});
+            auto *dialog = ProfileEditorDialog::nativeConfirmation(&window, "fixture", "vpn.example", "remove", true, plan);
+            dialog->show(); QCoreApplication::processEvents();
+            require(dialog->grab().save(destination), "complete D3 plan capture");
+            delete dialog;
+            NativeIKEv2SessionTest::Fixture provision;
+            window.bindNativeController(&provision.controller);
+            window.nativeActions_.select("fixture", "vpn.example", "remove");
+            provision.controller.setLaunchGates({true,true,true,true});
+            window.nativeActions_.preview(); NativeIKEv2SessionTest::startProvision(provision);
+            window.show(); QCoreApplication::processEvents();
+            require(window.connectionLabel_->wordWrap(), "native connection status wraps");
+            require(window.connectionLabel_->isVisible() && window.connectionLabel_->text().contains(MainWindow::tr("Windows profile plan is ready for review.")), "localized review status visible");
+            require(window.controlBlocked(), "review retains packet blocking");
+            require(window.grab().save(destination + ".review.png"), "D3 review capture");
+            for (const auto &code : {QString("ikev2_profile_preview_changed"), QString("ikev2_profile_rollback_incomplete_manual_review_required"), QString("native_operation_failed")}) {
+                auto reply = provision.reply(); reply.insert("operation", "failed"); reply.insert("error", code);
+                provision.observe(reply); QCoreApplication::processEvents();
+                const QString expected = code == "ikev2_profile_preview_changed"
+                    ? MainWindow::tr("Windows profile plan changed. A fresh review is required.")
+                    : MainWindow::tr("Windows profile operation failed. Manual review is required.");
+                require(window.connectionLabel_->isVisible() && window.connectionLabel_->text().contains(expected), "localized failure status visible");
+                require(window.controlBlocked(), "provisioning blocks packet connection");
+                require(window.grab().save(destination + "." + code + ".png"), "D3 failure capture");
+            }
+            provision.controller.cancelExchange(); QCoreApplication::processEvents();
+            require(window.controlBlocked(), "unknown retains packet blocking");
+            require(window.connectionLabel_->isVisible() && window.connectionLabel_->text().contains(MainWindow::tr("Windows profile outcome is unknown. Manual review is required.")), "localized unknown status visible");
+            require(window.grab().save(destination + ".unknown.png"), "D3 unknown capture");
+            app.removeTranslator(&translator); return 0;
+        }
         downloadFeedback(destination);
         MainWindow window;
         window.core_.cancel();
@@ -772,6 +818,8 @@ struct ConnectionManagementTest {
         return 0;
     }
     static int preview(QApplication &app, const QString &destination, const QString &language) {
+        QSettings().setValue("app/theme", app.arguments().contains("--ui-dark") ? "dark" : "light");
+        applyThemePalette(app);
         class Translator final : public QTranslator {
         public:
             QJsonObject strings;
@@ -825,6 +873,83 @@ struct ConnectionManagementTest {
         const QString path = directory.filePath("preview.conf");
         QFile profile(path);
         require(profile.open(QIODevice::WriteOnly), "preview profile");
+        if (app.arguments().contains("--native-preview")) {
+            profile.write("[Profile]\nName = Native\n[IKEv2]\nWindowsProfile = Fixture\nServerName = vpn.invalid\n[Interface]\nMode = vpn\n");
+            profile.close();
+            window.profiles_.append({"native-preview", "Native IKEv2", path});
+            window.profileList_->addItem("Native IKEv2");
+            window.profileList_->setCurrentRow(0);
+            window.handleStatus({{"State", "disconnected"}});
+            window.updateProfileAppearance();
+            window.updateConnectionButton();
+            NativeIKEv2SessionTest::Fixture nativePreview;
+            if (app.arguments().contains("--native-bound-preview")) {
+                nativePreview.discover();
+                nativePreview.observe(nativePreview.sessionReply("connected", true));
+                window.bindNativeController(&nativePreview.controller);
+                nativePreview.controller.cancelExchange();
+            }
+            window.show();
+            QCoreApplication::processEvents();
+            const int uiState = app.arguments().indexOf("--native-ui-state");
+            if (uiState >= 0) {
+                NativeIKEv2Session::Snapshot snapshot;
+                snapshot.state = app.arguments().value(uiState + 1);
+                if (snapshot.state == "fixture-775") { snapshot.state = "failed"; snapshot.safeError = "775"; }
+                snapshot.authoritative = snapshot.state != "unknown";
+                snapshot.wfp = snapshot.dns = snapshot.state == "connected" ? "active" : "unknown";
+                snapshot.recoveryRequired = snapshot.state == "retained";
+                if (snapshot.recoveryRequired) { snapshot.state = "failed"; snapshot.wfp = "retained"; }
+                window.showNativeSnapshot(snapshot);
+                require(!window.connectButton_->isEnabled(), "presentation never enables native connection");
+                QCoreApplication::processEvents();
+            }
+            if (app.arguments().contains("--native-editor-preview")) {
+                ProfileEditorDialog editor(QString::fromUtf8("[Profile]\nName = Native\n[IKEv2]\nWindowsProfile = Fixture\nServerName = vpn.invalid\n[Interface]\nMode = vpn\n"), {}, &window);
+                editor.show();
+                if (app.arguments().contains("--ui-minimum")) editor.resize(620, 460);
+                QCoreApplication::processEvents();
+                require(editor.grab().save(destination), "native editor capture");
+                auto *authMethod = editor.findChild<QComboBox *>("nativeAuthMethod");
+                auto *authSource = editor.findChild<QComboBox *>("nativeAuthSource");
+                for (int method = 0; method < 3; ++method) {
+                    authMethod->setCurrentIndex(method);
+                    for (int source = 0; source < (method == 0 ? 2 : 1); ++source) {
+                        authSource->setCurrentIndex(source);
+                        QCoreApplication::processEvents();
+                        require(editor.grab().save(destination + QString(".auth-%1-%2.png").arg(method).arg(source)), "authentication capture");
+                    }
+                }
+                authMethod->setCurrentIndex(0); authSource->setCurrentIndex(0);
+                auto *actions = editor.findChild<QWidget *>("nativeProfileActions");
+                require(actions && actions->isVisible(), "native actions visible");
+                for (auto *button : actions->findChildren<QPushButton *>()) require(!button->isEnabled(), "native actions disabled");
+                for (const auto &action : {QString("create"), QString("remove"), QString("unchanged"), QString("invalid")}) {
+                    auto *confirmation = ProfileEditorDialog::nativeConfirmation(&editor, "<b>Fixture</b>", "vpn.invalid", action, true);
+                    confirmation->show();
+                    QCoreApplication::processEvents();
+                    auto *box = confirmation->findChild<QDialogButtonBox *>();
+                    require(box, "confirmation buttons");
+                    int accepts = 0;
+                    for (auto *button : box->buttons()) if (box->buttonRole(button) == QDialogButtonBox::AcceptRole) ++accepts;
+                    require(accepts == (action == "create" || action == "remove" ? 1 : 0), "only reviewed mutations can confirm");
+                    for (auto *label : confirmation->findChildren<QLabel *>())
+                        if (label->text().contains("<b>")) require(label->textFormat() == Qt::PlainText, "preview markup is literal");
+                    require(confirmation->grab().save(destination + "." + action + ".png"), "confirmation capture");
+                    confirmation->reject();
+                    require(confirmation->result() == QDialog::Rejected, "local cancellation");
+                    delete confirmation;
+                }
+                ProfileEditorDialog packet("[Profile]\nName = Packet\n[AccessKey]\nSOCKS5 = socks5://localhost:1080\n[Interface]\nMode = proxy\n", {{"proxy", true}}, &window);
+                packet.show();
+                QCoreApplication::processEvents();
+                require(!packet.findChild<QWidget *>("nativeProfileActions")->isVisible(), "packet editor has no native actions");
+                require(!packet.findChild<QWidget *>("nativeAuthentication")->isVisible(), "packet editor has no native authentication");
+                return 0;
+            }
+            require(window.grab().save(destination), "native unavailable preview image");
+            return 0;
+        }
         profile.write("[Profile]\nName = Example proxy\n[AccessKey]\nSOCKS5 = socks5://localhost:1080\n[Interface]\nMode = proxy\n");
         profile.close();
         window.profiles_.append({"preview", "Example proxy", path});
@@ -1578,6 +1703,231 @@ struct ConnectionManagementTest {
         serviceProbeSurvivesIpcFailure();
         {
             MainWindow window;
+            NativeIKEv2SessionTest::Fixture fixture;
+            fixture.discover();
+            window.bindNativeController(&fixture.controller);
+            for (const auto &state : {QString("connecting"), QString("connected"), QString("stopping"), QString("failed")}) {
+                fixture.observe(fixture.sessionReply(state));
+                const QString expected = state == "connecting" ? MainWindow::tr("Connecting…")
+                    : state == "connected" ? MainWindow::tr("Connected")
+                    : state == "stopping" ? MainWindow::tr("Disconnecting…") : MainWindow::tr("Native connection failed.");
+                require(window.connectionLabel_->text().startsWith(expected), "controller outcome reaches GUI");
+                const auto before = fixture.calls.size();
+                window.connectButton_->click();
+                window.toggleConnection();
+                require(!window.connectButton_->isEnabled() && !window.core_.busy()
+                    && fixture.calls.size() == before && fixture.launches == 0,
+                    "native outcome prevents repeated GUI Connect and packet dispatch");
+            }
+            const auto calls = fixture.calls.size();
+            NativeIKEv2Session::Snapshot snapshot;
+            snapshot.authoritative = true;
+            snapshot.state = "failed";
+            snapshot.safeError = "775"; // Private hypothetical fixture, not a transport contract.
+            JsonTranslator translator;
+            require(translator.load(QFileInfo(QString::fromUtf8(__FILE__)).dir().filePath("../assets/translations/ru.json")), "775 Russian catalog");
+            for (bool russian : {false, true}) {
+                if (russian) QCoreApplication::installTranslator(&translator);
+                window.showNativeSnapshot(snapshot);
+                const QString expected = russian
+                    ? QString::fromUtf8("Соединение завершилось с ошибкой Windows 775. Локальная причина неизвестна.")
+                    : QString("Connection failed with Windows error 775. The local cause is unknown.");
+                const QString text = window.nativeStatusLabel_->text();
+                require(text.contains(expected), "775 explicitly localized with unknown local cause");
+                for (const auto &unsupported : {QString("EAP"), QString("password"), QString("server rejection"),
+                        QString::fromUtf8("парол"), QString::fromUtf8("отказ сервер")})
+                    require(!text.contains(unsupported, Qt::CaseInsensitive), "775 makes no authentication diagnosis");
+                if (russian) QCoreApplication::removeTranslator(&translator);
+            }
+            snapshot.authoritative = false;
+            window.showNativeSnapshot(snapshot);
+            require(!window.nativeStatusLabel_->text().contains("775")
+                && window.connectionLabel_->text().startsWith("Connection state is unknown."),
+                "stale 775 never becomes an authoritative outcome");
+            snapshot.authoritative = true;
+            snapshot.safeError = "raw diagnostic EAP password server rejection";
+            window.showNativeSnapshot(snapshot);
+            require(!window.nativeStatusLabel_->text().contains(snapshot.safeError)
+                && window.nativeStatusLabel_->text().contains("The native operation could not be completed."),
+                "unknown diagnostic uses generic fallback");
+            require(fixture.calls.size() == calls && fixture.launches == 0 && window.nativeOwnerBlocked_
+                && !window.connectButton_->isEnabled(), "rendering never dispatches or readmits");
+        }
+        for (int scenario = 0; scenario < 3; ++scenario) {
+            MainWindow reviewWindow;
+            require(reviewWindow.nativeUnavailableReason().contains("Core/Desktop"), "concrete approval reason");
+            NativeIKEv2SessionTest::Fixture provision;
+            reviewWindow.bindNativeController(&provision.controller);
+            reviewWindow.nativeActions_.select("fixture", "vpn.example", "remove");
+            provision.controller.setLaunchGates({true,true,true,true});
+            require(reviewWindow.nativeActions_.preview(), "modal fixture preview");
+            NativeIKEv2SessionTest::startProvision(provision);
+            QTimer::singleShot(0, [&] {
+                auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+                require(dialog, "actual consent modal");
+                const auto plan = NativeIKEv2SessionTest::publicPlan();
+                for (const auto *key : {"authentication", "ipsec", "credentials", "trust"}) {
+                    bool found = false;
+                    for (auto *label : dialog->findChildren<QLabel *>())
+                        if (label->text() == plan.value(key).toString()) {
+                            require(label->textFormat() == Qt::PlainText, "plan plain text"); found = true;
+                        }
+                    require(found, "public plan field displayed");
+                }
+                if (scenario == 0) { dialog->reject(); return; }
+                if (scenario == 1) reviewWindow.nativeActions_.select("other", "vpn.example", "remove");
+                else {
+                    auto reply = provision.reply(); auto changed = plan; changed.insert("trust", "changed");
+                    reply.insert("operation", "previewed"); reply.insert("profile", changed); provision.observe(reply);
+                }
+                dialog->accept();
+            });
+            reviewWindow.confirmNativePreview();
+            for (const auto &call : provision.calls)
+                require(call.command != "remove" && call.command != "apply", "cancel or changed modal cannot mutate");
+        }
+        {
+            MainWindow reviewWindow;
+            NativeIKEv2SessionTest::Fixture provision;
+            reviewWindow.bindNativeController(&provision.controller);
+            reviewWindow.nativeActions_.select("fixture", "vpn.example", "remove");
+            provision.controller.setLaunchGates({true,true,true,true});
+            require(reviewWindow.nativeActions_.preview(), "UI adapter starts fixture preview");
+            NativeIKEv2SessionTest::startProvision(provision);
+            QTimer::singleShot(0, [&] {
+                auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+                require(dialog, "adapter opens actual confirmation");
+                auto *buttons = dialog->findChild<QDialogButtonBox *>();
+                for (auto *button : buttons->buttons())
+                    if (buttons->buttonRole(button) == QDialogButtonBox::AcceptRole) button->click();
+            });
+            reviewWindow.confirmNativePreview();
+            require(provision.calls.back().command == "remove", "Qt consent reaches adapter once");
+        }
+
+        {
+            QTemporaryDir directory;
+            require(directory.isValid(), "native creation fixture directory");
+            MainWindow window;
+            window.store_ = ProfileStore(directory.filePath("profiles"));
+            window.profiles_.clear();
+            window.validationExecutable_ = QCoreApplication::applicationFilePath();
+            QTimer::singleShot(0, [&] {
+                auto *add = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+                require(add, "native creation Add dialog");
+                auto *action = add->findChild<QPushButton *>("createNativeProfile");
+                require(action && !action->autoDefault(), "distinct native creation action");
+                QTimer::singleShot(0, [&] {
+                    auto *editor = qobject_cast<ProfileEditorDialog *>(QApplication::activeModalWidget());
+                    require(editor, "creation opens existing editor");
+                    require(editor->findChild<QTabWidget *>()->isTabEnabled(0), "empty native draft opens visual form");
+                    require(editor->findChild<QLineEdit *>("windowsProfile")->text().isEmpty()
+                        && editor->findChild<QLineEdit *>("nativeServerName")->text().isEmpty(), "no lab defaults");
+                    editor->reject();
+                });
+                action->click();
+            });
+            window.addProfile();
+            require(window.profiles_.isEmpty() && QDir(directory.path()).entryList(QDir::Files).isEmpty(), "cancel creates no profile");
+            for (int scenario = 0; scenario < 5; ++scenario) {
+                const bool available = scenario != 0;
+                const bool successful = scenario >= 3;
+                const int before = window.profiles_.size();
+                if (scenario == 2) require(QDir().mkdir(directory.filePath("profiles.json")), "index write failure fixture");
+                window.validationExecutable_ = available ? QCoreApplication::applicationFilePath() : directory.filePath("missing-core");
+                bool submitted = false;
+                bool submitPending = false;
+                bool errorShown = false;
+                bool cancelling = false;
+                QTimer timer;
+                QObject::connect(&timer, &QTimer::timeout, [&] {
+                    if (auto *message = qobject_cast<QMessageBox *>(QApplication::activeModalWidget())) {
+                        require(!successful, "successful native creation has no error");
+                        errorShown = true;
+                        bool discarded = false;
+                        for (auto *button : message->buttons()) {
+                            if (message->buttonRole(button) == QMessageBox::DestructiveRole) {
+                                button->click(); discarded = true; break;
+                            }
+                        }
+                        if (!discarded) message->accept();
+                    } else if (auto *editor = qobject_cast<ProfileEditorDialog *>(QApplication::activeModalWidget())) {
+                        // Ticks that piled up while the editor opened may run before the
+                        // queued Save click; wait until that click has actually happened.
+                        if (cancelling || submitPending) return;
+                        if (submitted) {
+                            require(errorShown && editor->findChild<QLineEdit *>("windowsProfile")->text() == "Fixture", "failed save preserves draft");
+                            cancelling = true;
+                            QTimer::singleShot(0, editor, [editor] { editor->reject(); });
+                        } else {
+                            editor->findChild<QLineEdit *>("profileName")->setText(scenario == 1 ? "fixture-reject" : "Native fixture");
+                            editor->findChild<QLineEdit *>("windowsProfile")->setText("Fixture");
+                            editor->findChild<QLineEdit *>("nativeServerName")->setText("vpn.invalid");
+                            submitted = true;
+                            submitPending = true;
+                            auto *save = editor->findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Save);
+                            QTimer::singleShot(0, save, [&submitPending, save] {
+                                submitPending = false;
+                                save->click();
+                            });
+                        }
+                    }
+                });
+                timer.start(20);
+                window.createNativeProfile();
+                timer.stop();
+                require(window.profiles_.size() == before + (successful ? 1 : 0), "only validated profile registered");
+                require(QDir(directory.filePath("profiles")).entryList({"*.conf"}, QDir::Files).size() == window.profiles_.size(), "failed save leaves no orphan profile");
+                if (scenario == 2) require(QDir().rmdir(directory.filePath("profiles.json")), "remove index failure fixture");
+            }
+            require(window.profiles_[0].path != window.profiles_[1].path, "duplicate display names cannot overwrite another profile");
+            QFile saved(window.profiles_.first().path);
+            require(saved.open(QIODevice::ReadOnly), "created native profile persisted");
+            const QByteArray bytes = saved.readAll();
+            saved.close();
+            require(bytes.contains("WindowsProfile = Fixture") && bytes.contains("ServerName = vpn.invalid"), "native creation round trip");
+            QTimer::singleShot(0, [&] {
+                auto *editor = qobject_cast<ProfileEditorDialog *>(QApplication::activeModalWidget());
+                require(editor && editor->findChild<QLineEdit *>("windowsProfile")->text() == "Fixture", "reopen native profile");
+                editor->findChild<QLineEdit *>("profileName")->setText("Renamed native fixture");
+                editor->findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Save)->click();
+            });
+            window.editProfile(0);
+            require(window.profiles_[0].name == "Renamed native fixture", "native local rename");
+            const QString removedPath = window.profiles_[0].path;
+            for (const bool confirmed : {false, true}) {
+                window.profileList_->setCurrentRow(0, QItemSelectionModel::ClearAndSelect);
+                QTimer::singleShot(0, [&] {
+                    auto *message = qobject_cast<QMessageBox *>(QApplication::activeModalWidget());
+                    require(message && message->text().contains("Windows VPN profile"), "local deletion scope is explicit");
+                    for (auto *button : message->buttons()) {
+                        if (message->buttonRole(button) == (confirmed ? QMessageBox::DestructiveRole : QMessageBox::RejectRole)) {
+                            button->click(); break;
+                        }
+                    }
+                });
+                window.removeProfile();
+                require(QFileInfo::exists(removedPath) != confirmed, "local deletion honors confirmation");
+            }
+            require(window.profiles_.size() == 1 && QFileInfo::exists(window.profiles_[0].path), "other same-name profile retained");
+        }
+        {
+            for (const bool reviewable : {false, true}) {
+                for (const QString action : {"create", "remove", "unchanged", "invalid"}) {
+                    auto *dialog = ProfileEditorDialog::nativeConfirmation(nullptr, "Fixture", "vpn.invalid", action, reviewable);
+                    auto *buttons = dialog->findChild<QDialogButtonBox *>();
+                    QPushButton *accept = nullptr;
+                    for (auto *button : buttons->buttons())
+                        if (buttons->buttonRole(button) == QDialogButtonBox::AcceptRole) accept = qobject_cast<QPushButton *>(button);
+                    require(bool(accept) == (reviewable && (action == "create" || action == "remove")), "confirmation requires reviewed mutation");
+                    if (accept) { accept->click(); require(dialog->result() == QDialog::Accepted && !accept->isEnabled(), "one local confirmation"); }
+                    else { dialog->reject(); require(dialog->result() == QDialog::Rejected, "no mutation confirmation"); }
+                    delete dialog;
+                }
+            }
+        }
+        {
+            MainWindow window;
             QTimer::singleShot(0, [&] {
                 auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
                 require(dialog, "Add dialog opened");
@@ -1589,63 +1939,87 @@ struct ConnectionManagementTest {
                 }
                 require(paste, "Paste control");
                 require(fields[1]->isHidden() && fields[0]->echoMode() == QLineEdit::Normal, "Name initially hidden and URI visible");
-                const QString previous = QApplication::clipboard()->text();
-                QApplication::clipboard()->setText("unsupported clipboard");
-                QCoreApplication::processEvents();
-                require(waitFor([&] { return !paste->isVisible(); }), "Unsupported clipboard hides Paste");
+                // The native clipboard is shared with every process in the session. Snapshot the
+                // user's content and restore it before any failure, because require() aborts.
+                QMimeData *previous = new QMimeData;
+                if (const QMimeData *current = QApplication::clipboard()->mimeData()) {
+                    if (current->hasImage()) previous->setImageData(current->imageData());
+                    for (const QString &format : current->formats())
+                        if (format != "application/x-qt-image") previous->setData(format, current->data(format));
+                }
+                const auto restoreClipboard = [&] {
+                    if (previous) QApplication::clipboard()->setMimeData(previous);
+                    previous = nullptr;
+                };
+                const auto check = [&](bool condition, const char *message) {
+                    if (!condition) restoreClipboard();
+                    require(condition, message);
+                };
+                // Another process can hold the clipboard open, so the OS may reject a write.
+                // Retry within a deadline and report that apart from the dialog's reaction,
+                // which arrives asynchronously through QClipboard::dataChanged.
+                const auto setClipboard = [&](const QString &text) {
+                    QElapsedTimer timer;
+                    timer.start();
+                    qint64 lastWrite = -1000;
+                    const bool written = waitFor([&] {
+                        if (QApplication::clipboard()->text() == text) return true;
+                        if (timer.elapsed() - lastWrite >= 250) {
+                            QApplication::clipboard()->setText(text);
+                            lastWrite = timer.elapsed();
+                        }
+                        return false;
+                    }, 5000);
+                    check(written, "Fixture could not write the system clipboard; another process may hold it open");
+                };
+                setClipboard("unsupported clipboard");
+                check(waitFor([&] { return !paste->isVisible() && !paste->isEnabled(); }, 5000), "Unsupported clipboard hides Paste");
                 const QSize original = dialog->size();
                 fields[0]->setText("typed text");
                 QCoreApplication::processEvents();
-                require(dialog->size() == original, "Typing retains geometry");
-                // Native clipboard ownership can be transiently held by another application.
-                // Establish the fixture input before testing the UI's response to it.
-                require(waitFor([&] {
-                    if (QApplication::clipboard()->text() == "https://example.invalid:443") return true;
-                    QApplication::clipboard()->setText("https://example.invalid:443");
-                    return QApplication::clipboard()->text() == "https://example.invalid:443";
-                }), "native clipboard accepts supported fixture input");
-                QCoreApplication::processEvents();
-                const bool clipboardVisible = waitFor([&] { return paste->isEnabled() && paste->isVisible(); });
-                require(clipboardVisible, "Supported clipboard shows Paste");
+                check(dialog->size() == original, "Typing retains geometry");
+                setClipboard("https://example.invalid:443");
+                check(waitFor([&] { return paste->isEnabled() && paste->isVisible(); }, 5000), "Supported clipboard shows Paste");
                 paste->click();
                 QCoreApplication::processEvents();
-                require(dialog->width() == original.width() && dialog->height() > original.height(), "Valid URI reveals name without width change");
-                require(fields[1]->isVisible() && fields[1]->y() < fields[0]->y(), "Name appears above URI");
+                check(fields[0]->text() == "https://example.invalid:443", "Paste fills the URI field");
+                check(dialog->width() == original.width() && dialog->height() > original.height(), "Valid URI reveals name without width change");
+                check(fields[1]->isVisible() && fields[1]->y() < fields[0]->y(), "Name appears above URI");
                 fields[0]->setText("ssh://alice@example.invalid");
                 QCoreApplication::processEvents();
-                require(fields[1]->isVisible() && dialog->width() == original.width(), "SSH retains name and dialog width");
-                require(dialog->findChildren<QLineEdit *>().size() == 4, "SSH identity and known hosts retained");
-                require(dialog->findChild<QPushButton *>("browseProfileFile"), "File browse shares the add form");
-                require(dialog->findChild<QPushButton *>("createProfileInEditor"), "Create editor action is available");
+                check(fields[1]->isVisible() && dialog->width() == original.width(), "SSH retains name and dialog width");
+                check(dialog->findChildren<QLineEdit *>().size() == 4, "SSH identity and known hosts retained");
+                check(dialog->findChild<QPushButton *>("browseProfileFile"), "File browse shares the add form");
+                check(dialog->findChild<QPushButton *>("createProfileInEditor"), "Create editor action is available");
                 fields[0]->setText(QDir::homePath() + "/profile.conf");
-                require(fields[1]->isHidden(), "Typed absolute path hides profile name");
-                require(dialog->findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Save)->isEnabled(), "File import does not require a name");
+                check(fields[1]->isHidden(), "Typed absolute path hides profile name");
+                check(dialog->findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Save)->isEnabled(), "File import does not require a name");
                 fields[0]->setText("relative.conf");
-                require(!dialog->findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Save)->isEnabled(), "Relative path is not accepted");
+                check(!dialog->findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Save)->isEnabled(), "Relative path is not accepted");
                 for (const QString &path : {QUrl::fromLocalFile(QDir::homePath() + "/profile.conf").toString(), QString("~/profile.conf"), "\"" + QDir::homePath() + "/profile.conf\""}) {
                     fields[0]->setText(path);
-                    require(fields[1]->isHidden() && dialog->findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Save)->isEnabled(), "File URL, home path and quoted path accepted without name");
+                    check(fields[1]->isHidden() && dialog->findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Save)->isEnabled(), "File URL, home path and quoted path accepted without name");
                 }
                 const QString retainedInput = fields[0]->text();
                 const QString capture = qEnvironmentVariable("BIMERON_CREATION_CAPTURE");
                 if (!capture.isEmpty()) {
                     QCoreApplication::processEvents();
-                    require(dialog->grab().save(capture + ".add.png"), "capture actual add dialog");
+                    check(dialog->grab().save(capture + ".add.png"), "capture actual add dialog");
                 }
                 QTimer::singleShot(0, [&] {
                     auto *editor = qobject_cast<ProfileEditorDialog *>(QApplication::activeModalWidget());
-                    require(editor, "Create action opens profile editor");
+                    check(editor, "Create action opens profile editor");
                     auto *sources = editor->findChild<QComboBox *>("keySource");
-                    require(sources && sources->isEnabled() && sources->findData("SS") < 0, "New editor has no URI source choices");
+                    check(sources && sources->isEnabled() && sources->findData("SS") < 0, "New editor has no URI source choices");
                     if (!capture.isEmpty()) {
                         QCoreApplication::processEvents();
-                        require(editor->grab().save(capture + ".editor.png"), "capture actual creation editor");
+                        check(editor->grab().save(capture + ".editor.png"), "capture actual creation editor");
                     }
                     editor->findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Cancel)->click();
                 });
                 dialog->findChild<QPushButton *>("createProfileInEditor")->click();
-                require(fields[0]->text() == retainedInput, "Cancel editor retains add-dialog input");
-                QApplication::clipboard()->setText(previous);
+                check(fields[0]->text() == retainedInput, "Cancel editor retains add-dialog input");
+                restoreClipboard();
                 dialog->reject();
             });
             window.addProfile();
@@ -1910,6 +2284,26 @@ struct ConnectionManagementTest {
         window.poll();
         require(waitFor(synchronized), "backend invalidation must resynchronize");
         require(starts == 2 && !window.validationProcess_, "stale CLI must not start after invalidation");
+        // Core failures invalidate from event callbacks; the discarded CLI must
+        // be deleted only after its exit is reported, never while still running.
+        write(window.profiles_[0].path, config + "# fixture-delay\n");
+        window.toggleConnection();
+        const QPointer<QProcess> discarded = window.validationProcess_;
+        require(discarded, "delayed validation must be running before callback invalidation");
+        static QtMessageHandler previousHandler = nullptr;
+        static int destroyedRunning = 0;
+        destroyedRunning = 0;
+        previousHandler = qInstallMessageHandler([](QtMsgType type, const QMessageLogContext &context, const QString &message) {
+            if (message.startsWith("QProcess: Destroyed while process")) ++destroyedRunning;
+            if (previousHandler) previousHandler(type, context, message);
+        });
+        QTimer::singleShot(0, &window, [&window] { window.invalidateConnection(); });
+        const bool reaped = waitFor([&] { return !discarded; });
+        qInstallMessageHandler(previousHandler);
+        require(reaped && destroyedRunning == 0, "callback invalidation must reap the discarded CLI before deleting it");
+        write(window.profiles_[0].path, config);
+        window.poll();
+        require(waitFor(synchronized) && starts == 2 && !window.validationProcess_, "callback invalidation must resynchronize");
 
         QSettings().setValue("app/autoConnectProfile", "removed-profile");
         window.autoConnectAttempted_ = false;
@@ -1967,15 +2361,120 @@ struct ConnectionManagementTest {
         window.toggleConnection();
         require(waitFor([&] { return rejectionShown && window.operation_.isEmpty(); }), "service rejection after CLI acceptance is displayed");
         dismiss.stop();
-        QFile retained(window.profiles_[0].path);
-        require(retained.open(QIODevice::ReadOnly) && retained.readAll() == wrapped, "service rejection preserves profile bytes");
+        QFile retainedProfile(window.profiles_[0].path);
+        require(retainedProfile.open(QIODevice::ReadOnly) && retainedProfile.readAll() == wrapped, "service rejection preserves profile bytes");
         require(window.log_->toPlainText().contains("OUTER_SENTINEL"), "service rejection retains supplied diagnostic detail");
 
-        const int before = requests;
+        // The selection checks below need row 0 to stay an unsupported packet profile.
+        write(window.profiles_[0].path, "[Profile]\nName = Unsupported\n[AccessKey]\nType = future\n");
+        const int nativeStarts = starts;
+        // Native profiles remain displayable but can never use packet lifecycle paths.
+        const QString nativePath = directory.filePath("native.conf");
+        write(nativePath, "[Profile]\nName = Native\n[IKEv2]\nWindowsProfile = Fixture\nServerName = vpn.invalid\n[Interface]\nMode = vpn\n");
+        const Profile native{ProfileStore::identity(nativePath), "Native", nativePath};
+        window.profiles_.append(native);
+        window.store_ = ProfileStore(directory.path());
+        require(window.store_.save(window.profiles_), "save isolated native selector fixture");
+        window.refreshProfiles();
+        const int nativeRow = window.profiles_.size() - 1;
+        require(window.profileInfo(nativeRow).backend == ProfileConnectionInfo::Backend::NativeIKEv2,
+                "native backend discriminator");
+        require(window.autoConnectProfile_->findData(native.id) < 0, "native excluded from startup selector");
+        require(!window.profileList_->item(nativeRow)->data(Qt::UserRole + 1).toBool(),
+                "native unavailable label is not replaced by unknown protocol");
+        window.profileList_->setCurrentRow(nativeRow);
+        window.updateConnectionButton();
+        require(!window.connectButton_->isEnabled() && window.nativeStatusLabel_->text().contains("approved Core/Desktop artifact pair and fresh admission"),
+                "native action disabled with unavailable explanation");
+        const auto settingsKeys = QSettings().allKeys();
+        const auto startupProfile = QSettings().value("app/autoConnectProfile");
+        window.toggleConnection();
+        require(!window.startProfile(nativeRow) && window.operation_.isEmpty(), "native never starts packet validation");
+        require(QSettings().allKeys() == settingsKeys && QSettings().value("app/autoConnectProfile") == startupProfile,
+                "blocked native route does not mutate settings");
+        require(waitFor(synchronized), "native dispatch fixture synchronized");
+        window.startReadyPath_ = nativePath;
+        window.operation_ = "start";
+        window.poll();
+        require(window.operation_.isEmpty() && starts == nativeStarts, "stale dispatch cannot send native daemon start");
+        QSettings().setValue("app/autoConnectProfile", native.id);
+        QSettings().setValue("app/autoConnect", true);
+        window.autoConnectAttempted_ = false;
+        window.completeSynchronization();
+        require(window.autoConnectAttempted_ && starts == nativeStarts && window.operation_.isEmpty(), "stale native autostart is ignored");
+        window.coreUpdateAwaitingResult_ = true;
+        window.expectedCoreVersionAfterUpdate_ = version;
+        window.reconnectProfileAfterUpdate_ = native.id;
+        window.completeSynchronization();
+        require(!window.coreUpdateAwaitingResult_ && window.reconnectResultProfileId_.isEmpty() && starts == nativeStarts,
+                "native never restored by packet updater");
+        // Selection must not strand the authoritative packet session. Neither an
+        // unsupported packet profile nor native selection is a switch target.
+        holdStop = false;
+        for (const int selectedRow : {0, nativeRow}) {
+            for (const QString activeState : {QStringLiteral("connected"), QStringLiteral("connecting"), QStringLiteral("reconnecting")}) {
+                status = {{"State", activeState}, {"Session", QJsonObject{
+                    {"id", "packet-selection"}, {"active", true}, {"profile_id", window.profiles_[1].id}, {"mode", "proxy"}}}};
+                request("status");
+                window.profileList_->setCurrentRow(selectedRow);
+                window.updateConnectionButton();
+                require(window.connectButton_->isEnabled() && window.connectButton_->text() == "Disconnect",
+                        "unavailable selection must allow authoritative packet disconnect");
+                const int previousStops = stops;
+                window.connectButton_->click();
+                require(!window.connectButton_->isEnabled(), "pending packet stop disables duplicate action");
+                window.toggleConnection();
+                require(waitFor([&] { return stops == previousStops + 1 && synchronized() && window.operation_.isEmpty(); }),
+                        "unavailable selection sends exactly one packet stop");
+                require(starts == nativeStarts && window.pendingStartPath_.isEmpty() && !window.nativeSession_,
+                        "disconnect never starts native or switches backend");
+            }
+        }
+        for (const QString blockedState : {QStringLiteral("stopping"), QStringLiteral("unknown")}) {
+            status = {{"State", blockedState}, {"Session", QJsonObject{{"id", "packet-selection"}, {"active", true}}}};
+            request("status");
+            const int previousStops = stops;
+            require(!window.connectButton_->isEnabled(), "ambiguous or stopping state disables disconnect");
+            window.toggleConnection();
+            require(stops == previousStops && window.operation_.isEmpty(), "blocked state cannot duplicate stop");
+        }
+        status = {{"State", "disconnected"}};
+        window.retryAt_ = 0;
+        window.poll();
+        require(waitFor(synchronized), "unknown state resynchronizes before polling test");
+
+        // Prove the update guard independently, before the permanent native block.
+        require(!window.nativeOwnerBlocked_ && synchronized(), "polling fixture has no native owner block");
+        window.nextStatus_ = 0;
+        const int liveBefore = requests;
+        window.poll();
+        require(waitFor([&] { return requests > liveBefore && synchronized(); }), "regular polling is live before update");
+        window.nextStatus_ = 0;
+        const int suspendedBefore = requests;
         window.coreUpdateCommand_ = true;
         window.poll();
-        require(requests == before, "service update must suspend regular polling");
+        require(requests == suspendedBefore && !window.core_.busy(), "service update alone suspends polling");
         window.coreUpdateCommand_ = false;
+        window.poll();
+        require(waitFor([&] { return requests > suspendedBefore && synchronized(); }), "regular polling resumes after update");
+
+        const int beforeUpdateRefresh = requests;
+        window.refreshCoreAfterUpdate();
+        require(waitFor([&] { return requests > beforeUpdateRefresh && synchronized(); }),
+                "unbound update refresh still synchronizes the packet backend");
+        if (!window.developmentStatus_) window.developmentPage()->setParent(&window);
+        const quint64 beforeDevelopmentChange = window.connectionGeneration_;
+        window.development_->select("relative-invalid-core");
+        require(window.connectionGeneration_ > beforeDevelopmentChange
+                && window.connectionLabel_->text() == "Could not prepare connection"
+                && window.developmentStatus_->text() == window.development_->status()
+                && !window.development_->busy() && window.development_->failed(),
+                "unbound Development failure still resets packet state and updates controls");
+        // Return to the system backend so the failed selection does not mask IPC diagnostics.
+        window.development_->select({});
+        require(!window.development_->busy() && !window.development_->failed(), "Development failure clears on system backend");
+        window.core_.setEndpoint(server.serverName());
+
         window.repairSnapshotTest_ = [](ConnectionRepair::Snapshot &snapshot) {
             snapshot.helperAvailable = true;
             snapshot.helperTrusted = true;
@@ -1984,6 +2483,104 @@ struct ConnectionManagementTest {
         require(window.coreManagementTitle_->text() == "Cannot inspect the service with current permissions", "access denial must be distinct");
         window.connectionFailure("hello", CoreClient::Failure::Incompatible, "incompatible");
         require(window.coreManagementTitle_->text() == "Application and service versions differ", "incompatible IPC must be distinct");
+        require(!window.nativeController_, "ordinary packet window never constructs a native controller");
+        auto nativeFixture = std::make_unique<NativeIKEv2SessionTest::Fixture>();
+        nativeFixture->discover();
+        nativeFixture->observe(nativeFixture->sessionReply("connected", true));
+        bool queuedRefreshDelivered = false, queuedDevelopmentDelivered = false;
+        const auto queueLegacyCallbacks = [&] {
+            queuedRefreshDelivered = queuedDevelopmentDelivered = false;
+            QTimer::singleShot(0, &window, [&] {
+                window.refreshCoreAfterUpdate();
+                queuedRefreshDelivered = true;
+            });
+            QTimer::singleShot(0, &window, [&] {
+                emit window.development_->changed();
+                queuedDevelopmentDelivered = true;
+            });
+        };
+        const auto checkLegacyCallbacks = [&] {
+            const QString presentation = window.connectionLabel_->text();
+            const quint64 generation = window.connectionGeneration_;
+            const int previousRequests = requests;
+            const auto previousCalls = nativeFixture ? nativeFixture->calls.size() : 0;
+            if (!window.trayMenu_) window.trayMenu_ = new QMenu(&window);
+            window.rebuildTrayMenu();
+            const QString trayStatus = window.trayStatusAction_->text();
+            window.developmentStatus_->setText("stale development status");
+            require(waitFor([&] { return queuedRefreshDelivered && queuedDevelopmentDelivered; }),
+                    "queued legacy callbacks delivered after native authority transition");
+            require(window.nativeOwnerBlocked_ && window.connectionLabel_->text() == presentation
+                    && window.nativeStatusLabel_->text() == presentation
+                    && window.trayStatusAction_->text() == trayStatus
+                    && window.connectionGeneration_ == generation,
+                    "queued legacy callbacks preserve native presentation tray and authority");
+            require(!window.core_.busy() && requests == previousRequests
+                    && (!nativeFixture || nativeFixture->calls.size() == previousCalls),
+                    "queued legacy callbacks send no daemon hello or native activation");
+            require(window.developmentStatus_->text() == window.development_->status()
+                    && window.developmentStopOrphan_->isHidden() == !window.development_->orphanAvailable(),
+                    "native authority preserves Development status and cleanup controls");
+        };
+        queueLegacyCallbacks();
+        window.bindNativeController(&nativeFixture->controller);
+        checkLegacyCallbacks();
+        require(window.nativeOwnerBlocked_ && !window.nativeSession_
+                && window.nativeStatusLabel_->text().contains("Active"),
+                "initial real controller snapshot binds independently of daemon flag");
+        nativeFixture->observe(nativeFixture->sessionReply("stopping", true));
+        require(window.nativeStatusLabel_->text().contains("Inactive"), "changed signal propagates stopping snapshot");
+        auto retained = nativeFixture->sessionReply("stopping", true);
+        auto ns = retained["status"].toObject();
+        auto protection = ns["native"].toObject();
+        protection["wfp"] = "retained"; protection["dns"] = "modified";
+        ns["native"] = protection; retained["status"] = ns;
+        nativeFixture->observe(retained);
+        require(window.nativeStatusLabel_->text().contains("Retained")
+                && window.nativeStatusLabel_->text().contains("Modified"), "retained signal reaches native UI");
+        JsonTranslator applicationTranslator;
+        require(applicationTranslator.load(QFileInfo(QString::fromUtf8(__FILE__)).dir().filePath("../assets/translations/ru.json")),
+                "load actual Russian translator");
+        QCoreApplication::installTranslator(&applicationTranslator);
+        nativeFixture->observe(retained);
+        require(!window.nativeStatusLabel_->text().contains("WFP: Retained"), "controller signal uses Russian translation");
+        QCoreApplication::removeTranslator(&applicationTranslator);
+        nativeFixture->observe(retained);
+        const QString retainedText = window.nativeStatusLabel_->text();
+        window.handleStatus({{"State", "disconnected"}});
+        window.refreshProfiles();
+        window.trayMenu_ = new QMenu(&window);
+        window.rebuildTrayMenu();
+        require(window.nativeStatusLabel_->text() == retainedText
+                && window.connectionLabel_->text() == retainedText
+                && window.trayStatusAction_->text().contains(retainedText),
+                "packet replies profile refresh and tray rebuild preserve native uncertainty");
+        const auto nativeCalls = nativeFixture->calls.size();
+        QCloseEvent close;
+        window.closeEvent(&close);
+        window.trayMenu_->actions().last()->trigger();
+        require(!window.quitRequested_ && nativeFixture->calls.size() == nativeCalls,
+                "close and tray quit never stop or close native owner");
+        queueLegacyCallbacks();
+        nativeFixture.reset();
+        checkLegacyCallbacks();
+        require(!window.nativeController_ && window.nativeOwnerBlocked_
+                && window.nativeStatusLabel_->text().contains("Unknown"),
+                "controller destruction leaves guarded sticky unknown");
+        require(!window.runServiceCommand({"service", "update"}, "fixture") && !window.coreUpdatePrerequisite(),
+                "native unknown ownership blocks service mutation");
+        const int nativeRequests = requests;
+        QSettings().setValue("app/autoConnect", true);
+        QSettings().setValue("app/autoConnectProfile", window.profiles_.first().id);
+        window.autoConnectAttempted_ = false;
+        window.completeSynchronization();
+        window.restartApplication();
+        require(!window.quitRequested_ && !window.canActivateProfile(0), "settings and restart cannot bypass native block");
+        window.poll();
+        window.toggleConnection();
+        require(requests == nativeRequests && starts == nativeStarts && !window.connectButton_->isEnabled(),
+                "native ownership blocks polling and packet activation");
+
         window.core_.cancel();
         QSettings().clear();
     }

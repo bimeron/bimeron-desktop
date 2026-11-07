@@ -5,6 +5,7 @@
 #include "CoreUpdater.h"
 #include "ProfileStore.h"
 #include "DevelopmentCore.h"
+#include "NativeIKEv2Actions.h"
 
 #include <QElapsedTimer>
 #include <QJsonObject>
@@ -37,6 +38,7 @@ class MainWindow final : public QMainWindow {
     Q_OBJECT
 public:
     explicit MainWindow(QWidget *parent = nullptr);
+    ~MainWindow() override;
     void showWindow();
 
 protected:
@@ -56,7 +58,13 @@ private:
     void refreshProfiles();
     ProfileConnectionInfo profileInfo(int row) const;
     bool activeProxyMode() const;
+    bool packetProfile(int row) const;
+    void bindNativeController(NativeIKEv2Session *controller);
+    void confirmNativePreview();
+    void showNativeSnapshot(const NativeIKEv2Session::Snapshot &snapshot);
+    QString nativeUnavailableReason() const;
     void addProfile();
+    void createNativeProfile();
     bool importProfile(const QString &source);
     bool createProfile();
     void removeProfile();
@@ -201,6 +209,10 @@ private:
     CoreUpdater updater_{this};
     QListWidget *profileList_ = nullptr;
     QLabel *connectionLabel_ = nullptr;
+    QLabel *nativeStatusLabel_ = nullptr;
+    bool nativeOwnerBlocked_ = false;
+    NativeIKEv2Actions nativeActions_;
+    QPointer<NativeIKEv2Session> nativeController_;
     QLabel *trafficLabel_ = nullptr;
     QLabel *sessionStatsLabel_ = nullptr;
     QLabel *coreVersionLabel_ = nullptr;

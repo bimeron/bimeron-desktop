@@ -23,6 +23,8 @@ target_link_libraries(core-update PUBLIC Qt6::Network)
 set(BIMERON_DESKTOP_SOURCES
     src/MainWindow.cpp src/MainWindow.h
     src/CoreClient.cpp src/CoreClient.h
+    src/NativeIKEv2Transport.cpp src/NativeIKEv2Transport.h
+    src/NativeIKEv2Session.cpp src/NativeIKEv2Session.h
     src/DevelopmentCore.cpp src/DevelopmentCore.h
     src/CoreUpdater.cpp src/CoreUpdater.h
     src/TrustedCore.cpp src/TrustedCore.h
@@ -79,7 +81,7 @@ if(WIN32)
 endif()
 target_link_libraries(bimeron-desktop PRIVATE Qt6::Widgets Qt6::Network core-update)
 if(WIN32)
-    target_link_libraries(bimeron-desktop PRIVATE shell32 advapi32)
+    target_link_libraries(bimeron-desktop PRIVATE shell32 advapi32 ole32)
 endif()
 target_compile_definitions(bimeron-desktop PRIVATE
     BIMERON_GUI_VERSION="${PROJECT_VERSION}"
@@ -98,10 +100,11 @@ if(BUILD_TESTING)
     target_include_directories(developer-mode-test PRIVATE src)
     target_link_libraries(developer-mode-test PRIVATE Qt6::Widgets Qt6::Network core-update)
     target_compile_definitions(developer-mode-test PRIVATE
+        NATIVE_IKEV2_TRANSPORT_TESTING
         BIMERON_GUI_VERSION="${PROJECT_VERSION}"
         BIMERON_CORE_UPDATE_PUBLIC_KEY="")
     if(WIN32)
-        target_link_libraries(developer-mode-test PRIVATE advapi32 shell32)
+        target_link_libraries(developer-mode-test PRIVATE advapi32 shell32 ole32)
     endif()
     add_test(NAME developer-mode-test COMMAND developer-mode-test --visual-check)
     if(NOT WIN32)
@@ -160,6 +163,29 @@ if(BUILD_TESTING)
     add_test(NAME profile-vless-test COMMAND profile-vless-test)
     if(NOT WIN32)
         set_tests_properties(profile-vless-test PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+    endif()
+    # Disconnected parser for the frozen offline IKEv2 failure draft; Qt Core only.
+    add_executable(offline-ikev2-failure-test tests/OfflineIKEv2FailureTest.cpp
+        src/OfflineIKEv2Failure.h src/OfflineIKEv2FailureRaw.h)
+    target_link_libraries(offline-ikev2-failure-test PRIVATE Qt6::Core)
+    add_test(NAME offline-ikev2-failure-test COMMAND offline-ikev2-failure-test
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/ikev2-error-draft-v1.json"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/ikev2-error-raw-addendum-v1.json")
+    # Standard-library checks for the optional offline MSI inventory utility.
+    # Python is not a build or packaging dependency, so a missing interpreter only skips this test
+    # unless BIMERON_REQUIRE_PYTHON_TESTS is ON (CI sets it so the test cannot silently disappear).
+    option(BIMERON_REQUIRE_PYTHON_TESTS "Fail configuration when Python tests cannot be registered" OFF)
+    if(BIMERON_REQUIRE_PYTHON_TESTS)
+        find_package(Python3 COMPONENTS Interpreter REQUIRED)
+    else()
+        find_package(Python3 COMPONENTS Interpreter QUIET)
+    endif()
+    if(Python3_Interpreter_FOUND)
+        add_test(NAME msi-inventory-test
+            COMMAND "${Python3_EXECUTABLE}" -B -m unittest discover -s tests -p test_msi_inventory.py
+            WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
+    else()
+        message(STATUS "Python 3 interpreter not found; msi-inventory-test is not registered")
     endif()
 endif()
 
@@ -302,12 +328,13 @@ if(EXISTS "${BIMERON_CORE_EXECUTABLE}")
 endif()
 
 if(WIN32)
+    # Test targets share the GUI output directory. Every test executable must be
+    # named *-test so this rule keeps it and its linker byproducts out of the MSI.
     install(DIRECTORY "$<TARGET_FILE_DIR:bimeron-desktop>/"
         DESTINATION .
         USE_SOURCE_PERMISSIONS
         PATTERN "core-update*" EXCLUDE
-        PATTERN "profile-vless-test*" EXCLUDE
-        PATTERN "developer-mode-test*" EXCLUDE)
+        PATTERN "*-test*" EXCLUDE)
     set(CMAKE_INSTALL_SYSTEM_RUNTIME_DESTINATION ".")
     set(CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS_SKIP TRUE)
     include(InstallRequiredSystemLibraries)

@@ -34,7 +34,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y cmake ninja-build g++ qt6-base-dev qt6-base-dev-tools
       - name: Configure
-        run: cmake -S . -B build/ci -G Ninja -DCMAKE_BUILD_TYPE=Release
+        run: cmake -S . -B build/ci -G Ninja -DCMAKE_BUILD_TYPE=Release -DBIMERON_REQUIRE_PYTHON_TESTS=ON
       - name: Build
         run: cmake --build build/ci --parallel 2
       - name: Test
@@ -83,7 +83,7 @@ jobs:
         shell: pwsh
         run: |
           $qtTarget = '${{ runner.temp }}/qt-target/Qt/6.8.3/${{ matrix.qt_dir }}'
-          $args = @('-S', '.', '-B', 'build/ci', '-G', 'Visual Studio 17 2022', '-A', '${{ matrix.arch }}', "-DCMAKE_PREFIX_PATH=$qtTarget")
+          $args = @('-S', '.', '-B', 'build/ci', '-G', 'Visual Studio 17 2022', '-A', '${{ matrix.arch }}', "-DCMAKE_PREFIX_PATH=$qtTarget", '-DBIMERON_REQUIRE_PYTHON_TESTS=ON')
           if ('${{ matrix.arch }}' -eq 'ARM64') {
             $args += '-DQT_HOST_PATH=${{ runner.temp }}/qt-host/Qt/6.8.3/msvc2022_64'
             $args += '-DBIMERON_DEPLOY_QT=OFF'
