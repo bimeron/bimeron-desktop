@@ -204,6 +204,7 @@ private:
     bool validateConfig(const QString &path, QString *error = nullptr) const;
     bool validateConfig(const QString &path, CoreFailure *failure) const;
     CoreErrorCatalog errorCatalog() const;
+    void explainRejectedDraft(const QString &text, const QString &directory, CoreFailure *failure) const;
     QString humanBytes(qint64 bytes) const;
 
     ProfileStore store_;

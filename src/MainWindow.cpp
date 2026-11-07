@@ -1278,7 +1278,10 @@ void MainWindow::editProfile(int row) {
         QString *error = failure ? &failure->text : nullptr;
         const QString prepared = GeoDataSelection::materialize(text, profiles_[row].path,
             validationExecutable_, GeoDataSelection::instance()->paths(), error);
-        if (error && !error->isEmpty()) return false;
+        if (error && !error->isEmpty()) {
+            explainRejectedDraft(text, QFileInfo(profiles_[row].path).absolutePath(), failure);
+            return false;
+        }
         const QString conflict = routingCompatibilityError(prepared, capabilities_);
         if (!conflict.isEmpty()) { if (error) *error = conflict; return false; }
         const QByteArray data = prepared.toUtf8();
@@ -1680,7 +1683,10 @@ bool MainWindow::importProfile(const QString &source) {
             QString *details = failure ? &failure->text : nullptr;
             const QString prepared = GeoDataSelection::materialize(text, source,
                 validationExecutable_, GeoDataSelection::instance()->paths(), details, QFileInfo(correctionPath).absolutePath());
-            if (details && !details->isEmpty()) return false;
+            if (details && !details->isEmpty()) {
+                explainRejectedDraft(text, QFileInfo(source).absolutePath(), failure);
+                return false;
+            }
             if (!ProfileStore::importReferencesSafe(prepared.toUtf8(), details)) return false;
             if (!ProfileStore::writeConfig(correctionPath, prepared.toUtf8(), details)) return false;
             const bool valid = validateConfig(correctionPath, failure);
@@ -2643,6 +2649,20 @@ bool MainWindow::validateConfig(const QString &path, QString *error) const {
 
 CoreErrorCatalog MainWindow::errorCatalog() const {
     return CoreErrorCatalog::forExecutable(validationExecutable_);
+}
+
+// GeoData preparation reports only that some rule is invalid. When it rejects a
+// draft, ask Core about the unprepared draft; its located problem (rule, field
+// and line) replaces the generic message. Other failures keep the message.
+void MainWindow::explainRejectedDraft(const QString &text, const QString &directory, CoreFailure *failure) const {
+    if (!failure || !errorCatalog().available() || !QFileInfo(directory).isDir()) return;
+    const QString temporary = QDir(directory).filePath(QString(".bimeron-validate-%1.conf").arg(QUuid::createUuid().toString(QUuid::WithoutBraces)));
+    QString error;
+    if (!ProfileStore::writeConfig(temporary, text.toUtf8(), &error)) return;
+    CoreFailure core;
+    validateConfig(temporary, &core);
+    const bool removed = QFile::remove(temporary);
+    if (removed && !core.problems.isEmpty()) *failure = core;
 }
 
 bool MainWindow::validateConfig(const QString &path, CoreFailure *failure) const {
