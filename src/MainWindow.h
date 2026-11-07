@@ -1,6 +1,7 @@
 #pragma once
 
 #include "CoreClient.h"
+#include "CoreProblems.h"
 #include "ConnectionRepair.h"
 #include "CoreUpdater.h"
 #include "ProfileStore.h"
@@ -201,6 +202,9 @@ private:
     void appendLog(const QString &message);
     bool prepareSharedGeoData(const QString &path, QString *error);
     bool validateConfig(const QString &path, QString *error = nullptr) const;
+    bool validateConfig(const QString &path, CoreFailure *failure, bool hostChecks = true) const;
+    CoreErrorCatalog errorCatalog() const;
+    void explainRejectedDraft(const QString &text, const QString &directory, CoreFailure *failure) const;
     QString humanBytes(qint64 bytes) const;
 
     ProfileStore store_;

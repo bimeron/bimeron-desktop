@@ -2872,5 +2872,18 @@
   "Reality short ID": "Короткий ID Reality",
   "Reality spider path": "Путь SpiderX Reality",
   "Enter an absolute file path or a supported connection link.": "Укажите полный путь к файлу или поддерживаемую ссылку подключения.",
-  "Files: .conf, .ssconf. Choose a file or enter its absolute path.": "Файлы: .conf, .ssconf. Выберите файл или укажите полный путь."
+  "Files: .conf, .ssconf. Choose a file or enter its absolute path.": "Файлы: .conf, .ssconf. Выберите файл или укажите полный путь.",
+  "not set": "не указано",
+  "rule %1": "правило %1",
+  "line %1": "строка %1",
+  "Access key": "Ключ доступа",
+  "Local proxy address": "Адрес локального прокси",
+  "MTU": "MTU",
+  "Core: %1 (%2)": "Ядро: %1 (%2)",
+  "Line %1 of the profile.": "Строка %1 профиля.",
+  "Rule %1": "Правило %1",
+  "Show value": "Показать значение",
+  "Hide value": "Скрыть значение",
+  "Go to field": "Перейти к полю",
+  "Go to line": "Перейти к строке"
 }
