@@ -1237,6 +1237,7 @@
   "Core requires an absolute profile path": "Core требует абсолютный путь профиля",
   "Core: %1": "Core: %1",
   "Core: unknown": "Core: неизвестно",
+  "Core: %1 · validation CLI: %2": "Core: %1 · CLI проверки: %2",
   "DNS (up to four IPv4 addresses)": "DNS (до четырёх IPv4)",
   "IP or CIDR: 1.1.1.1, 10.0.0.0/8": "IP или CIDR: 1.1.1.1, 10.0.0.0/8",
   "IP/CIDR rules": "IP/CIDR-правила",

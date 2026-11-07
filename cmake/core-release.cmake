@@ -1,4 +1,6 @@
 set(BIMERON_CORE_VERSION "v0.3.0-beta.2")
+# Commit reported by the pinned release binaries; About uses it to recognize the bundled release.
+set(BIMERON_CORE_REVISION "66d84d8f4dcfc6ada625eb11894b19feea51b7ba")
 set(BIMERON_CORE_RELEASE_SUPPORTS_SOURCE_UPDATE TRUE)
 set(BIMERON_CORE_REPOSITORY_URL "https://github.com/bimeron/bimeron-core")
 set(BIMERON_CORE_ROOT_DEFAULT "${CMAKE_CURRENT_LIST_DIR}/../.tools/core")

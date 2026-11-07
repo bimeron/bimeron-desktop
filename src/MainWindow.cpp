@@ -8,6 +8,7 @@
 #include "GeoDataSelection.h"
 #include "GeoDataDialog.h"
 #include "CoreDiagnostic.h"
+#include "CoreIdentity.h"
 #include "RoutingCompatibility.h"
 #include <QTemporaryDir>
 #include "TrustedCore.h"
@@ -1912,7 +1913,8 @@ void MainWindow::updateCoreIdentity() {
             identity.value("architecture").toString(tr("unknown")), identity.contains("modified")
                 ? (identity.value("modified").toBool() ? tr("modified") : tr("unmodified")) : tr("unknown"));
     };
-    coreVersionLabel_->setText(tr("Core: %1").arg(runtimeIdentity_.value("version").toString(tr("unknown"))));
+    coreVersionLabel_->setText(CoreIdentity::aboutText(runtimeIdentity_, validationIdentity_,
+        QStringLiteral(BIMERON_PINNED_CORE_VERSION), QStringLiteral(BIMERON_PINNED_CORE_REVISION)));
     coreVersionLabel_->setToolTip(tr("Validation CLI: %1\nRuntime Core: %2").arg(describe(validationIdentity_), describe(runtimeIdentity_)));
 }
 
