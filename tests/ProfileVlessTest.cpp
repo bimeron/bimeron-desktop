@@ -1974,9 +1974,29 @@ static void coreProblemPresentation() {
         auto *tabs = editor.findChild<QTabWidget *>();
         require(field && field->property("coreProblem").toBool());
         require(tabs->currentWidget() == field || tabs->currentWidget()->isAncestorOf(field));
-        field->setText("Edited");
-        emit field->textEdited("Edited");
+        // The outline must disappear visually after real typing.
+        editor.setStyleSheet("QLineEdit { border: 1px solid #ccd8e5; } QLineEdit[coreProblem=\"true\"] { border: 1px solid #d13438; }");
+        const auto borderIsRed = [field] {
+            const QImage image = field->grab().toImage();
+            const QColor color = image.pixelColor(0, image.height() / 2);
+            return color.red() > 180 && color.green() < 120;
+        };
+        require(borderIsRed());
+        field->setFocus();
+        QKeyEvent press(QEvent::KeyPress, Qt::Key_X, Qt::NoModifier, "x");
+        QApplication::sendEvent(field, &press);
         require(!field->property("coreProblem").toBool());
+        require(!borderIsRed());
+        // Paste, undo or Raw config edits change the value without typing.
+        QTimer::singleShot(0, [] {
+            auto *dialog = QApplication::activeModalWidget();
+            require(dialog && dialog->objectName() == "coreProblemDialog");
+            dialog->findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Close)->click();
+        });
+        editor.findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Save)->click();
+        require(borderIsRed());
+        field->setText("Programmatic");
+        require(!borderIsRed());
     }
     // Secret fields are masked until the user asks to show the editor value.
     {

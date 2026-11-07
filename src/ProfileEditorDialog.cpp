@@ -745,6 +745,7 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
             QMessageBox::warning(this, tr("Error"), tr("SS2022 does not support Prefix. Clear Prefix before saving."));
             return;
         }
+        clearProblemMarks();
         const QString draft = configText();
         const bool checkParameters = !native_ && !rawOnly_ && !rawDirty_;
         CoreFailure failure;
@@ -1315,6 +1316,7 @@ void ProfileEditorDialog::loadText(const QString &text) {
             blockers.push_back(std::make_unique<QSignalBlocker>(widget));
     }
     loadedText_ = text;
+    clearProblemMarks();
     native_ = false;
     for (const auto &line : text.split('\n'))
         native_ = native_ || ProfileStore::sectionName(line) == "IKEv2";
@@ -2471,16 +2473,28 @@ void ProfileEditorDialog::markProblemField(QWidget *widget) {
     widget->setProperty("coreProblem", true);
     widget->style()->unpolish(widget);
     widget->style()->polish(widget);
+    // Clear on any value change: typing, paste, undo or programmatic updates.
+    // loadText blocks signals, so it clears all marks explicitly.
     const auto clear = [widget] {
+        if (!widget->property("coreProblem").toBool()) return;
         widget->setProperty("coreProblem", false);
         widget->style()->unpolish(widget);
         widget->style()->polish(widget);
     };
-    if (auto *edit = qobject_cast<QLineEdit *>(widget)) connect(edit, &QLineEdit::textEdited, widget, clear, Qt::SingleShotConnection);
+    if (auto *edit = qobject_cast<QLineEdit *>(widget)) connect(edit, &QLineEdit::textChanged, widget, clear, Qt::SingleShotConnection);
     else if (auto *combo = qobject_cast<QComboBox *>(widget)) connect(combo, &QComboBox::currentIndexChanged, widget, clear, Qt::SingleShotConnection);
     else if (auto *spin = qobject_cast<QSpinBox *>(widget)) connect(spin, &QSpinBox::valueChanged, widget, clear, Qt::SingleShotConnection);
     else if (auto *check = qobject_cast<QCheckBox *>(widget)) connect(check, &QCheckBox::toggled, widget, clear, Qt::SingleShotConnection);
     else if (auto *text = qobject_cast<QPlainTextEdit *>(widget)) connect(text, &QPlainTextEdit::textChanged, widget, clear, Qt::SingleShotConnection);
+}
+
+void ProfileEditorDialog::clearProblemMarks() {
+    for (QWidget *widget : findChildren<QWidget *>()) {
+        if (!widget->property("coreProblem").toBool()) continue;
+        widget->setProperty("coreProblem", false);
+        widget->style()->unpolish(widget);
+        widget->style()->polish(widget);
+    }
 }
 
 void ProfileEditorDialog::focusProblem(const CoreProblem &problem) {

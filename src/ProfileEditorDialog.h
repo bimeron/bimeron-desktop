@@ -146,4 +146,5 @@ private:
     void showProblems(const CoreFailure &failure);
     void focusProblem(const CoreProblem &problem);
     void markProblemField(QWidget *widget);
+    void clearProblemMarks();
 };
