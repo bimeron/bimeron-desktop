@@ -2660,12 +2660,12 @@ void MainWindow::explainRejectedDraft(const QString &text, const QString &direct
     QString error;
     if (!ProfileStore::writeConfig(temporary, text.toUtf8(), &error)) return;
     CoreFailure core;
-    validateConfig(temporary, &core);
+    validateConfig(temporary, &core, false);
     const bool removed = QFile::remove(temporary);
     if (removed && !core.problems.isEmpty()) *failure = core;
 }
 
-bool MainWindow::validateConfig(const QString &path, CoreFailure *failure) const {
+bool MainWindow::validateConfig(const QString &path, CoreFailure *failure, bool hostChecks) const {
     CoreFailure local;
     if (!failure) failure = &local;
     failure->clear();
@@ -2674,7 +2674,9 @@ bool MainWindow::validateConfig(const QString &path, CoreFailure *failure) const
     if (!profile.open(QIODevice::ReadOnly)) { if (error) *error = profile.errorString(); return false; }
     const QByteArray bytes = profile.read(64 * 1024 + 1);
     if (bytes.size() > 64 * 1024) { if (error) *error = tr("The profile exceeds the 64 KiB limit."); return false; }
-    const QString conflict = routingCompatibilityError(QString::fromUtf8(bytes), capabilities_);
+    // hostChecks compares the profile with the running service's capabilities;
+    // locating a Core problem in a rejected draft does not need it.
+    const QString conflict = hostChecks ? routingCompatibilityError(QString::fromUtf8(bytes), capabilities_) : QString();
     if (!conflict.isEmpty()) { if (error) *error = conflict; return false; }
     const QString executable = validationExecutable_;
     if (!QFileInfo::exists(executable)) {
