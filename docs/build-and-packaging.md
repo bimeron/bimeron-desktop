@@ -50,7 +50,7 @@ All directories are generated locally and excluded from Git:
 
 ## Core release inputs
 
-Both packaging scripts use the pinned Bimeron Core version in `cmake/core-release.cmake`. The current `v0.3.0-beta.2` candidate includes the required `-source` helper; its four frozen ZIP hashes are pinned together. They must match the signed manifest and actual published assets before release approval. `scripts/fetch-core.cmake` verifies the pinned archives on Windows and Linux, including cached candidate ZIPs. A sibling core checkout is not required. The version and hashes must be updated together when upgrading core.
+Both packaging scripts use the pinned Bimeron Core version in `cmake/core-release.cmake`. The current `v0.3.0-beta.2` candidate includes the required `-source` helper; its four frozen ZIP hashes are pinned together. They must match the signed manifest and actual published assets before release approval. `scripts/fetch-core.cmake` verifies the pinned archives on Windows and Linux, including cached candidate ZIPs. A sibling core checkout is not required. The version, its full commit (`BIMERON_CORE_REVISION`) and the hashes must be updated together when upgrading core. About uses the pinned version and commit to tell the bundled release from development Core builds; see [Core build identity](core-identity.md).
 
 Acceptance criteria: a clean checkout can build the two DEBs on native Linux without PowerShell or WSL; Windows with WSL can build all four packages; Windows without WSL can build two MSI packages with `-WindowsOnly`; an archive that fails the pinned hash check cannot be packaged. Each installed core binary must match the verified published archive for its architecture.
 
@@ -70,8 +70,8 @@ The fetch script checks cached archive hashes on every run, downloads missing or
 ### Updating the bundled core version
 
 1. Inspect the desired published release of `bimeron/bimeron-core` and its `SHA256SUMS` file. Confirm it contains Windows and Linux archives for amd64 and arm64 with the expected binaries, Wintun files and licenses.
-2. Change the tag and four matching SHA-256 values in `cmake/core-release.cmake`. Verify that the published helper supports `-source`, then set `BIMERON_CORE_RELEASE_SUPPORTS_SOURCE_UPDATE` to `TRUE`. Update the repository URL, target lists or filenames there only if the release format changed. Do not use a floating `latest` URL; prereleases may not be returned by GitHub's latest-release endpoint.
-3. Fetch on both platforms, or run the full package scripts. Check that the extracted core binaries and Wintun DLLs match their target architectures.
+2. Change the tag, its full 40-character lowercase commit in `BIMERON_CORE_REVISION` and four matching SHA-256 values in `cmake/core-release.cmake`. The commit is the `revision` reported by the release binary's `version` command and must equal the tag's commit. Verify that the published helper supports `-source`, then set `BIMERON_CORE_RELEASE_SUPPORTS_SOURCE_UPDATE` to `TRUE`. Update the repository URL, target lists or filenames there only if the release format changed. Do not use a floating `latest` URL; prereleases may not be returned by GitHub's latest-release endpoint.
+3. Fetch on both platforms, or run the full package scripts. Check that the extracted core binaries and Wintun DLLs match their target architectures. A package configuration with the default core root runs the pinned binary's `version` command when it can execute on the build host (Windows amd64 and Linux amd64 on the usual hosts) and fails if the reported revision differs from `BIMERON_CORE_REVISION`; ARM64 payloads that cannot run there rely on the archive hashes. Local candidate roots skip this check.
 4. Build all four packages and verify their payloads and metadata using the review steps below. Record the chosen core tag in the release notes. A core release does not change an already installed desktop package automatically. The installed service can be updated independently only from a compatible signed release after the user confirms installation.
 
 ### Signed service updates
@@ -310,6 +310,8 @@ GitHub Actions `Desktop CI` runs on pushes, pull requests and manual dispatch. I
 
 `ctest` runs `profile-vless-test`, covering profile preservation, atomic replacement, permissions/DACLs, relative-reference import refusal, and secret redaction as well as existing protocol round trips. It uses Qt's offscreen platform on Linux and the Windows platform plugin on Windows. Running a Windows test executable with `QT_QPA_PLATFORM=offscreen` outside CTest requires `QT_QPA_PLATFORM_PLUGIN_PATH`; see [the offline native IKEv2 section](#offline-native-ikev2-build-integration). Set `BIMERON_VLESS_CORE` to a VLESS-capable core CLI path to additionally validate each generated profile against the core. Set `BIMERON_HYSTERIA2_CORE` for Hysteria2 validation and `BIMERON_PRESERVATION_CORE` to the exact reviewed newer CLI for SS2022, plugin, wrapper, and opaque-source preservation fixtures. Set `BIMERON_PROBLEMS_CORE` to a Core implementing `docs/ERRORS.MD` to check the error catalog and structured validation problems against it; without it, the problem presentation fixtures use an injected catalog. These variables are for local contract testing and do not affect packages.
 
+`core-identity-test` covers the About classification of release, development and unknown Core builds against the pinned version and commit, including the validation CLI suffix. It needs only Qt Core and no Core executable.
+
 `developer-mode-test` checks session activation/restart, local IPC routing and peer-process rejection, canceled requests, and invalid executable handling. It uses isolated settings and the offscreen platform on Linux, never elevates or changes the installed service. On Windows its Add-profile Paste fixture writes the real session clipboard: it retries the write for up to 5 seconds, restores the previous clipboard content, and fails with `Fixture could not write the system clipboard` when another process keeps the clipboard open, separately from a dialog that does not react. Real elevated daemon switching still requires integration checks. The session-only Development tab accepts a local Core executable at runtime without changing the bundled package payload; see [developer mode](developer-mode.md).
 
 The same executable includes `ConnectionManagementTest.h` fixtures for authoritative
@@ -414,7 +416,7 @@ The complete script cleans up old packages before building begins. If one of the
 - `scripts/package-all.ps1` - full orchestration of four packages;
 - `scripts/package-linux.sh` - native Linux orchestration of two DEBs;
 - `scripts/fetch-core.cmake` - portable core release download and SHA-256 verification;
-- `cmake/core-release.cmake` - core release URL, tag, hashes and payload filenames;
+- `cmake/core-release.cmake` - core release URL, tag, commit, hashes and payload filenames;
 - `scripts/stop-build-app.ps1` - safe completion of the GUI from a specific build directory;
 - `cmake/linux-arm64-toolchain.cmake` — Linux ARM64 cross-toolchain;
 - `packaging/windows/options.wxs` - MSI interface and behavior;
