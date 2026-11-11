@@ -1,4 +1,5 @@
 #include "NativeIKEv2Transport.h"
+#include "ElevationOwner.h"
 #include "TrustedCore.h"
 
 #include <QCryptographicHash>
@@ -634,13 +635,19 @@ bool NativeIKEv2Transport::start(Endpoint endpoint, QString command, QJsonObject
     const auto generation = ++generation_;
     const auto s = state_;
     const auto approval = approval_;
-    auto *worker = QThread::create([s, approval, endpoint, command, fields, config, configHash] {
+#ifdef Q_OS_WIN
+    const quintptr owner = reinterpret_cast<quintptr>(elevationOwnerWindow());
+#else
+    const quintptr owner = 0;
+#endif
+    auto *worker = QThread::create([s, approval, endpoint, command, fields, config, configHash, owner] {
         QJsonObject response;
         Failure failure = Failure::IdentityRejected;
         bool success = false;
         const bool launch = command == "launch";
         auto work = [&]() -> bool {
 #ifndef Q_OS_WIN
+            Q_UNUSED(owner);
             failure = Failure::Unsupported;
             return false;
 #else
@@ -700,6 +707,7 @@ bool NativeIKEv2Transport::start(Endpoint endpoint, QString command, QJsonObject
                 const auto directory = native(QFileInfo(approval.executable).absolutePath());
                 SHELLEXECUTEINFOW execute{};
                 execute.cbSize = sizeof(execute); execute.fMask = SEE_MASK_NOCLOSEPROCESS | SEE_MASK_NOASYNC | SEE_MASK_FLAG_NO_UI;
+                execute.hwnd = reinterpret_cast<HWND>(owner);
                 execute.lpVerb = L"runas"; execute.lpFile = exe.c_str(); execute.lpParameters = parameters.c_str();
                 execute.lpDirectory = directory.c_str(); execute.nShow = SW_HIDE;
                 // Shell execution occurs on this worker's STA, never the UI thread.

@@ -1,4 +1,5 @@
 #include "DevelopmentCore.h"
+#include "ElevationOwner.h"
 #include "TrustedCore.h"
 
 #include <QCryptographicHash>
@@ -56,7 +57,8 @@ QString processSid(HANDLE process) {
 void elevate(QObject *owner, const QString &file, const QStringList &arguments,
              std::function<void(HANDLE)> done) {
     auto handle = std::make_shared<HANDLE>(nullptr);
-    auto *thread = QThread::create([file, arguments, handle] {
+    const HWND window = elevationOwnerWindow();
+    auto *thread = QThread::create([file, arguments, handle, window] {
         const auto executable = QDir::toNativeSeparators(file).toStdWString();
         const auto parameters = TrustedCore::windowsCommandLine(arguments).toStdWString();
         const auto directory = QDir::toNativeSeparators(QFileInfo(file).absolutePath()).toStdWString();
@@ -75,6 +77,7 @@ void elevate(QObject *owner, const QString &file, const QStringList &arguments,
         SHELLEXECUTEINFOW info{};
         info.cbSize = sizeof(info);
         info.fMask = SEE_MASK_NOCLOSEPROCESS | SEE_MASK_NOASYNC;
+        info.hwnd = window;
         info.lpVerb = L"runas";
         info.lpFile = executable.c_str();
         info.lpParameters = parameters.c_str();

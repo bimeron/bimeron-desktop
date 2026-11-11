@@ -26,6 +26,7 @@ set(BIMERON_DESKTOP_SOURCES
     src/NativeIKEv2Transport.cpp src/NativeIKEv2Transport.h
     src/NativeIKEv2Session.cpp src/NativeIKEv2Session.h
     src/DevelopmentCore.cpp src/DevelopmentCore.h
+    src/ElevationOwner.h
     src/CoreUpdater.cpp src/CoreUpdater.h
     src/TrustedCore.cpp src/TrustedCore.h
     src/RepairBootstrap.cpp src/RepairBootstrap.h
