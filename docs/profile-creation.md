@@ -19,8 +19,10 @@ offer parameter-based choices, not URI/key choices. Cover every protocol already
 supported by desktop import: Shadowsocks, SOCKS5, VLESS, Hysteria2, VMess, Trojan,
 TUIC, HTTP, HTTPS, AnyTLS, Naive HTTPS/QUIC, MASQUE and SSH. SSConf is a dynamic
 subscription source, not a separate connection protocol; retain its import.
-Where Core only supports URI serialization, construct that representation from
-typed fields internally rather than requiring the user to supply a link.
+Every protocol is saved as explicit `[AccessKey]` options: each typed value has
+its own option in the profile, and no generated share link becomes the source.
+Hysteria2, VMess, TUIC, AnyTLS and Naive QUIC require a Core that lists them in
+the `explicit_access` capability; see [explicit access protocols](#explicit-access-protocols).
 
 Raw configuration remains available and shares the draft with visual controls.
 Unsupported or ambiguous documents retain protected Raw editing. Cancellation
@@ -59,8 +61,7 @@ TUIC, AnyTLS and Naive QUIC. New drafts keep protocol selection enabled and
 exclude URI sources. VMess exposes the Core-supported transport/TLS fields;
 Core remains authoritative for accepted combinations.
 
-Generated URI profiles retain the existing protected editing behavior when
-reopened. Raw changes that cannot be represented losslessly remain Raw-only;
+Raw changes that cannot be represented losslessly remain Raw-only;
 opening or saving such documents does not convert or discard their contents.
 Untouched switches between forms and Raw retain the creation draft.
 
@@ -71,6 +72,47 @@ No Core, package or dependency changes are included in this feature.
 
 ARM64 runtime checks require ARM64 hardware; this x64 host performs cross-builds
 only. Package and live connection tests are not part of this implementation task.
+
+## Explicit access protocols
+
+The first implementation saved Hysteria2, VMess, TUIC, AnyTLS and Naive QUIC
+drafts as share links built from the typed fields, because Core accepted these
+protocols only as links. Core now accepts them as explicit options, so the
+editor saves and reopens them as fields:
+
+| Protocol | Saved options | Capability |
+| --- | --- | --- |
+| Hysteria2 | `Type = hysteria2`, `Server`, `Port`, `Password`; optional `ServerName`, `ALPN`, `Fingerprint` | `hysteria2` |
+| TUIC | `Type = tuic`, `Server`, `Port`, `ID`, `Password`; optional `ServerName`, `ALPN` | `tuic` |
+| AnyTLS | `Type = anytls`, `Server`, `Port`, `Password`; optional `ServerName` | `anytls` |
+| Naive QUIC | `Type = naive`, `Server`, `Port`, `Username`, `Password`, `Network = quic`; optional `ServerName` | `naive_quic` |
+| VMess | `Type = vmess`, `Server`, `Port`, `ID`, `Encryption`, `Network`, `Security`; TLS, REALITY and transport options | `vmess` |
+
+The VMess form keeps one field for the transport path, one for the host and one
+for the mode. On save they become the option of the selected transport:
+`WSPath`/`WSHost` for `ws` and `httpupgrade` (Core rejects them for `tcp`,
+so a stale value is reported instead of dropped), `GRPCServiceName`/
+`GRPCAuthority`/`GRPCMultiMode` for `grpc` (mode `multi` is `true`, `gun` is
+`false`), and `XHTTPPath`/`XHTTPHost`/`XHTTPMode`/`XHTTPExtra` for `xhttp`.
+Reopening maps them back. A profile that sets two options for one field, such as
+both `WSPath` and `XHTTPPath`, stays Raw-only. Core problems at any of these
+options mark the VMess field that holds the value.
+
+The creation selector offers these five protocols only when the running Core
+lists them in `explicit_access`. Otherwise it hides them and explains that Core
+must be started or updated; an older Core would reject the saved profile.
+Existing profiles open regardless of the capability.
+
+Existing profiles with VMess, Trojan, TUIC, AnyTLS, HTTP, Naive or MASQUE links
+are not converted. They open in the form as link sources when the link scheme
+matches its field; the link stays hidden by default and is saved verbatim.
+Unrecognized links remain Raw-only.
+
+Regression tests cover every protocol's saved options, the absence of links and
+editor-only names in saved profiles, reopening into a populated form, all VMess
+transports, ambiguous VMess documents, VMess problem navigation, link profiles
+and the capability gate. With `BIMERON_PRESERVATION_CORE` set to a Core that
+reports `explicit_access`, each created profile is also validated by Core.
 
 ## Verification evidence
 
