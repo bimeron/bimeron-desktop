@@ -325,8 +325,6 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
     keySource_->addItem(tr("vless:// key"), "VLESS");
     keySource_->addItem(tr("Hysteria2 key"), "Hysteria2");
     keySource_->addItem(tr("SSH link"), "SSH");
-    for (const QString &field : linkSources())
-        if (!valueFor(text, "AccessKey", field).isEmpty()) keySource_->addItem(tr("%1 link").arg(field), field);
     if (!valueFor(text, "AccessKey", "Key").isEmpty())
         keySource_->addItem(tr("Legacy key"), "Key");
     if (!valueFor(text, "AccessKey", "File").isEmpty())
@@ -536,6 +534,20 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
         explicitNotice->setWordWrap(true);
         generalForm->addRow(explicitNotice);
     }
+    accessConversion_ = new QWidget;
+    accessConversion_->setObjectName("accessConversion");
+    auto *conversionLayout = new QHBoxLayout(accessConversion_);
+    conversionLayout->setContentsMargins(0, 0, 0, 0);
+    auto *toFields = new QPushButton(tr("Convert link to fields"));
+    toFields->setObjectName("convertAccessToFields");
+    auto *toLink = new QPushButton(tr("Convert fields to link"));
+    toLink->setObjectName("convertAccessToLink");
+    conversionLayout->addWidget(toFields);
+    conversionLayout->addWidget(toLink);
+    conversionLayout->addStretch();
+    connect(toFields, &QPushButton::clicked, this, [this] { convertAccess(true); });
+    connect(toLink, &QPushButton::clicked, this, [this] { convertAccess(false); });
+    generalForm->addRow(accessConversion_);
     generalForm->addRow(tr("Key or path"), keyRow);
     generalForm->addRow(tr("Server"), server_);
     generalForm->addRow(tr("Port"), port_);
@@ -1130,6 +1142,12 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
         if (explicitVless && port_->value() == 0) port_->setValue(443);
         if (explicitSsh && port_->value() == 0) port_->setValue(22);
         if (added && port_->value() == 0) port_->setValue(443);
+        // Conversion edits the draft of a stored profile, never a new one.
+        setFormRowVisible(generalForm, accessConversion_, developerMode_ && !creating_ && !native_
+            && !coreExecutable_.isEmpty() && capabilities_.value("access_conversion").toBool());
+        const bool linkSource = QStringList{"SS", "SOCKS5", "VLESS", "Hysteria2", "SSH", "Key"}.contains(source) || linkSources().contains(source);
+        accessConversion_->findChild<QPushButton *>("convertAccessToFields")->setEnabled(linkSource && !key_->text().trimmed().startsWith("ssconf://"));
+        accessConversion_->findChild<QPushButton *>("convertAccessToLink")->setEnabled(source.startsWith("Explicit"));
         // Defaults belong to new drafts; a loaded profile keeps omitted options omitted.
         if (source == "Explicitvmess" && freshDraft_) {
             if (parameters_["VMessTLS"]->text().isEmpty()) parameters_["VMessTLS"]->setText("tls");
@@ -1410,6 +1428,8 @@ void ProfileEditorDialog::loadText(const QString &text) {
         if (value.isEmpty()) { source = field; value = fieldValue("AccessKey", field); }
     if (value.isEmpty()) { source = "Key"; value = fieldValue("AccessKey", "Key"); }
     if (value.isEmpty()) { source = "File"; value = fieldValue("AccessKey", "File"); }
+    // A conversion can introduce a link source this dialog did not start with.
+    if (!value.isEmpty()) ensureSourceItem(source);
     if (value.isEmpty() && !fieldValue("AccessKey", "Server").isEmpty()) {
         const QString type = fieldValue("AccessKey", "Type");
         source = type == "socks5" ? "ExplicitSOCKS5" : type == "vless" ? "ExplicitVLESS" : type == "ssh" ? "ExplicitSSH"
@@ -2073,6 +2093,50 @@ void ProfileEditorDialog::reject() {
     QDialog::reject();
 }
 
+
+void ProfileEditorDialog::setDeveloperMode(bool enabled) {
+    developerMode_ = enabled;
+    if (refreshControls_) refreshControls_();
+}
+
+void ProfileEditorDialog::ensureSourceItem(const QString &source) {
+    if (creating_ || keySource_->findData(source) >= 0) return;
+    if (linkSources().contains(source)) keySource_->addItem(tr("%1 link").arg(source), source);
+    else if (source == "Key") keySource_->addItem(tr("Legacy key"), source);
+    else if (source == "File") keySource_->addItem(tr("Key file"), source);
+}
+
+// Core rewrites only the [AccessKey] source of the current draft and verifies
+// that the connection is unchanged. Nothing is stored until the user saves.
+void ProfileEditorDialog::convertAccess(bool toFields) {
+    const QString draft = configText();
+    QString error;
+    QJsonObject result;
+    if (draft.toUtf8().size() > 65536) {
+        error = tr("Profile exceeds the Core document limit. Use Raw config.");
+    } else {
+        const QJsonObject request{{"version", 1}, {"profile", draft},
+            {"operations", QJsonArray{QJsonObject{{"op", toFields ? "access_to_fields" : "access_to_uri"}}}}};
+        result = bridgeJson(coreExecutable_, {"document"}, QJsonDocument(request).toJson(QJsonDocument::Compact), &error);
+        if (error.isEmpty() && !result.value("profile").isString())
+            error = tr("Core document bridge returned an invalid response. The draft has been retained.");
+    }
+    if (!error.isEmpty()) {
+        QStringList lines;
+        const auto problems = parseCoreProblems(result.value("problems"));
+        const CoreErrorCatalog catalog = CoreErrorCatalog::forExecutable(coreExecutable_);
+        for (const auto &problem : problems) lines << describeCoreProblem(problem, catalog, problemLabel(problemWidget(problem)));
+        QMessageBox box(QMessageBox::Warning, tr("Conversion failed"),
+            lines.isEmpty() ? error : tr("The draft has been retained.") + "\n\n" + lines.join("\n"), QMessageBox::Ok, this);
+        box.setObjectName("accessConversionFailed");
+        box.setTextFormat(Qt::PlainText);
+        box.exec();
+        return;
+    }
+    loadText(result.value("profile").toString());
+    assessRepresentation();
+    syncRaw();
+}
 
 QJsonObject ProfileEditorDialog::document(const QJsonArray &operations, QString *error) const {
     const QJsonObject request{{"version", 1}, {"profile", loadedText_}, {"operations", operations}};

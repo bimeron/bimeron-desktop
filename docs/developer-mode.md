@@ -77,6 +77,31 @@ An elevated service command that outlives its two-minute watchdog remains tracke
 
 After a failed transition, the error remains visible and normal polling stays suspended until the developer explicitly retries or applies System service. This prevents a local-core failure from silently turning into a connection through the system service.
 
+## Access source conversion in the profile editor
+
+An unlocked developer session adds two actions under the key source when the
+active Core reports `access_conversion` and a Core CLI is available: "Convert
+link to fields" and "Convert fields to link". They are absent in ordinary
+sessions, with an older Core and in new-profile drafts; profiles are never
+converted automatically.
+
+- "Convert link to fields" is enabled for link sources: SS, SOCKS5, VLESS,
+  Hysteria2, SSH, VMess, Trojan, TUIC, AnyTLS, HTTP, Naive, MASQUE and a legacy
+  `Key`, except `ssconf://`. "Convert fields to link" is enabled for explicit
+  settings of every protocol.
+- The editor sends the current draft, including unsaved form or Raw changes, to
+  `bimeron document` with `access_to_fields` or `access_to_uri`. Core rewrites
+  only the `[AccessKey]` source and refuses a result that would connect
+  differently; see Core's `docs/DESKTOP_DOCUMENT_API.MD`.
+- The converted text replaces the draft; the form and Raw config show it at
+  once. Nothing is written until Save, and Cancel asks to discard the change.
+- A refusal keeps the draft and shows the Core problem text without values.
+
+Tests cover the hidden cases without Core. With `BIMERON_PRESERVATION_CORE`
+set to a Core that reports `access_conversion`, every link type is converted to
+fields and back, unrelated sections are checked, Cancel is exercised, and a
+refused conversion keeps the draft.
+
 ## Implementation sequence
 
 1. Implement session activation and restart handoff in `main.cpp` and `MainWindow`, including failure handling when the replacement process cannot start. Reuse the existing lock protocol and ensure exactly one window survives.
