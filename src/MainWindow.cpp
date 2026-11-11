@@ -1,6 +1,7 @@
 #include "RepairBootstrap.h"
 #include <QDesktopServices>
 #include "MainWindow.h"
+#include "ElevationOwner.h"
 #include "WindowsTheme.h"
 #include "HiDpiCheckBox.h"
 #include "HiDpiComboBox.h"
@@ -3263,7 +3264,8 @@ bool MainWindow::runServiceCommand(const QStringList &arguments, const QString &
         SHELLEXECUTEINFOW info{};
         info.cbSize = sizeof(info);
         info.fMask = SEE_MASK_NOCLOSEPROCESS;
-        info.hwnd = reinterpret_cast<HWND>(winId());
+        info.hwnd = elevationOwnerWindow();
+        if (!info.hwnd) info.hwnd = reinterpret_cast<HWND>(winId());
         info.lpVerb = L"runas";
         info.lpFile = file.c_str();
         info.lpParameters = params.c_str();
@@ -4137,6 +4139,7 @@ void MainWindow::restartApplication(bool development) {
             SHELLEXECUTEINFOW info{};
             info.cbSize = sizeof(info);
             info.fMask = SEE_MASK_NOCLOSEPROCESS | SEE_MASK_NOASYNC;
+            info.hwnd = elevationOwnerWindow();
             info.lpVerb = L"runas";
             info.lpFile = executable.c_str();
             info.lpParameters = parameters.c_str();
