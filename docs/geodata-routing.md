@@ -27,7 +27,39 @@ validation failures do not replace the saved profile.
 
 Manage databases opens the application-wide country/site database manager, also
 available in Settings. Opening it checks saved files without displaying download
-progress; valid cached catalogs are reused. The group picker uses compact rows
+progress; valid cached catalogs are reused. The manager shows a short scope note,
+the Download source link (Loyalsoldier on GitHub, used only by Download and Update),
+and a two-row table for Countries and Sites. An empty row shows No file selected
+with Download and Choose file. A selected row always keeps its file name and shows
+its status beneath it; its row menu offers Update from GitHub, Choose file, Check
+again, and Clear selection. Clearing changes only the draft selection and deletes
+no file. File information lists each selected file's full path, status, group
+count after a successful check, and diagnostics after a failed one; without a
+selected file it appears as Error details only after a real failure.
+
+Check results are classified from the validator's own response, never from
+translated text:
+
+| Status | Meaning |
+| --- | --- |
+| Checked | The selected Core listed the database groups. Local only; not proof that the service can read the file. |
+| File not found | The saved path does not exist. The selection is kept. |
+| Cannot read file | The application cannot read the file; not a corrupt-database verdict. |
+| Validation unavailable | The selected Core answers `unknown command` for `geodata groups`. The file stays selected but cannot be verified. |
+| Validation failed | The validator could not start, timed out, exceeded its output limit, crashed, or returned an invalid response. |
+| Invalid database | The Core rejected the contents with a `geodata_*` code, or listed no groups. |
+| Missing group: ID | An active rule uses a group that the database lacks. |
+
+Diagnostics name the operation, the validator path, the exit code, the Core code
+and message when present, and the first validator stderr line; they are plain
+text with control characters removed and lengths bounded. Cached results are tied
+to the file and to the validator executable's identity, so replacing the Core at
+the same path forces a new check. A relative selection opened without a profile
+context is reported as Cannot resolve path instead of being resolved elsewhere.
+A failed or canceled Download, Update, or chosen file never replaces the current
+selection or its status; the attempt is reported once, separately. Release and
+SHA-256 provenance is shown only for files downloaded in the current session and
+is never attributed to manually chosen files. The group picker uses compact rows
 and places checked groups first when reopened, without reordering during selection.
 Routing explanations are available through Routing limitations and Save/Start
 validation; the redundant inline warning panel is hidden.
@@ -144,10 +176,11 @@ system IPC. Native Windows at 150% reproduced 680x850 before the fix and retains
 During a transfer or check, each database row offers Cancel. Cancellation removes
 that attempt's staging files and stops its network/attempt-owned validation and
 publication work; previous selected files and shared validated cache hits remain.
-The full-width progress track has no percentage text reservation. Download failed
-and invalid-file states expose keyboard-accessible (?) diagnostics with the fixed
-source, phase and safe numeric HTTP/Qt/TLS/Core codes; response bodies and signed
-redirect query strings are excluded.
+The row progress track has no percentage text reservation. Failed downloads and
+checks expose their diagnostics through the keyboard-accessible File information or
+Error details disclosure, with the fixed source, phase and safe numeric
+HTTP/Qt/TLS/Core codes; response bodies and signed redirect query strings are
+excluded.
 
 The pinned Loyalsoldier GeoSite release tested on 2026-11-02 contains group names
 with `!`. The updated local Core bridge and Desktop accept them as literal stable

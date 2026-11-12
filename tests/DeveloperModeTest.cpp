@@ -331,6 +331,20 @@ int main(int argc, char **argv) {
         if (text.contains("fixture-delay")) QThread::msleep(200);
         return text.contains("fixture-reject") ? 1 : 0;
     }
+    // Synthetic database validator for the shared manager fixtures; inert unless requested.
+    if (argc == 5 && std::strcmp(argv[1], "geodata") == 0 && std::strcmp(argv[2], "groups") == 0
+        && qEnvironmentVariableIsSet("BIMERON_FAKE_GEODATA")) {
+        const QByteArray mode = qgetenv("BIMERON_FAKE_GEODATA");
+        if (mode == "unsupported") { std::fprintf(stderr, "error: unknown command\n"); return 1; }
+        if (mode == "rejected") {
+            std::puts(R"({"version":1,"groups":[],"error":"request failed","details":{"code":"geodata_invalid","kind":"geoip"},)"
+                      R"("problems":[{"code":"geodata_invalid","message":"geoip: unsupported protobuf wire type 7"}]})");
+            return 0;
+        }
+        std::puts(std::strcmp(argv[3], "geoip") == 0 ? R"({"version":1,"groups":["private","ru"]})"
+                                                      : R"({"version":1,"groups":["github"]})");
+        return 0;
+    }
     // The fixture CLI behaves like a Core without the error catalog
     // (`errors --json`), so the GUI keeps its legacy validation flow.
     if (argc == 3 && std::strcmp(argv[1], "errors") == 0) return 1;
@@ -534,6 +548,7 @@ int main(int argc, char **argv) {
     NativeIKEv2SessionTest::run();
     ConnectionManagementTest::profileGeometry(app, temporary.filePath("profile-geometry.png"));
     ConnectionManagementTest::run();
+    ConnectionManagementTest::geoDataManagerStates();
     ConnectionManagementTest::sharedGeoDataPreparation();
     ConnectionManagementTest::settingsGeoDataChecking();
     DevelopmentCore backend(temporary.filePath("missing-helper"));
