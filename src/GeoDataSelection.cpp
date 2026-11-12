@@ -18,6 +18,29 @@
 
 namespace {
 constexpr auto settingsKey = "geodata/paths";
+constexpr qsizetype catalogOutputLimit = 32 * 1024 * 1024;
+constexpr qsizetype catalogErrorLimit = 4096;
+constexpr int catalogDeadline = 15000;
+
+// A Core without the operation answers `unknown command` and exits non-zero.
+bool unsupportedOperation(int exitCode, const QByteArray &text) {
+    return exitCode != 0 && text.toLower().contains("unknown command");
+}
+// Diagnostics are plain text: replace control characters and bound the length.
+QString sanitized(const QString &text, int limit) {
+    QString result;
+    for (const QChar c : text.trimmed()) result += c.isPrint() ? c : QChar(' ');
+    return result.size() > limit ? result.left(limit) + QStringLiteral("…") : result;
+}
+QString fileIdentity(const QString &path) {
+    const QFileInfo info(path);
+    return info.canonicalFilePath() + '/' + QString::number(info.size()) + '/'
+        + QString::number(info.lastModified().toMSecsSinceEpoch());
+}
+// A validator replaced at the same path must not reuse earlier results.
+QString validatorIdentity(const QString &core) {
+    return QFileInfo::exists(core) ? fileIdentity(core) : core;
+}
 QJsonObject run(const QString &core, const QStringList &args, const QByteArray &input, QString *error) {
     QProcess process;
     QElapsedTimer timer;
@@ -26,13 +49,15 @@ QJsonObject run(const QString &core, const QStringList &args, const QByteArray &
     if (!process.waitForStarted(2000)) { *error = QObject::tr("Core GeoData bridge is unavailable."); return {}; }
     process.write(input);
     process.closeWriteChannel();
-    QByteArray output;
+    QByteArray output, errors;
     qint64 total = 0;
     while (true) {
         process.waitForReadyRead(25);
         const auto bytes = process.readAllStandardOutput();
-        total += bytes.size() + process.readAllStandardError().size();
+        const auto diagnostic = process.readAllStandardError();
+        total += bytes.size() + diagnostic.size();
         output += bytes;
+        errors += diagnostic.left(qMax<qsizetype>(0, catalogErrorLimit - errors.size()));
         if (total > 32 * 1024 * 1024 || timer.elapsed() >= 15000) {
             process.kill(); process.waitForFinished(1000);
             *error = QObject::tr("Core GeoData bridge timed out or exceeded its response limit."); return {};
@@ -46,7 +71,10 @@ QJsonObject run(const QString &core, const QStringList &args, const QByteArray &
         || parse.error != QJsonParseError::NoError || !document.isObject()
         || result.value("version").toInt() != 1 || !result.value("error").toString().isEmpty()
         || (result.contains("error") && !result.value("error").isString())) {
-        *error = QObject::tr("Core rejected GeoData validation or returned an invalid bridge response."); return {};
+        *error = unsupportedOperation(process.exitCode(), output + errors)
+            ? QObject::tr("The selected Core cannot check country and site databases.")
+            : QObject::tr("Core rejected GeoData validation or returned an invalid bridge response.");
+        return {};
     }
     return result;
 }
@@ -70,25 +98,143 @@ GeoDataSelection *GeoDataSelection::instance() {
 }
 GeoDataSelection::Paths GeoDataSelection::paths() const { return paths_; }
 
-QStringList GeoDataSelection::inspect(const QString &core, const QString &kind, const QString &path, QString *error) {
+QString GeoDataSelection::failureStatus(CatalogFailure failure) {
+    switch (failure) {
+    case CatalogFailure::None: return tr("Checked");
+    case CatalogFailure::Missing: return tr("File not found");
+    case CatalogFailure::Unreadable: return tr("Cannot read file");
+    case CatalogFailure::Unsupported: return tr("Validation unavailable");
+    case CatalogFailure::ValidatorFailed: return tr("Validation failed");
+    case CatalogFailure::Rejected: return tr("Invalid database");
+    }
+    return {};
+}
+
+QString GeoDataSelection::failureExplanation(CatalogFailure failure) {
+    switch (failure) {
+    case CatalogFailure::Missing: return tr("The selected file no longer exists. The selection is kept until you change it.");
+    case CatalogFailure::Unreadable: return tr("The application cannot read the file. This does not mean the database is damaged.");
+    case CatalogFailure::Unsupported: return tr("The selected Core cannot check databases. The file stays selected but cannot be verified.");
+    case CatalogFailure::ValidatorFailed: return tr("The check did not complete. This does not mean the database is damaged.");
+    case CatalogFailure::Rejected: return tr("The selected Core rejected the database contents.");
+    case CatalogFailure::None: break;
+    }
+    return {};
+}
+
+GeoDataSelection::CatalogOutcome GeoDataSelection::precheckCatalog(const QString &core, const QString &kind,
+                                                                  const QString &path) {
+    CatalogOutcome outcome;
+    const QString facts = tr("Operation: check %1 database").arg(kind) + '\n' + tr("Validator: %1").arg(QDir::toNativeSeparators(core));
+    if (!QFileInfo::exists(path)) {
+        outcome.failure = CatalogFailure::Missing;
+        outcome.diagnostic = facts + '\n' + tr("Cause: the file does not exist.");
+        return outcome;
+    }
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly)) {
+        outcome.failure = CatalogFailure::Unreadable;
+        outcome.diagnostic = facts + '\n' + tr("Cause: the application cannot read the file (%1).")
+            .arg(sanitized(file.errorString(), 200));
+    }
+    return outcome;
+}
+
+GeoDataSelection::CatalogOutcome GeoDataSelection::classifyCatalog(const QString &core, const QString &kind,
+                                                                   const QString &path, const CatalogRun &run) {
+    CatalogOutcome outcome;
+    QStringList facts{tr("Operation: check %1 database").arg(kind), tr("Validator: %1").arg(QDir::toNativeSeparators(core))};
+    const auto fail = [&](CatalogFailure failure, const QString &cause) {
+        outcome.failure = failure;
+        outcome.groups.clear();
+        facts << tr("Cause: %1").arg(cause);
+        const QString firstLine = QString::fromUtf8(run.errors.left(catalogErrorLimit)).trimmed().section('\n', 0, 0);
+        if (!firstLine.isEmpty()) facts << tr("Validator output: %1").arg(sanitized(firstLine, 200));
+        outcome.diagnostic = facts.join('\n');
+        return outcome;
+    };
+    if (!run.started) return fail(CatalogFailure::ValidatorFailed, tr("the validator could not be started."));
+    if (run.timedOut) return fail(CatalogFailure::ValidatorFailed, tr("the validator did not finish within 15 seconds."));
+    if (run.overLimit) return fail(CatalogFailure::ValidatorFailed, tr("the validator response exceeded its size limit."));
+    if (run.crashed) return fail(CatalogFailure::ValidatorFailed, tr("the validator stopped unexpectedly."));
+    facts << tr("Exit code: %1").arg(run.exitCode);
+    if (unsupportedOperation(run.exitCode, run.output + run.errors))
+        return fail(CatalogFailure::Unsupported, tr("this Core does not support database checks."));
+    QJsonParseError parse;
+    const auto document = QJsonDocument::fromJson(run.output, &parse);
+    const auto result = document.object();
+    if (parse.error != QJsonParseError::NoError || !document.isObject() || result.value("version").toInt() != 1
+        || (result.contains("error") && !result.value("error").isString()))
+        return fail(CatalogFailure::ValidatorFailed, tr("the validator returned an invalid response."));
+    const QString code = result.value("details").toObject().value("code").toString();
+    const bool geoCode = QRegularExpression("^geodata_[a-z_]{1,80}$").match(code).hasMatch();
+    if (geoCode) facts << tr("Core code: %1").arg(code);
+    const auto problems = result.value("problems").toArray();
+    const QString message = problems.isEmpty() ? QString()
+        : sanitized(problems.first().toObject().value("message").toString(), 300);
+    if (!message.isEmpty()) facts << tr("Core message: %1").arg(message);
+    if (!result.value("error").toString().isEmpty() || run.exitCode != 0) {
+        if (code == "geodata_unreadable")
+            return fail(QFileInfo::exists(path) ? CatalogFailure::Unreadable : CatalogFailure::Missing,
+                        tr("the validator cannot read the file."));
+        if (geoCode) return fail(CatalogFailure::Rejected, tr("the validator rejected the database."));
+        return fail(CatalogFailure::ValidatorFailed, run.exitCode != 0
+            ? tr("the validator exited with an error.") : tr("the validator reported an unclassified error."));
+    }
+    if (!result.value("groups").isArray())
+        return fail(CatalogFailure::ValidatorFailed, tr("the validator returned an invalid response."));
+    for (const auto &value : result.value("groups").toArray()) {
+        if (!value.isString() || !QRegularExpression(R"(\A[a-z0-9_!-]{1,256}\z)").match(value.toString()).hasMatch())
+            return fail(CatalogFailure::ValidatorFailed, tr("the validator returned an invalid group list."));
+        outcome.groups.append(value.toString());
+    }
+    if (outcome.groups.isEmpty()) return fail(CatalogFailure::Rejected, tr("the database contains no groups."));
+    return outcome;
+}
+
+QStringList GeoDataSelection::inspect(const QString &core, const QString &kind, const QString &path, QString *error,
+                                      CatalogFailure *failure) {
     QString local;
+    CatalogFailure localFailure;
     if (!error) error = &local;
+    if (!failure) failure = &localFailure;
     error->clear();
+    *failure = CatalogFailure::None;
     if ((kind != "geoip" && kind != "geosite") || path.isEmpty() || !QDir::isAbsolutePath(path)) {
-        *error = tr("Select an absolute GeoData file path and a supported database kind."); return {};
+        *error = tr("Select an absolute GeoData file path and a supported database kind.");
+        *failure = CatalogFailure::Missing;
+        return {};
     }
-    const auto result = run(core, {"geodata", "groups", kind, path}, {}, error);
-    QStringList groups;
-    if (error->isEmpty() && result.value("groups").isArray()) {
-        for (const auto &value : result.value("groups").toArray()) {
-            if (!value.isString() || !QRegularExpression(R"(\A[a-z0-9_!-]{1,256}\z)").match(value.toString()).hasMatch()) {
-                *error = tr("Core returned an invalid GeoData catalog."); return {};
+    auto outcome = precheckCatalog(core, kind, path);
+    if (outcome.failure == CatalogFailure::None) {
+        CatalogRun run;
+        QProcess process;
+        QElapsedTimer timer;
+        timer.start();
+        process.start(core, {"geodata", "groups", kind, path});
+        run.started = process.waitForStarted(2000);
+        if (run.started) {
+            process.closeWriteChannel();
+            const auto drain = [&] {
+                run.output += process.readAllStandardOutput();
+                run.errors += process.readAllStandardError().left(qMax<qsizetype>(0, catalogErrorLimit - run.errors.size()));
+            };
+            while (process.state() != QProcess::NotRunning) {
+                process.waitForReadyRead(25);
+                drain();
+                run.overLimit = run.output.size() > catalogOutputLimit;
+                run.timedOut = timer.elapsed() >= catalogDeadline;
+                if (run.overLimit || run.timedOut) { process.kill(); process.waitForFinished(1000); break; }
             }
-            groups.append(value.toString());
+            drain();
+            run.crashed = !run.overLimit && !run.timedOut && process.exitStatus() != QProcess::NormalExit;
+            run.exitCode = process.exitCode();
         }
+        outcome = classifyCatalog(core, kind, path, run);
     }
-    if (error->isEmpty() && groups.isEmpty()) *error = tr("The database contains no available groups.");
-    return error->isEmpty() ? groups : QStringList{};
+    *failure = outcome.failure;
+    *error = outcome.diagnostic;
+    return outcome.failure == CatalogFailure::None ? outcome.groups : QStringList{};
 }
 
 QString GeoDataSelection::materialize(const QString &text, const QString &profilePath, const QString &core,
@@ -218,12 +364,12 @@ QString GeoDataSelection::catalogKey(const QString &core, const QString &kind, c
     return core + '\n' + kind + '\n' + QFileInfo(path).absoluteFilePath();
 }
 bool GeoDataSelection::cachedCatalog(const QString &core, const QString &kind, const QString &path,
-                                     QStringList *groups, QString *error) const {
+                                     QStringList *groups, QString *error, CatalogFailure *failure) const {
     const auto it = catalogs_.constFind(catalogKey(core, kind, path));
-    const QFileInfo info(path);
-    const QString identity = info.canonicalFilePath() + '/' + QString::number(info.size()) + '/' + QString::number(info.lastModified().toMSecsSinceEpoch());
-    if (it == catalogs_.cend() || it->process || it->identity != identity) return false;
+    if (it == catalogs_.cend() || it->process || it->identity != fileIdentity(path)
+        || it->validator != validatorIdentity(core)) return false;
     *groups = it->groups; *error = it->error;
+    if (failure) *failure = it->failure;
     return true;
 }
 bool GeoDataSelection::catalogsBusy() const {
@@ -244,77 +390,80 @@ void GeoDataSelection::cancelCatalog(const QString &key) {
 void GeoDataSelection::requestCatalog(const QString &core, const QString &kind, const QString &path, bool force) {
     const QString key = catalogKey(core, kind, path);
     auto &catalog = catalogs_[key];
-    const QFileInfo info(path);
-    const QString identity = info.canonicalFilePath() + '/' + QString::number(info.size()) + '/' + QString::number(info.lastModified().toMSecsSinceEpoch());
+    const QString identity = fileIdentity(path);
+    const QString validator = validatorIdentity(core);
     if (catalog.process) return;
-    if (!force && catalog.identity == identity) {
-        const quint64 generation = catalog.generation;
-        const auto groups = catalog.groups; const QString error = catalog.error;
-        QTimer::singleShot(0, this, [this, key, generation, identity, groups, error] {
+    // Deliver asynchronously, and only if nothing superseded this result meanwhile.
+    const auto deliver = [this, key](const Catalog &entry) {
+        const quint64 generation = entry.generation;
+        const QString expected = entry.identity;
+        QTimer::singleShot(0, this, [this, key, generation, expected] {
             const auto current = catalogs_.constFind(key);
-            if (current != catalogs_.cend() && current->generation == generation && !current->process && current->identity == identity)
-                emit catalogResult(key, groups, error);
+            if (current != catalogs_.cend() && current->generation == generation && !current->process
+                && current->identity == expected)
+                emit catalogResult(key, current->groups, current->error, current->failure);
         });
-        return;
-    }
+    };
+    if (!force && catalog.identity == identity && catalog.validator == validator) { deliver(catalog); return; }
     ++catalog.generation;
     catalog.identity = identity;
+    catalog.validator = validator;
     catalog.groups.clear();
+    catalog.error.clear();
+    catalog.failure = CatalogFailure::None;
     if (catalog.watcher) delete catalog.watcher;
     auto *watcher = new QFileSystemWatcher(this); catalog.watcher = watcher;
-    watcher->addPath(path);
-    watcher->addPath(info.absolutePath());
+    if (QFileInfo::exists(path)) watcher->addPath(path);
+    watcher->addPath(QFileInfo(path).absolutePath());
     const auto invalidated = [this, key] {
         catalogs_[key].identity.clear(); emit catalogInvalidated(key);
     };
     connect(watcher, &QFileSystemWatcher::fileChanged, this, invalidated);
     connect(watcher, &QFileSystemWatcher::directoryChanged, this, [this, key, path, invalidated] {
-        const QFileInfo info(path);
-        const QString current = info.canonicalFilePath() + '/' + QString::number(info.size()) + '/' + QString::number(info.lastModified().toMSecsSinceEpoch());
-        if (catalogs_.value(key).identity != current) invalidated();
+        if (catalogs_.value(key).identity != fileIdentity(path)) invalidated();
     });
+    const auto local = precheckCatalog(core, kind, path);
+    if (local.failure != CatalogFailure::None) {
+        catalog.error = local.diagnostic;
+        catalog.failure = local.failure;
+        deliver(catalog);
+        return;
+    }
     auto *process = new QProcess(this); catalog.process = process;
-    auto output = std::make_shared<QByteArray>();
+    auto run = std::make_shared<CatalogRun>();
     auto done = std::make_shared<bool>(false);
     auto *timer = new QTimer(process); timer->setSingleShot(true);
-    connect(timer, &QTimer::timeout, process, [process] { process->setProperty("failed", true); process->kill(); });
-    connect(process, &QProcess::readyReadStandardOutput, process, [process, output] {
-        *output += process->readAllStandardOutput();
-        if (output->size() > 32 * 1024 * 1024) { process->setProperty("failed", true); process->kill(); }
+    connect(timer, &QTimer::timeout, process, [process, run] { run->timedOut = true; process->kill(); });
+    connect(process, &QProcess::readyReadStandardOutput, process, [process, run] {
+        run->output += process->readAllStandardOutput();
+        if (run->output.size() > catalogOutputLimit) { run->overLimit = true; process->kill(); }
     });
-    connect(process, &QProcess::readyReadStandardError, process, [process] { process->readAllStandardError(); });
-    const auto finish = [this, key, core, kind, path, process, output, done](bool success) {
+    connect(process, &QProcess::readyReadStandardError, process, [process, run] {
+        run->errors += process->readAllStandardError().left(qMax<qsizetype>(0, catalogErrorLimit - run->errors.size()));
+    });
+    const auto finish = [this, key, core, kind, path, process, run, done](bool started, bool crashed, int exitCode) {
         if (*done) return; *done = true;
-        *output += process->readAllStandardOutput();
-        QJsonParseError parse;
-        const auto document = QJsonDocument::fromJson(*output, &parse);
-        const auto result = document.object();
+        run->output += process->readAllStandardOutput();
+        run->errors += process->readAllStandardError().left(qMax<qsizetype>(0, catalogErrorLimit - run->errors.size()));
+        run->started = started;
+        run->crashed = crashed && !run->timedOut && !run->overLimit;
+        run->exitCode = exitCode;
         auto &entry = catalogs_[key]; entry.process = nullptr;
         if (entry.identity.isEmpty()) {
             process->deleteLater(); requestCatalog(core, kind, path, true); return;
         }
-        success &= !process->property("failed").toBool() && output->size() <= 32 * 1024 * 1024
-            && parse.error == QJsonParseError::NoError && document.isObject()
-            && result.value("version").toInt() == 1 && result.value("groups").isArray()
-            && (!result.contains("error") || result.value("error").isString()) && result.value("error").toString().isEmpty();
-        if (success) for (const auto &value : result.value("groups").toArray()) {
-            if (!value.isString() || !QRegularExpression(R"(\A[a-z0-9_!-]{1,256}\z)").match(value.toString()).hasMatch()) { success = false; break; }
-            entry.groups.append(value.toString());
-        }
-        entry.error = success && !entry.groups.isEmpty() ? QString() :
-            QStringLiteral("Source: selected Core\nPhase: catalog validation\nProcess code: %1; exit code: %2; JSON code: %3; deadline/limit: %4")
-                .arg(int(process->error())).arg(process->exitCode()).arg(int(parse.error))
-                .arg(process->property("failed").toBool());
-        if (!entry.error.isEmpty()) {
-            const QString code = result.value("details").toObject().value("code").toString();
-            if (QRegularExpression("^geodata_[a-z_]{1,80}$").match(code).hasMatch()) entry.error += "\nCore code: " + code;
-            entry.groups.clear();
-        }
-        emit catalogResult(key, entry.groups, entry.error);
+        const auto outcome = classifyCatalog(core, kind, path, *run);
+        entry.groups = outcome.groups;
+        entry.error = outcome.diagnostic;
+        entry.failure = outcome.failure;
+        emit catalogResult(key, entry.groups, entry.error, entry.failure);
         process->deleteLater();
     };
-    connect(process, &QProcess::errorOccurred, this, [finish](QProcess::ProcessError e) { if (e == QProcess::FailedToStart) finish(false); });
+    connect(process, &QProcess::errorOccurred, this, [finish](QProcess::ProcessError e) {
+        if (e == QProcess::FailedToStart) finish(false, false, -1);
+    });
     connect(process, qOverload<int, QProcess::ExitStatus>(&QProcess::finished), this,
-        [finish](int code, QProcess::ExitStatus status) { finish(code == 0 && status == QProcess::NormalExit); });
-    process->start(core, {"geodata", "groups", kind, path}); timer->start(15000);
+        [finish](int code, QProcess::ExitStatus status) { finish(true, status != QProcess::NormalExit, code); });
+    process->start(core, {"geodata", "groups", kind, path});
+    timer->start(catalogDeadline);
 }
