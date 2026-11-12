@@ -119,8 +119,8 @@ routing behavior in [geodata-routing.md](geodata-routing.md).
 | --- | --- |
 | Actions | Действия |
 | Update now | Обновить сейчас |
-| Choose own file… | Выбрать свой файл… |
-| Choose another file… | Выбрать другой файл… |
+| Choose own file | Выбрать свой файл |
+| Choose another file | Выбрать другой файл |
 | Disable database | Отключить базу |
 | Install Loyalsoldier database | Установить базу Loyalsoldier |
 | Install Loyalsoldier databases | Установить базы Loyalsoldier |
@@ -137,12 +137,12 @@ routing behavior in [geodata-routing.md](geodata-routing.md).
 Final wording of explanatory sentences is reviewed in the actual Qt dialogs in
 both languages.
 
-## Open question
+## Ellipses
 
-- Ellipses: the application otherwise ends dialog-opening button labels with "…"
-  (for example "Choose file…", "Save diagnostic report…"). Removing it only for
-  the labels in decision 21 makes adjacent buttons inconsistent. Recommendation:
-  remove ellipses throughout the application in a separate consistency change.
+Resolved: labels of buttons, menu items and window titles that open dialogs no
+longer end with "…" anywhere in the application (for example "Choose file",
+"Save diagnostic report", "Manage databases"). Texts that mean "in progress"
+("Checking…", "Downloading…") and input placeholders keep it.
 
 ## Acceptance criteria
 

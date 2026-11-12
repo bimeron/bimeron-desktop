@@ -860,7 +860,7 @@ QWidget *MainWindow::settingsPage() {
         sessionStatsLabel_->setVisible(checked);
     });
     general->addWidget(detailedStats);
-    auto *databases = new QPushButton(tr("Country and site databases…"));
+    auto *databases = new QPushButton(tr("Country and site databases"));
     databases->setObjectName("settingsGeoData");
     databases->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
     general->addWidget(databases, 0, Qt::AlignLeft);
@@ -923,7 +923,7 @@ QWidget *MainWindow::settingsPage() {
     serviceHeader->addStretch();
     serviceHeader->addWidget(serviceStatusLabel_);
     service->addLayout(serviceHeader);
-    auto *manage = new QPushButton(tr("Open…"));
+    auto *manage = new QPushButton(tr("Open"));
     serviceHeader->addWidget(manage);
     connect(manage, &QPushButton::clicked, this, &MainWindow::openCoreManagement);
     layout->addWidget(serviceCard);
@@ -996,7 +996,7 @@ QWidget *MainWindow::settingsPage() {
     coreManagementDetails_->setWordWrap(true);
     coreManagementDetails_->setTextFormat(Qt::PlainText);
     advancedLayout->addWidget(coreManagementDetails_);
-    auto *saveReport = new QPushButton(tr("Save diagnostic report…"));
+    auto *saveReport = new QPushButton(tr("Save diagnostic report"));
     connect(saveReport, &QPushButton::clicked, this, &MainWindow::saveRepairReport);
     advancedLayout->addWidget(saveReport);
     // Keep legacy settings controls out of the repair surface. The repair
@@ -1110,7 +1110,7 @@ QWidget *MainWindow::settingsPage() {
     layout->addStretch();
 
     auto *footer = new QHBoxLayout;
-    auto *diagnostics = new QPushButton(tr("Save diagnostic report…"));
+    auto *diagnostics = new QPushButton(tr("Save diagnostic report"));
     connect(diagnostics, &QPushButton::clicked, this, &MainWindow::saveDiagnostics);
     auto *quit = new QPushButton(tr("Quit Bimeron"));
     quit->setObjectName("dangerButton");
@@ -1139,7 +1139,7 @@ QWidget *MainWindow::logPage() {
     log_->setReadOnly(true);
     layout->addWidget(log_);
     auto *logButtons = new QHBoxLayout;
-    auto *save = new QPushButton(tr("Save log…"));
+    auto *save = new QPushButton(tr("Save log"));
     auto *clear = new QPushButton(tr("Clear"));
     const auto updateLogActions = [this, save, clear] {
         const bool hasEntries = !log_->document()->isEmpty();
@@ -1387,8 +1387,8 @@ void MainWindow::addProfile() {
     auto *sshForm = new QFormLayout(sshFiles);
     auto *identity = new QLineEdit;
     auto *hosts = new QLineEdit;
-    auto *identityBrowse = new QPushButton(tr("Browse…"));
-    auto *hostsBrowse = new QPushButton(tr("Browse…"));
+    auto *identityBrowse = new QPushButton(tr("Browse"));
+    auto *hostsBrowse = new QPushButton(tr("Browse"));
     auto *identityRow = new QWidget;
     auto *identityLayout = new QHBoxLayout(identityRow);
     identityLayout->setContentsMargins(0, 0, 0, 0);
@@ -1416,7 +1416,7 @@ void MainWindow::addProfile() {
     name->hide();
     layout->addLayout(hintRow);
     auto *inputRow = new QHBoxLayout;
-    auto *browseConfig = new QPushButton(tr("Choose file…"));
+    auto *browseConfig = new QPushButton(tr("Choose file"));
     browseConfig->setObjectName("browseProfileFile");
     inputRow->addWidget(key, 1);
     inputRow->addWidget(browseConfig);
@@ -1430,7 +1430,7 @@ void MainWindow::addProfile() {
     bool createNative = false;
     // Native IKEv2 creation is not a finished user workflow yet.
     if (developerMode_) {
-        auto *native = new QPushButton(tr("Create IKEv2 profile…"));
+        auto *native = new QPushButton(tr("Create IKEv2 profile"));
         native->setObjectName("createNativeProfile");
         native->setAutoDefault(false);
         layout->addWidget(native);
@@ -1443,7 +1443,7 @@ void MainWindow::addProfile() {
     buttons.button(QDialogButtonBox::Save)->setText(tr("Save"));
     buttons.button(QDialogButtonBox::Cancel)->setText(tr("Cancel"));
     buttons.button(QDialogButtonBox::Save)->setEnabled(false);
-    auto *create = new QPushButton(tr("Create in editor…"));
+    auto *create = new QPushButton(tr("Create in editor"));
     create->setObjectName("createProfileInEditor");
     connect(create, &QPushButton::clicked, &dialog, [&] {
         if (createProfile()) dialog.done(2);
@@ -4135,7 +4135,7 @@ QWidget *MainWindow::developmentPage() {
             QSettings().setValue("developer/lastCorePath", file.absoluteFilePath());
     };
     connect(developmentPath_, &QLineEdit::editingFinished, this, rememberPath);
-    auto *browse = new QPushButton(tr("Browse…"));
+    auto *browse = new QPushButton(tr("Browse"));
     browse->setEnabled(false);
     pathRow->addWidget(developmentPath_, 1);
     pathRow->addWidget(browse);
