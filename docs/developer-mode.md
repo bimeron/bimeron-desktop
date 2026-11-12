@@ -21,6 +21,7 @@ falls back to another backend or installs/starts a service automatically.
 - Development contains a backend selector: System service (initial selection) or Local core executable; an absolute-path field with Browse; and an explicit Apply action. Selecting a file alone does not launch it. Show the active backend, effective path, running Core version, and transition/error status.
 - When Local core executable is selected, show the chosen file's filesystem modification date and time beneath the path, formatted in the user's locale. Update it as the path changes or is restored; show unavailable for a missing/unreadable file. Label it as file modification time, never as compilation time or Git metadata.
 - Persist the last valid absolute local-core file path as a convenience when it is selected in Browse or committed by editing the field. Restore it when Development opens again. Persisting the path never activates it or changes the initial System service selection; an explicit Apply is still required. Invalid or incomplete paths do not overwrite the remembered path.
+- The Add profile dialog shows Create IKEv2 profile only in an unlocked developer session.
 - Developer unlock and active backend are session-only. Existing profiles and ordinary application preferences retain their current persistence behavior.
 
 ## Existing integration and constraints

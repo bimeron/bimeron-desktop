@@ -1849,6 +1849,11 @@ QString ProfileEditorDialog::buildText() const {
 
 void ProfileEditorDialog::assessRepresentation() {
     if (freshDraft_) {
+        // A new draft is never native; hide the IKEv2 rows the form starts with.
+        auto *general = qobject_cast<QFormLayout *>(name_->parentWidget()->layout());
+        for (QWidget *widget : QList<QWidget *>{windowsProfile_, nativeServerName_, nativeKillSwitch_,
+                                                nativeMode_, nativeProfileActions_, nativeAuthentication_})
+            setFormRowVisible(general, widget, false);
         rawOnly_ = false;
         bridgeReady_ = false;
         visualBaseline_ = buildText();

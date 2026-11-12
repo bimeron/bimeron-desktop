@@ -490,7 +490,9 @@ initial UI-only stage is complete, not a completed native VPN feature.
 
 ### Current implementation increment
 
-The Add profile dialog now offers Create IKEv2 profile, opening the existing
+In an unlocked developer session the Add profile dialog offers Create IKEv2
+profile; ordinary sessions do not show it until native IKEv2 is a finished user
+workflow. The action opens the existing
 editor with empty name/profile/server fields and protection requested. Empty
 native fields remain visually editable; unsupported documents retain Raw-only
 preservation. Cancel creates no stored profile. Save validates a protected

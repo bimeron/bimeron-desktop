@@ -1410,15 +1410,18 @@ void MainWindow::addProfile() {
     });
     layout->addWidget(paste);
     layout->addWidget(sshFiles);
-    auto *native = new QPushButton(tr("Create IKEv2 profile…"));
-    native->setObjectName("createNativeProfile");
-    native->setAutoDefault(false);
-    layout->addWidget(native);
     bool createNative = false;
-    connect(native, &QPushButton::clicked, &dialog, [&] {
-        createNative = true;
-        dialog.reject();
-    });
+    // Native IKEv2 creation is not a finished user workflow yet.
+    if (developerMode_) {
+        auto *native = new QPushButton(tr("Create IKEv2 profile…"));
+        native->setObjectName("createNativeProfile");
+        native->setAutoDefault(false);
+        layout->addWidget(native);
+        connect(native, &QPushButton::clicked, &dialog, [&] {
+            createNative = true;
+            dialog.reject();
+        });
+    }
     QDialogButtonBox buttons(QDialogButtonBox::Save | QDialogButtonBox::Cancel);
     buttons.button(QDialogButtonBox::Save)->setText(tr("Save"));
     buttons.button(QDialogButtonBox::Cancel)->setText(tr("Cancel"));
