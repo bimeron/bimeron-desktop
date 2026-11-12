@@ -68,9 +68,13 @@ routing behavior in [geodata-routing.md](geodata-routing.md).
       again, Disable database.
     - Disabled row ("Not used"): Install Loyalsoldier database, Choose own file.
 11. **Attribution.** No badges. The source appears as text in the row status line:
-    "Loyalsoldier · release DD.MM.YYYY · checked" or "Own file · checked". Above
-    the table: "Loyalsoldier databases are used by default · GitHub (GPL-3.0)",
-    with a link to the source repository.
+    "Loyalsoldier · DD.MM.YYYY" or "Own file"; a problem replaces the date in the
+    failure color. Above the list: "By default, the databases come from
+    Loyalsoldier · GitHub (GPL-3.0)", with a link to the source repository.
+    Revised after the live review: the rows form one card like the Settings page
+    cards (no table header or grid), the last check shares the checkbox row, and the
+    footer holds File information plus "Install Loyalsoldier databases" only when
+    the selection differs from the defaults.
 12. **Restore.** The footer button "Install Loyalsoldier databases" sets both kinds
     to Loyalsoldier and enables automatic updates. "Install Loyalsoldier database"
     in a row menu does the same for that kind, also enabling automatic updates.

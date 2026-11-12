@@ -159,22 +159,32 @@ struct ConnectionManagementTest {
             require(waitFor([&] { QApplication::processEvents(); return !selection->catalogsBusy()
                 && manager->findChild<QLabel *>("geositeStatus")->property("status").toString() == "Checked"; }), "defaults checked");
             auto *status = manager->findChild<QLabel *>("geoipStatus");
-            require(status->text() == "Loyalsoldier · release 01.01.2026 · checked", "Loyalsoldier status line");
+            require(status->property("line").toString() == "Loyalsoldier · 01.01.2026" && status->text() == "01.01.2026"
+                && manager->findChild<QLabel *>("geoipSource")->text() == "Loyalsoldier ·", "Loyalsoldier status line");
+            // Rows are never clipped: each row gets its full height and keeps its actions inside the card.
+            auto *card = manager->findChild<QFrame *>("geodataCard");
+            for (const QString &kind : {QStringLiteral("geoip"), QStringLiteral("geosite")}) {
+                auto *row = manager->findChild<QWidget *>(kind + "Row");
+                auto *actions = manager->findChild<QPushButton *>(kind + "Actions");
+                require(row && card && row->height() >= row->minimumSizeHint().height()
+                    && actions->mapTo(card, QPoint(actions->width(), actions->height())).x() <= card->width()
+                    && actions->width() >= actions->sizeHint().width(), "card row is not clipped");
+            }
             require(manager->findChild<QAction *>("geoipUpdate")->isVisible() && !manager->findChild<QAction *>("geoipInstall")->isVisible(),
                 "Loyalsoldier row offers Update now");
             auto *installAll = manager->findChild<QPushButton *>("geodataInstallAll");
             auto *autoUpdate = manager->findChild<QCheckBox *>("geodataAutoUpdate");
             auto *apply = manager->findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Apply);
-            require(autoUpdate->isChecked() && !installAll->isEnabled() && !apply->isEnabled(), "defaults need no restore");
+            require(autoUpdate->isChecked() && !installAll->isVisible() && !apply->isEnabled(), "defaults hide the restore action");
             manager->findChild<QAction *>("geositeClear")->trigger();
             autoUpdate->setChecked(false);
             QApplication::processEvents();
-            require(installAll->isEnabled() && apply->isEnabled()
+            require(installAll->isVisible() && installAll->isEnabled() && apply->isEnabled()
                 && manager->findChild<QLabel *>("geositeFile")->text() == "Not used", "changes enable restore and Apply");
             installAll->click();
             require(waitFor([&] { QApplication::processEvents(); return !selection->catalogsBusy()
                 && manager->findChild<QLabel *>("geositeStatus")->property("status").toString() == "Checked"; }), "restored site database");
-            require(autoUpdate->isChecked() && !installAll->isEnabled() && !apply->isEnabled(), "restore returns the defaults and updates");
+            require(autoUpdate->isChecked() && !installAll->isVisible() && !apply->isEnabled(), "restore returns the defaults and updates");
             manager->findChild<QAction *>("geositeClear")->trigger();
             QApplication::processEvents();
             apply->click();
@@ -285,12 +295,12 @@ struct ConnectionManagementTest {
                     && !manager->findChild<QAction *>(kind + "Clear")->isVisible()
                     && !label(manager, kind + "Status")->isVisible(), "empty row offers install and own file");
             }
-            require(manager->findChild<QPushButton *>("geodataInstallAll")->isEnabled(), "install action available");
+            require(manager->findChild<QPushButton *>("geodataInstallAll")->isVisible(), "install action shown when not default");
             require(!manager->findChild<QToolButton *>("geodataDetails")->isVisible()
                 && !manager->findChild<QPlainTextEdit *>("geodataInformation")->isVisible(), "no disclosure without files or errors");
             require(!manager->findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Apply)->isEnabled(), "Apply needs a change");
             auto *source = label(manager, "geodataSource");
-            auto *table = manager->findChild<QTableWidget *>("geodataTable");
+            auto *table = manager->findChild<QFrame *>("geodataCard");
             require(source->isVisible() && source->mapTo(manager, QPoint()).y() < table->mapTo(manager, QPoint()).y(),
                     "download source sits above the table");
             require(manager->width() == 520, "compact manager width");
@@ -307,7 +317,9 @@ struct ConnectionManagementTest {
             require(manager->findChild<QPushButton *>("geoipActions")->isVisible()
                 && manager->findChild<QAction *>("geoipInstall")->isVisible()
                 && manager->findChild<QAction *>("geoipChooseAction")->text() == "Choose another file…"
-                && label(manager, "geoipStatus")->text() == "Own file · checked", "own file row names its source");
+                && label(manager, "geoipStatus")->property("line").toString() == "Own file"
+                && label(manager, "geoipSource")->text() == "Own file" && !label(manager, "geoipStatus")->isVisible(),
+                "own file row names its source");
             auto *details = manager->findChild<QToolButton *>("geodataDetails");
             require(details->isVisible() && details->text() == "File information", "file information offered");
             details->click();
@@ -1241,6 +1253,20 @@ struct ConnectionManagementTest {
             QString error;
             require(GeoDataSelection::instance()->apply(state == "empty" || state == "failed" ? GeoDataSelection::Paths{}
                 : GeoDataSelection::Paths{{"geoip", ip}, {"geosite", site}}, fake, {}, &error), "preview selection");
+            // Loyalsoldier states: shipped release on both rows, optionally with a failing check.
+            if (state == "loyalsoldier" || state == "loyalsoldier-error" || state == "mixed-sources") {
+                GeoDataSelection::Selection defaults = GeoDataSelection::instance()->selection();
+                for (const QString &kind : GeoDataSelection::kinds()) {
+                    defaults.sources[kind] = GeoDataSelection::Source::Loyalsoldier;
+                    defaults.tags[kind] = "202611112204";
+                }
+                if (state == "mixed-sources") { defaults.sources["geosite"] = GeoDataSelection::Source::Custom; defaults.tags["geosite"].clear(); }
+                defaults.autoUpdate = true;
+                require(GeoDataSelection::instance()->apply(defaults, fake, {}, &error), "preview Loyalsoldier selection");
+                QSettings().setValue("geodata/lastCheck", QDateTime::currentDateTimeUtc());
+                QSettings().setValue("geodata/lastCheckFailed", false);
+                if (state == "loyalsoldier-error") qputenv("BIMERON_FAKE_GEODATA", "unsupported");
+            }
             if (state == "unsupported") qputenv("BIMERON_FAKE_GEODATA", "unsupported");
             if (state == "mixed") QFile::remove(site);
             GeoDataFixture::Network network;

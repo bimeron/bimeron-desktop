@@ -10,8 +10,10 @@
 #include <QDir>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QDate>
+#include <QFontMetrics>
+#include <QFrame>
 #include <QHBoxLayout>
-#include <QHeaderView>
 #include <QJsonObject>
 #include <QLabel>
 #include <QMenu>
@@ -22,7 +24,6 @@
 #include <QRegularExpression>
 #include <QResizeEvent>
 #include <QSet>
-#include <QTableWidget>
 #include <QTimer>
 #include <QToolButton>
 #include <QVBoxLayout>
@@ -65,8 +66,8 @@ struct Row {
 };
 
 struct RowWidgets {
-    ElidedLabel *file = nullptr;
-    QLabel *status = nullptr;
+    ElidedLabel *file = nullptr, *status = nullptr;
+    QLabel *source = nullptr;
     QProgressBar *bar = nullptr;
     QPushButton *cancel = nullptr, *actions = nullptr;
     QAction *update = nullptr, *install = nullptr, *chooseAction = nullptr, *recheck = nullptr, *clear = nullptr;
@@ -108,33 +109,26 @@ void manageSharedGeoData(QWidget *parent, const QString &core, const QString &pr
     auto *autoUpdateHint = new QLabel;
     autoUpdateHint->setObjectName("geodataAutoUpdateHint");
     autoUpdateHint->setTextFormat(Qt::PlainText);
-    autoUpdateHint->setWordWrap(true);
-    autoUpdateHint->setContentsMargins(26, 0, 0, 0);
-    layout->addSpacing(2);
-    layout->addWidget(autoUpdate);
-    layout->addWidget(autoUpdateHint);
-    layout->addSpacing(2);
+    auto *autoUpdateRow = new QHBoxLayout;
+    autoUpdateRow->setSpacing(12);
+    autoUpdateRow->addWidget(autoUpdate);
+    autoUpdateRow->addStretch();
+    autoUpdateRow->addWidget(autoUpdateHint);
+    layout->addSpacing(4);
+    layout->addLayout(autoUpdateRow);
+    layout->addSpacing(4);
 
-    auto *table = new QTableWidget(2, 3);
-    table->setObjectName("geodataTable");
-    table->setHorizontalHeaderLabels({tr("Database"), tr("File"), QString()});
-    table->verticalHeader()->hide();
-    table->setSelectionMode(QAbstractItemView::NoSelection);
-    table->setEditTriggers(QAbstractItemView::NoEditTriggers);
-    table->setFocusPolicy(Qt::NoFocus);
-    table->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    table->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    table->setWordWrap(false);
-    auto *header = table->horizontalHeader();
-    header->setSectionResizeMode(0, QHeaderView::ResizeToContents);
-    header->setSectionResizeMode(1, QHeaderView::Stretch);
-    // Sized in fitHeight(): row actions change (Download, Cancel, the row menu) after layout.
-    header->setSectionResizeMode(2, QHeaderView::Fixed);
-    header->setDefaultAlignment(Qt::AlignLeft | Qt::AlignVCenter);
-    header->setHighlightSections(false);
-    header->setSectionsClickable(false);
-    table->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-    layout->addWidget(table);
+    // Two rows in one card, like the cards on the Settings page: no header and no grid.
+    auto *card = new QFrame;
+    card->setObjectName("geodataCard");
+    card->setStyleSheet(QString("QFrame#geodataCard { border: 1px solid %1; border-radius: 9px; background: %2; }"
+                                " QFrame#geodataDivider { border: 0; background: %3; }")
+        .arg(dark ? "#40516a" : "#dce5ef", dark ? "#202937" : "white", dark ? "#40516a" : "#e5ebf2"));
+    card->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    auto *cardLayout = new QVBoxLayout(card);
+    cardLayout->setContentsMargins(1, 1, 1, 1);
+    cardLayout->setSpacing(0);
+    layout->addWidget(card);
 
     auto *message = new QLabel;
     message->setObjectName("geodataMessage");
@@ -152,7 +146,6 @@ void manageSharedGeoData(QWidget *parent, const QString &core, const QString &pr
     // A plain disclosure: no button surface, focus shown by the link color.
     toggle->setStyleSheet(QString("QToolButton { border: 0; background: transparent; padding: 2px 0; color: %1; }"
                                   " QToolButton:focus, QToolButton:hover { color: %2; }").arg(textColor, linkColor));
-    layout->addWidget(toggle, 0, Qt::AlignLeft);
     auto *information = new QPlainTextEdit;
     information->setObjectName("geodataInformation");
     information->setReadOnly(true);
@@ -163,10 +156,17 @@ void manageSharedGeoData(QWidget *parent, const QString &core, const QString &pr
     layout->addWidget(information);
     layout->addStretch();
     auto *buttons = new QDialogButtonBox(QDialogButtonBox::Cancel | QDialogButtonBox::Apply);
-    auto *installAll = buttons->addButton(tr("Install Loyalsoldier databases"), QDialogButtonBox::ResetRole);
+    auto *installAll = new QPushButton(tr("Install Loyalsoldier databases"));
     installAll->setObjectName("geodataInstallAll");
     installAll->setAutoDefault(false);
-    layout->addWidget(buttons);
+    auto *footer = new QHBoxLayout;
+    footer->setSpacing(12);
+    footer->addWidget(toggle);
+    footer->addWidget(installAll);
+    footer->addStretch();
+    footer->addWidget(buttons);
+    layout->addSpacing(4);
+    layout->addLayout(footer);
 
     auto *selection = GeoDataSelection::instance();
     const GeoDataSelection::Selection original = selection->selection();
@@ -210,8 +210,6 @@ void manageSharedGeoData(QWidget *parent, const QString &core, const QString &pr
         }
         return current.autoUpdate != original.autoUpdate;
     };
-    // The status line names the source in words; badges would read as branding.
-    const auto lowered = [](QString text) { if (!text.isEmpty()) text[0] = text[0].toLower(); return text; };
     const auto requiredGroups = [&](const QString &kind) {
         QStringList ids;
         for (const auto &value : rules) {
@@ -248,18 +246,7 @@ void manageSharedGeoData(QWidget *parent, const QString &core, const QString &pr
         return blocks.join("\n\n");
     };
     const auto fitHeight = [&] {
-        int actionsWidth = 0;
-        for (int row = 0; row < table->rowCount(); ++row) {
-            // Visibility changes only post a layout request; measure the current buttons now.
-            QLayout *actions = table->cellWidget(row, 2)->layout();
-            actions->invalidate();
-            actionsWidth = qMax(actionsWidth, actions->sizeHint().width());
-        }
-        header->resizeSection(2, actionsWidth + (table->showGrid() ? 1 : 0)); // The grid line takes one pixel.
-        table->resizeRowsToContents();
-        int height = header->sizeHint().height() + 2 * table->frameWidth();
-        for (int row = 0; row < table->rowCount(); ++row) height += table->rowHeight(row);
-        table->setFixedHeight(height);
+        layout->invalidate();
         if (dialog.isVisible()) dialog.resize(dialog.width(), dialog.sizeHint().height());
     };
     const auto refresh = [&] {
@@ -285,19 +272,25 @@ void manageSharedGeoData(QWidget *parent, const QString &core, const QString &pr
             else if (empty) { status = row.attemptLabel; problem = !status.isEmpty(); }
             else if (row.checking) status = tr("Checking…");
             else { status = row.status; problem = !row.valid; }
-            // Raw status for tests and accessibility; the visible line also names the source.
-            w.status->setProperty("status", status);
-            QStringList line;
-            if (!empty && !row.transfer && !row.busy) {
-                if (row.source == Source::Loyalsoldier) {
-                    line << QStringLiteral("Loyalsoldier");
-                    if (!row.tag.isEmpty()) line << tr("release %1").arg(GeoDataSelection::releaseDate(row.tag));
-                } else line << tr("Own file");
-                if (!status.isEmpty()) line << lowered(status);
-            } else if (!status.isEmpty()) line << status;
-            w.status->setText(line.join(QStringLiteral(" · ")));
-            w.status->setVisible(!line.isEmpty());
+            // The source is named in words (badges would read as branding). A healthy
+            // Loyalsoldier row shows its release date; a problem replaces it in red.
+            const bool showSource = !empty && !row.transfer && !row.busy;
+            QString detail = status;
+            if (showSource && !row.checking && row.valid)
+                detail = row.source == Source::Loyalsoldier && !row.tag.isEmpty() ? GeoDataSelection::releaseDate(row.tag) : QString();
+            const QString sourceText = !showSource ? QString()
+                : (row.source == Source::Loyalsoldier ? QStringLiteral("Loyalsoldier") : tr("Own file"));
+            w.source->setText(detail.isEmpty() ? sourceText : sourceText + QStringLiteral(" ·"));
+            w.source->setVisible(!sourceText.isEmpty());
+            w.status->setFullText(detail);
+            w.status->setVisible(!detail.isEmpty());
             w.status->setStyleSheet(problem ? failed : muted);
+            // Raw status for tests; the full plain line for tests and accessibility.
+            const QString line = sourceText.isEmpty() ? detail
+                : (detail.isEmpty() ? sourceText : sourceText + QStringLiteral(" · ") + detail);
+            w.status->setProperty("status", status);
+            w.status->setProperty("line", line);
+            w.status->setAccessibleName(kindName(kind) + ": " + line);
             w.bar->setVisible(row.transfer);
             w.cancel->setVisible(row.transfer);
             w.actions->setVisible(!row.transfer);
@@ -315,13 +308,18 @@ void manageSharedGeoData(QWidget *parent, const QString &core, const QString &pr
             loyalsoldier |= uses;
             everythingDefault &= uses;
         }
-        installAll->setEnabled(!busy && !everythingDefault);
+        // Restoring is offered only when something differs from the defaults.
+        installAll->setVisible(!everythingDefault);
+        installAll->setEnabled(!busy);
         QString hint;
         bool hintProblem = false;
-        if (!loyalsoldier) hint = tr("Nothing to update: no Loyalsoldier databases are selected.");
-        else if (GeoDataUpdater::lastCheckFailed()) { hint = tr("Last check failed. It will be retried later."); hintProblem = true; }
-        else if (GeoDataUpdater::lastCheck().isValid())
-            hint = tr("Last checked %1").arg(QLocale().toString(GeoDataUpdater::lastCheck().toLocalTime(), QLocale::ShortFormat));
+        const QDateTime checked = GeoDataUpdater::lastCheck().toLocalTime();
+        if (!loyalsoldier) hint = tr("nothing to update");
+        else if (GeoDataUpdater::lastCheckFailed()) { hint = tr("last check failed"); hintProblem = true; }
+        else if (checked.isValid())
+            hint = checked.date() == QDate::currentDate()
+                ? tr("checked today at %1").arg(checked.time().toString("H:mm"))
+                : tr("checked %1").arg(checked.toString("dd.MM.yyyy H:mm"));
         autoUpdateHint->setText(hint);
         autoUpdateHint->setVisible(autoUpdate->isChecked() && !hint.isEmpty());
         autoUpdateHint->setStyleSheet(hintProblem ? failed : muted);
@@ -474,39 +472,63 @@ void manageSharedGeoData(QWidget *parent, const QString &core, const QString &pr
         inspect(kind, QFileInfo(path).absoluteFilePath(), Purpose::Manual);
     };
 
+    QFont kindFont = dialog.font();
+    kindFont.setWeight(QFont::DemiBold);
+    int kindWidth = 0;
+    for (const QString &kind : kinds) kindWidth = qMax(kindWidth, QFontMetrics(kindFont).horizontalAdvance(kindName(kind)));
     for (int index = 0; index < kinds.size(); ++index) {
         const QString kind = kinds[index];
         RowWidgets &w = ui[kind];
-        auto *name = new QTableWidgetItem(kindName(kind));
-        name->setFlags(Qt::ItemIsEnabled);
-        table->setItem(index, 0, name);
+        if (index > 0) {
+            auto *divider = new QFrame;
+            divider->setObjectName("geodataDivider");
+            divider->setFixedHeight(1);
+            cardLayout->addWidget(divider);
+        }
+        auto *rowWidget = new QWidget;
+        rowWidget->setObjectName(kind + "Row");
+        auto *rowLayout = new QHBoxLayout(rowWidget);
+        rowLayout->setContentsMargins(12, 8, 12, 8);
+        rowLayout->setSpacing(12);
+        auto *name = new QLabel(kindName(kind));
+        name->setObjectName(kind + "Kind");
+        name->setFont(kindFont);
+        name->setStyleSheet(QString("color: %1").arg(dark ? "#e8edf5" : "#26364a"));
+        name->setFixedWidth(kindWidth + 4);
+        rowLayout->addWidget(name);
 
-        auto *fileCell = new QWidget;
-        auto *fileLayout = new QVBoxLayout(fileCell);
-        fileLayout->setContentsMargins(8, 6, 8, 6);
-        fileLayout->setSpacing(2);
+        // The file column always takes the free width, even when only "Not used" is shown.
+        auto *fileColumn = new QWidget;
+        fileColumn->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+        auto *fileLayout = new QVBoxLayout(fileColumn);
+        fileLayout->setContentsMargins(0, 0, 0, 0);
+        fileLayout->setSpacing(1);
         w.file = new ElidedLabel;
         w.file->setObjectName(kind + "File");
-        w.status = new QLabel;
+        w.source = new QLabel;
+        w.source->setObjectName(kind + "Source");
+        w.source->setTextFormat(Qt::PlainText);
+        w.source->setStyleSheet(muted);
+        w.status = new ElidedLabel;
         w.status->setObjectName(kind + "Status");
-        w.status->setTextFormat(Qt::PlainText);
-        w.status->setWordWrap(true);
-        w.status->setAccessibleName(kindName(kind) + ' ' + tr("Status"));
+        auto *statusLine = new QHBoxLayout;
+        statusLine->setContentsMargins(0, 0, 0, 0);
+        statusLine->setSpacing(4);
+        statusLine->addWidget(w.source);
+        statusLine->addWidget(w.status, 1);
         w.bar = new QProgressBar;
         w.bar->setObjectName(kind + "Progress");
         w.bar->setTextVisible(false);
         w.bar->setFixedHeight(6);
         w.bar->hide();
         fileLayout->addWidget(w.file);
-        fileLayout->addWidget(w.status);
+        fileLayout->addLayout(statusLine);
         fileLayout->addWidget(w.bar);
-        table->setCellWidget(index, 1, fileCell);
+        rowLayout->addWidget(fileColumn, 1);
 
-        auto *actionCell = new QWidget;
-        auto *actionLayout = new QHBoxLayout(actionCell);
-        actionLayout->setContentsMargins(6, 4, 8, 4);
+        auto *actionLayout = new QHBoxLayout;
+        actionLayout->setContentsMargins(0, 0, 0, 0);
         actionLayout->setSpacing(6);
-        actionLayout->addStretch();
         w.cancel = new QPushButton(tr("Cancel"));
         w.cancel->setObjectName(kind + "Cancel");
         w.actions = new QPushButton(tr("Actions"));
@@ -530,13 +552,16 @@ void manageSharedGeoData(QWidget *parent, const QString &core, const QString &pr
         w.actions->setMenu(menu);
         for (auto *button : {w.cancel, w.actions}) {
             button->setAutoDefault(false);
+            // Buttons keep their natural width; the file column takes the rest of the row.
+            button->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
             button->setAccessibleName(button->text() + ' ' + kindName(kind));
             actionLayout->addWidget(button);
         }
         w.actions->setAccessibleName(tr("Actions for %1").arg(kindName(kind)));
         w.actions->setToolTip(w.actions->accessibleName());
         w.cancel->hide();
-        table->setCellWidget(index, 2, actionCell);
+        rowLayout->addLayout(actionLayout);
+        cardLayout->addWidget(rowWidget);
 
         QObject::connect(w.update, &QAction::triggered, &dialog, [&, kind] { startDownload(kind); });
         QObject::connect(w.install, &QAction::triggered, &dialog, [&, kind] { installLoyalsoldier(kind); });

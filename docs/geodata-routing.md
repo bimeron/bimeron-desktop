@@ -28,8 +28,9 @@ validation failures do not replace the saved profile.
 Default databases. Bimeron does not author country and site databases. Packages
 ship Loyalsoldier's `v2ray-rules-dat` release pinned at build time (GPL-3.0) and
 select it by default for both kinds; the manager names the source in each row
-("Loyalsoldier · release DD.MM.YYYY · checked" or "Own file · checked") and links
-the author with the license above the table, and About repeats the attribution.
+("Loyalsoldier · DD.MM.YYYY" or "Own file"; a problem replaces the date in red)
+and links the author with the license above the list, and About repeats the
+attribution.
 Each kind has one source: Loyalsoldier, own file, or none ("Not used"). With
 "Update Loyalsoldier databases automatically" on, the application checks once a
 day while it runs and downloads only a newer release; a new file replaces the
@@ -55,14 +56,15 @@ comment out rules of the unavailable kind, so Core still checks the rest.
 Manage databases opens the application-wide country/site database manager, also
 available in Settings. Opening it checks saved files without displaying download
 progress; valid cached catalogs are reused. The manager shows a short scope note,
-the Download source link (Loyalsoldier on GitHub, used only by Download and Update),
-and a two-row table for Countries and Sites. An empty row shows No file selected
-with Download and Choose file. A selected row always keeps its file name and shows
-its status beneath it; its row menu offers Update from GitHub, Choose file, Check
-again, and Clear selection. Clearing changes only the draft selection and deletes
-no file. File information lists each selected file's full path, status, group
-count after a successful check, and diagnostics after a failed one; without a
-selected file it appears as Error details only after a real failure.
+the attribution line, the automatic-update checkbox with the last check on the same
+row, and one card with two rows, Countries and Sites, like the cards on the
+Settings page. A row shows "Not used" or the file name with its source line beneath,
+and an Actions menu. Disabling changes only the draft selection and deletes no
+file. The footer holds File information (Error details without a selected file and
+after a real failure) and, only when the selection differs from the defaults,
+"Install Loyalsoldier databases", with Cancel and Apply on the right. File
+information lists each selected file's source, full path, status, group count after
+a successful check, and diagnostics after a failed one.
 
 Check results are classified from the validator's own response, never from
 translated text:
