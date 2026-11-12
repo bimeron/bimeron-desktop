@@ -552,6 +552,7 @@ int main(int argc, char **argv) {
     ConnectionManagementTest::profileGeometry(app, temporary.filePath("profile-geometry.png"));
     ConnectionManagementTest::run();
     ConnectionManagementTest::geoDataManagerStates();
+    ConnectionManagementTest::autoConnectSelector();
     ConnectionManagementTest::geoDataDefaults();
     ConnectionManagementTest::geoDataRoutingNotice();
     ConnectionManagementTest::sharedGeoDataPreparation();
