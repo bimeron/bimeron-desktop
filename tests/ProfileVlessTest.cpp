@@ -2027,7 +2027,20 @@ static void geoSiteClassificationTest() {
         bool isEmpty() const override { return false; }
     } translator;
     QFile translations(":/translations/ru.json"); require(translations.open(QIODevice::ReadOnly));
-    translator.strings = QJsonDocument::fromJson(translations.readAll()).object();
+    const QByteArray catalog = translations.readAll();
+    translator.strings = QJsonDocument::fromJson(catalog).object();
+    {
+        // The catalog has one entry per line; duplicated keys would silently override each other.
+        QSet<QString> keys;
+        const QRegularExpression entry(QStringLiteral(R"re(^\s*"((?:[^"\\]|\\.)*)"\s*:)re"));
+        for (const QString &line : QString::fromUtf8(catalog).split('\n')) {
+            const auto match = entry.match(line);
+            if (!match.hasMatch()) continue;
+            require(!keys.contains(match.captured(1)));
+            keys.insert(match.captured(1));
+        }
+        require(keys.size() == translator.strings.size());
+    }
     for (auto it = geoSiteEntries().cbegin(); it != geoSiteEntries().cend(); ++it)
         require(!translator.strings.value(QString::fromUtf8(it->name)).toString().isEmpty());
     for (const auto &topic : geoSiteTopics()) require(!translator.strings.value(QString::fromUtf8(topic.name)).toString().isEmpty());
