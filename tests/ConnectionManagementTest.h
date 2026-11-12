@@ -2,6 +2,8 @@
 #include "GeoSitePicker.h"
 
 #include <QListWidget>
+#include <QCheckBox>
+#include <QComboBox>
 #include <QDialogButtonBox>
 #include <QScrollArea>
 #include <QPlainTextEdit>
@@ -36,6 +38,120 @@
 // Uses only temporary profiles/settings, a private pipe/socket and this test's
 // validate subcommand. Never reaches a system endpoint or privileged helper.
 struct ConnectionManagementTest {
+    // The Settings startup selector writes preferences only on explicit user activation.
+    static void autoConnectSelector() {
+        QTemporaryDir directory;
+        require(directory.isValid(), "selector fixture directory");
+        const QByteArray packet("[Profile]\nName = Packet\n[AccessKey]\nSOCKS5 = socks5://localhost:1080\n[Interface]\nMode = proxy\n");
+        const QByteArray native("[Profile]\nName = Native\n[IKEv2]\nWindowsProfile = Fixture\nServerName = vpn.invalid\n[Interface]\nMode = vpn\n");
+        const QByteArray unsupported("[Profile]\nName = Unsupported\n[AccessKey]\nType = future\n");
+        QList<Profile> profiles;
+        const auto add = [&](const QString &file, const QString &name, const QByteArray &bytes) {
+            const QString path = directory.filePath(file);
+            QFile config(path);
+            require(config.open(QIODevice::WriteOnly) && config.write(bytes) == bytes.size(), "write selector fixture");
+            profiles.append({ProfileStore::identity(path), name, path});
+        };
+        add("alpha.conf", "Alpha", packet);
+        add("same-1.conf", "Same", packet);
+        add("same-2.conf", "Same", packet);
+        add("native.conf", "Native", native);
+        add("unsupported.conf", "Unsupported", unsupported);
+        const QString alpha = profiles[0].id, first = profiles[1].id, second = profiles[2].id, nativeId = profiles[3].id;
+        QSettings().remove("app/autoConnect");
+        QSettings().remove("app/autoConnectProfile");
+
+        MainWindow window;
+        window.core_.cancel();
+        window.core_.setEndpoint("bimeron-auto-connect-selector-" + QUuid::createUuid().toString());
+        for (auto *timer : window.findChildren<QTimer *>()) timer->stop();
+        window.autoConnectAttempted_ = true;
+        window.store_ = ProfileStore(directory.path());
+        require(window.store_.save(profiles), "save selector fixture");
+        auto *selector = window.findChild<QComboBox *>("settingsAutoConnect");
+        require(selector && selector == window.autoConnectProfile_ && selector->isEnabled(), "single always-usable selector");
+        for (auto *box : window.findChildren<QCheckBox *>())
+            require(!box->text().contains("automatically", Qt::CaseInsensitive), "former auto-connect checkbox removed");
+        const auto stored = [] {
+            const QSettings settings;
+            return QVariantList{settings.contains("app/autoConnect"), settings.value("app/autoConnect"),
+                                settings.contains("app/autoConnectProfile"), settings.value("app/autoConnectProfile")};
+        };
+        const auto refreshWithoutWrites = [&](const char *message) {
+            const auto before = stored();
+            window.refreshProfiles();
+            require(stored() == before && window.operation_.isEmpty(), message);
+        };
+        const auto activate = [&](int index) { emit selector->activated(index); QApplication::processEvents(); };
+        const auto enabled = [&](int index) {
+            return (selector->model()->index(index, 0).flags() & Qt::ItemIsEnabled) != 0;
+        };
+
+        refreshWithoutWrites("initial population creates no preferences");
+        require(selector->currentIndex() == 0 && selector->currentText() == "Off" && selector->count() == 5,
+                "Off, separator and three eligible profiles");
+        require(!enabled(1) && selector->itemData(1).isNull(), "separator is not selectable");
+        require(selector->itemData(2) == alpha && selector->itemData(3) == first && selector->itemData(4) == second,
+                "eligible profiles keep their order and stable IDs");
+        require(selector->findData(nativeId) < 0 && selector->findData(profiles[4].id) < 0,
+                "native and non-connectable profiles are excluded");
+        require(window.autoConnectHint_->text() == "When Bimeron starts", "startup hint");
+
+        selector->setFocus();
+        QKeyEvent down(QEvent::KeyPress, Qt::Key_Down, Qt::NoModifier);
+        QApplication::sendEvent(selector, &down);
+        require(selector->currentIndex() == 2 && QSettings().value("app/autoConnect").toBool()
+                && QSettings().value("app/autoConnectProfile") == alpha && window.operation_.isEmpty(),
+                "keyboard selection skips the separator, enables auto-connect and connects nothing");
+
+        activate(selector->findData(second));
+        require(QSettings().value("app/autoConnectProfile") == second && selector->currentData() == second
+                && selector->toolTip() == "Same", "duplicate display names resolve to their own IDs");
+        activate(0);
+        require(!QSettings().value("app/autoConnect").toBool() && QSettings().value("app/autoConnectProfile") == second
+                && selector->currentIndex() == 0 && selector->toolTip().isEmpty(), "Off retains the remembered profile");
+        refreshWithoutWrites("refresh keeps Off");
+        require(selector->currentIndex() == 0, "disabled preference shows Off despite a remembered profile");
+
+        QSettings().setValue("app/autoConnect", true);
+        profiles.move(2, 0);
+        profiles[0].name = "Renamed";
+        require(window.store_.save(profiles), "save renamed fixture");
+        refreshWithoutWrites("rename and reorder refresh without writes");
+        require(selector->currentData() == second && selector->currentText() == "Renamed" && selector->itemData(2) == second,
+                "selection follows the stable ID after rename and reorder");
+
+        for (const QString &missing : {QStringLiteral("removed-profile"), nativeId}) {
+            QSettings().setValue("app/autoConnectProfile", missing);
+            refreshWithoutWrites("stale selection is preserved");
+            require(selector->currentIndex() == 1 && selector->currentText() == "Profile unavailable" && !enabled(1)
+                    && selector->itemData(1).isNull() && enabled(0) && selector->count() == 6
+                    && window.autoConnectHint_->text().contains("removed"), "unavailable placeholder without fallback");
+            activate(1);
+            require(QSettings().value("app/autoConnect").toBool() && QSettings().value("app/autoConnectProfile") == missing,
+                    "placeholder is never stored as a profile ID");
+        }
+        QKeyEvent up(QEvent::KeyPress, Qt::Key_Up, Qt::NoModifier);
+        QApplication::sendEvent(selector, &up);
+        require(selector->currentIndex() == 0 && !QSettings().value("app/autoConnect").toBool()
+                && QSettings().value("app/autoConnectProfile") == nativeId, "keyboard Off from the placeholder");
+
+        require(window.store_.save({profiles[3], profiles[4]}), "save ineligible fixture");
+        refreshWithoutWrites("empty eligible list refreshes without writes");
+        require(selector->count() == 1 && selector->currentIndex() == 0
+                && window.autoConnectHint_->text() == "No profiles can connect automatically yet.", "no eligible profiles");
+        require(window.store_.save(profiles), "restore eligible fixture");
+        refreshWithoutWrites("a new profile does not enable auto-connect");
+        require(selector->currentIndex() == 0 && !QSettings().value("app/autoConnect").toBool(), "Off survives new profiles");
+
+        auto *databases = window.findChild<QPushButton *>("settingsGeoData");
+        require(databases && databases->isEnabled(), "header database action exists");
+        for (QWidget *parent = databases->parentWidget(); parent; parent = parent->parentWidget())
+            require(parent->objectName() != "settingsCard", "database action is in the page header, not a preference card");
+        QSettings().remove("app/autoConnect");
+        QSettings().remove("app/autoConnectProfile");
+    }
+
     static void settingsGeoDataChecking() {
         const QString core = qEnvironmentVariable("BIMERON_GEODATA_CORE");
         if (core.isEmpty()) return;
@@ -858,6 +974,58 @@ struct ConnectionManagementTest {
             editor.show();
             app.processEvents();
             require(editor.grab().save(destination), "styled ShadowTLS preview");
+            return 0;
+        }
+        const int settingsPreview = app.arguments().indexOf("--settings-preview");
+        if (settingsPreview >= 0) {
+            // State: off | profile | long | stale | empty. Captures the Settings page and its open selector.
+            const QString state = app.arguments().value(settingsPreview + 1);
+            window.core_.cancel();
+            for (auto *timer : window.findChildren<QTimer *>()) timer->stop();
+            window.autoConnectAttempted_ = true;
+            QTemporaryDir directory;
+            QList<Profile> profiles;
+            if (state != "empty") {
+                const QStringList names{"a20a542725", "Home", "Home",
+                    "Office through the very long backup tunnel name that must not overflow"};
+                for (int i = 0; i < names.size(); ++i) {
+                    const QString path = directory.filePath(QString("p%1.conf").arg(i));
+                    QFile config(path);
+                    require(config.open(QIODevice::WriteOnly), "settings preview profile");
+                    config.write("[Profile]\nName = P\n[AccessKey]\nSOCKS5 = socks5://localhost:1080\n[Interface]\nMode = proxy\n");
+                    profiles.append({ProfileStore::identity(path), names[i], path});
+                }
+            }
+            QSettings().setValue("app/autoConnect", state != "off" && state != "empty");
+            QSettings().setValue("app/autoConnectProfile", state == "stale" ? QStringLiteral("removed")
+                : profiles.isEmpty() ? QString() : profiles[state == "long" ? 3 : 0].id);
+            window.store_ = ProfileStore(directory.path());
+            require(window.store_.save(profiles), "settings preview store");
+            window.refreshProfiles();
+            window.pages_->setCurrentIndex(1);
+            window.settingsNavigation_->setChecked(true);
+            const int size = app.arguments().indexOf("--settings-size");
+            if (size >= 0) {
+                const auto parts = app.arguments().value(size + 1).split('x');
+                window.resize(parts.value(0).toInt(), parts.value(1).toInt());
+            }
+            window.show();
+            QCoreApplication::processEvents();
+            require(window.grab().save(destination), "settings preview image");
+            window.raise();
+            window.activateWindow();
+            QTimer::singleShot(300, &window, [&] {
+                window.autoConnectProfile_->setFocus();
+                window.autoConnectProfile_->showPopup();
+            });
+            QTimer::singleShot(900, &window, [&] {
+                QWidget *popup = window.autoConnectProfile_->view()->window();
+                require(popup->isVisible(), "settings selector popup");
+                require(popup->grab().save(destination + ".open.png"), "settings selector popup image");
+                window.autoConnectProfile_->hidePopup();
+                QCoreApplication::quit();
+            });
+            app.exec();
             return 0;
         }
         if (app.arguments().contains("--ssh-preview")) {
