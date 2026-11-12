@@ -7,6 +7,7 @@
 #include <QFileSystemWatcher>
 #include <QTemporaryDir>
 #include <QElapsedTimer>
+#include <QDateTime>
 #include <QEventLoop>
 #include <functional>
 #include <cstdio>
@@ -28,6 +29,10 @@ static void waitFor(const std::function<bool()> &done) {
 
 int main(int argc, char **argv) {
     QCoreApplication app(argc, argv);
+    if (app.arguments().value(1) == "geodata" && qEnvironmentVariableIsSet("BIMERON_FAKE_GEODATA")) {
+        if (qgetenv("BIMERON_FAKE_GEODATA") == "unsupported") { std::fputs("error: unknown command\n", stderr); return 1; }
+        std::puts("{\"version\":1,\"groups\":[\"ru\"]}"); return 0;
+    }
     if (app.arguments().value(1) == "geodata" && !qEnvironmentVariable("BIMERON_COUNT_LOG").isEmpty()) {
         QFile log(qEnvironmentVariable("BIMERON_COUNT_LOG"));
         require(log.open(QIODevice::Append)); log.write("catalog\n");
@@ -61,6 +66,109 @@ int main(int argc, char **argv) {
     require(read(countLog) == "catalog\ncatalog\n"); // Cache lifetime is one Apply.
     qunsetenv("BIMERON_COUNT_LOG");
     require(selection->apply(previous, {}, {}, &error)); changes = 0;
+    {
+        // Catalog classification from raw validator facts; no Core is required.
+        using Failure = GeoDataSelection::CatalogFailure;
+        using Run = GeoDataSelection::CatalogRun;
+        const QString present = directory.filePath("present.dat"), absent = directory.filePath("absent.dat");
+        write(present, "fixture");
+        const auto classify = [&](const Run &run, const QString &path = {}) {
+            return GeoDataSelection::classifyCatalog("validator", "geoip", path.isEmpty() ? present : path, run);
+        };
+        const auto finished = [](int code, const QByteArray &output, const QByteArray &errors = {}) {
+            Run run; run.started = true; run.exitCode = code; run.output = output; run.errors = errors; return run;
+        };
+        Run run;
+        require(classify(run).failure == Failure::ValidatorFailed && classify(run).diagnostic.contains("could not be started"));
+        run.started = true; run.timedOut = true;
+        require(classify(run).failure == Failure::ValidatorFailed && classify(run).diagnostic.contains("15 seconds"));
+        run.timedOut = false; run.overLimit = true;
+        require(classify(run).failure == Failure::ValidatorFailed && classify(run).diagnostic.contains("size limit"));
+        run.overLimit = false; run.crashed = true;
+        require(classify(run).failure == Failure::ValidatorFailed && classify(run).diagnostic.contains("stopped unexpectedly"));
+        const auto unsupported = classify(finished(1, {}, "error: unknown command\nusage"));
+        require(unsupported.failure == Failure::Unsupported && unsupported.diagnostic.contains("error: unknown command")
+            && !unsupported.diagnostic.contains("usage") && unsupported.groups.isEmpty());
+        require(classify(finished(0, "not json")).failure == Failure::ValidatorFailed);
+        require(classify(finished(2, "")).failure == Failure::ValidatorFailed);
+        const QByteArray rejected = R"({"version":1,"groups":[],"error":"request failed","details":{"code":"geodata_invalid"},)"
+            R"("problems":[{"code":"geodata_invalid","message":"geoip: wire type 7)" "\x07" R"("}]})";
+        const auto invalid = classify(finished(0, rejected));
+        require(invalid.failure == Failure::Rejected && invalid.diagnostic.contains("Core code: geodata_invalid")
+            && invalid.diagnostic.contains("wire type 7") && !invalid.diagnostic.contains(QChar(7)));
+        const QByteArray unreadable = R"({"version":1,"groups":[],"error":"request failed","details":{"code":"geodata_unreadable"}})";
+        require(classify(finished(0, unreadable)).failure == Failure::Unreadable);
+        require(classify(finished(0, unreadable), absent).failure == Failure::Missing);
+        const QByteArray unclassified = R"({"version":1,"groups":[],"error":"request failed","problems":[{"code":"unclassified"}]})";
+        require(classify(finished(0, unclassified)).failure == Failure::ValidatorFailed);
+        const auto ok = classify(finished(0, R"({"version":1,"groups":["ru","private"]})"));
+        require(ok.failure == Failure::None && ok.groups == QStringList({"ru", "private"}) && ok.diagnostic.isEmpty());
+        require(classify(finished(0, R"({"version":1,"groups":[]})")).failure == Failure::Rejected);
+        require(classify(finished(0, R"({"version":1,"groups":["Bad Id"]})")).failure == Failure::ValidatorFailed);
+        const auto bounded = classify(finished(0, QByteArray(R"({"version":1,"groups":[],"error":"x","details":{"code":"geodata_invalid"},"problems":[{"message":")")
+            + QByteArray(5000, 'a') + R"("}]})"));
+        require(bounded.failure == Failure::Rejected && bounded.diagnostic.size() < 1000);
+        require(GeoDataSelection::precheckCatalog("validator", "geoip", absent).failure == Failure::Missing);
+        // Directories cannot be opened as files on any supported platform.
+        require(GeoDataSelection::precheckCatalog("validator", "geoip", directory.path()).failure == Failure::Unreadable);
+        require(GeoDataSelection::precheckCatalog("validator", "geoip", present).failure == Failure::None);
+
+        // Process level: this executable acts as the validator through BIMERON_FAKE_GEODATA.
+        Failure failure = Failure::None;
+        qputenv("BIMERON_FAKE_GEODATA", "unsupported");
+        require(GeoDataSelection::inspect(app.applicationFilePath(), "geoip", present, &error, &failure).isEmpty()
+            && failure == Failure::Unsupported && error.contains("unknown command"));
+        require(GeoDataSelection::inspect(directory.filePath("no-such-validator"), "geoip", present, &error, &failure).isEmpty()
+            && failure == Failure::ValidatorFailed);
+        require(GeoDataSelection::inspect(app.applicationFilePath(), "geoip", absent, &error, &failure).isEmpty()
+            && failure == Failure::Missing);
+        // Apply reports an unsupported validator plainly and keeps the previous selection.
+        require(!selection->apply({{"geoip", present}}, app.applicationFilePath(), {}, &error)
+            && error.contains("unknown command") && selection->paths() == previous);
+
+        // A validator replaced at the same path must not reuse an earlier cached result.
+        const QFileInfo self(app.applicationFilePath());
+        const QString validator = self.dir().filePath("geodata-validator-copy-test"
+            + (self.suffix().isEmpty() ? QString() : "." + self.suffix()));
+        QFile::remove(validator);
+        require(QFile::copy(app.applicationFilePath(), validator));
+        qputenv("BIMERON_FAKE_GEODATA", "ok");
+        const QString validatorKey = GeoDataSelection::catalogKey(validator, "geoip", present);
+        Failure delivered = Failure::Rejected;
+        int deliveries = 0;
+        QObject receiver;
+        QObject::connect(selection, &GeoDataSelection::catalogResult, &receiver,
+            [&](const QString &key, const QStringList &, const QString &, Failure value) {
+                if (key == validatorKey) { delivered = value; ++deliveries; }
+            });
+        selection->requestCatalog(validator, "geoip", present, true);
+        waitFor([&] { return deliveries == 1; });
+        QStringList groups; QString diagnostic; Failure cached = Failure::Rejected;
+        require(delivered == Failure::None && selection->cachedCatalog(validator, "geoip", present, &groups, &diagnostic, &cached)
+            && cached == Failure::None);
+        {
+            QFile replaced(validator);
+            require(replaced.open(QIODevice::ReadWrite)
+                && replaced.setFileTime(QDateTime::currentDateTimeUtc().addSecs(120), QFileDevice::FileModificationTime));
+        }
+        require(!selection->cachedCatalog(validator, "geoip", present, &groups, &diagnostic, &cached));
+        qputenv("BIMERON_FAKE_GEODATA", "unsupported");
+        selection->requestCatalog(validator, "geoip", present); // Not forced: must still re-run.
+        waitFor([&] { return deliveries == 2; });
+        require(delivered == Failure::Unsupported);
+        // Missing files are reported without starting a validator.
+        const QString absentKey = GeoDataSelection::catalogKey(validator, "geoip", absent);
+        Failure absentFailure = Failure::None;
+        QObject::connect(selection, &GeoDataSelection::catalogResult, &receiver,
+            [&](const QString &key, const QStringList &, const QString &, Failure value) { if (key == absentKey) absentFailure = value; });
+        selection->requestCatalog(validator, "geoip", absent, true);
+        require(!selection->catalogsBusy());
+        waitFor([&] { return absentFailure == Failure::Missing; });
+        selection->cancelCatalog(validatorKey);
+        selection->cancelCatalog(absentKey);
+        qunsetenv("BIMERON_FAKE_GEODATA");
+        require(QFile::remove(validator));
+    }
     // A file occupying the settings directory forces sync failure on every host.
     const QString blocked = directory.filePath("blocked");
     write(blocked, "file");
@@ -149,7 +257,7 @@ int main(int argc, char **argv) {
         [&](QString k, QStringList, QString failure) { if (k == incompatibleKey) incompatibleError = failure; });
     selection->requestCatalog(core, "geosite", incompatible, true);
     waitFor([&] { return !incompatibleError.isEmpty(); });
-    require(incompatibleError.contains("geodata_identifier_invalid") && incompatibleError.contains("Phase: catalog validation"));
+    require(incompatibleError.contains("geodata_identifier_invalid") && incompatibleError.contains("Operation: check geosite database"));
     const QString base = "[Profile]\nVersion=1\nName=Bridge\n[AccessKey]\nType=shadowsocks\n"
         "Server=example.invalid\nPort=443\nMethod=aes-256-gcm\nPassword=SYNTHETIC\n"
         "[Routing]\nDefault=proxy\n";
