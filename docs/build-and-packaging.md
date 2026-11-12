@@ -44,6 +44,7 @@ All directories are generated locally and excluded from Git:
 - `dist` - only ready-made `.msi` and `.deb` intended for publication;
 - `.tools/wix` - automatically downloaded portable WiX Toolset;
 - `.tools/core` - downloaded and verified core release archives and extracted payloads;
+- `.tools/geodata` - downloaded and verified default country and site databases (`<tag>/geoip.dat`, `geosite.dat`, generated `release.json` and `SOURCE.txt`);
 - `/tmp/bimeron-desktop-packages` inside WSL/Linux - temporary CPack platform for DEB.
 
 `build` and `stage` are not published and should not be included in the installer as separate directories. `dist` should not contain `_CPack_Packages`, unpacked payloads or old Bimeron packages. The full Windows script clears old Bimeron packages before building. `-WindowsOnly` also clears them and leaves two MSI files. The Linux script replaces old Linux DEBs but leaves any existing MSI files; check their versions before publishing a combined set.
@@ -66,6 +67,12 @@ Expected input files:
 When core is present, the build bundles it as `bimeron-core.exe` on Windows or `bimeron-core` on Linux. The GUI looks for this exact name. GUI-only builds can omit core; package builds use `BIMERON_REQUIRE_CORE=ON` and fail if any required payload file is missing.
 
 The fetch script checks cached archive hashes on every run, downloads missing or changed archives, verifies the pinned SHA-256, extracts them, and checks required files. A clean checkout needs access to GitHub. With verified archives already in `.tools/core`, the fetch step can run offline. The installer does not download core. Separately, a GUI built with a trusted production release key can download signed core updates at runtime; see [Signed core service updates](core-updates.md).
+
+## Default country and site databases
+
+Packages ship Loyalsoldier's `v2ray-rules-dat` `geoip.dat` and `geosite.dat` as the default selection. Bimeron does not author them; they are GPL-3.0 data used unmodified. `cmake/geodata-release.cmake` pins the release tag and one SHA-256 per file; update the tag and both values together from the release's `*.dat.sha256sum` assets, never from a floating `latest` URL. `scripts/fetch-geodata.cmake` downloads both files into `.tools/geodata/<tag>/`, verifies them against the pins (a verified cache works offline), and writes `release.json` (`{"tag":"<tag>"}`) and `SOURCE.txt` (author, release, source URL and license). The upstream `LICENSE` is vendored in `third_party/loyalsoldier-v2ray-rules-dat/LICENSE` from commit `9a1fbf47e0a1f673eac87ebe90178db5ecd7d21c` (Git blob `f288702d2fa16d3cdf0035b15a9fcbc552cd88e7`).
+
+The packaging scripts run the fetch step and configure with `BIMERON_REQUIRE_GEODATA=ON` and an explicit `BIMERON_GEODATA_ROOT=.tools/geodata`; configuration then fails on a missing file or a hash mismatch. Without the files (CI, GUI-only builds) the databases are simply not installed. The files are installed explicitly, never copied into the shared build output directory: `<install>\geodata\` on Windows and `/usr/share/bimeron/geodata/` in the DEB, each with `LICENSE.txt` beside them. The application reads them from that directory (overridable with `BIMERON_BUNDLED_GEODATA` for tests) and, while it runs, checks Loyalsoldier for newer releases once a day; downloaded releases go to the per-user application data directory as before. The installer itself downloads nothing.
 
 ### Updating the bundled core version
 
@@ -231,7 +238,8 @@ The `stage/windows-amd64` or `stage/windows-arm64` tree is the source of the MSI
 - `WINTUN-LICENSE.txt`;
 - `CORE-LICENSE.txt`;
 - `THIRD_PARTY_NOTICES.txt`.
-- `MONOCYPHER-LICENSE.txt` and `MINIZ-LICENSE.txt`.
+- `MONOCYPHER-LICENSE.txt` and `MINIZ-LICENSE.txt`;
+- `geodata\geoip.dat`, `geodata\geosite.dat`, `geodata\release.json`, `geodata\SOURCE.txt` and `geodata\LICENSE.txt` (pinned Loyalsoldier databases, GPL-3.0).
 
 The install rule excludes `core-update.lib` and every file matching `*-test*` (all test executables, such as `core-update-test.exe`, `developer-mode-test.exe`, `profile-vless-test.exe`, `geodata-download-test.exe`, `geodata-selection-test.exe` and `offline-ikev2-failure-test.exe`, plus any linker byproducts) from the MSI even though they share the Visual Studio output directory with the GUI. Name every new test target `*-test` so this rule covers it; no shipped file may match that pattern. Use a fresh `stage/upgrade-windows-*` prefix for local upgrade-test packages so previously staged test artifacts cannot survive an incremental install.
 
@@ -265,6 +273,12 @@ DEB installs:
 /usr/share/doc/bimeron-desktop/CORE-LICENSE.txt
 /usr/share/doc/bimeron-desktop/MONOCYPHER-LICENSE.txt
 /usr/share/doc/bimeron-desktop/MINIZ-LICENSE.txt
+/usr/share/doc/bimeron-desktop/LOYALSOLDIER-GEODATA-LICENSE.txt
+/usr/share/bimeron/geodata/geoip.dat
+/usr/share/bimeron/geodata/geosite.dat
+/usr/share/bimeron/geodata/release.json
+/usr/share/bimeron/geodata/SOURCE.txt
+/usr/share/bimeron/geodata/LICENSE.txt
 ```
 
 The Linux window uses the bundled PNG icon (Qt's system ICO image plugin is not guaranteed to be installed) and declares the `bimeron` desktop file name so the dock can match the window to `bimeron.desktop`.
@@ -283,7 +297,7 @@ pkexec
 systemd
 ```
 
-Because of this, the package is designed for Debian/Ubuntu-like systems with Qt 6, systemd and `pkexec` available. Depend on `pkexec` directly: Ubuntu 25.04 has it but no installable `policykit-1` package. Core is included inside DEB and is not downloaded after installation.
+Because of this, the package is designed for Debian/Ubuntu-like systems with Qt 6, systemd and `pkexec` available. Depend on `pkexec` directly: Ubuntu 25.04 has it but no installable `policykit-1` package. Core is included inside DEB and is not downloaded after installation. The default databases are included as well; only the application's daily update check may replace them later, per user.
 
 Acceptance criterion: `apt-get -s install ./bimeron-desktop-<version>-linux-amd64.deb` resolves dependencies on Ubuntu 25.04, and installation leaves both desktop and core executables available.
 
@@ -366,7 +380,7 @@ dpkg-deb -I dist/bimeron-desktop-<version>-linux-arm64.deb
 dpkg-deb -c dist/bimeron-desktop-<version>-linux-arm64.deb
 ```
 
-Check the DEB architecture (`amd64` or `arm64`), desktop version, dependencies, paths and executable rights of both binaries. Compare each staged core binary, Wintun DLL and license with the extracted file under `.tools/core/<platform>-<architecture>`. For MSI, manually check a clean install and an upgrade from a previous version on the appropriate architecture, all three `Additional options` page options, launching the application, closing the installer, and uninstalling the program. MSI creation alone does not validate installer behavior.
+Check the DEB architecture (`amd64` or `arm64`), desktop version, dependencies, paths and executable rights of both binaries. Compare each staged core binary, Wintun DLL and license with the extracted file under `.tools/core/<platform>-<architecture>`. Compare the staged `geodata` files with `.tools/geodata/<tag>/` and their SHA-256 with `cmake/geodata-release.cmake`. For MSI, manually check a clean install and an upgrade from a previous version on the appropriate architecture, all three `Additional options` page options, launching the application, closing the installer, and uninstalling the program. MSI creation alone does not validate installer behavior.
 
 The user performs GUI checks separately; successful compilation does not in itself confirm the correctness of the interface or VPN session.
 
@@ -385,6 +399,10 @@ Check for the path from `CMAKE_PREFIX_PATH` of the corresponding preset. For Win
 ### Core or Wintun not found
 
 Run `cmake -DBIMERON_CORE_PLATFORM=linux -P scripts/fetch-core.cmake` on Linux or use `windows` on Windows, then check the input paths from the table above. Do not replace ARM64 files with x64 versions. Packaging requires all payload files. A GUI-only build can omit core.
+
+### Default databases not found
+
+Run `cmake -P scripts/fetch-geodata.cmake` and check `.tools/geodata/<tag>/`. A hash mismatch means the pinned tag and SHA-256 values in `cmake/geodata-release.cmake` disagree with the downloaded files; update them together. A GUI-only build can omit the databases; reconfigure with `-DBIMERON_REQUIRE_GEODATA=OFF` if the build directory was configured for packaging.
 
 ### WSL is not installed
 
@@ -417,6 +435,8 @@ The complete script cleans up old packages before building begins. If one of the
 - `scripts/package-linux.sh` - native Linux orchestration of two DEBs;
 - `scripts/fetch-core.cmake` - portable core release download and SHA-256 verification;
 - `cmake/core-release.cmake` - core release URL, tag, commit, hashes and payload filenames;
+- `scripts/fetch-geodata.cmake` - download and SHA-256 verification of the default databases;
+- `cmake/geodata-release.cmake` - default database release tag, hashes and license path;
 - `scripts/stop-build-app.ps1` - safe completion of the GUI from a specific build directory;
 - `cmake/linux-arm64-toolchain.cmake` — Linux ARM64 cross-toolchain;
 - `packaging/windows/options.wxs` - MSI interface and behavior;
@@ -1397,10 +1417,11 @@ above). Never run
 ARM64 test executables on an x64 host as native runtime acceptance.
 
 
-The explicit shared GeoData manager adds `GeoDataDialog`, `GeoDataDownload` and
-`GeoDataSelection` to the desktop and profile fixture source lists. It uses the
-existing Qt Network dependency and adds no package payload, executable installer,
-database bundle or release pin. `geodata-download-test` uses injected local fake
+The explicit shared GeoData manager adds `GeoDataDialog`, `GeoDataDownload`,
+`GeoDataSelection` and `GeoDataUpdater` to the desktop and profile fixture source
+lists. It uses the existing Qt Network dependency. The default Loyalsoldier
+databases are a pinned package payload described in
+[Default country and site databases](#default-country-and-site-databases). `geodata-download-test` uses injected local fake
 Qt replies (no public download), covering pinning, redirects, bounds, cancellation,
 timeouts and immutable publication. `geodata-selection-test` uses synthetic
 protobufs with `BIMERON_GEODATA_CORE` for shared settings/groups and document

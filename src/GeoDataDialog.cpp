@@ -1,6 +1,8 @@
 #include "GeoDataDialog.h"
 #include "GeoDataDownload.h"
 #include "GeoDataSelection.h"
+#include "GeoDataUpdater.h"
+#include "HiDpiCheckBox.h"
 #include <QAction>
 #include <QApplication>
 #include <QDialog>
@@ -8,8 +10,10 @@
 #include <QDir>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QDate>
+#include <QFontMetrics>
+#include <QFrame>
 #include <QHBoxLayout>
-#include <QHeaderView>
 #include <QJsonObject>
 #include <QLabel>
 #include <QMenu>
@@ -20,7 +24,6 @@
 #include <QRegularExpression>
 #include <QResizeEvent>
 #include <QSet>
-#include <QTableWidget>
 #include <QTimer>
 #include <QToolButton>
 #include <QVBoxLayout>
@@ -50,22 +53,24 @@ enum class Purpose { Passive, Recheck, Manual, Downloaded };
 // The draft selection (path and its verified status) is kept apart from the latest
 // replacement attempt, so a failed download or rejected file never hides the current file.
 struct Row {
-    QString path;
+    GeoDataSelection::Source source = GeoDataSelection::Source::None;
+    QString path, tag;
     bool valid = false, checking = false;
     QString status, facts, provenance;
     int groups = -1;
     bool busy = false, transfer = false;
     QString attemptStatus, attemptLabel, attemptSummary, attemptError, pendingProvenance;
     int pendingGroups = -1;
+    QString pendingTag;
     int generation = 0;
 };
 
 struct RowWidgets {
-    ElidedLabel *file = nullptr;
-    QLabel *status = nullptr;
+    ElidedLabel *file = nullptr, *status = nullptr;
+    QLabel *source = nullptr;
     QProgressBar *bar = nullptr;
-    QPushButton *download = nullptr, *choose = nullptr, *cancel = nullptr, *actions = nullptr;
-    QAction *update = nullptr, *chooseAction = nullptr, *recheck = nullptr, *clear = nullptr;
+    QPushButton *cancel = nullptr, *actions = nullptr;
+    QAction *update = nullptr, *install = nullptr, *chooseAction = nullptr, *recheck = nullptr, *clear = nullptr;
 };
 }
 
@@ -89,41 +94,41 @@ void manageSharedGeoData(QWidget *parent, const QString &core, const QString &pr
     auto *scope = new QLabel(tr("These databases serve country and site rules in all profiles."));
     scope->setWordWrap(true);
     layout->addWidget(scope);
-    // The source describes Download and Update only, never a manually chosen file.
-    auto *sourceRow = new QHBoxLayout;
-    sourceRow->setSpacing(6);
-    auto *sourceLabel = new QLabel(tr("Download source:"));
-    sourceLabel->setStyleSheet(muted);
-    auto *source = new QLabel(QString("<a style=\"color:%1\" href=\"https://github.com/Loyalsoldier/v2ray-rules-dat\">Loyalsoldier · GitHub</a>").arg(linkColor));
+    // Bimeron ships these third-party databases; attribute them to their author.
+    const QString link = QString("<a style=\"color:%1\" href=\"https://github.com/Loyalsoldier/v2ray-rules-dat\">Loyalsoldier · GitHub</a>").arg(linkColor);
+    auto *source = new QLabel(tr("By default, the databases come from %1 (GPL-3.0)").arg(link));
     source->setObjectName("geodataSource");
+    source->setStyleSheet(muted);
     source->setTextInteractionFlags(Qt::LinksAccessibleByMouse | Qt::LinksAccessibleByKeyboard);
     source->setFocusPolicy(Qt::StrongFocus);
     source->setOpenExternalLinks(true);
-    sourceRow->addWidget(sourceLabel);
-    sourceRow->addWidget(source);
-    sourceRow->addStretch();
-    layout->addLayout(sourceRow);
+    source->setWordWrap(true);
+    layout->addWidget(source);
+    auto *autoUpdate = new HiDpiCheckBox(tr("Update Loyalsoldier databases automatically"));
+    autoUpdate->setObjectName("geodataAutoUpdate");
+    auto *autoUpdateHint = new QLabel;
+    autoUpdateHint->setObjectName("geodataAutoUpdateHint");
+    autoUpdateHint->setTextFormat(Qt::PlainText);
+    auto *autoUpdateRow = new QHBoxLayout;
+    autoUpdateRow->setSpacing(12);
+    autoUpdateRow->addWidget(autoUpdate);
+    autoUpdateRow->addStretch();
+    autoUpdateRow->addWidget(autoUpdateHint);
+    layout->addSpacing(4);
+    layout->addLayout(autoUpdateRow);
+    layout->addSpacing(4);
 
-    auto *table = new QTableWidget(2, 3);
-    table->setObjectName("geodataTable");
-    table->setHorizontalHeaderLabels({tr("Database"), tr("File"), QString()});
-    table->verticalHeader()->hide();
-    table->setSelectionMode(QAbstractItemView::NoSelection);
-    table->setEditTriggers(QAbstractItemView::NoEditTriggers);
-    table->setFocusPolicy(Qt::NoFocus);
-    table->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    table->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    table->setWordWrap(false);
-    auto *header = table->horizontalHeader();
-    header->setSectionResizeMode(0, QHeaderView::ResizeToContents);
-    header->setSectionResizeMode(1, QHeaderView::Stretch);
-    // Sized in fitHeight(): row actions change (Download, Cancel, the row menu) after layout.
-    header->setSectionResizeMode(2, QHeaderView::Fixed);
-    header->setDefaultAlignment(Qt::AlignLeft | Qt::AlignVCenter);
-    header->setHighlightSections(false);
-    header->setSectionsClickable(false);
-    table->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-    layout->addWidget(table);
+    // Two rows in one card, like the cards on the Settings page: no header and no grid.
+    auto *card = new QFrame;
+    card->setObjectName("geodataCard");
+    card->setStyleSheet(QString("QFrame#geodataCard { border: 1px solid %1; border-radius: 9px; background: %2; }"
+                                " QFrame#geodataDivider { border: 0; background: %3; }")
+        .arg(dark ? "#40516a" : "#dce5ef", dark ? "#202937" : "white", dark ? "#40516a" : "#e5ebf2"));
+    card->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    auto *cardLayout = new QVBoxLayout(card);
+    cardLayout->setContentsMargins(1, 1, 1, 1);
+    cardLayout->setSpacing(0);
+    layout->addWidget(card);
 
     auto *message = new QLabel;
     message->setObjectName("geodataMessage");
@@ -141,7 +146,6 @@ void manageSharedGeoData(QWidget *parent, const QString &core, const QString &pr
     // A plain disclosure: no button surface, focus shown by the link color.
     toggle->setStyleSheet(QString("QToolButton { border: 0; background: transparent; padding: 2px 0; color: %1; }"
                                   " QToolButton:focus, QToolButton:hover { color: %2; }").arg(textColor, linkColor));
-    layout->addWidget(toggle, 0, Qt::AlignLeft);
     auto *information = new QPlainTextEdit;
     information->setObjectName("geodataInformation");
     information->setReadOnly(true);
@@ -152,10 +156,20 @@ void manageSharedGeoData(QWidget *parent, const QString &core, const QString &pr
     layout->addWidget(information);
     layout->addStretch();
     auto *buttons = new QDialogButtonBox(QDialogButtonBox::Cancel | QDialogButtonBox::Apply);
-    layout->addWidget(buttons);
+    auto *installAll = new QPushButton(tr("Install Loyalsoldier databases"));
+    installAll->setObjectName("geodataInstallAll");
+    installAll->setAutoDefault(false);
+    auto *footer = new QHBoxLayout;
+    footer->setSpacing(12);
+    footer->addWidget(toggle);
+    footer->addWidget(installAll);
+    footer->addStretch();
+    footer->addWidget(buttons);
+    layout->addSpacing(4);
+    layout->addLayout(footer);
 
     auto *selection = GeoDataSelection::instance();
-    const auto original = selection->paths();
+    const GeoDataSelection::Selection original = selection->selection();
     // One app-owned transport, used only by this modal manager; close cancels its jobs.
     static auto *sharedDownload = new GeoDataDownload(qApp);
     auto *download = transport ? transport : sharedDownload;
@@ -165,17 +179,36 @@ void manageSharedGeoData(QWidget *parent, const QString &core, const QString &pr
     QMap<QString, QMetaObject::Connection> catalogConnections;
     QSet<QString> ownedDownloads;
     QString applyError;
-    for (const QString &kind : kinds) rows[kind].path = original.value(kind);
+    for (const QString &kind : kinds) {
+        rows[kind].path = original.paths.value(kind);
+        rows[kind].tag = original.tags.value(kind);
+        rows[kind].source = rows[kind].path.isEmpty() ? GeoDataSelection::Source::None : original.sources.value(kind);
+    }
+    autoUpdate->setChecked(original.autoUpdate);
+    using Source = GeoDataSelection::Source;
 
     // Relative selections resolve against the profile being edited; without one, report it.
     const auto resolve = [&](const QString &path) {
         if (QDir::isAbsolutePath(path)) return QFileInfo(path).absoluteFilePath();
         return profilePath.isEmpty() ? QString() : QFileInfo(profilePath).dir().absoluteFilePath(path);
     };
-    const auto paths = [&] {
-        GeoDataSelection::Paths result;
-        for (const QString &kind : kinds) result[kind] = rows[kind].path;
+    const auto draft = [&] {
+        GeoDataSelection::Selection result;
+        result.autoUpdate = autoUpdate->isChecked();
+        for (const QString &kind : kinds) {
+            result.paths[kind] = rows[kind].path;
+            result.sources[kind] = rows[kind].path.isEmpty() ? Source::None : rows[kind].source;
+            result.tags[kind] = result.sources[kind] == Source::Loyalsoldier ? rows[kind].tag : QString();
+        }
         return result;
+    };
+    const auto changedFromOriginal = [&] {
+        const auto current = draft();
+        for (const QString &kind : kinds) {
+            const Source before = original.paths.value(kind).isEmpty() ? Source::None : original.sources.value(kind);
+            if (current.paths.value(kind) != original.paths.value(kind) || current.sources.value(kind) != before) return true;
+        }
+        return current.autoUpdate != original.autoUpdate;
     };
     const auto requiredGroups = [&](const QString &kind) {
         QStringList ids;
@@ -194,6 +227,10 @@ void manageSharedGeoData(QWidget *parent, const QString &core, const QString &pr
             QStringList lines{kind == "geoip" ? tr("Country database") : tr("Site database")};
             if (!row.path.isEmpty()) {
                 const QString absolute = resolve(row.path);
+                lines << tr("Source: %1").arg(row.source == Source::Loyalsoldier
+                    ? (row.tag.isEmpty() ? QStringLiteral("Loyalsoldier")
+                                         : tr("Loyalsoldier, release %1").arg(GeoDataSelection::releaseDate(row.tag)))
+                    : tr("own file"));
                 lines << tr("Path: %1").arg(QDir::toNativeSeparators(absolute.isEmpty() ? row.path : absolute));
                 QString check = row.checking ? tr("Checking…") : row.status;
                 if (row.valid && row.groups >= 0) check += " · " + tr("%1 groups").arg(row.groups);
@@ -209,18 +246,7 @@ void manageSharedGeoData(QWidget *parent, const QString &core, const QString &pr
         return blocks.join("\n\n");
     };
     const auto fitHeight = [&] {
-        int actionsWidth = 0;
-        for (int row = 0; row < table->rowCount(); ++row) {
-            // Visibility changes only post a layout request; measure the current buttons now.
-            QLayout *actions = table->cellWidget(row, 2)->layout();
-            actions->invalidate();
-            actionsWidth = qMax(actionsWidth, actions->sizeHint().width());
-        }
-        header->resizeSection(2, actionsWidth + (table->showGrid() ? 1 : 0)); // The grid line takes one pixel.
-        table->resizeRowsToContents();
-        int height = header->sizeHint().height() + 2 * table->frameWidth();
-        for (int row = 0; row < table->rowCount(); ++row) height += table->rowHeight(row);
-        table->setFixedHeight(height);
+        layout->invalidate();
         if (dialog.isVisible()) dialog.resize(dialog.width(), dialog.sizeHint().height());
     };
     const auto refresh = [&] {
@@ -236,7 +262,7 @@ void manageSharedGeoData(QWidget *parent, const QString &core, const QString &pr
             anyError |= !row.attemptError.isEmpty();
             // Empty rows show the failed attempt in their own status line; avoid repeating it.
             if (!empty && !row.attemptSummary.isEmpty() && attemptMessage.isEmpty()) attemptMessage = kindName(kind) + QStringLiteral(" · ") + row.attemptSummary;
-            w.file->setFullText(empty ? tr("No file selected") : QFileInfo(row.path).fileName());
+            w.file->setFullText(empty ? tr("Not used") : QFileInfo(row.path).fileName());
             w.file->setStyleSheet(empty ? muted : QString());
             const QString absolute = empty ? QString() : resolve(row.path);
             w.file->setToolTip(empty ? QString() : QDir::toNativeSeparators(absolute.isEmpty() ? row.path : absolute));
@@ -246,22 +272,58 @@ void manageSharedGeoData(QWidget *parent, const QString &core, const QString &pr
             else if (empty) { status = row.attemptLabel; problem = !status.isEmpty(); }
             else if (row.checking) status = tr("Checking…");
             else { status = row.status; problem = !row.valid; }
-            w.status->setText(status);
-            w.status->setVisible(!status.isEmpty());
+            // The source is named in words (badges would read as branding). A healthy
+            // Loyalsoldier row shows its release date; a problem replaces it in red.
+            const bool showSource = !empty && !row.transfer && !row.busy;
+            QString detail = status;
+            if (showSource && !row.checking && row.valid)
+                detail = row.source == Source::Loyalsoldier && !row.tag.isEmpty() ? GeoDataSelection::releaseDate(row.tag) : QString();
+            const QString sourceText = !showSource ? QString()
+                : (row.source == Source::Loyalsoldier ? QStringLiteral("Loyalsoldier") : tr("Own file"));
+            w.source->setText(detail.isEmpty() ? sourceText : sourceText + QStringLiteral(" ·"));
+            w.source->setVisible(!sourceText.isEmpty());
+            w.status->setFullText(detail);
+            w.status->setVisible(!detail.isEmpty());
             w.status->setStyleSheet(problem ? failed : muted);
+            // Raw status for tests; the full plain line for tests and accessibility.
+            const QString line = sourceText.isEmpty() ? detail
+                : (detail.isEmpty() ? sourceText : sourceText + QStringLiteral(" · ") + detail);
+            w.status->setProperty("status", status);
+            w.status->setProperty("line", line);
+            w.status->setAccessibleName(kindName(kind) + ": " + line);
             w.bar->setVisible(row.transfer);
-            w.download->setVisible(empty && !row.transfer);
-            w.choose->setVisible(empty && !row.transfer);
-            w.download->setEnabled(!row.busy);
-            w.choose->setEnabled(!row.busy);
             w.cancel->setVisible(row.transfer);
-            w.actions->setVisible(!empty && !row.transfer);
+            w.actions->setVisible(!row.transfer);
             w.actions->setEnabled(!row.busy && !row.checking);
+            w.update->setVisible(!empty && row.source == Source::Loyalsoldier);
+            w.install->setVisible(empty || row.source != Source::Loyalsoldier);
+            w.chooseAction->setText(row.source == Source::Custom && !empty ? tr("Choose another file…") : tr("Choose own file…"));
+            w.recheck->setVisible(!empty);
             w.recheck->setEnabled(!absolute.isEmpty());
+            w.clear->setVisible(!empty);
         }
-        for (const QString &kind : kinds)
-            if (!requiredGroups(kind).isEmpty()) ready &= !rows[kind].path.isEmpty() && rows[kind].valid;
-        buttons->button(QDialogButtonBox::Apply)->setEnabled(!busy && ready && applyError.isEmpty() && paths() != original);
+        bool loyalsoldier = false, everythingDefault = autoUpdate->isChecked();
+        for (const QString &kind : kinds) {
+            const bool uses = !rows[kind].path.isEmpty() && rows[kind].source == Source::Loyalsoldier;
+            loyalsoldier |= uses;
+            everythingDefault &= uses;
+        }
+        // Restoring is offered only when something differs from the defaults.
+        installAll->setVisible(!everythingDefault);
+        installAll->setEnabled(!busy);
+        QString hint;
+        bool hintProblem = false;
+        const QDateTime checked = GeoDataUpdater::lastCheck().toLocalTime();
+        if (!loyalsoldier) hint = tr("nothing to update");
+        else if (GeoDataUpdater::lastCheckFailed()) { hint = tr("last check failed"); hintProblem = true; }
+        else if (checked.isValid())
+            hint = checked.date() == QDate::currentDate()
+                ? tr("checked today at %1").arg(checked.time().toString("H:mm"))
+                : tr("checked %1").arg(checked.toString("dd.MM.yyyy H:mm"));
+        autoUpdateHint->setText(hint);
+        autoUpdateHint->setVisible(autoUpdate->isChecked() && !hint.isEmpty());
+        autoUpdateHint->setStyleSheet(hintProblem ? failed : muted);
+        buttons->button(QDialogButtonBox::Apply)->setEnabled(!busy && ready && applyError.isEmpty() && changedFromOriginal());
         const QString shown = !applyError.isEmpty() ? applyError.left(180) : attemptMessage;
         message->setText(shown);
         message->setVisible(!shown.isEmpty());
@@ -344,6 +406,8 @@ void manageSharedGeoData(QWidget *parent, const QString &core, const QString &pr
             } else {
                 row.busy = false;
                 row.path = path;
+                row.source = Source::Custom;
+                row.tag.clear();
                 row.valid = true;
                 row.status = status;
                 row.facts.clear();
@@ -381,6 +445,24 @@ void manageSharedGeoData(QWidget *parent, const QString &core, const QString &pr
         refresh();
         download->start(kind);
     };
+    // Restores the shipped (or current managed) Loyalsoldier copy; downloads when none exists.
+    const auto installLoyalsoldier = [&](const QString &kind) {
+        Row &row = rows[kind];
+        if (row.busy || row.checking) return;
+        autoUpdate->setChecked(true);
+        if (!row.path.isEmpty() && row.source == Source::Loyalsoldier) { refresh(); return; }
+        const auto release = selection->loyalsoldierRelease(kind);
+        if (release.path.isEmpty()) { startDownload(kind); return; }
+        applyError.clear();
+        row.attemptLabel.clear();
+        row.attemptSummary.clear();
+        row.attemptError.clear();
+        row.source = Source::Loyalsoldier;
+        row.path = release.path;
+        row.tag = release.tag;
+        row.provenance.clear();
+        inspect(kind, row.path, Purpose::Passive);
+    };
     const auto chooseFile = [&](const QString &kind) {
         const QString path = QFileDialog::getOpenFileName(&dialog, tr("Choose local database"));
         if (path.isEmpty()) return;
@@ -390,79 +472,104 @@ void manageSharedGeoData(QWidget *parent, const QString &core, const QString &pr
         inspect(kind, QFileInfo(path).absoluteFilePath(), Purpose::Manual);
     };
 
+    QFont kindFont = dialog.font();
+    kindFont.setWeight(QFont::DemiBold);
+    int kindWidth = 0;
+    for (const QString &kind : kinds) kindWidth = qMax(kindWidth, QFontMetrics(kindFont).horizontalAdvance(kindName(kind)));
     for (int index = 0; index < kinds.size(); ++index) {
         const QString kind = kinds[index];
         RowWidgets &w = ui[kind];
-        auto *name = new QTableWidgetItem(kindName(kind));
-        name->setFlags(Qt::ItemIsEnabled);
-        table->setItem(index, 0, name);
+        if (index > 0) {
+            auto *divider = new QFrame;
+            divider->setObjectName("geodataDivider");
+            divider->setFixedHeight(1);
+            cardLayout->addWidget(divider);
+        }
+        auto *rowWidget = new QWidget;
+        rowWidget->setObjectName(kind + "Row");
+        auto *rowLayout = new QHBoxLayout(rowWidget);
+        rowLayout->setContentsMargins(12, 8, 12, 8);
+        rowLayout->setSpacing(12);
+        auto *name = new QLabel(kindName(kind));
+        name->setObjectName(kind + "Kind");
+        name->setFont(kindFont);
+        name->setStyleSheet(QString("color: %1").arg(dark ? "#e8edf5" : "#26364a"));
+        name->setFixedWidth(kindWidth + 4);
+        rowLayout->addWidget(name);
 
-        auto *fileCell = new QWidget;
-        auto *fileLayout = new QVBoxLayout(fileCell);
-        fileLayout->setContentsMargins(8, 6, 8, 6);
-        fileLayout->setSpacing(2);
+        // The file column always takes the free width, even when only "Not used" is shown.
+        auto *fileColumn = new QWidget;
+        fileColumn->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+        auto *fileLayout = new QVBoxLayout(fileColumn);
+        fileLayout->setContentsMargins(0, 0, 0, 0);
+        fileLayout->setSpacing(1);
         w.file = new ElidedLabel;
         w.file->setObjectName(kind + "File");
-        w.status = new QLabel;
+        w.source = new QLabel;
+        w.source->setObjectName(kind + "Source");
+        w.source->setTextFormat(Qt::PlainText);
+        w.source->setStyleSheet(muted);
+        w.status = new ElidedLabel;
         w.status->setObjectName(kind + "Status");
-        w.status->setTextFormat(Qt::PlainText);
-        w.status->setWordWrap(true);
-        w.status->setAccessibleName(kindName(kind) + ' ' + tr("Status"));
+        auto *statusLine = new QHBoxLayout;
+        statusLine->setContentsMargins(0, 0, 0, 0);
+        statusLine->setSpacing(4);
+        statusLine->addWidget(w.source);
+        statusLine->addWidget(w.status, 1);
         w.bar = new QProgressBar;
         w.bar->setObjectName(kind + "Progress");
         w.bar->setTextVisible(false);
         w.bar->setFixedHeight(6);
         w.bar->hide();
         fileLayout->addWidget(w.file);
-        fileLayout->addWidget(w.status);
+        fileLayout->addLayout(statusLine);
         fileLayout->addWidget(w.bar);
-        table->setCellWidget(index, 1, fileCell);
+        rowLayout->addWidget(fileColumn, 1);
 
-        auto *actionCell = new QWidget;
-        auto *actionLayout = new QHBoxLayout(actionCell);
-        actionLayout->setContentsMargins(6, 4, 8, 4);
+        auto *actionLayout = new QHBoxLayout;
+        actionLayout->setContentsMargins(0, 0, 0, 0);
         actionLayout->setSpacing(6);
-        actionLayout->addStretch();
-        w.download = new QPushButton(tr("Download"));
-        w.download->setObjectName(kind + "Download");
-        w.choose = new QPushButton(tr("Choose file…"));
-        w.choose->setObjectName(kind + "Choose");
         w.cancel = new QPushButton(tr("Cancel"));
         w.cancel->setObjectName(kind + "Cancel");
-        w.actions = new QPushButton(QStringLiteral("⋯"));
+        w.actions = new QPushButton(tr("Actions"));
         w.actions->setObjectName(kind + "Actions");
-        w.actions->setStyleSheet("QPushButton { font-size: 15px; font-weight: 700; padding: 0; }"
-                                 " QPushButton::menu-indicator { image: none; width: 0; }");
-        w.actions->setFixedWidth(36);
+        // The application's secondary button with the product chevron instead of a glyph.
+        w.actions->setStyleSheet("QPushButton { padding: 0 26px 0 10px; }"
+                                 " QPushButton::menu-indicator { image: url(:/icons/chevron-down.xpm); width: 9px; height: 5px;"
+                                 " subcontrol-origin: padding; subcontrol-position: right center; right: 10px; }");
         auto *menu = new QMenu(w.actions);
-        w.update = menu->addAction(tr("Update from GitHub"));
+        w.update = menu->addAction(tr("Update now"));
         w.update->setObjectName(kind + "Update");
-        w.chooseAction = menu->addAction(tr("Choose file…"));
+        w.install = menu->addAction(tr("Install Loyalsoldier database"));
+        w.install->setObjectName(kind + "Install");
+        w.chooseAction = menu->addAction(tr("Choose own file…"));
         w.chooseAction->setObjectName(kind + "ChooseAction");
         w.recheck = menu->addAction(tr("Check again"));
         w.recheck->setObjectName(kind + "Recheck");
         menu->addSeparator();
-        w.clear = menu->addAction(tr("Clear selection"));
+        w.clear = menu->addAction(tr("Disable database"));
         w.clear->setObjectName(kind + "Clear");
         w.actions->setMenu(menu);
-        for (auto *button : {w.download, w.choose, w.cancel, w.actions}) {
+        for (auto *button : {w.cancel, w.actions}) {
             button->setAutoDefault(false);
+            // Buttons keep their natural width; the file column takes the rest of the row.
+            button->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
             button->setAccessibleName(button->text() + ' ' + kindName(kind));
             actionLayout->addWidget(button);
         }
         w.actions->setAccessibleName(tr("Actions for %1").arg(kindName(kind)));
         w.actions->setToolTip(w.actions->accessibleName());
         w.cancel->hide();
-        table->setCellWidget(index, 2, actionCell);
+        rowLayout->addLayout(actionLayout);
+        cardLayout->addWidget(rowWidget);
 
-        QObject::connect(w.download, &QPushButton::clicked, &dialog, [&, kind] { startDownload(kind); });
         QObject::connect(w.update, &QAction::triggered, &dialog, [&, kind] { startDownload(kind); });
-        QObject::connect(w.choose, &QPushButton::clicked, &dialog, [&, kind] { chooseFile(kind); });
+        QObject::connect(w.install, &QAction::triggered, &dialog, [&, kind] { installLoyalsoldier(kind); });
         QObject::connect(w.chooseAction, &QAction::triggered, &dialog, [&, kind] { chooseFile(kind); });
         QObject::connect(w.recheck, &QAction::triggered, &dialog, [&, kind] {
             if (!rows[kind].path.isEmpty() && !rows[kind].busy) inspect(kind, rows[kind].path, Purpose::Recheck);
         });
-        // Clearing changes only the draft selection; no file is deleted.
+        // Disabling changes only the draft selection; no file is deleted.
         QObject::connect(w.clear, &QAction::triggered, &dialog, [&, kind] {
             Row &row = rows[kind];
             if (row.busy || row.checking) return;
@@ -498,11 +605,13 @@ void manageSharedGeoData(QWidget *parent, const QString &core, const QString &pr
         rows[kind].pendingProvenance = tr("Downloaded release: %1").arg(download->releaseTag(kind)) + "\nSHA-256: " + hash;
         inspect(kind, path, Purpose::Downloaded);
     });
-    QObject::connect(download, &GeoDataDownload::published, &dialog, [&](const QString &kind, const QString &path) {
+    QObject::connect(download, &GeoDataDownload::published, &dialog, [&](const QString &kind, const QString &path, const QString &tag) {
         if (!ownedDownloads.contains(kind) || !rows[kind].transfer) return;
         Row &row = rows[kind];
         row.busy = row.transfer = false;
         row.path = path;
+        row.source = Source::Loyalsoldier;
+        row.tag = tag;
         row.valid = true;
         row.status = GeoDataSelection::failureStatus(Failure::None);
         row.facts.clear();
@@ -530,16 +639,18 @@ void manageSharedGeoData(QWidget *parent, const QString &core, const QString &pr
             inspect(kind, row.path, Purpose::Passive);
         }
     });
+    QObject::connect(autoUpdate, &QCheckBox::toggled, &dialog, [&] { applyError.clear(); refresh(); });
+    QObject::connect(installAll, &QPushButton::clicked, &dialog, [&] {
+        autoUpdate->setChecked(true);
+        for (const QString &kind : kinds) installLoyalsoldier(kind);
+        refresh();
+    });
     QObject::connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
     QObject::connect(buttons->button(QDialogButtonBox::Apply), &QPushButton::clicked, &dialog, [&] {
+        // A disabled database is allowed: profiles that need it are blocked when connecting.
         QString error;
-        for (const QString &kind : kinds)
-            if (!requiredGroups(kind).isEmpty() && rows[kind].path.isEmpty()) {
-                error = tr("No shared %1 database is selected.").arg(kind);
-                break;
-            }
         const auto profiles = ProfileStore().load(&error);
-        if (error.isEmpty() && selection->apply(paths(), core, profiles, &error)) dialog.accept();
+        if (error.isEmpty() && selection->apply(draft(), core, profiles, &error)) dialog.accept();
         else { applyError = error; refresh(); }
     });
     for (const QString &kind : kinds) if (!rows[kind].path.isEmpty()) inspect(kind, rows[kind].path, Purpose::Passive);

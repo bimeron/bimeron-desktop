@@ -61,6 +61,9 @@ private:
     int localRule_ = -1;
     QLabel *routingStatus_ = nullptr;
     QMap<QString, QString> datasetPaths_, datasetErrors_, datasetIdentities_, datasetKeys_;
+    // Kinds whose shared database is missing or failed its check. Rules of such kinds
+    // may be saved, but the profile cannot connect while they are enabled.
+    QMap<QString, bool> datasetUnavailable_;
     bool datasetChanged_ = false;
     QMap<QString, QStringList> datasetGroups_;
     QMap<QString, int> datasetGeneration_;

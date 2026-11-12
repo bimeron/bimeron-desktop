@@ -4,6 +4,8 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QSettings>
+#include <QProcess>
+#include <QStandardPaths>
 #include <QFileSystemWatcher>
 #include <QTemporaryDir>
 #include <QElapsedTimer>
@@ -13,7 +15,8 @@
 #include <cstdio>
 #include <cstdlib>
 
-static void require(bool value) { if (!value) std::abort(); }
+static void requireAt(bool value, int line) { if (!value) { std::fprintf(stderr, "FAILED line %d", line); std::fputc(10, stderr); std::abort(); } }
+#define require(x) requireAt((x), __LINE__)
 static QByteArray read(const QString &path) {
     QFile file(path); require(file.open(QIODevice::ReadOnly)); return file.readAll();
 }
@@ -27,8 +30,70 @@ static void waitFor(const std::function<bool()> &done) {
     require(done());
 }
 
+
+// Runs in a child process so each case gets a fresh selection singleton.
+static int migrationCase(const QString &name) {
+    QTemporaryDir directory;
+    require(directory.isValid());
+    QStandardPaths::setTestModeEnabled(true);
+    QCoreApplication::setOrganizationName("BimeronSelectionTest");
+    QCoreApplication::setApplicationName("Migration-" + name);
+    QSettings::setDefaultFormat(QSettings::IniFormat);
+    QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, directory.path());
+    const QString bundled = directory.filePath("bundled");
+    require(QDir().mkpath(bundled));
+    write(bundled + "/release.json", "{\"tag\":\"202611112204\"}");
+    write(bundled + "/geoip.dat", "bundled geoip");
+    write(bundled + "/geosite.dat", "bundled geosite");
+    qputenv("BIMERON_BUNDLED_GEODATA", bundled.toUtf8());
+    const QString managed = GeoDataSelection::managedDirectory() + "/" + QString(64, 'a');
+    require(QDir().mkpath(managed));
+    write(managed + "/geoip.dat", "managed geoip");
+    const QString own = directory.filePath("own-geosite.dat");
+    write(own, "own geosite");
+    QSettings settings;
+    using Source = GeoDataSelection::Source;
+    if (name == "empty") {
+        // A fresh install selects the shipped databases with automatic updates.
+    } else if (name == "legacy") {
+        settings.setValue("geodata/paths", QVariantMap{{"geoip", managed + "/geoip.dat"}, {"geosite", own}});
+    } else if (name == "newer-bundled") {
+        settings.setValue("geodata/paths", QVariantMap{{"geoip", managed + "/geoip.dat"}, {"geosite", own}});
+        settings.setValue("geodata/sources", QVariantMap{{"geoip", "loyalsoldier"}, {"geosite", "none"}});
+        settings.setValue("geodata/tags", QVariantMap{{"geoip", "202601010000"}});
+    } else if (name == "missing-managed") {
+        settings.setValue("geodata/paths", QVariantMap{{"geoip", directory.filePath("gone/geoip.dat")}});
+        settings.setValue("geodata/sources", QVariantMap{{"geoip", "loyalsoldier"}, {"geosite", "custom"}});
+        settings.setValue("geodata/tags", QVariantMap{{"geoip", "202612312359"}});
+    }
+    settings.sync();
+    auto *selection = GeoDataSelection::instance();
+    const auto choice = selection->selection();
+    const QString bundledIp = QDir::cleanPath(bundled + "/geoip.dat"), bundledSite = QDir::cleanPath(bundled + "/geosite.dat");
+    if (name == "empty") {
+        require(choice.sources.value("geoip") == Source::Loyalsoldier && choice.sources.value("geosite") == Source::Loyalsoldier);
+        require(choice.paths.value("geoip") == bundledIp && choice.paths.value("geosite") == bundledSite);
+        require(choice.tags.value("geoip") == "202611112204" && choice.autoUpdate);
+    } else if (name == "legacy") {
+        // A managed download keeps its file; another path is the user's own file.
+        require(choice.sources.value("geoip") == Source::Loyalsoldier && choice.paths.value("geoip") == managed + "/geoip.dat");
+        require(choice.tags.value("geoip").isEmpty());
+        require(choice.sources.value("geosite") == Source::Custom && choice.paths.value("geosite") == own);
+    } else if (name == "newer-bundled") {
+        require(choice.paths.value("geoip") == bundledIp && choice.tags.value("geoip") == "202611112204");
+        require(choice.sources.value("geosite") == Source::None);
+    } else if (name == "missing-managed") {
+        require(choice.paths.value("geoip") == bundledIp && choice.tags.value("geoip") == "202611112204");
+        require(choice.sources.value("geosite") == Source::Custom);
+    }
+    // The migrated state is persisted.
+    require(QSettings().value("geodata/sources").toMap().size() == 2);
+    return 0;
+}
+
 int main(int argc, char **argv) {
     QCoreApplication app(argc, argv);
+    if (app.arguments().value(1) == "--migration") return migrationCase(app.arguments().value(2));
     if (app.arguments().value(1) == "geodata" && qEnvironmentVariableIsSet("BIMERON_FAKE_GEODATA")) {
         if (qgetenv("BIMERON_FAKE_GEODATA") == "unsupported") { std::fputs("error: unknown command\n", stderr); return 1; }
         std::puts("{\"version\":1,\"groups\":[\"ru\"]}"); return 0;
@@ -66,6 +131,38 @@ int main(int argc, char **argv) {
     require(read(countLog) == "catalog\ncatalog\n"); // Cache lifetime is one Apply.
     qunsetenv("BIMERON_COUNT_LOG");
     require(selection->apply(previous, {}, {}, &error)); changes = 0;
+
+    {
+        // Rule scanning and validation copies need no Core.
+        const QString profile = "[Profile]\nName=P\n[Rule]\nGeoIP=ru\nAction=direct\n# [Rule]\n# GeoSite=github\n"
+                                "# Action=proxy\n[Rule]\r\nGeoSite = youtube\r\nAction=proxy\r\n[Rule]\nCIDR=10.0.0.0/8\nAction=direct\n";
+        require(GeoDataSelection::requiredKinds(profile) == QStringList({"geoip", "geosite"}));
+        require(GeoDataSelection::requiredKinds("[Rule]\n# GeoIP=ru\n[GeoData]\nGeoIP=ru\n").isEmpty());
+        const QString withoutSites = GeoDataSelection::withoutRules(profile, {"geosite"});
+        require(GeoDataSelection::requiredKinds(withoutSites) == QStringList({"geoip"}));
+        require(withoutSites.contains("# [Rule]\r\n# GeoSite = youtube\r\n# Action=proxy\r\n") && withoutSites.contains("CIDR=10.0.0.0/8"));
+        require(GeoDataSelection::withoutRules(profile, {}) == profile);
+        require(GeoDataSelection::releaseDate("202611112204") == "11.11.2026" && GeoDataSelection::releaseDate("x") == "x");
+        for (const QString &name : {QStringLiteral("empty"), QStringLiteral("legacy"), QStringLiteral("newer-bundled"), QStringLiteral("missing-managed")}) {
+            QProcess child;
+            child.start(app.applicationFilePath(), {"--migration", name});
+            require(child.waitForFinished(15000) && child.exitStatus() == QProcess::NormalExit && child.exitCode() == 0);
+        }
+        // Sources persist with the selection, and a kind may be disabled even when a
+        // profile uses it: such profiles are blocked when connecting instead.
+        const QString used = directory.filePath("uses-geoip.conf");
+        write(used, "[Rule]\nGeoIP=ru\nAction=direct\n");
+        GeoDataSelection::Selection disabled = selection->selection();
+        disabled.paths = {{"geoip", QString()}, {"geosite", QString()}};
+        disabled.autoUpdate = false;
+        require(selection->apply(disabled, {}, {{"u", "Uses", used}}, &error) && error.isEmpty());
+        require(selection->source("geoip") == GeoDataSelection::Source::None && !selection->autoUpdate());
+        require(QSettings().value("geodata/autoUpdate").toBool() == false
+            && QSettings().value("geodata/sources").toMap().value("geoip").toString() == "none");
+        disabled.autoUpdate = true;
+        require(selection->apply(disabled, {}, {}, &error) && selection->autoUpdate());
+        changes = 0;
+    }
     {
         // Catalog classification from raw validator facts; no Core is required.
         using Failure = GeoDataSelection::CatalogFailure;
@@ -128,10 +225,13 @@ int main(int argc, char **argv) {
 
         // A validator replaced at the same path must not reuse an earlier cached result.
         const QFileInfo self(app.applicationFilePath());
-        const QString validator = self.dir().filePath("geodata-validator-copy-test"
+        // The copy lives in the temporary directory; Windows finds its Qt libraries through PATH.
+        const QString validator = directory.filePath("geodata-validator-copy-test"
             + (self.suffix().isEmpty() ? QString() : "." + self.suffix()));
+        qputenv("PATH", QDir::toNativeSeparators(self.absolutePath()).toLocal8Bit()
+            + QDir::listSeparator().toLatin1() + qgetenv("PATH"));
         QFile::remove(validator);
-        require(QFile::copy(app.applicationFilePath(), validator));
+        { QFile source(app.applicationFilePath()); const bool copied = source.copy(validator); if (!copied) std::fprintf(stderr, "copy error: %s -> %s\n", qPrintable(source.errorString()), qPrintable(validator)); require(copied); }
         qputenv("BIMERON_FAKE_GEODATA", "ok");
         const QString validatorKey = GeoDataSelection::catalogKey(validator, "geoip", present);
         Failure delivered = Failure::Rejected;
@@ -302,6 +402,19 @@ int main(int argc, char **argv) {
     invalid.replace("Port=443", "Port=invalid");
     require(GeoDataSelection::materialize(invalid, first, core, paths, &error).isEmpty() && !error.isEmpty());
     require(GeoDataSelection::materialize(source, first, core, {}, &error).isEmpty() && !error.isEmpty());
+    {
+        // Saving tolerates a missing database: rules stay, the kind is reported, and Core
+        // validates the rest of the profile.
+        QStringList skipped;
+        const QString kept = GeoDataSelection::materialize(source, first, core, {}, &error, {}, &skipped);
+        require(error.isEmpty() && kept == source && skipped == QStringList{"geoip"});
+        QString broken = source;
+        broken.replace("Port=443", "Port=invalid");
+        require(GeoDataSelection::materialize(broken, first, core, {}, &error, {}, &skipped).isEmpty() && !error.isEmpty());
+        // A missing group in an available database still blocks saving.
+        const QString missingGroup = base + "[Rule]\nGeoIP=missing\nAction=direct\n";
+        require(GeoDataSelection::materialize(missingGroup, first, core, paths, &error, {}, &skipped).isEmpty() && !error.isEmpty());
+    }
     write(second, (base + "[Rule]\nGeoSite=missing\nAction=proxy\n").toUtf8());
     require(!selection->apply(paths, core, profiles, &error) && error.contains("Second"));
     require(selection->paths() == paths && changes == 1 && read(first) == source.toUtf8());

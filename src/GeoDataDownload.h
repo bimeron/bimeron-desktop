@@ -15,7 +15,9 @@ public:
     explicit GeoDataDownload(QObject *parent = nullptr);
     explicit GeoDataDownload(QNetworkAccessManager *network, QObject *parent = nullptr);
     ~GeoDataDownload() override;
-    bool start(const QString &kind);
+    // A nonempty knownTag skips the download when the latest release is not newer;
+    // upToDate is emitted instead of candidateReady.
+    bool start(const QString &kind, const QString &knownTag = {});
     bool busy(const QString &kind) const;
     QString releaseTag(const QString &kind) const;
     void cancel(const QString &kind);
@@ -24,7 +26,8 @@ public:
     bool publishAsync(const QString &kind);
     QString publish(const QString &kind, QString *error = nullptr);
 signals:
-    void published(QString kind, QString path);
+    void published(QString kind, QString path, QString tag);
+    void upToDate(QString kind, QString tag);
     void progress(QString kind, qint64 received, qint64 total);
     void candidateReady(QString kind, QString temporaryPath, QString hash);
     void failed(QString kind, QString error);
