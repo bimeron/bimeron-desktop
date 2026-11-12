@@ -754,16 +754,27 @@ struct ConnectionManagementTest {
                         });
                         buttons->button(QDialogButtonBox::Cancel)->click(); return;
                     }
+                    // Save reports a rejection either as a message box or, when the Core
+                    // publishes structured problems, as the editor's problem dialog.
                     QTimer watchdog;
                     watchdog.setInterval(10);
+                    int ticks = 0;
                     QObject::connect(&watchdog, &QTimer::timeout, dialog, [&] {
-                        auto *message = qobject_cast<QMessageBox *>(QApplication::activeModalWidget());
-                        if (!message) return;
-                        if (action == 0) fprintf(stderr, "Raw validation: %s\n", qPrintable(message->text()));
+                        // Fail instead of hanging if Save neither finishes nor reports a problem.
+                        require(++ticks < 3000, "Raw Save produced no result within 30 seconds");
+                        QWidget *modal = QApplication::activeModalWidget();
+                        if (!modal || modal == dialog) return;
+                        QString text;
+                        if (auto *message = qobject_cast<QMessageBox *>(modal)) text = message->text();
+                        else if (modal->objectName() == "coreProblemDialog") text = modal->findChild<QLabel *>("coreProblemText")->text();
+                        else require(false, "unexpected dialog during Raw Save");
+                        if (action == 0) fprintf(stderr, "Raw validation: %s\n", qPrintable(text));
                         require(action == 1 || action == 3, "valid Raw Save must not show validation error");
                         require(raw->toPlainText().toUtf8() == draft && read(first) == original,
                             "invalid groups and unknown fields retain Raw draft and original");
-                        rejected = true; message->accept();
+                        rejected = true;
+                        // Close without the problem dialog's navigation action.
+                        static_cast<QDialog *>(modal)->reject();
                         QTimer::singleShot(0, dialog, [dialog] { dialog->QDialog::reject(); });
                     });
                     watchdog.start();
