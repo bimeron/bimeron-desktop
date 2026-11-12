@@ -297,7 +297,7 @@ void manageSharedGeoData(QWidget *parent, const QString &core, const QString &pr
             w.actions->setEnabled(!row.busy && !row.checking);
             w.update->setVisible(!empty && row.source == Source::Loyalsoldier);
             w.install->setVisible(empty || row.source != Source::Loyalsoldier);
-            w.chooseAction->setText(row.source == Source::Custom && !empty ? tr("Choose another file…") : tr("Choose own file…"));
+            w.chooseAction->setText(row.source == Source::Custom && !empty ? tr("Choose another file") : tr("Choose own file"));
             w.recheck->setVisible(!empty);
             w.recheck->setEnabled(!absolute.isEmpty());
             w.clear->setVisible(!empty);
@@ -542,7 +542,7 @@ void manageSharedGeoData(QWidget *parent, const QString &core, const QString &pr
         w.update->setObjectName(kind + "Update");
         w.install = menu->addAction(tr("Install Loyalsoldier database"));
         w.install->setObjectName(kind + "Install");
-        w.chooseAction = menu->addAction(tr("Choose own file…"));
+        w.chooseAction = menu->addAction(tr("Choose own file"));
         w.chooseAction->setObjectName(kind + "ChooseAction");
         w.recheck = menu->addAction(tr("Check again"));
         w.recheck->setObjectName(kind + "Recheck");

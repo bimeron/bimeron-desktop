@@ -364,7 +364,7 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
     auto *keyLayout = new QHBoxLayout(keyRow);
     keyLayout->setContentsMargins(0, 0, 0, 0);
     keyLayout->addWidget(key_);
-    auto *browse = new QPushButton(tr("Browse…"));
+    auto *browse = new QPushButton(tr("Browse"));
     auto *reveal = new QPushButton(tr("Show"));
     keyLayout->addWidget(reveal);
     keyLayout->addWidget(browse);
@@ -393,7 +393,7 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
     auto *identityLayout = new QHBoxLayout(identityRow);
     identityLayout->setContentsMargins(0, 0, 0, 0);
     identityLayout->addWidget(sshIdentity_);
-    auto *chooseIdentity = new QPushButton(tr("Browse…"));
+    auto *chooseIdentity = new QPushButton(tr("Browse"));
     identityLayout->addWidget(chooseIdentity);
     connect(chooseIdentity, &QPushButton::clicked, this, [this] {
         const QString path = QFileDialog::getOpenFileName(this, tr("SSH identity file"));
@@ -403,7 +403,7 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
     auto *hostsLayout = new QHBoxLayout(hostsRow);
     hostsLayout->setContentsMargins(0, 0, 0, 0);
     hostsLayout->addWidget(sshKnownHosts_);
-    auto *chooseHosts = new QPushButton(tr("Browse…"));
+    auto *chooseHosts = new QPushButton(tr("Browse"));
     hostsLayout->addWidget(chooseHosts);
     connect(chooseHosts, &QPushButton::clicked, this, [this] {
         const QString path = QFileDialog::getOpenFileName(this, tr("SSH known_hosts file"));
@@ -471,7 +471,7 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
     authForm->addRow(remember);
     auto *identity = new QLabel(tr("No identity selected"));
     authForm->addRow(identity);
-    auto *choose = new QPushButton(tr("Choose…"));
+    auto *choose = new QPushButton(tr("Choose"));
     authForm->addRow(choose);
     auto *notice = new QLabel;
     notice->setWordWrap(true);
@@ -517,7 +517,7 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
     nativeNotice->setTextFormat(Qt::PlainText);
     nativeActions->addWidget(nativeNotice);
     auto *nativeActionRow = new QHBoxLayout;
-    for (const auto &text : {tr("Review changes…"), tr("Remove Windows profile…")}) {
+    for (const auto &text : {tr("Review changes"), tr("Remove Windows profile")}) {
         auto *button = new QPushButton(text);
         button->setEnabled(false);
         nativeActionRow->addWidget(button);
@@ -882,7 +882,7 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
     parameters_["GRPCMultiMode"]->setValidator(new QRegularExpressionValidator(QRegularExpression("true|false"), this));
     parameters_["Security"]->setPlaceholderText(tr("Empty uses TLS"));
     parameters_["GRPCMultiMode"]->setPlaceholderText(tr("Empty, true or false"));
-    auto *browseCa = new QPushButton(tr("Choose CA file…"));
+    auto *browseCa = new QPushButton(tr("Choose CA file"));
     browseCa->setObjectName("browseParameterCa");
     form->addRow(browseCa);
     connect(browseCa, &QPushButton::clicked, this, [this] {
@@ -1665,7 +1665,7 @@ void ProfileEditorDialog::addRule(const Rule &rule) {
     QPixmap arrowIcon(16, 16);
     arrowIcon.fill(Qt::transparent);
     { QPainter painter(&arrowIcon); painter.drawPixmap(3, 6, QPixmap(":/icons/chevron-down.xpm")); }
-    auto *choose = new QAction(QIcon(arrowIcon), tr("Choose groups…"), target);
+    auto *choose = new QAction(QIcon(arrowIcon), tr("Choose groups"), target);
     target->addAction(choose, QLineEdit::TrailingPosition);
     const auto updateTarget = [this, type, target, choose, rule] {
         const QString matcher = type->currentData().toString();
@@ -2389,7 +2389,7 @@ void ProfileEditorDialog::selectGroups(QLineEdit *target, QComboBox *type) {
         return;
     }
     QDialog popup(this);
-    popup.setWindowTitle(tr("Choose groups…"));
+    popup.setWindowTitle(tr("Choose groups"));
     popup.resize(440, 420);
     auto *layout = new QVBoxLayout(&popup);
     auto *search = new QLineEdit;
