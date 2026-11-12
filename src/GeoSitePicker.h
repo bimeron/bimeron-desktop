@@ -66,7 +66,7 @@ class GeoSitePicker final : public QDialog {
 public:
     GeoSitePicker(QWidget *parent, const QStringList &available, QStringList selected,
                   const QString &error) : QDialog(parent), original_(selected) {
-        setWindowTitle(tr("Choose groups…"));
+        setWindowTitle(tr("Choose groups"));
         setMinimumSize(590, 350);
         resize(728, 473);
         auto *layout = new QVBoxLayout(this);

@@ -317,7 +317,7 @@ struct ConnectionManagementTest {
             require(manager->width() == 520, "long names never widen the manager");
             require(manager->findChild<QPushButton *>("geoipActions")->isVisible()
                 && manager->findChild<QAction *>("geoipInstall")->isVisible()
-                && manager->findChild<QAction *>("geoipChooseAction")->text() == "Choose another file…"
+                && manager->findChild<QAction *>("geoipChooseAction")->text() == "Choose another file"
                 && label(manager, "geoipStatus")->property("line").toString() == "Own file"
                 && label(manager, "geoipSource")->text() == "Own file" && !label(manager, "geoipStatus")->isVisible(),
                 "own file row names its source");
