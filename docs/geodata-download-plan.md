@@ -1,5 +1,10 @@
 # GeoData download dialog implementation plan
 
+The later accepted [manager redesign plan](geodata-manager-redesign-plan.md)
+supersedes this document's manager layout, explanatory Details copy, and generic
+validation-failure presentation. Download integrity and selection-safety contracts
+remain in force.
+
 Status: implemented locally at low reasoning effort, 2026-11-02; parent review pending. Continue in
 the shared dirty checkout on eat/geodata-routing, preserving existing changes.
 No commits, pushes, PRs, release packages, installed-service changes or Core edits.

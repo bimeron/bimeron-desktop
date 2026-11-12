@@ -969,9 +969,13 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
     });
     setFormRowVisible(form, browseCa, valueFor(text, "AccessKey", "Type") == "masque");
     connect(GeoDataSelection::instance(), &GeoDataSelection::catalogResult, this,
-        [this](const QString &key, const QStringList &groups, const QString &error) {
+        [this](const QString &key, const QStringList &groups, const QString &error, GeoDataSelection::CatalogFailure failure) {
             for (const QString &kind : {QString("geoip"), QString("geosite")}) if (datasetKeys_.value(kind) == key) {
-                datasetGroups_[kind] = groups; datasetErrors_[kind] = error; refreshRouting();
+                // Lead with the classified meaning; the raw diagnostic follows for support.
+                datasetGroups_[kind] = groups;
+                datasetErrors_[kind] = failure == GeoDataSelection::CatalogFailure::None ? error
+                    : GeoDataSelection::failureExplanation(failure) + '\n' + error;
+                refreshRouting();
             }
         });
     connect(GeoDataSelection::instance(), &GeoDataSelection::catalogInvalidated, this, [this](const QString &key) {
