@@ -57,6 +57,8 @@ private:
     void restartApplication(bool development = false);
     void updateDevelopment();
     void refreshProfiles();
+    void populateAutoConnectSelector();
+    void chooseAutoConnect(int index);
     ProfileConnectionInfo profileInfo(int row) const;
     bool activeProxyMode() const;
     bool packetProfile(int row) const;
@@ -231,6 +233,7 @@ private:
     QCheckBox *serviceAutomaticCheck_ = nullptr;
     QCheckBox *betaUpdatesCheck_ = nullptr;
     QComboBox *autoConnectProfile_ = nullptr;
+    QLabel *autoConnectHint_ = nullptr;
     QPushButton *connectButton_ = nullptr;
     QPushButton *removeProfileButton_ = nullptr;
     QToolButton *profileGear_ = nullptr;

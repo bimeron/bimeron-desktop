@@ -534,6 +534,7 @@ int main(int argc, char **argv) {
     NativeIKEv2SessionTest::run();
     ConnectionManagementTest::profileGeometry(app, temporary.filePath("profile-geometry.png"));
     ConnectionManagementTest::run();
+    ConnectionManagementTest::autoConnectSelector();
     ConnectionManagementTest::sharedGeoDataPreparation();
     ConnectionManagementTest::settingsGeoDataChecking();
     DevelopmentCore backend(temporary.filePath("missing-helper"));
