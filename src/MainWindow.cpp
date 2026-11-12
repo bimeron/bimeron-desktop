@@ -21,6 +21,7 @@
 #include <QClipboard>
 #include <QCheckBox>
 #include <QComboBox>
+#include <QStandardItemModel>
 #include <QCoreApplication>
 #include <QDateTime>
 #include <QCloseEvent>
@@ -479,6 +480,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), core_(this) {
         QFrame#settingsCard { background: white; border: 1px solid #dce5ef; border-radius: 9px; }
         QLabel#sectionTitle { color: #26364a; font-size: 13px; font-weight: 700; }
         QLabel#sectionHint { color: #718096; }
+        QFrame#settingsDivider { background: #e5ebf2; border: 0; }
         QLabel#fieldValue { min-height: 27px; padding: 0 8px; color: #526174; background: #f7f9fc; border: 1px solid #dce5ef; border-radius: 6px; }
         QPushButton#dangerButton { color: #b42318; }
         QPushButton#dangerButton:hover { color: #912018; background: #fff5f4; border-color: #e5a29c; }
@@ -496,6 +498,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), core_(this) {
         QComboBox QAbstractItemView { padding: 0; background: white; border: 1px solid #ccd8e5; border-top: 0; border-top-left-radius: 0; border-top-right-radius: 0; border-bottom-left-radius: 6px; border-bottom-right-radius: 6px; outline: 0; selection-color: #1267d6; selection-background-color: #edf5ff; }
         QComboBox QAbstractItemView::item { min-height: 26px; padding: 0 6px; border: 0; }
         QComboBox QAbstractItemView::item:selected { color: #1267d6; background: #edf5ff; border: 0; outline: 0; }
+        QComboBox QAbstractItemView::item:disabled { color: #95a2b2; }
         QSpinBox::up-button, QSpinBox::down-button { subcontrol-origin: border; width: 26px; background: transparent; border: 0; border-left: 1px solid #e5ebf2; }
         QSpinBox::up-button { subcontrol-position: top right; border-top-right-radius: 6px; }
         QSpinBox::down-button { subcontrol-position: bottom right; border-bottom-right-radius: 6px; }
@@ -752,7 +755,19 @@ QWidget *MainWindow::settingsPage() {
     layout->setSpacing(12);
     auto *title = new QLabel(tr("Settings"));
     title->setStyleSheet("font-size: 17px; font-weight: 700");
-    layout->addWidget(title);
+    // Databases are shared by every profile, so the action belongs to the page, not to a preference group.
+    auto *databases = new QPushButton(tr("Country and site databases"));
+    databases->setObjectName("settingsGeoData");
+    databases->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+    connect(databases, &QPushButton::clicked, this, [this] {
+        manageSharedGeoData(this, validationExecutable_, {}, {});
+    });
+    auto *header = new QHBoxLayout;
+    header->setSpacing(10);
+    header->addWidget(title);
+    header->addStretch();
+    header->addWidget(databases);
+    layout->addLayout(header);
 
     auto *hint = new QLabel(tr("Application behavior, automatic connection, and Bimeron maintenance."));
     hint->setObjectName("sectionHint");
@@ -766,6 +781,14 @@ QWidget *MainWindow::settingsPage() {
     auto *generalTitle = new QLabel(tr("Application"));
     generalTitle->setObjectName("sectionTitle");
     general->addWidget(generalTitle);
+    const auto addDivider = [general] {
+        auto *divider = new QFrame;
+        divider->setObjectName("settingsDivider");
+        divider->setFixedHeight(1);
+        general->addSpacing(4);
+        general->addWidget(divider);
+        general->addSpacing(4);
+    };
     auto *themeRow = new QHBoxLayout;
     auto *themeLabel = new QLabel(tr("Theme"));
     auto *theme = new HiDpiComboBox;
@@ -843,6 +866,7 @@ QWidget *MainWindow::settingsPage() {
         const QSignalBlocker blocker(language);
         language->setCurrentIndex(language->findData(previousLanguage));
     });
+    addDivider();
     auto *stopOnExit = new HiDpiCheckBox(tr("Disconnect and stop core when quitting"));
     stopOnExit->setChecked(QSettings().value("app/stopCoreOnExit", false).toBool());
     connect(stopOnExit, &QCheckBox::toggled, this, [](bool checked) {
@@ -860,31 +884,7 @@ QWidget *MainWindow::settingsPage() {
         sessionStatsLabel_->setVisible(checked);
     });
     general->addWidget(detailedStats);
-    auto *databases = new QPushButton(tr("Country and site databases"));
-    databases->setObjectName("settingsGeoData");
-    databases->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
-    general->addWidget(databases, 0, Qt::AlignLeft);
-    connect(databases, &QPushButton::clicked, this, [this] {
-        manageSharedGeoData(this, validationExecutable_, {}, {});
-    });
-    auto *autoConnect = new HiDpiCheckBox(tr("Connect automatically on startup"));
-    autoConnect->setChecked(QSettings().value("app/autoConnect", false).toBool());
-    autoConnectProfile_ = new HiDpiComboBox;
-    autoConnectProfile_->setEnabled(autoConnect->isChecked());
-    connect(autoConnect, &QCheckBox::toggled, this, [this](bool checked) {
-        QSettings().setValue("app/autoConnect", checked);
-        autoConnectProfile_->setEnabled(checked);
-        if (checked && autoConnectProfile_->currentIndex() >= 0)
-            QSettings().setValue("app/autoConnectProfile", autoConnectProfile_->currentData().toString());
-    });
-    connect(autoConnectProfile_, &QComboBox::currentIndexChanged, this, [this](int index) {
-        if (index >= 0) QSettings().setValue("app/autoConnectProfile", autoConnectProfile_->itemData(index).toString());
-    });
-    auto *autoConnectRow = new QHBoxLayout;
-    autoConnectRow->setSpacing(10);
-    autoConnectRow->addWidget(autoConnect);
-    autoConnectRow->addWidget(autoConnectProfile_, 1);
-    general->addLayout(autoConnectRow);
+    addDivider();
 #if defined(Q_OS_WIN) || defined(Q_OS_LINUX)
 #ifdef Q_OS_WIN
     QSettings runKey("HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run", QSettings::NativeFormat);
@@ -906,6 +906,30 @@ QWidget *MainWindow::settingsPage() {
     connect(startOnLogin, &QCheckBox::toggled, this, &MainWindow::applyStartupSetting);
     general->addWidget(startOnLogin);
 #endif
+    // One selector replaces the former checkbox plus disabled profile list. Only explicit
+    // user activation writes settings; refreshProfiles() repopulates it without side effects.
+    auto *autoConnectLabel = new QLabel(tr("Auto-connect"));
+    autoConnectHint_ = new QLabel;
+    autoConnectHint_->setObjectName("sectionHint");
+    autoConnectHint_->setWordWrap(true);
+    autoConnectProfile_ = new HiDpiComboBox;
+    autoConnectLabel->setBuddy(autoConnectProfile_);
+    autoConnectProfile_->setObjectName("settingsAutoConnect");
+    autoConnectProfile_->setAccessibleName(tr("Auto-connect"));
+    autoConnectProfile_->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+    autoConnectProfile_->setMinimumContentsLength(18);
+    autoConnectProfile_->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
+    connect(autoConnectProfile_, &QComboBox::activated, this, &MainWindow::chooseAutoConnect);
+    auto *autoConnectText = new QVBoxLayout;
+    autoConnectText->setSpacing(1);
+    autoConnectText->addWidget(autoConnectLabel);
+    autoConnectText->addWidget(autoConnectHint_);
+    auto *autoConnectRow = new QHBoxLayout;
+    autoConnectRow->setSpacing(16);
+    autoConnectRow->addLayout(autoConnectText, 1);
+    autoConnectRow->addWidget(autoConnectProfile_, 0, Qt::AlignVCenter);
+    general->addLayout(autoConnectRow);
+    populateAutoConnectSelector();
     layout->addWidget(generalCard);
 
 #if defined(Q_OS_WIN) || defined(Q_OS_LINUX)
@@ -1226,18 +1250,68 @@ void MainWindow::refreshProfiles() {
         item->setSizeHint(QSize(0, 50));
     }
     if (trayMenu_) rebuildTrayMenu();
-    if (autoConnectProfile_) {
-        const QString selected = QSettings().value("app/autoConnectProfile").toString();
-        const QSignalBlocker blocker(autoConnectProfile_);
-        autoConnectProfile_->clear();
-        for (int row = 0; row < profiles_.size(); ++row)
-            if (profileInfo(row).backend != ProfileConnectionInfo::Backend::NativeIKEv2)
-                autoConnectProfile_->addItem(profiles_[row].name, profiles_[row].id);
-        const int index = autoConnectProfile_->findData(selected);
-        autoConnectProfile_->setCurrentIndex(index);
-    }
+    populateAutoConnectSelector();
     updateProfileAppearance();
     if (!error.isEmpty()) appendLog(tr("Failed to load profiles: %1").arg(error));
+}
+
+// Rebuilds the startup selector from the stored preference without writing settings.
+// Item 0 is Off; profile items carry their stable ID, and every other item has no data.
+void MainWindow::populateAutoConnectSelector() {
+    if (!autoConnectProfile_) return;
+    const QSettings settings;
+    const bool enabled = settings.value("app/autoConnect", false).toBool();
+    const QString selected = settings.value("app/autoConnectProfile").toString();
+    QList<int> eligible;
+    bool selectedEligible = false;
+    for (int row = 0; row < profiles_.size(); ++row) {
+        // The startup path connects only packet profiles; offer exactly those.
+        if (!packetProfile(row)) continue;
+        eligible.append(row);
+        selectedEligible = selectedEligible || profiles_[row].id == selected;
+    }
+    const bool stale = enabled && !selectedEligible;
+
+    const QSignalBlocker blocker(autoConnectProfile_);
+    autoConnectProfile_->clear();
+    autoConnectProfile_->addItem(tr("Off"));
+    int current = 0;
+    if (stale) {
+        current = autoConnectProfile_->count();
+        autoConnectProfile_->addItem(tr("Profile unavailable"));
+        if (auto *model = qobject_cast<QStandardItemModel *>(autoConnectProfile_->model()))
+            model->item(current)->setEnabled(false);
+    }
+    if (!eligible.isEmpty()) autoConnectProfile_->insertSeparator(autoConnectProfile_->count());
+    for (const int row : eligible) {
+        const auto &profile = profiles_[row];
+        const int index = autoConnectProfile_->count();
+        autoConnectProfile_->addItem(profile.name, profile.id);
+        autoConnectProfile_->setItemData(index, profile.name, Qt::ToolTipRole);
+        if (enabled && current == 0 && profile.id == selected) current = index;
+    }
+    autoConnectProfile_->setCurrentIndex(current);
+    const bool profileSelected = !autoConnectProfile_->itemData(current).toString().isEmpty();
+    autoConnectProfile_->setToolTip(profileSelected ? autoConnectProfile_->itemText(current) : QString());
+    if (autoConnectHint_)
+        autoConnectHint_->setText(stale ? tr("The selected profile was removed or cannot connect automatically.")
+            : eligible.isEmpty() ? tr("No profiles can connect automatically yet.")
+            : tr("When Bimeron starts"));
+}
+
+void MainWindow::chooseAutoConnect(int index) {
+    if (!autoConnectProfile_ || index < 0) return;
+    QSettings settings;
+    if (index == 0) {
+        // Off keeps the remembered profile so turning auto-connect back on is one choice away.
+        settings.setValue("app/autoConnect", false);
+    } else {
+        const QString id = autoConnectProfile_->itemData(index).toString();
+        if (id.isEmpty()) return;  // Placeholder or separator; never a profile ID.
+        settings.setValue("app/autoConnectProfile", id);
+        settings.setValue("app/autoConnect", true);
+    }
+    populateAutoConnectSelector();
 }
 
 bool MainWindow::eventFilter(QObject *watched, QEvent *event) {
