@@ -23,6 +23,11 @@ Escape cancels and asks whether to discard edits if the draft changed.
 
 Theme and language remain available in Settings. Pending preferences remain
 disabled except the restored auto-connect and explicit stop-Core-on-exit options.
+The Settings header holds the Country and site databases action, because the
+databases are shared by every profile. The Application card groups appearance,
+general behavior, and startup preferences with thin dividers; launch at login is
+followed by a single Auto-connect selector (see
+[connection management](connection-management.md)).
 Save log and Clear are disabled while the log is empty. Tray profile entries
 follow the same availability gates as the connection button; Open Bimeron and
 Quit remain available. Closing to tray does not disconnect.
