@@ -50,6 +50,15 @@ Compute payload speed using monotonic elapsed time between snapshots. Reset on
 instance/session change, counter decrease or IPC loss. The first sample has no
 rate. Missing statistics and stale speed are unavailable, not zero.
 
+The Settings Auto-connect selector offers Off, then the packet profiles that the
+startup path can connect, in profile-list order. Choosing a profile stores its
+stable ID in `app/autoConnectProfile` and sets `app/autoConnect`; it never
+connects immediately. Choosing Off clears only `app/autoConnect` and keeps the
+remembered ID. If auto-connect is on but the stored profile is missing or not
+eligible (for example, native IKEv2), the selector shows a disabled Profile
+unavailable entry and never falls back to another profile. Rebuilding the list
+after profile changes or opening Settings writes no preferences.
+
 Adopt an already active startup session. Auto-connect is opt-in, once after the
 initial synchronized disconnected state; never after IPC failure, instance or
 backend change, cleanup failure or an administrative operation. DevelopmentCore
