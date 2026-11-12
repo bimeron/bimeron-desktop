@@ -102,14 +102,14 @@ the local SOCKS5 listener, not the remote upstream protocol.
 | Shadowsocks / `SS`, dynamic `SSConf` | `ss://`, `ssconf://`; explicit `Type=shadowsocks` (alias `ss`), `Server`, `Port`, `Method`, `Password`, optional `Prefix` | Native UDP without wrapper/plugin; DNS uses UDP with TCP fallback | TCP CONNECT | Inner cipher authenticates traffic; SSConf fetched over verified HTTPS |
 | Remote SOCKS5 / `SOCKS5` | `socks5://`; explicit `Type=socks5`, `Server`, `Port`, paired optional `Username`/`Password` | Upstream UDP ASSOCIATE required, including DNS | TCP CONNECT | No auth or username/password; upstream is unencrypted |
 | VLESS / `VLESS` | `vless://`; explicit fields described below | XUDP over supported transport | TCP CONNECT | UUID; verified TLS or REALITY public-key authentication |
-| VMess AEAD / `VMess` | Base64 JSON `vmess://`; no explicit form | UDP over supported transport | TCP CONNECT | UUID, `aid=0`, `scy=auto`, `aes-128-gcm` or `chacha20-poly1305`; TLS or REALITY |
+| VMess AEAD / `VMess` | Base64 JSON `vmess://`; explicit `Type=vmess` with `ID`, `Encryption`, `Network`, `Security` and VLESS-style TLS/REALITY/transport options (Core with `explicit_access`) | UDP over supported transport | TCP CONNECT | UUID, `aid=0`, `scy=auto`, `aes-128-gcm` or `chacha20-poly1305`; TLS or REALITY |
 | Trojan / `Trojan` | `trojan://`; explicit `Type=trojan`, `Server`, `Port`, `Password`, optional `ServerName` and transport fields | UDP-over-stream | TCP CONNECT | Password; verified TLS required |
-| Hysteria2 / `Hysteria2` | `hysteria2://`, `hy2://`; no explicit form | QUIC relay; server must allow UDP | TCP CONNECT | Password in userinfo or `auth`, never both; verified TLS |
-| AnyTLS / `AnyTLS` | `anytls://`; no explicit form | UDP-over-TCP v2 | TCP CONNECT | Password userinfo; verified TLS; session reuse/padding |
-| TUIC v5 / `TUIC` | `tuic://`; no explicit form | `quic` stream-mode relay, not native datagram mode | TCP CONNECT | UUID and password; verified TLS |
+| Hysteria2 / `Hysteria2` | `hysteria2://`, `hy2://`; explicit `Type=hysteria2`, endpoint, `Password`, optional `ServerName`, `ALPN`, `Fingerprint` (Core with `explicit_access`) | QUIC relay; server must allow UDP | TCP CONNECT | Password in userinfo or `auth`, never both; verified TLS |
+| AnyTLS / `AnyTLS` | `anytls://`; explicit `Type=anytls`, endpoint, `Password`, optional `ServerName` (Core with `explicit_access`) | UDP-over-TCP v2 | TCP CONNECT | Password userinfo; verified TLS; session reuse/padding |
+| TUIC v5 / `TUIC` | `tuic://`; explicit `Type=tuic`, endpoint, `ID`, `Password`, optional `ServerName`, `ALPN` (Core with `explicit_access`) | `quic` stream-mode relay, not native datagram mode | TCP CONNECT | UUID and password; verified TLS |
 | SSH / `SSH` | `ssh://`; explicit `Type=ssh`, `Server`, `Port`, `Username`; optional `IdentityFile`, `KnownHostsFile` | TCP-only policy | TCP CONNECT | Key/agent or interactive authentication; matching known_hosts entry required |
 | HTTP CONNECT / `HTTP` | `http://`, `https://`; explicit `Type=http` or `https`, `Server`, `Port`, paired optional credentials | TCP-only policy | TCP CONNECT | Optional Basic auth; HTTP plaintext, HTTPS verified TLS before credentials |
-| Naive-compatible / `Naive` | `naive+https://` H2, `naive+quic://` H3; explicit `Type=naive`, endpoint, `Username`, `Password`, optional `ServerName` selects H2 only | TCP-only policy, even with H3 | TCP CONNECT | Basic auth; verified TLS and selected H2/H3 ALPN |
+| Naive-compatible / `Naive` | `naive+https://` H2, `naive+quic://` H3; explicit `Type=naive`, endpoint, `Username`, `Password`, optional `ServerName` selects H2; `Network=quic` selects H3 (Core with `explicit_access`) | TCP-only policy, even with H3 | TCP CONNECT | Basic auth; verified TLS and selected H2/H3 ALPN |
 | MASQUE / `MASQUE` | `masque://`; explicit `Type=masque`, endpoint, optional paired credentials, `ServerName`, `CAFile`, `MASQUEPath` | H3 CONNECT-UDP, QUIC DATAGRAM; DNS through tunnel | TCP CONNECT and UDP ASSOCIATE | Optional Basic auth; verified TLS 1.3/H3; optional additional CA |
 
 TCP-only policy means captured DNS uses TCP through the upstream and other
@@ -130,8 +130,8 @@ requires a selected CLI accepting the profile; it does not imply safe visual sav
 | SS/SSConf | Yes | Yes, after CLI validation | Existing URI and legacy SS fields; SS2022/plugin/wrapper fields are not fully represented |
 | SOCKS5 | Yes | Yes, after CLI validation | URI and explicit parameters |
 | VLESS | Yes | Yes, after CLI validation | URI inspection/editing and represented explicit fields; advanced explicit settings use Raw |
-| Hysteria2/hy2 | Yes | Conditional; bundle CLI rejects it | URI source; no explicit form |
-| VMess, Trojan, AnyTLS, TUIC, HTTP/HTTPS, Naive, MASQUE | Yes, with target Core validation | Conditional; old bundle CLI rejects them | Protected Raw; source and protocol labels recognized; no new visual forms |
+| Hysteria2/hy2 | Yes | Conditional; bundle CLI rejects it | URI source; explicit form with `explicit_access` |
+| VMess, Trojan, AnyTLS, TUIC, HTTP/HTTPS, Naive, MASQUE | Yes, with target Core validation | Conditional; old bundle CLI rejects them | Recognized links open as hidden, verbatim link sources; explicit forms (VMess, TUIC, AnyTLS and Naive QUIC with `explicit_access`); see [profile creation](profile-creation.md#explicit-access-protocols) |
 | SSH | Yes, with target Core validation | Conditional; old bundle CLI rejects it | URI and explicit forms, identity/known_hosts and transient authentication; see SSH profiles |
 | ShadowTLS section | Only as part of a profile, not a standalone URI | Selected CLI validates; installed service must independently support it | Compatible explicit SS/VLESS/Trojan/Naive H2/SSH forms; other sources retain protected Raw |
 | Native IKEv2 | No | Rejected by current AccessKey import requirement | No form; outside the packet connection flow |

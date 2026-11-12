@@ -429,6 +429,78 @@ static void sshProfiles(const QString &directory) {
     }
 }
 
+// The VMess form keeps one field per transport value; it maps each field to
+// the Core option of the selected transport and back.
+static void vmessTransports(const QString &directory) {
+    const QString core = qEnvironmentVariable("BIMERON_PRESERVATION_CORE");
+    const QJsonObject caps{{"vpn", true}, {"proxy", true}, {"explicit_access", QJsonArray{"vmess"}}};
+    const QString uuid = "123e4567-e89b-12d3-a456-426614174000";
+    struct Case { QString network, path, host, mode, extra; QStringList expected; };
+    const QList<Case> cases{
+        {"ws", "/ws", "cdn.example.com", "", "", {"Network = ws", "WSPath = /ws", "WSHost = cdn.example.com"}},
+        {"httpupgrade", "/up", "", "", "", {"Network = httpupgrade", "WSPath = /up"}},
+        {"grpc", "svc", "auth.example", "multi", "", {"Network = grpc", "GRPCServiceName = svc", "GRPCAuthority = auth.example", "GRPCMultiMode = true"}},
+        {"grpc", "svc", "", "gun", "", {"GRPCServiceName = svc", "GRPCMultiMode = false"}},
+        {"xhttp", "/x", "x.example", "packet-up", R"({"xPaddingBytes":"100-1000"})",
+            {"Network = xhttp", "XHTTPPath = /x", "XHTTPHost = x.example", "XHTTPMode = packet-up", "XHTTPExtra = "}}};
+    int index = 0;
+    for (const auto &c : cases) {
+        ProfileEditorDialog draft({}, caps, nullptr, {}, {}, {}, true);
+        auto *sources = draft.findChild<QComboBox *>("keySource");
+        sources->setCurrentIndex(sources->findData("Explicitvmess"));
+        draft.findChild<QLineEdit *>("server")->setText("example.com");
+        draft.findChild<QLineEdit *>("parameterID")->setText(uuid);
+        draft.findChild<QLineEdit *>("parameterVMessNetwork")->setText(c.network);
+        draft.findChild<QLineEdit *>("parameterVMessPath")->setText(c.path);
+        draft.findChild<QLineEdit *>("parameterVMessHost")->setText(c.host);
+        draft.findChild<QLineEdit *>("parameterVMessMode")->setText(c.mode);
+        draft.findChild<QLineEdit *>("parameterVMessExtra")->setText(c.extra);
+        const QString text = draft.configText();
+        for (const QString &field : c.expected) require(text.contains(field));
+        // Editor-only field names never reach the profile.
+        require(!text.contains("VMess") && !text.contains("://"));
+        check(text, c.expected, core, directory + "/vmess-" + QString::number(index++) + ".conf");
+        ProfileEditorDialog reopened(text, caps);
+        require(reopened.configText() == text && reopened.findChild<QTabWidget *>()->isTabEnabled(0));
+        require(reopened.findChild<QLineEdit *>("parameterVMessNetwork")->text() == c.network);
+        require(reopened.findChild<QLineEdit *>("parameterVMessPath")->text() == c.path);
+        require(reopened.findChild<QLineEdit *>("parameterVMessHost")->text() == c.host);
+        require(reopened.findChild<QLineEdit *>("parameterVMessMode")->text() == c.mode);
+        require(reopened.findChild<QLineEdit *>("parameterVMessExtra")->text() == c.extra);
+    }
+    // Existing link profiles stay links: the form edits the rest verbatim.
+    const QByteArray json = R"({"v":"2","add":"example.com","port":"443","id":"123e4567-e89b-12d3-a456-426614174000","tls":"tls"})";
+    for (const QString &link : {"VMess = vmess://" + QString::fromLatin1(json.toBase64()), QString("TUIC = tuic://" + uuid + ":SENTINEL@example.com:443"),
+             QString("AnyTLS = anytls://SENTINEL@example.com:443"), QString("Naive = naive+quic://alice:SENTINEL@example.com:443")}) {
+        const QString profile = "[Profile]\nVersion = 1\nName = Link\n[AccessKey]\n" + link + "\n";
+        ProfileEditorDialog editor(profile, caps);
+        require(editor.findChild<QTabWidget *>()->isTabEnabled(0));
+        require(editor.findChild<QComboBox *>("keySource")->currentData().toString() == link.section(" = ", 0, 0));
+        editor.findChild<QLineEdit *>("profileName")->setText("Renamed");
+        require(editor.configText() == QString(profile).replace("Name = Link", "Name = Renamed"));
+    }
+    const QString base = "[Profile]\nVersion = 1\nName = VMess\n[AccessKey]\nType = vmess\nServer = example.com\nPort = 443\nID = " + uuid + "\nSecurity = tls\n";
+    // Two Core options for one editor field cannot be shown without loss.
+    ProfileEditorDialog ambiguous(base + "Network = ws\nWSPath = /a\nXHTTPPath = /b\n", caps);
+    require(!ambiguous.findChild<QTabWidget *>()->isTabEnabled(0));
+    require(ambiguous.configText() == base + "Network = ws\nWSPath = /a\nXHTTPPath = /b\n");
+    // A Core problem at a transport option marks the VMess field that holds it.
+    CoreProblem problem;
+    problem.code = "choice_invalid"; problem.section = "AccessKey"; problem.field = "XHTTPMode";
+    ProfileEditorDialog editor(base + "Network = xhttp\nXHTTPMode = fast\n", caps, nullptr, [problem](const QString &, CoreFailure *failure) {
+        failure->text = "rendered";
+        failure->problems = {problem};
+        return false;
+    });
+    QTimer::singleShot(0, [] {
+        auto *dialog = QApplication::activeModalWidget();
+        require(dialog && dialog->objectName() == "coreProblemDialog");
+        dialog->findChild<QPushButton *>("coreProblemGo")->click();
+    });
+    editor.findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Save)->click();
+    require(editor.findChild<QLineEdit *>("parameterVMessMode")->property("coreProblem").toBool());
+}
+
 static void parameterForms(const QString &directory) {
     const QJsonObject caps{{"vpn", true}, {"proxy", true}};
     const QString head = "[Profile]\nVersion = 1\nName = Parameters\n[AccessKey]\n";
@@ -2188,23 +2260,48 @@ int main(int argc, char **argv) {
         require(draft.configText().contains("Mode = vpn"));
     }
 
-    // New drafts expose parameter sources only, including URI-backed protocols.
-    for (const QString &source : {QString("GeneratedHysteria2"), QString("GeneratedVMess"), QString("GeneratedTUIC"), QString("GeneratedAnyTLS"), QString("GeneratedNaive")}) {
-        ProfileEditorDialog draft({}, QJsonObject{{"vpn", true}, {"proxy", true}}, nullptr, [](const QString &, CoreFailure *) { return true; }, {}, {}, true);
+    // New drafts expose parameter sources only. Protocols that Core accepts as
+    // explicit settings since explicit_access are hidden from an older Core.
+    const QJsonObject explicitCaps{{"vpn", true}, {"proxy", true},
+        {"explicit_access", QJsonArray{"shadowsocks", "vless", "hysteria2", "tuic", "anytls", "vmess", "naive_quic"}}};
+    {
+        ProfileEditorDialog older({}, QJsonObject{{"vpn", true}, {"proxy", true}}, nullptr, {}, {}, {}, true);
+        auto *sources = older.findChild<QComboBox *>("keySource");
+        require(sources->count() == 9 && sources->findData("Explicitvmess") < 0);
+        require(older.findChild<QLabel *>("explicitAccessUnavailable"));
+        ProfileEditorDialog partial({}, QJsonObject{{"explicit_access", QJsonArray{"vmess"}}}, nullptr, {}, {}, {}, true);
+        require(partial.findChild<QComboBox *>("keySource")->count() == 10 && partial.findChild<QLabel *>("explicitAccessUnavailable"));
+        ProfileEditorDialog current({}, explicitCaps, nullptr, {}, {}, {}, true);
+        require(!current.findChild<QLabel *>("explicitAccessUnavailable"));
+    }
+    const QMap<QString, QStringList> explicitFields{
+        {"Explicithysteria2", {"Type = hysteria2", "Password = "}},
+        {"Explicitvmess", {"Type = vmess", "ID = 123e4567-e89b-12d3-a456-426614174000", "Encryption = auto", "Network = tcp", "Security = tls"}},
+        {"Explicittuic", {"Type = tuic", "ID = 123e4567-e89b-12d3-a456-426614174000", "Password = "}},
+        {"Explicitanytls", {"Type = anytls", "Password = "}},
+        {"ExplicitnaiveQUIC", {"Type = naive", "Username = alice", "Password = ", "Network = quic"}}};
+    for (auto entry = explicitFields.cbegin(); entry != explicitFields.cend(); ++entry) {
+        const QString source = entry.key();
+        ProfileEditorDialog draft({}, explicitCaps, nullptr, [](const QString &, CoreFailure *) { return true; }, {}, {}, true);
         auto *sources = draft.findChild<QComboBox *>("keySource");
         require(sources && sources->isEnabled() && sources->count() == 14);
         for (int i = 0; i < sources->count(); ++i)
-            require(sources->itemData(i).toString().startsWith("Explicit") || sources->itemData(i).toString().startsWith("Generated"));
+            require(sources->itemData(i).toString().startsWith("Explicit"));
         sources->setCurrentIndex(sources->findData(source));
         draft.findChild<QLineEdit *>("profileName")->setText("Created");
         draft.findChild<QLineEdit *>("server")->setText("example.com");
         draft.findChild<QSpinBox *>("port")->setValue(443);
         draft.findChild<QLineEdit *>("username")->setText("alice");
         draft.findChild<QLineEdit *>("password")->setText("secret@:#&+%");
-        if (source == "GeneratedTUIC" || source == "GeneratedVMess")
+        if (source == "Explicittuic" || source == "Explicitvmess")
             draft.findChild<QLineEdit *>("parameterID")->setText("123e4567-e89b-12d3-a456-426614174000");
         const QString text = draft.configText();
-        require(text.contains("Name = Created") && text.contains(source.mid(9) + " = "));
+        // Every value has its own option; no generated share link becomes the source.
+        require(text.contains("Name = Created") && text.contains("Server = example.com") && text.contains("Port = 443"));
+        for (const QString &field : entry.value()) require(text.contains(field));
+        require(!text.contains("://"));
+        require(text.contains("Username = ") == (source == "ExplicitnaiveQUIC"));
+        require(text.contains("Password = ") == (source != "Explicitvmess"));
         require(ProfileStore::connectionInfo(text).connectable);
         const QString cli = qEnvironmentVariable("BIMERON_PRESERVATION_CORE");
         check(text, {"Name = Created"}, cli, temporary.filePath(source + ".conf"));
@@ -2213,18 +2310,27 @@ int main(int argc, char **argv) {
         require(draft.findChild<QPlainTextEdit *>("rawConfig")->toPlainText() == text);
         tabs->setCurrentIndex(0);
         require(draft.configText() == text);
-        if (source == "GeneratedVMess") {
-            sources->setCurrentIndex(sources->findData("GeneratedAnyTLS"));
+        if (source == "Explicitvmess") {
+            sources->setCurrentIndex(sources->findData("Explicitanytls"));
             require(draft.findChild<QLineEdit *>("parameterVMessTLS")->isHidden());
-            require(!draft.configText().contains("VMess = "));
+            require(!draft.configText().contains("Type = vmess"));
             sources->setCurrentIndex(sources->findData(source));
             require(draft.configText() == text);
         }
         draft.findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Save)->click();
         require(draft.result() == QDialog::Accepted);
-        ProfileEditorDialog reopened(text, QJsonObject{});
+        // Saved profiles reopen into the same populated form, not Raw-only,
+        // whether or not Core reports explicit_access.
+        ProfileEditorDialog reopened(text, QJsonObject{{"vpn", true}, {"proxy", true}});
         require(reopened.configText() == text);
+        require(reopened.findChild<QComboBox *>("keySource")->currentData().toString() == source);
+        auto *reopenedTabs = reopened.findChild<QTabWidget *>();
+        require(reopenedTabs->isTabEnabled(0) && reopenedTabs->currentIndex() != reopenedTabs->count() - 1);
+        require(reopened.findChild<QLineEdit *>("server")->text() == "example.com");
+        require(reopened.findChild<QLineEdit *>("password")->text() == (source == "Explicitvmess" ? QString() : "secret@:#&+%"));
+        if (source == "Explicitvmess") require(reopened.findChild<QLineEdit *>("parameterVMessTLS")->text() == "tls");
     }
+    vmessTransports(temporary.path());
     require(temporary.isValid());
     QSettings::setDefaultFormat(QSettings::IniFormat);
     QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, temporary.path());

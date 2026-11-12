@@ -391,6 +391,10 @@ ProfileConnectionInfo ProfileStore::connectionInfo(const QString &configText) {
     } else if (type == "vless") {
         info.protocol = QStringLiteral("VLESS");
         info.connectable = true;
+    } else if (QStringList{"hysteria2", "tuic", "anytls", "vmess"}.contains(type)) {
+        // Like their links, the selected CLI validates these before start.
+        info.protocol = type == "hysteria2" ? "Hysteria2" : type == "tuic" ? "TUIC" : type == "anytls" ? "AnyTLS" : "VMess";
+        info.connectable = true;
     } else if (QStringList{"trojan", "http", "https", "naive", "masque"}.contains(type)) {
         info.protocol = type == "trojan" ? "Trojan" : type == "naive" ? "Naive" : type == "masque" ? "MASQUE" : "HTTP";
         info.connectable = info.interfaceMode == "proxy" || info.interfaceMode == "vpn";

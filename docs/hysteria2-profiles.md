@@ -25,8 +25,9 @@ The GUI preserves the chosen spelling. Unknown or empty values are rejected,
 and there is no fallback to another fingerprint. VPN mode uses TCP and UDP
 through QUIC, and the server must support UDP relay. Local proxy mode provides
 TCP CONNECT. The GUI does not offer unsupported obfuscation, insecure TLS or
-bandwidth options. There is no explicit Hysteria2 parameter form in the current
-Core contract.
+bandwidth options. A Core that lists `hysteria2` in `explicit_access` also
+accepts explicit `Type = hysteria2` options; the editor creates new Hysteria2
+profiles in that form (see [explicit access protocols](profile-creation.md#explicit-access-protocols)).
 
 ## GUI behavior
 
