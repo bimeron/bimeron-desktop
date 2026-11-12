@@ -549,6 +549,7 @@ int main(int argc, char **argv) {
     ConnectionManagementTest::profileGeometry(app, temporary.filePath("profile-geometry.png"));
     ConnectionManagementTest::run();
     ConnectionManagementTest::geoDataManagerStates();
+    ConnectionManagementTest::autoConnectSelector();
     ConnectionManagementTest::sharedGeoDataPreparation();
     ConnectionManagementTest::settingsGeoDataChecking();
     DevelopmentCore backend(temporary.filePath("missing-helper"));
