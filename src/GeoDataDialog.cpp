@@ -117,7 +117,8 @@ void manageSharedGeoData(QWidget *parent, const QString &core, const QString &pr
     auto *header = table->horizontalHeader();
     header->setSectionResizeMode(0, QHeaderView::ResizeToContents);
     header->setSectionResizeMode(1, QHeaderView::Stretch);
-    header->setSectionResizeMode(2, QHeaderView::ResizeToContents);
+    // Sized in fitHeight(): row actions change (Download, Cancel, the row menu) after layout.
+    header->setSectionResizeMode(2, QHeaderView::Fixed);
     header->setDefaultAlignment(Qt::AlignLeft | Qt::AlignVCenter);
     header->setHighlightSections(false);
     header->setSectionsClickable(false);
@@ -208,6 +209,14 @@ void manageSharedGeoData(QWidget *parent, const QString &core, const QString &pr
         return blocks.join("\n\n");
     };
     const auto fitHeight = [&] {
+        int actionsWidth = 0;
+        for (int row = 0; row < table->rowCount(); ++row) {
+            // Visibility changes only post a layout request; measure the current buttons now.
+            QLayout *actions = table->cellWidget(row, 2)->layout();
+            actions->invalidate();
+            actionsWidth = qMax(actionsWidth, actions->sizeHint().width());
+        }
+        header->resizeSection(2, actionsWidth + (table->showGrid() ? 1 : 0)); // The grid line takes one pixel.
         table->resizeRowsToContents();
         int height = header->sizeHint().height() + 2 * table->frameWidth();
         for (int row = 0; row < table->rowCount(); ++row) height += table->rowHeight(row);
@@ -226,7 +235,7 @@ void manageSharedGeoData(QWidget *parent, const QString &core, const QString &pr
             anyPath |= !empty;
             anyError |= !row.attemptError.isEmpty();
             // Empty rows show the failed attempt in their own status line; avoid repeating it.
-            if (!empty && !row.attemptSummary.isEmpty() && attemptMessage.isEmpty()) attemptMessage = row.attemptSummary;
+            if (!empty && !row.attemptSummary.isEmpty() && attemptMessage.isEmpty()) attemptMessage = kindName(kind) + QStringLiteral(" · ") + row.attemptSummary;
             w.file->setFullText(empty ? tr("No file selected") : QFileInfo(row.path).fileName());
             w.file->setStyleSheet(empty ? muted : QString());
             const QString absolute = empty ? QString() : resolve(row.path);

@@ -164,13 +164,25 @@ struct ConnectionManagementTest {
         forget();
         GeoDataFixture::Network network;
         GeoDataDownload download(&network);
+        // While a selected row updates, Cancel replaces the narrow row menu and must fit.
+        network.responses = {{{}, 200, {}, -1, true}};
+        open([&](QDialog *manager) {
+            manager->findChild<QAction *>("geositeUpdate")->trigger();
+            QApplication::processEvents();
+            auto *cancel = manager->findChild<QPushButton *>("geositeCancel");
+            require(cancel->isVisible() && cancel->width() >= cancel->sizeHint().width()
+                && cancel->mapTo(manager, QPoint(cancel->width(), 0)).x() <= manager->width(), "row Cancel is never clipped");
+            cancel->click();
+            QApplication::processEvents();
+            require(manager->findChild<QPushButton *>("geositeActions")->isVisible(), "cancel restores the row menu");
+        }, &download);
         network.responses = {{{}, 429, {}, -1, false, false, QNetworkReply::UnknownContentError}};
         open([&](QDialog *manager) {
             manager->findChild<QAction *>("geoipUpdate")->trigger();
             require(waitFor([&] { return !download.busy("geoip"); }), "update failure completes");
             QApplication::processEvents();
             require(label(manager, "geoipStatus")->text() == "Checked" && label(manager, "geoipFile")->toolTip() == QDir::toNativeSeparators(ip)
-                && label(manager, "geodataMessage")->text() == "Update failed. The current file is kept.", "failed update keeps the file");
+                && label(manager, "geodataMessage")->text() == "Countries · Update failed. The current file is kept.", "failed update keeps the file");
         }, &download);
         // A downloaded candidate that the validator rejects never replaces the selection.
         network.responses = {{GeoDataFixture::metadata()}, {GeoDataFixture::checksum("candidate")}, {"candidate"}};
@@ -180,7 +192,7 @@ struct ConnectionManagementTest {
             require(waitFor([&] { QApplication::processEvents();
                 return !download.busy("geoip") && !label(manager, "geodataMessage")->text().isEmpty(); }), "candidate rejection completes");
             require(label(manager, "geoipStatus")->text() == "Checked"
-                && label(manager, "geodataMessage")->text() == "Update failed: Invalid database", "rejected candidate keeps the file");
+                && label(manager, "geodataMessage")->text() == "Countries · Update failed: Invalid database", "rejected candidate keeps the file");
             qputenv("BIMERON_FAKE_GEODATA", "ok");
         }, &download);
         require(QFile::exists(ip) && QFile::exists(site), "manager never deletes selected files");
@@ -287,7 +299,7 @@ struct ConnectionManagementTest {
             require(file->text() == fileBefore, "failed download keeps the file name");
             auto *message = manager->findChild<QLabel *>("geodataMessage");
             require(core.isEmpty() ? !message->isVisible()
-                : message->isVisible() && message->text() == QObject::tr("Update failed. The current file is kept."),
+                : message->isVisible() && message->text() == QObject::tr("Countries") + " · " + QObject::tr("Update failed. The current file is kept."),
                 "failed attempt reported once, separately from the current file");
             if (core.isEmpty()) require(status->isVisible() && status->text() == QObject::tr("Download failed"), "empty row shows the failed download");
             else require(status->text() == statusBefore, "failed update keeps the current file status");
@@ -355,7 +367,7 @@ struct ConnectionManagementTest {
                     const QString status = manager->findChild<QLabel *>("geoipStatus")->text();
                     const QString message = manager->findChild<QLabel *>("geodataMessage")->text();
                     require(status == QObject::tr("Checked") && (valid ? message.isEmpty()
-                        : message == QObject::tr("Update failed: %1").arg(QObject::tr("Invalid database"))),
+                        : message == QObject::tr("Countries") + " · " + QObject::tr("Update failed: %1").arg(QObject::tr("Invalid database"))),
                         "completion result shown without hiding the current file");
                     manager->reject();
                 });
