@@ -747,9 +747,9 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
     auto *firstMatch = new QLabel(tr("Rules run top to bottom; the first match wins. New local-network bypass rules are inserted first; imported rules keep their positions. Edited IP literals use /32 or /128."));
     firstMatch->setWordWrap(true);
     routingLayout->addWidget(firstMatch);
-    auto *limitations = new QPushButton(tr("Routing limitations…"));
+    auto *limitations = new QPushButton(tr("Routing limitations"));
     connect(limitations, &QPushButton::clicked, this, [this] {
-        QMessageBox::information(this, tr("Routing limitations…"),
+        QMessageBox::information(this, tr("Routing limitations"),
             tr("GeoSite VPN routing uses DNS metadata (TTL, shared IPs and caches); DoH/DoT and bare IPs may not match. SOCKS GeoIP uses known IPs only, without local DNS lookup. IPv6 disable remains dominant."));
     });
     routingLayout->addWidget(limitations);
@@ -768,7 +768,7 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
     routingStatusScroll->setMaximumHeight(64);
     routingStatusScroll->setWidget(routingStatus_);
     routingLayout->addWidget(routingStatusScroll);
-    auto *manage = new QPushButton(tr("Manage databases…"));
+    auto *manage = new QPushButton(tr("Manage databases"));
     manage->setObjectName("manageGeodata");
     manage->setObjectName("manageDatabases");
     connect(manage, &QPushButton::clicked, this, &ProfileEditorDialog::manageDatabases);
@@ -973,6 +973,7 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
             for (const QString &kind : {QString("geoip"), QString("geosite")}) if (datasetKeys_.value(kind) == key) {
                 // Lead with the classified meaning; the raw diagnostic follows for support.
                 datasetGroups_[kind] = groups;
+                datasetUnavailable_[kind] = failure != GeoDataSelection::CatalogFailure::None;
                 datasetErrors_[kind] = failure == GeoDataSelection::CatalogFailure::None ? error
                     : GeoDataSelection::failureExplanation(failure) + '\n' + error;
                 refreshRouting();
@@ -2264,7 +2265,8 @@ QString ProfileEditorDialog::routingError() const {
         if (!restriction.isEmpty()) return prefix + restriction;
         if (rule.matcher != "GeoIP" && rule.matcher != "GeoSite") continue;
         const QString kind = rule.matcher == "GeoIP" ? "geoip" : "geosite";
-        if (!datasetErrors_.value(kind).isEmpty()) return prefix + datasetErrors_.value(kind);
+        // A missing or failed database does not block saving; connecting is blocked instead.
+        if (datasetUnavailable_.value(kind) || !datasetErrors_.value(kind).isEmpty()) continue;
         for (const auto &id : rule.target.split(','))
             if (!routingGroupContains(datasetGroups_.value(kind), id)) return prefix + tr("Dataset group is unavailable: %1").arg(id.trimmed());
     }
@@ -2318,13 +2320,37 @@ void ProfileEditorDialog::refreshRouting() {
         enabled->setEnabled(enabled->isChecked() || (rules_->cellWidget(row, 0)->property("editable").toBool()
             && matcherError(type->currentData().toString()).isEmpty()));
     }
+    // Rules of a kind without a usable database keep Enabled and Type editable, so they can
+    // be disabled or changed; their Target is disabled and a note explains the block.
+    QStringList blocked;
+    for (int row = 0; row < rules_->rowCount(); ++row) {
+        if (!rules_->cellWidget(row, 3)) continue;
+        auto *type = static_cast<QComboBox *>(rules_->cellWidget(row, 1));
+        const QString matcher = type->currentData().toString();
+        const QString kind = matcher == "GeoIP" ? "geoip" : matcher == "GeoSite" ? "geosite" : QString();
+        const bool unusable = !kind.isEmpty() && datasetUnavailable_.value(kind);
+        if (QWidget *target = rules_->cellWidget(row, 2)) target->setEnabled(!unusable);
+        if (unusable && ruleEnabled(rules_, row)->isChecked() && !blocked.contains(kind)) blocked << kind;
+    }
+    QStringList notes;
+    for (const QString &kind : blocked) {
+        const bool countries = kind == "geoip";
+        const bool selected = !datasetPaths_.value(kind).isEmpty();
+        notes << (countries
+            ? (selected ? tr("The country database failed its check: while a country rule is enabled, the profile will not connect. Choose a database in Manage databases or clear the rule's checkbox.")
+                        : tr("No country database is selected: while a country rule is enabled, the profile will not connect. Choose a database in Manage databases or clear the rule's checkbox."))
+            : (selected ? tr("The site database failed its check: while a site rule is enabled, the profile will not connect. Choose a database in Manage databases or clear the rule's checkbox.")
+                        : tr("No site database is selected: while a site rule is enabled, the profile will not connect. Choose a database in Manage databases or clear the rule's checkbox.")));
+    }
     const QString error = routingError();
-    QString text = error;
+    QString text = !notes.isEmpty() ? notes.join('\n') : error;
     if (text.isEmpty() && datasetChanged_) text = tr("New databases take effect on the next connection.");
     routingStatus_->setToolTip(unavailable.join('\n'));
     routingStatus_->setText(text);
+    const bool dark = palette().color(QPalette::Window).lightness() < 128;
+    routingStatus_->setStyleSheet(notes.isEmpty() ? QString() : QStringLiteral("color: %1").arg(dark ? "#f3cf72" : "#b54708"));
     auto *statusScroll = findChild<QScrollArea *>("routingStatusScroll");
-    statusScroll->hide();
+    statusScroll->setVisible(!notes.isEmpty());
 }
 
 void ProfileEditorDialog::inspectDataset(const QString &kind) {
@@ -2333,16 +2359,20 @@ void ProfileEditorDialog::inspectDataset(const QString &kind) {
     const QString path = datasetPaths_.value(kind);
     if (path.isEmpty()) {
         datasetErrors_[kind] = tr("No shared database selected. Open Manage databases to set it up.");
+        datasetUnavailable_[kind] = true;
         refreshRouting(); return;
     }
     if (coreExecutable_.isEmpty() || (QDir::isRelativePath(path) && profilePath_.isEmpty())) {
         datasetErrors_[kind] = tr("Select a Core executable and final profile path before validating datasets.");
+        datasetUnavailable_[kind] = false;
         refreshRouting(); return;
     }
     const QString absolute = QDir::isAbsolutePath(path) ? QFileInfo(path).absoluteFilePath()
         : QFileInfo(QFileInfo(profilePath_).absoluteDir(), path).absoluteFilePath();
     datasetKeys_[kind] = GeoDataSelection::catalogKey(coreExecutable_, kind, absolute);
-    datasetErrors_[kind] = tr("Checking file…"); refreshRouting();
+    datasetErrors_[kind] = tr("Checking file…");
+    datasetUnavailable_[kind] = false;
+    refreshRouting();
     GeoDataSelection::instance()->requestCatalog(coreExecutable_, kind, absolute);
 }
 

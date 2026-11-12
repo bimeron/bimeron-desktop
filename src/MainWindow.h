@@ -92,6 +92,13 @@ private:
     void initTray();
     void rebuildTrayMenu();
     bool startProfile(int row);
+    // Explains why a profile cannot use its country/site rules now; empty when it can.
+    QString geoDataBlocker(int row) const;
+    // Validates path, ignoring rules of kinds whose shared database is unavailable.
+    bool validateWithout(const QString &path, const QStringList &kinds, QString *error) const;
+    void reportUnavailableProfile(int row, const QString &reason);
+    void offerGeoDataReconnect();
+    void reconnectActiveProfile();
     bool controlBlocked() const;
     bool cleanDisconnected() const;
     bool canActivateProfile(int row) const;
@@ -202,7 +209,7 @@ private:
     QIcon trayIcon(bool connected) const;
     void showCoreError(const QJsonObject &response);
     void appendLog(const QString &message);
-    bool prepareSharedGeoData(const QString &path, QString *error);
+    bool prepareSharedGeoData(const QString &path, QString *error, QStringList *skipped = nullptr);
     bool validateConfig(const QString &path, QString *error = nullptr) const;
     bool validateConfig(const QString &path, CoreFailure *failure, bool hostChecks = true) const;
     CoreErrorCatalog errorCatalog() const;
@@ -255,6 +262,8 @@ private:
     QString lastCoreError_;
     QString runningCoreVersion_;
     QString pendingStartPath_;
+    class GeoDataUpdater *geoDataUpdater_ = nullptr;
+    bool automaticStart_ = false;
     QString instance_;
     QString sessionId_;
     QJsonObject capabilities_;

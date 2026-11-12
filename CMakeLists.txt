@@ -35,6 +35,7 @@ set(BIMERON_DESKTOP_SOURCES
     src/GeoDataDialog.cpp src/GeoDataDialog.h
     src/GeoDataDownload.cpp src/GeoDataDownload.h
     src/GeoDataSelection.cpp src/GeoDataSelection.h
+    src/GeoDataUpdater.cpp src/GeoDataUpdater.h
 )
 qt_add_executable(bimeron-desktop WIN32 src/main.cpp ${BIMERON_DESKTOP_SOURCES})
 file(GLOB_RECURSE BIMERON_ICON_FILES CONFIGURE_DEPENDS
@@ -150,7 +151,8 @@ if(BUILD_TESTING)
         src/ProfileEditorDialog.cpp src/ProfileEditorDialog.h
         src/GeoDataDialog.cpp src/GeoDataDialog.h
         src/GeoDataDownload.cpp src/GeoDataDownload.h
-        src/GeoDataSelection.cpp src/GeoDataSelection.h)
+        src/GeoDataSelection.cpp src/GeoDataSelection.h
+        src/GeoDataUpdater.cpp src/GeoDataUpdater.h)
     foreach(translation_test IN ITEMS profile-vless-test developer-mode-test)
         qt_add_resources(${translation_test} "test-translations"
             PREFIX "/translations" BASE "${CMAKE_CURRENT_SOURCE_DIR}/assets/translations"
@@ -191,6 +193,7 @@ if(BUILD_TESTING)
 endif()
 
 include(cmake/core-release.cmake)
+include(cmake/geodata-release.cmake)
 string(LENGTH "${BIMERON_CORE_REVISION}" core_revision_length)
 if(NOT BIMERON_CORE_REVISION MATCHES "^[0-9a-f]+$" OR NOT core_revision_length EQUAL 40)
     message(FATAL_ERROR "BIMERON_CORE_REVISION must be the full lowercase commit of ${BIMERON_CORE_VERSION}")
@@ -218,6 +221,36 @@ if(WIN32)
     set(BIMERON_WINTUN_LICENSE "${BIMERON_CORE_DIR}/${BIMERON_WINTUN_LICENSE_FILE}")
 endif()
 option(BIMERON_REQUIRE_CORE "Require complete core payload for packaging" OFF)
+# Pinned Loyalsoldier databases shipped as the default selection (see scripts/fetch-geodata.cmake).
+set(BIMERON_GEODATA_ROOT "${BIMERON_GEODATA_ROOT_DEFAULT}" CACHE PATH "Downloaded default country and site databases")
+set(BIMERON_GEODATA_DIR "${BIMERON_GEODATA_ROOT}/${BIMERON_GEODATA_TAG}")
+set(BIMERON_GEODATA_FILES "${BIMERON_GEODATA_DIR}/geoip.dat" "${BIMERON_GEODATA_DIR}/geosite.dat"
+    "${BIMERON_GEODATA_DIR}/release.json" "${BIMERON_GEODATA_DIR}/SOURCE.txt")
+option(BIMERON_REQUIRE_GEODATA "Require the pinned default databases for packaging" OFF)
+set(BIMERON_GEODATA_AVAILABLE TRUE)
+foreach(file IN LISTS BIMERON_GEODATA_FILES)
+    if(NOT EXISTS "${file}")
+        set(BIMERON_GEODATA_AVAILABLE FALSE)
+    endif()
+endforeach()
+if(BIMERON_REQUIRE_GEODATA)
+    foreach(file IN LISTS BIMERON_GEODATA_FILES)
+        if(NOT EXISTS "${file}")
+            message(FATAL_ERROR "Missing ${file}; run cmake -P scripts/fetch-geodata.cmake")
+        endif()
+    endforeach()
+    foreach(kind IN LISTS BIMERON_GEODATA_KINDS)
+        file(SHA256 "${BIMERON_GEODATA_DIR}/${kind}.dat" actual)
+        if(NOT actual STREQUAL BIMERON_GEODATA_SHA256_${kind})
+            message(FATAL_ERROR "${BIMERON_GEODATA_DIR}/${kind}.dat does not match the pinned SHA-256")
+        endif()
+    endforeach()
+endif()
+if(WIN32)
+    set(BIMERON_GEODATA_DESTINATION geodata)
+else()
+    set(BIMERON_GEODATA_DESTINATION share/bimeron/geodata)
+endif()
 set(BIMERON_REPAIR_BROKER "" CACHE FILEPATH "Reviewed target-architecture repair broker payload")
 set(BIMERON_REPAIR_BROKER_SHA256 "" CACHE STRING "Reviewed repair broker SHA-256")
 if(BIMERON_REPAIR_BROKER)
@@ -387,6 +420,9 @@ else()
         PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)
     install(FILES third_party/monocypher/LICENSE
         DESTINATION share/doc/bimeron-desktop RENAME MONOCYPHER-LICENSE.txt)
+    install(FILES "${BIMERON_GEODATA_LICENSE}"
+        DESTINATION share/doc/bimeron-desktop RENAME LOYALSOLDIER-GEODATA-LICENSE.txt
+        PERMISSIONS OWNER_READ OWNER_WRITE GROUP_READ WORLD_READ)
     install(FILES third_party/miniz/LICENSE
         DESTINATION share/doc/bimeron-desktop RENAME MINIZ-LICENSE.txt)
     if(EXISTS "${BIMERON_CORE_EXECUTABLE}")
@@ -413,6 +449,16 @@ else()
             RENAME CORE-LICENSE.txt
             PERMISSIONS OWNER_READ OWNER_WRITE GROUP_READ WORLD_READ)
     endif()
+endif()
+# Default databases: <install>\geodata on Windows, /usr/share/bimeron/geodata in the DEB.
+# Installed explicitly so they never enter the shared build output directory.
+if(BIMERON_GEODATA_AVAILABLE)
+    install(FILES ${BIMERON_GEODATA_FILES}
+        DESTINATION "${BIMERON_GEODATA_DESTINATION}"
+        PERMISSIONS OWNER_READ OWNER_WRITE GROUP_READ WORLD_READ)
+    install(FILES "${BIMERON_GEODATA_LICENSE}"
+        DESTINATION "${BIMERON_GEODATA_DESTINATION}" RENAME LICENSE.txt
+        PERMISSIONS OWNER_READ OWNER_WRITE GROUP_READ WORLD_READ)
 endif()
 
 if(WIN32)

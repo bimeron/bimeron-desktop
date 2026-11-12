@@ -30,7 +30,7 @@ bool allowed(const QUrl &url) {
 }
 }
 struct GeoDataDownload::Job {
-    QString kind, hash, tag;
+    QString kind, hash, tag, knownTag;
     QUrl dataUrl;
     int phase = 0; // metadata, checksum, data, awaiting caller validation
     qint64 received = 0;
@@ -54,10 +54,11 @@ GeoDataDownload::~GeoDataDownload() { jobs_.clear(); }
 bool GeoDataDownload::busy(const QString &kind) const { return jobs_.contains(kind); }
 QString GeoDataDownload::releaseTag(const QString &kind) const { const auto job = jobs_.value(kind); return job ? job->tag : QString(); }
 bool GeoDataDownload::current(const std::shared_ptr<Job> &job) const { return jobs_.value(job->kind) == job; }
-bool GeoDataDownload::start(const QString &kind) {
+bool GeoDataDownload::start(const QString &kind, const QString &knownTag) {
     if ((kind != "geoip" && kind != "geosite") || busy(kind)) return false;
     auto job = std::make_shared<Job>();
     job->kind = kind;
+    job->knownTag = knownTag;
     jobs_.insert(kind, job);
     // QObject visibility permits deterministic timeout tests without changing deadlines.
     job->deadline.setParent(this);
@@ -184,6 +185,14 @@ void GeoDataDownload::complete(const std::shared_ptr<Job> &job) {
             fail(job, QStringLiteral("Invalid release metadata")); return;
         }
         job->tag = tag;
+        // Loyalsoldier tags are fixed-width timestamps, so text order is release order.
+        if (!job->knownTag.isEmpty() && tag <= job->knownTag) {
+            const QString kind = job->kind;
+            QPointer<GeoDataDownload> guard(this);
+            discard(kind);
+            if (guard) emit upToDate(kind, tag);
+            return;
+        }
         const QString name = job->kind + ".dat";
         const QString prefix = Repository + QString::fromLatin1(QUrl::toPercentEncoding(tag)) + '/';
         QUrl checksum;
@@ -298,8 +307,9 @@ bool GeoDataDownload::publishAsync(const QString &kind) {
     auto job = jobs_.value(kind);
     if (!job || job->phase != 3) return false;
     job->phase = 4;
-    struct Result { QString path, error; };
+    struct Result { QString path, error, tag; };
     auto result = std::make_shared<Result>();
+    result->tag = job->tag;
     job->publisher.reset(QThread::create([candidate = job->file.fileName(), hash = job->hash, kind, result] {
         result->path = publishFile(candidate, hash, kind, &result->error);
     }));
@@ -313,7 +323,7 @@ bool GeoDataDownload::publishAsync(const QString &kind) {
         j.reset();
         QPointer<GeoDataDownload> guard(this);
         discard(kind);
-        if (guard && !busy(kind)) emit published(kind, result->path);
+        if (guard && !busy(kind)) emit published(kind, result->path, result->tag);
     }, Qt::QueuedConnection);
     job->publisher->start();
     return true;
