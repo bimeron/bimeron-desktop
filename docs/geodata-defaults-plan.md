@@ -1,6 +1,6 @@
 # Default country and site databases
 
-Status: specification agreed; tracked in issue #34; implementation not started.
+Status: implemented in Desktop on `feat/geodata-defaults` (issue #34) except the Core release pin; see Implementation results.
 
 Bimeron does not author the country (GeoIP) and site (GeoSite) databases. It
 ships and selects, by default, the third-party databases published by
@@ -193,3 +193,63 @@ depend on step 1; steps 3, 5 and 6 need a Core that can check databases.
 - Each Windows user keeps their own updated copies in application data.
 - The service reads databases from per-user application data, as it does today;
   this must be rechecked for the bundled directory on both platforms.
+
+## Implementation results
+
+Implemented in Desktop:
+
+- `GeoDataSelection`: per-kind source (Loyalsoldier, own file, none), release tags,
+  the automatic-update setting, persistence of the whole selection, first-run
+  migration (decision 4), shipped-release discovery (`release.json` in the package
+  `geodata` directory, overridable with `BIMERON_BUNDLED_GEODATA`), and
+  `requiredKinds()` / `withoutRules()` for connection gating and saving. Disabling
+  a kind used by profiles is allowed.
+- `GeoDataDownload` skips downloads when the latest release is not newer and
+  reports the published release tag. `GeoDataUpdater` checks daily while the
+  application runs, accepts a release only after the selected Core reads it and
+  `apply()` succeeds, records failures, and removes managed copies older than the
+  previous one. It does not run while a modal dialog is open.
+- Manager: "Actions" menu in every row, attribution line, automatic-update checkbox
+  with last-check state, text source in the status line, "Install Loyalsoldier
+  databases" (footer) and "Install Loyalsoldier database" (row).
+- Main window: connection gating with the "Profile unavailable" message box,
+  notification and log for automatic connection, reconnect prompt after an update
+  while connected, and About attribution. Profiles with rules of an unavailable
+  kind can be saved, added and imported; Core validates a copy without those
+  rules. Routing tab: disabled Target, explanatory line, labels without ellipses.
+- Packaging: `cmake/geodata-release.cmake` pins release `202611112204`;
+  `scripts/fetch-geodata.cmake` downloads and verifies it; MSI installs
+  `geodata\` beside the executable and the DEB `/usr/share/bimeron/geodata/`, with
+  the vendored GPL-3.0 license and `SOURCE.txt`. Packaging scripts require the
+  files; GUI-only and CI builds work without them.
+
+Not done here, by design:
+
+- Decision 22 (Core release and pin): publishing a Core beta needs the release
+  signing key and compatibility review (`bimeron-core` `docs/RELEASE_UPDATES.md`).
+  Until a Core that implements `geodata groups` is pinned, installed builds show
+  "Validation unavailable" and cannot accept updates; the shipped files stay
+  selected.
+- The ellipsis open question; only the labels in decision 21 changed.
+- Packages for the four targets were not built (no release task).
+
+Verification:
+
+- Windows x64 (Release, Qt 6.8.3): `ctest -C Release` 8/8. New coverage:
+  migration cases in child processes, rule scanning and validation copies, saving
+  selections with disabled kinds, tolerant preparation with a real Core (rules kept,
+  invalid profiles and missing groups still rejected), automatic updates (up to
+  date, newer release with cleanup, failure, own files skipped), manager states and
+  restore, connection gating for manual and automatic starts, and the routing tab
+  with a real Core.
+- With `BIMERON_GEODATA_CORE` set to a Core built from `bimeron-core` master
+  (`690a7a6`), the new fixtures and `settingsGeoDataChecking` passed;
+  `sharedGeoDataPreparation` still stops in its Raw editor fixture as on `main`.
+- Install trees: Windows staging contains `geodata\` with both databases,
+  `release.json`, `SOURCE.txt` and `LICENSE.txt`; the Linux install tree contains
+  `/usr/share/bimeron/geodata/` and `LOYALSOLDIER-GEODATA-LICENSE.txt`.
+- Live check on Windows with the user's settings and the master Core: migration
+  kept the managed downloads as Loyalsoldier, the first daily check recorded release
+  `202611112204`, and two superseded copies were removed.
+- Linux amd64 (WSL Ubuntu, offscreen CTest): 8/8 passed. ARM64 targets and
+  Linux visual checks were not run.

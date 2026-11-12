@@ -23,6 +23,8 @@ if (-not $WindowsOnly) {
 $corePlatform = if ($WindowsOnly) { "windows" } else { "all" }
 cmake "-DBIMERON_CORE_PLATFORM=$corePlatform" -P (Join-Path $PSScriptRoot "fetch-core.cmake")
 if ($LASTEXITCODE -ne 0) { throw "Core download failed" }
+cmake -P (Join-Path $PSScriptRoot "fetch-geodata.cmake")
+if ($LASTEXITCODE -ne 0) { throw "Database download failed" }
 
 New-Item -ItemType Directory -Force $distRoot | Out-Null
 Get-ChildItem -LiteralPath $distRoot -File | Where-Object {
@@ -40,7 +42,8 @@ if (-not (Test-Path (Join-Path $wixRoot "candle.exe"))) {
 $env:PATH = "$wixRoot;$env:PATH"
 
 foreach ($preset in @("windows-amd64-release", "windows-arm64-release")) {
-    cmake --preset $preset -DBIMERON_REQUIRE_CORE=ON "-DBIMERON_CORE_ROOT=$(Join-Path $sourceRoot '.tools/core')"
+    cmake --preset $preset -DBIMERON_REQUIRE_CORE=ON "-DBIMERON_CORE_ROOT=$(Join-Path $sourceRoot '.tools/core')" `
+        -DBIMERON_REQUIRE_GEODATA=ON "-DBIMERON_GEODATA_ROOT=$(Join-Path $sourceRoot '.tools/geodata')"
     if ($LASTEXITCODE -ne 0) { throw "Configure failed: $preset" }
     cmake --build --preset $preset
     if ($LASTEXITCODE -ne 0) { throw "Build failed: $preset" }

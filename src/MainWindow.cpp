@@ -8,6 +8,8 @@
 #include "ProfileEditorDialog.h"
 #include "GeoDataSelection.h"
 #include "GeoDataDialog.h"
+#include "GeoDataSelection.h"
+#include "GeoDataUpdater.h"
 #include "CoreDiagnostic.h"
 #include "CoreIdentity.h"
 #include "RoutingCompatibility.h"
@@ -596,6 +598,10 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), core_(this) {
         }
     });
     refreshProfiles();
+    geoDataUpdater_ = new GeoDataUpdater([this] { return validationExecutable_; }, [this] { return profiles_; }, this);
+    connect(geoDataUpdater_, &GeoDataUpdater::updated, this, [this] { offerGeoDataReconnect(); });
+    // Test harnesses disable network checks; the first check is a child timer they can stop.
+    if (!qEnvironmentVariableIsSet("BIMERON_DISABLE_GEODATA_UPDATES")) geoDataUpdater_->start();
     connectionLabel_->setText(tr("Connecting to core…"));
     resetMeasurements();
     probeValidationCli();
@@ -1174,6 +1180,14 @@ QWidget *MainWindow::aboutPage() {
     if (serviceUpdateButton_) layout->addWidget(serviceUpdateButton_);
     if (coreUpdateLabel_) layout->addWidget(coreUpdateLabel_);
     if (betaUpdatesCheck_) layout->addWidget(betaUpdatesCheck_);
+    // Bimeron ships these third-party databases; credit the author and license.
+    auto *geoData = new QLabel(tr("Country and site databases: %1, GPL-3.0")
+        .arg(QStringLiteral("<a href=\"https://github.com/Loyalsoldier/v2ray-rules-dat\">Loyalsoldier/v2ray-rules-dat</a>")));
+    geoData->setObjectName("geoDataAttribution");
+    geoData->setOpenExternalLinks(true);
+    geoData->setTextInteractionFlags(Qt::LinksAccessibleByMouse | Qt::LinksAccessibleByKeyboard);
+    geoData->setWordWrap(true);
+    layout->addWidget(geoData);
     layout->addStretch();
     return page;
 }
@@ -1278,15 +1292,17 @@ void MainWindow::editProfile(int row) {
     }
     const auto validateDraft = [this, row](const QString &text, CoreFailure *failure) {
         QString *error = failure ? &failure->text : nullptr;
+        QStringList skipped;
         const QString prepared = GeoDataSelection::materialize(text, profiles_[row].path,
-            validationExecutable_, GeoDataSelection::instance()->paths(), error);
+            validationExecutable_, GeoDataSelection::instance()->paths(), error, {}, &skipped);
         if (error && !error->isEmpty()) {
             explainRejectedDraft(text, QFileInfo(profiles_[row].path).absolutePath(), failure);
             return false;
         }
         const QString conflict = routingCompatibilityError(prepared, capabilities_);
         if (!conflict.isEmpty()) { if (error) *error = conflict; return false; }
-        const QByteArray data = prepared.toUtf8();
+        // Rules whose database is unavailable may be saved; Core checks the rest.
+        const QByteArray data = GeoDataSelection::withoutRules(prepared, skipped).toUtf8();
         const QFileInfo profileInfo(profiles_[row].path);
         const QString temporary = profileInfo.dir().filePath(QString(".bimeron-validate-%1.conf").arg(QUuid::createUuid().toString(QUuid::WithoutBraces)));
         if (!ProfileStore::writeConfig(temporary, data, error)) return false;
@@ -1301,8 +1317,9 @@ void MainWindow::editProfile(int row) {
     dialog.setDeveloperMode(developerMode_);
     while (dialog.exec() == QDialog::Accepted) {
         QString error;
+        QStringList skipped;
         const QString prepared = GeoDataSelection::materialize(dialog.configText(), profiles_[row].path,
-            validationExecutable_, GeoDataSelection::instance()->paths(), &error);
+            validationExecutable_, GeoDataSelection::instance()->paths(), &error, {}, &skipped);
         if (!error.isEmpty()) { QMessageBox::warning(&dialog, tr("Error"), error); continue; }
         const QByteArray data = prepared.toUtf8();
         if (data == originalData) break;
@@ -1602,8 +1619,9 @@ void MainWindow::createNativeProfile() {
         capabilities_, this, validateDraft, validationExecutable_, draftPath);
     while (editor.exec() == QDialog::Accepted) {
         QString error;
+        QStringList skipped;
         const QString text = GeoDataSelection::materialize(editor.configText(), draftPath,
-            validationExecutable_, GeoDataSelection::instance()->paths(), &error, directory.path());
+            validationExecutable_, GeoDataSelection::instance()->paths(), &error, directory.path(), &skipped);
         CoreFailure failure;
         if (error.isEmpty() && !validateDraft(text, &failure))
             error = failure.text.isEmpty() ? tr("Core validation failed. The draft has been retained.") : failure.text;
@@ -1617,7 +1635,7 @@ void MainWindow::createNativeProfile() {
             QMessageBox::warning(&editor, tr("Cannot save profile"), error);
             continue;
         }
-        if (!prepareSharedGeoData(path, &error) || !validateConfig(path, &error)) {
+        if (!prepareSharedGeoData(path, &error, &skipped) || !validateWithout(path, skipped, &error)) {
             QFile::remove(path);
             QMessageBox::warning(&editor, tr("Cannot save profile"), error);
             continue;
@@ -1671,8 +1689,9 @@ bool MainWindow::importProfile(const QString &source) {
     if (QString::fromUtf8(imported).toUtf8() != imported) {
         QMessageBox::warning(this, tr("Import failed"), tr("The profile must be valid UTF-8 and at most 64 KiB.")); return false;
     }
+    QStringList skipped;
     const QString sharedDraft = GeoDataSelection::materialize(QString::fromUtf8(imported), source,
-        validationExecutable_, GeoDataSelection::instance()->paths(), &error, correctionDirectory.path());
+        validationExecutable_, GeoDataSelection::instance()->paths(), &error, correctionDirectory.path(), &skipped);
     if (error.isEmpty() && sharedDraft.toUtf8() != imported) {
         correctionPath = correctionDirectory.filePath("shared.conf");
         if (!correctionDirectory.isValid() || !ProfileStore::writeConfig(correctionPath, sharedDraft.toUtf8(), &error)) {
@@ -1680,21 +1699,22 @@ bool MainWindow::importProfile(const QString &source) {
         }
         importSource = correctionPath;
     }
-    if (!error.isEmpty() || !ProfileStore::importReferencesSafe(sharedDraft.toUtf8(), &error) || !validateConfig(importSource, &error)) {
+    if (!error.isEmpty() || !ProfileStore::importReferencesSafe(sharedDraft.toUtf8(), &error) || !validateWithout(importSource, skipped, &error)) {
         QMessageBox::information(this, tr("Import needs correction"),
             error + "\n\n" + tr("The original file is unchanged. Correct this draft before importing. Relative database paths must be made portable explicitly or replaced with host-local absolute paths."));
         if (!correctionDirectory.isValid()) { QMessageBox::warning(this, tr("Import failed"), tr("Cannot create a protected import draft directory.")); return false; }
         correctionPath = correctionDirectory.filePath("corrected.conf");
         const auto validateImport = [this, correctionPath, source](const QString &text, CoreFailure *failure) {
             QString *details = failure ? &failure->text : nullptr;
+            QStringList unavailable;
             const QString prepared = GeoDataSelection::materialize(text, source,
-                validationExecutable_, GeoDataSelection::instance()->paths(), details, QFileInfo(correctionPath).absolutePath());
+                validationExecutable_, GeoDataSelection::instance()->paths(), details, QFileInfo(correctionPath).absolutePath(), &unavailable);
             if (details && !details->isEmpty()) {
                 explainRejectedDraft(text, QFileInfo(source).absolutePath(), failure);
                 return false;
             }
             if (!ProfileStore::importReferencesSafe(prepared.toUtf8(), details)) return false;
-            if (!ProfileStore::writeConfig(correctionPath, prepared.toUtf8(), details)) return false;
+            if (!ProfileStore::writeConfig(correctionPath, GeoDataSelection::withoutRules(prepared, unavailable).toUtf8(), details)) return false;
             const bool valid = validateConfig(correctionPath, failure);
             if (!QFile::remove(correctionPath)) {
                 if (details) *details = tr("Cannot remove the protected validation draft; the original profile was retained.");
@@ -1707,7 +1727,7 @@ bool MainWindow::importProfile(const QString &source) {
         while (true) {
             if (draft.exec() != QDialog::Accepted) { QFile::remove(correctionPath); return false; }
             const QString prepared = GeoDataSelection::materialize(draft.configText(), source,
-                validationExecutable_, GeoDataSelection::instance()->paths(), &error, correctionDirectory.path());
+                validationExecutable_, GeoDataSelection::instance()->paths(), &error, correctionDirectory.path(), &skipped);
             CoreFailure failure;
             const bool valid = error.isEmpty() && validateImport(prepared, &failure);
             if (!valid && error.isEmpty()) error = failure.text;
@@ -1725,7 +1745,7 @@ bool MainWindow::importProfile(const QString &source) {
         QMessageBox::warning(this, tr("Import failed"), error);
         return false;
     }
-    if (!prepareSharedGeoData(path, &error) || !validateConfig(path, &error)) {
+    if (!prepareSharedGeoData(path, &error, &skipped) || !validateWithout(path, skipped, &error)) {
         QFile::remove(path);
         QMessageBox::warning(this, tr("Import failed"), error);
         return false;
@@ -1778,6 +1798,86 @@ void MainWindow::moveProfile(int delta) {
     refreshProfiles();
     profileList_->setCurrentRow(target, QItemSelectionModel::ClearAndSelect);
     profileList_->setFocus();
+}
+
+QString MainWindow::geoDataBlocker(int row) const {
+    if (row < 0 || row >= profiles_.size()) return {};
+    QFile file(profiles_[row].path);
+    if (!file.open(QIODevice::ReadOnly)) return {};
+    const QStringList needed = GeoDataSelection::requiredKinds(QString::fromUtf8(file.read(64 * 1024 + 1)));
+    const auto paths = GeoDataSelection::instance()->paths();
+    for (const QString &kind : needed) {
+        const bool countries = kind == "geoip";
+        const QString selected = paths.value(kind);
+        if (selected.isEmpty())
+            return countries ? tr("The profile has enabled country rules, but no country database is selected. Choose a database or disable these rules in the profile.")
+                             : tr("The profile has enabled site rules, but no site database is selected. Choose a database or disable these rules in the profile.");
+        const QString absolute = QDir::isAbsolutePath(selected) ? selected
+            : QFileInfo(profiles_[row].path).absoluteDir().absoluteFilePath(selected);
+        GeoDataSelection::CatalogFailure failure = GeoDataSelection::CatalogFailure::None;
+        QString diagnostic;
+        GeoDataSelection::inspect(validationExecutable_, kind, absolute, &diagnostic, &failure);
+        if (failure == GeoDataSelection::CatalogFailure::None) continue;
+        QString status = GeoDataSelection::failureStatus(failure);
+        if (!status.isEmpty()) status[0] = status[0].toLower();
+        return countries ? tr("The country database failed its check: %1. Choose another database or disable the country rules in the profile.").arg(status)
+                         : tr("The site database failed its check: %1. Choose another database or disable the site rules in the profile.").arg(status);
+    }
+    return {};
+}
+
+void MainWindow::reportUnavailableProfile(int row, const QString &reason) {
+    const QString name = row >= 0 && row < profiles_.size() ? profiles_[row].name : QString();
+    appendLog(tr("Could not connect “%1”: %2").arg(name, reason));
+    // Automatic connection at startup only notifies; a dialog would appear unasked.
+    if (automaticStart_) {
+        if (tray_ && QSettings().value("app/notifications", true).toBool())
+            tray_->showMessage(tr("Bimeron"), tr("Could not connect “%1”. See the log for details.").arg(name),
+                               QSystemTrayIcon::Warning, 5000);
+        return;
+    }
+    QMessageBox box(QMessageBox::Warning, tr("Profile unavailable"), tr("Could not connect “%1”.").arg(name),
+                    QMessageBox::NoButton, this);
+    box.setObjectName("profileUnavailable");
+    box.setTextFormat(Qt::PlainText);
+    box.setInformativeText(reason);
+    auto *databases = box.addButton(tr("Manage databases"), QMessageBox::ActionRole);
+    databases->setObjectName("manageDatabases");
+    auto *edit = box.addButton(tr("Edit profile"), QMessageBox::ActionRole);
+    edit->setObjectName("editProfile");
+    box.addButton(tr("Close"), QMessageBox::RejectRole);
+    box.setDefaultButton(databases);
+    box.exec();
+    if (box.clickedButton() == databases) manageSharedGeoData(this, validationExecutable_, {}, {});
+    else if (box.clickedButton() == edit) editProfile(row);
+}
+
+void MainWindow::offerGeoDataReconnect() {
+    // Disconnected: the new databases simply apply to the next connection.
+    if (!sessionActive_ && state_ != "connected") return;
+    QMessageBox box(QMessageBox::Question, tr("Bimeron"), tr("New databases were downloaded. Reconnect now?"),
+                    QMessageBox::NoButton, this);
+    box.setObjectName("geoDataReconnect");
+    auto *now = box.addButton(tr("Now"), QMessageBox::AcceptRole);
+    box.addButton(tr("Later"), QMessageBox::RejectRole);
+    box.setDefaultButton(now);
+    box.exec();
+    if (box.clickedButton() == now) reconnectActiveProfile();
+}
+
+void MainWindow::reconnectActiveProfile() {
+    if (controlBlocked() || !helloReady_ || statusNeeded_ || !operation_.isEmpty() || nativeSession_ || cleanupBlocked_) return;
+    QString path;
+    for (int row = 0; row < profiles_.size(); ++row)
+        if (profiles_[row].id == activeProfileId_ && packetProfile(row)) { path = profiles_[row].path; break; }
+    if (path.isEmpty()) return;
+    // The existing stop-then-start path prepares the profile again with the new databases.
+    pendingStartPath_ = path;
+    operation_ = "stop";
+    clearSSHAuthentication();
+    stopRequested_ = true;
+    updateConnectionButton();
+    poll();
 }
 
 bool MainWindow::packetProfile(int row) const {
@@ -2026,9 +2126,11 @@ bool MainWindow::startProfile(int row) {
         return false;
     const auto info = profileInfo(row);
     if (!packetProfile(row)) return false;
+    const QString blocker = geoDataBlocker(row);
+    if (!blocker.isEmpty()) { reportUnavailableProfile(row, blocker); return false; }
     QString sharedError;
     if (!prepareSharedGeoData(profiles_[row].path, &sharedError)) {
-        QMessageBox::warning(this, tr("Profile unavailable"), sharedError); return false;
+        reportUnavailableProfile(row, sharedError); return false;
     }
     QFile profileFile(profiles_[row].path);
     if (!profileFile.open(QIODevice::ReadOnly)) {
@@ -2424,7 +2526,13 @@ void MainWindow::completeSynchronization() {
         if (cleanDisconnected() && QSettings().value("app/autoConnect", false).toBool()) {
             const QString wanted = QSettings().value("app/autoConnectProfile").toString();
             for (int row = 0; row < profiles_.size(); ++row)
-                if (profiles_[row].id == wanted && packetProfile(row)) { profileList_->setCurrentRow(row); startProfile(row); break; }
+                if (profiles_[row].id == wanted && packetProfile(row)) {
+                    profileList_->setCurrentRow(row);
+                    automaticStart_ = true;
+                    startProfile(row);
+                    automaticStart_ = false;
+                    break;
+                }
         }
     }
 }
@@ -2626,7 +2734,7 @@ void MainWindow::appendLog(const QString &message) {
     if (log_) log_->append(QString("[%1] %2").arg(QTime::currentTime().toString("HH:mm:ss"), safeLogMessage(message).toHtmlEscaped()));
 }
 
-bool MainWindow::prepareSharedGeoData(const QString &path, QString *error) {
+bool MainWindow::prepareSharedGeoData(const QString &path, QString *error, QStringList *skipped) {
     QFile input(path);
     if (!input.open(QIODevice::ReadOnly)) { *error = input.errorString(); return false; }
     const QByteArray original = input.read(64 * 1024 + 1); input.close();
@@ -2634,7 +2742,7 @@ bool MainWindow::prepareSharedGeoData(const QString &path, QString *error) {
     if (QString::fromUtf8(original).toUtf8() != original) { *error = tr("The profile must be valid UTF-8 and at most 64 KiB."); return false; }
     const QString prepared = GeoDataSelection::materialize(QString::fromUtf8(original), path,
         validationExecutable_.isEmpty() ? (development_->local() ? development_->path() : coreExecutablePath()) : validationExecutable_,
-        GeoDataSelection::instance()->paths(), error);
+        GeoDataSelection::instance()->paths(), error, {}, skipped);
     if (!error->isEmpty()) return false;
     if (prepared.toUtf8() == original) return true;
     const QString conflict = routingCompatibilityError(prepared, capabilities_);
@@ -2645,6 +2753,23 @@ bool MainWindow::prepareSharedGeoData(const QString &path, QString *error) {
     }
     current.close();
     return ProfileStore::writeConfig(path, prepared.toUtf8(), error);
+}
+
+bool MainWindow::validateWithout(const QString &path, const QStringList &kinds, QString *error) const {
+    if (kinds.isEmpty()) return validateConfig(path, error);
+    QFile input(path);
+    if (!input.open(QIODevice::ReadOnly)) { if (error) *error = input.errorString(); return false; }
+    const QString text = QString::fromUtf8(input.read(64 * 1024 + 1));
+    input.close();
+    const QString temporary = QFileInfo(path).absoluteDir().filePath(
+        QString(".bimeron-validate-%1.conf").arg(QUuid::createUuid().toString(QUuid::WithoutBraces)));
+    if (!ProfileStore::writeConfig(temporary, GeoDataSelection::withoutRules(text, kinds).toUtf8(), error)) return false;
+    const bool valid = validateConfig(temporary, error);
+    if (!QFile::remove(temporary)) {
+        if (error) *error = tr("Cannot remove the protected validation draft; the original profile was retained.");
+        return false;
+    }
+    return valid;
 }
 
 bool MainWindow::validateConfig(const QString &path, QString *error) const {

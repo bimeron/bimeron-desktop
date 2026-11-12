@@ -25,6 +25,33 @@ that layer. There is no Enabled field. Comments, unknown fields, disabled blocks
 and ordering stay in the document. Unsafe edits require Raw config. Cancel and
 validation failures do not replace the saved profile.
 
+Default databases. Bimeron does not author country and site databases. Packages
+ship Loyalsoldier's `v2ray-rules-dat` release pinned at build time (GPL-3.0) and
+select it by default for both kinds; the manager names the source in each row
+("Loyalsoldier · release DD.MM.YYYY · checked" or "Own file · checked") and links
+the author with the license above the table, and About repeats the attribution.
+Each kind has one source: Loyalsoldier, own file, or none ("Not used"). With
+"Update Loyalsoldier databases automatically" on, the application checks once a
+day while it runs and downloads only a newer release; a new file replaces the
+current one only after the selected Core reads it and managed profiles' active
+groups still exist. A failed check keeps the current file and shows "Last check
+failed". Only the current and previous managed copies are kept; own files are
+never deleted. If a VPN is connected when a database changes, the application
+asks whether to reconnect now; otherwise the next connection uses it. Every row
+has an Actions menu (Update now or Install Loyalsoldier database, Choose own
+file, Check again, Disable database); "Install Loyalsoldier databases" restores
+both kinds and enables automatic updates. On first start of this version, a path
+in the managed download store becomes Loyalsoldier, any other path stays an own
+file, and an empty selection becomes Loyalsoldier.
+
+A kind may be disabled even when profiles use it. Such a profile can still be
+edited and saved: the routing tab disables the rule's Target, keeps Enabled and
+Type editable, and explains that the profile will not connect while the rule is
+enabled. Connecting it shows "Profile unavailable" with Manage databases, Edit
+profile and Close; automatic connection at startup only notifies and logs. A
+running connection is never interrupted. Validation copies used while saving
+comment out rules of the unavailable kind, so Core still checks the rest.
+
 Manage databases opens the application-wide country/site database manager, also
 available in Settings. Opening it checks saved files without displaying download
 progress; valid cached catalogs are reused. The manager shows a short scope note,
