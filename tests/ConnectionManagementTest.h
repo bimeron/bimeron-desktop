@@ -34,10 +34,208 @@
 #include "GeoDataDialog.h"
 #include "GeoDataDownload.h"
 #include "GeoDataDownloadFixtures.h"
+#include "GeoDataUpdater.h"
 
 // Uses only temporary profiles/settings, a private pipe/socket and this test's
 // validate subcommand. Never reaches a system endpoint or privileged helper.
 struct ConnectionManagementTest {
+    // Routing tab: a rule whose database is unavailable keeps Enabled and Type editable,
+    // disables Target, explains the block, and does not prevent saving. Needs a real Core
+    // for the profile document bridge.
+    static void geoDataRoutingNotice() {
+        const QString core = qEnvironmentVariable("BIMERON_GEODATA_CORE");
+        if (core.isEmpty()) return;
+        auto *selection = GeoDataSelection::instance();
+        const auto previous = selection->selection();
+        QString error;
+        GeoDataSelection::Selection none = previous;
+        none.paths = {{"geoip", QString()}, {"geosite", QString()}};
+        require(selection->apply(none, core, {}, &error), "no shared databases");
+        QTemporaryDir directory;
+        const QString path = directory.filePath("routing.conf");
+        const QString text = "[Profile]\nVersion=1\nName=Routing\n[AccessKey]\nType=shadowsocks\nServer=example.invalid\nPort=443\n"
+                             "Method=aes-256-gcm\nPassword=SYNTHETIC\n[Interface]\nMode=proxy\n[Routing]\nDefault=proxy\n"
+                             "[Rule]\nGeoIP=ru\nAction=direct\n";
+        require(ProfileStore::writeConfig(path, text.toUtf8(), &error), "routing profile");
+        const QJsonObject capabilities{{"proxy", true}, {"vpn", true}, {"geoip_split", true}, {"geosite_split", true},
+                                       {"geodata_schema", "v2ray-protobuf"}, {"ip_split", true}, {"domain_split", true}};
+        ProfileEditorDialog editor(text, capabilities, nullptr, {}, core, path);
+        auto *rules = editor.findChild<QTableWidget *>();
+        auto *status = editor.findChild<QLabel *>("routingStatus");
+        auto *scroll = editor.findChild<QScrollArea *>("routingStatusScroll");
+        require(rules && status && scroll, "routing widgets");
+        require(waitFor([&] { QApplication::processEvents(); return rules->rowCount() > 0 && rules->cellWidget(0, 2)
+            && !rules->cellWidget(0, 2)->isEnabled(); }, 8000), "unavailable database disables the rule target");
+        require(rules->cellWidget(0, 1)->isEnabled() && !scroll->isHidden()
+            && status->text().contains("No country database is selected"), "type stays editable and the block is explained");
+        require(editor.routingError().isEmpty(), "a missing database does not block saving");
+        require(editor.findChild<QPushButton *>("manageDatabases")->text() == "Manage databases", "label without ellipsis");
+        selection->apply(previous, core, {}, &error);
+    }
+    // Loyalsoldier defaults: automatic updates, the manager's Loyalsoldier states, and
+    // blocking connections whose rules need an unavailable database. Uses the synthetic
+    // validator, a fixture network, and temporary files and settings only.
+    static void geoDataDefaults() {
+        using Source = GeoDataSelection::Source;
+        const QString fake = QCoreApplication::applicationFilePath();
+        auto *selection = GeoDataSelection::instance();
+        const auto previous = selection->selection();
+        QTemporaryDir directory;
+        require(directory.isValid(), "defaults directory");
+        const QString bundled = directory.filePath("bundled");
+        require(QDir().mkpath(bundled), "bundled directory");
+        const auto write = [](const QString &path, const QByteArray &bytes) {
+            QFile file(path);
+            require(file.open(QIODevice::WriteOnly) && file.write(bytes) == bytes.size(), "defaults fixture file");
+        };
+        write(bundled + "/release.json", "{\"tag\":\"202601010000\"}");
+        write(bundled + "/geoip.dat", "bundled geoip");
+        write(bundled + "/geosite.dat", "bundled geosite");
+        const QByteArray previousBundled = qgetenv("BIMERON_BUNDLED_GEODATA");
+        qputenv("BIMERON_BUNDLED_GEODATA", bundled.toUtf8());
+        qputenv("BIMERON_FAKE_GEODATA", "ok");
+        QSettings().setValue("app/notifications", false);
+        QString error;
+        GeoDataSelection::Selection defaults;
+        defaults.autoUpdate = true;
+        for (const QString &kind : GeoDataSelection::kinds()) {
+            defaults.paths[kind] = GeoDataSelection::bundledRelease(kind).path;
+            defaults.sources[kind] = Source::Loyalsoldier;
+            defaults.tags[kind] = "202601010000";
+        }
+        require(selection->apply(defaults, fake, {}, &error), "select shipped defaults");
+
+        // Automatic updates: up to date, a newer release, and a failed check.
+        GeoDataFixture::Network network;
+        GeoDataDownload download(&network);
+        GeoDataUpdater updater([fake] { return fake; }, [] { return QList<Profile>{}; }, nullptr, &download);
+        bool finished = false, failed = false;
+        QStringList updated;
+        QObject::connect(&updater, &GeoDataUpdater::finished, [&](bool value) { finished = true; failed = value; });
+        QObject::connect(&updater, &GeoDataUpdater::updated, [&](const QStringList &kinds) { updated = kinds; });
+        const auto run = [&] {
+            finished = false; failed = false; updated.clear();
+            require(updater.check(true), "update check starts");
+            require(waitFor([&] { return finished; }, 8000), "update check finishes");
+        };
+        network.responses = {{GeoDataFixture::metadata("geoip", "202601010000")}, {GeoDataFixture::metadata("geosite", "202601010000")}};
+        run();
+        require(!failed && updated.isEmpty() && selection->paths() == defaults.paths
+            && GeoDataUpdater::lastCheck().isValid() && !GeoDataUpdater::lastCheckFailed(), "same release downloads nothing");
+        const QString stale = GeoDataSelection::managedDirectory() + "/" + QString(64, 'b');
+        require(QDir().mkpath(stale), "stale managed copy");
+        write(stale + "/geoip.dat", "old managed geoip");
+        const QByteArray fresh("fresh geoip");
+        network.responses = {{GeoDataFixture::metadata("geoip", "202611112204")}, {GeoDataFixture::checksum(fresh)}, {fresh},
+                             {GeoDataFixture::metadata("geosite", "202601010000")}};
+        run();
+        const QString updatedPath = selection->paths().value("geoip");
+        require(!failed && updated == QStringList{"geoip"} && selection->selection().tags.value("geoip") == "202611112204"
+            && updatedPath.startsWith(GeoDataSelection::managedDirectory()) && QFile::exists(updatedPath),
+            "a newer release replaces the Loyalsoldier database after the Core check");
+        require(!QFile::exists(stale + "/geoip.dat") && QFile::exists(bundled + "/geoip.dat"),
+            "older managed copies are removed; the shipped and previous copies stay");
+        network.responses = {{{}, 429, {}, -1, false, false, QNetworkReply::UnknownContentError},
+                             {GeoDataFixture::metadata("geosite", "202601010000")}};
+        run();
+        require(failed && GeoDataUpdater::lastCheckFailed() && selection->paths().value("geoip") == updatedPath,
+            "a failed check keeps the current database");
+        selection->apply(defaults, fake, {}, &error);
+        GeoDataSelection::Selection own = defaults;
+        own.sources["geosite"] = Source::Custom;
+        require(selection->apply(own, fake, {}, &error), "own site file");
+        network.responses = {{GeoDataFixture::metadata("geoip", "202601010000")}};
+        run();
+        require(network.responses.isEmpty() && !failed, "own files are never checked for updates");
+        selection->apply(defaults, fake, {}, &error);
+        QSettings().remove("geodata/lastCheckFailed");
+
+        // The manager names the source and restores Loyalsoldier databases.
+        MainWindow parent; parent.core_.cancel();
+        parent.core_.setEndpoint("bimeron-defaults-" + QUuid::createUuid().toString());
+        for (auto *timer : parent.findChildren<QTimer *>()) timer->stop();
+        QTimer::singleShot(0, &parent, [&] {
+            auto *manager = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+            require(manager && manager->objectName() == "sharedGeoDataDialog", "defaults manager");
+            require(waitFor([&] { QApplication::processEvents(); return !selection->catalogsBusy()
+                && manager->findChild<QLabel *>("geositeStatus")->property("status").toString() == "Checked"; }), "defaults checked");
+            auto *status = manager->findChild<QLabel *>("geoipStatus");
+            require(status->property("line").toString() == "Loyalsoldier · 01.01.2026" && status->text() == "01.01.2026"
+                && manager->findChild<QLabel *>("geoipSource")->text() == "Loyalsoldier ·", "Loyalsoldier status line");
+            // Rows are never clipped: each row gets its full height and keeps its actions inside the card.
+            auto *card = manager->findChild<QFrame *>("geodataCard");
+            for (const QString &kind : {QStringLiteral("geoip"), QStringLiteral("geosite")}) {
+                auto *row = manager->findChild<QWidget *>(kind + "Row");
+                auto *actions = manager->findChild<QPushButton *>(kind + "Actions");
+                require(row && card && row->height() >= row->minimumSizeHint().height()
+                    && actions->mapTo(card, QPoint(actions->width(), actions->height())).x() <= card->width()
+                    && actions->width() >= actions->sizeHint().width(), "card row is not clipped");
+            }
+            require(manager->findChild<QAction *>("geoipUpdate")->isVisible() && !manager->findChild<QAction *>("geoipInstall")->isVisible(),
+                "Loyalsoldier row offers Update now");
+            auto *installAll = manager->findChild<QPushButton *>("geodataInstallAll");
+            auto *autoUpdate = manager->findChild<QCheckBox *>("geodataAutoUpdate");
+            auto *apply = manager->findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Apply);
+            require(autoUpdate->isChecked() && !installAll->isVisible() && !apply->isEnabled(), "defaults hide the restore action");
+            manager->findChild<QAction *>("geositeClear")->trigger();
+            autoUpdate->setChecked(false);
+            QApplication::processEvents();
+            require(installAll->isVisible() && installAll->isEnabled() && apply->isEnabled()
+                && manager->findChild<QLabel *>("geositeFile")->text() == "Not used", "changes enable restore and Apply");
+            installAll->click();
+            require(waitFor([&] { QApplication::processEvents(); return !selection->catalogsBusy()
+                && manager->findChild<QLabel *>("geositeStatus")->property("status").toString() == "Checked"; }), "restored site database");
+            require(autoUpdate->isChecked() && !installAll->isVisible() && !apply->isEnabled(), "restore returns the defaults and updates");
+            manager->findChild<QAction *>("geositeClear")->trigger();
+            QApplication::processEvents();
+            apply->click();
+        });
+        manageSharedGeoData(&parent, fake, QString(), {});
+        require(selection->source("geosite") == Source::None && selection->paths().value("geosite").isEmpty()
+            && selection->source("geoip") == Source::Loyalsoldier && selection->autoUpdate(), "Apply persists the disabled kind");
+
+        // Connecting a profile whose enabled rules need the disabled database is blocked.
+        const QString profilePath = directory.filePath("sites.conf");
+        write(profilePath, "[Profile]\nName=Sites\n[AccessKey]\nSOCKS5 = socks5://localhost:1080\n[Interface]\nMode = proxy\n"
+                           "[Rule]\nGeoSite=github\nAction=proxy\n");
+        parent.profiles_ = {{ProfileStore::identity(profilePath), "Sites", profilePath}};
+        parent.validationExecutable_ = fake;
+        require(parent.geoDataBlocker(0).contains("no site database is selected"), "missing database blocks the profile");
+        parent.automaticStart_ = true;
+        parent.reportUnavailableProfile(0, parent.geoDataBlocker(0));
+        parent.automaticStart_ = false;
+        require(!QApplication::activeModalWidget() && parent.log_->toPlainText().contains("Could not connect “Sites”"),
+            "automatic connection only logs and notifies");
+        bool shown = false;
+        QTimer::singleShot(0, &parent, [&] {
+            auto *box = qobject_cast<QMessageBox *>(QApplication::activeModalWidget());
+            require(box && box->objectName() == "profileUnavailable" && box->informativeText().contains("site rules")
+                && box->findChild<QPushButton *>("manageDatabases") && box->findChild<QPushButton *>("editProfile"),
+                "manual connection explains the block with actions");
+            shown = true;
+            box->reject();
+        });
+        parent.reportUnavailableProfile(0, parent.geoDataBlocker(0));
+        require(shown, "manual connection shows the dialog");
+        write(profilePath, "[Profile]\nName=Sites\n[AccessKey]\nSOCKS5 = socks5://localhost:1080\n[Interface]\nMode = proxy\n"
+                           "# [Rule]\n# GeoSite=github\n# Action=proxy\n");
+        require(parent.geoDataBlocker(0).isEmpty(), "disabled rules no longer block");
+        write(profilePath, "[Profile]\nName=Sites\n[AccessKey]\nSOCKS5 = socks5://localhost:1080\n[Interface]\nMode = proxy\n"
+                           "[Rule]\nGeoIP=ru\nAction=direct\n");
+        qputenv("BIMERON_FAKE_GEODATA", "unsupported");
+        GeoDataSelection::instance()->cancelCatalog(GeoDataSelection::catalogKey(fake, "geoip", selection->paths().value("geoip")));
+        require(parent.geoDataBlocker(0).contains("country database failed its check: validation unavailable"),
+            "an unusable database blocks with its reason");
+
+        qputenv("BIMERON_FAKE_GEODATA", "ok");
+        GeoDataSelection::Selection restore = previous;
+        selection->apply(restore, fake, {}, &error);
+        QDir(GeoDataSelection::managedDirectory()).removeRecursively();
+        qunsetenv("BIMERON_FAKE_GEODATA");
+        qputenv("BIMERON_BUNDLED_GEODATA", previousBundled);
+        QSettings().remove("geodata/lastCheck");
+        QSettings().remove("geodata/lastCheckFailed");
+    }
     // Shared database manager states driven by this executable's synthetic `geodata groups`
     // validator (BIMERON_FAKE_GEODATA). Uses temporary files and isolated settings only.
     static void geoDataManagerStates() {
@@ -65,8 +263,8 @@ struct ConnectionManagementTest {
         const auto settled = [&](QDialog *manager) {
             return waitFor([&] {
                 QApplication::processEvents();
-                return !selection->catalogsBusy() && label(manager, "geoipStatus")->text() != "Checking…"
-                    && label(manager, "geositeStatus")->text() != "Checking…";
+                return !selection->catalogsBusy() && label(manager, "geoipStatus")->property("status").toString() != "Checking…"
+                    && label(manager, "geositeStatus")->property("status").toString() != "Checking…";
             });
         };
         const auto open = [&](const std::function<void(QDialog *)> &check, GeoDataDownload *transport = nullptr) {
@@ -87,20 +285,23 @@ struct ConnectionManagementTest {
                     "opening, checking and canceling never rewrite the shared selection");
         };
 
-        require(selection->apply({}, fake, {}, &error), "empty selection");
+        require(selection->apply(GeoDataSelection::Paths{}, fake, {}, &error), "empty selection");
         open([&](QDialog *manager) {
-            require(label(manager, "geoipFile")->text() == "No file selected", "empty row text");
+            require(label(manager, "geoipFile")->text() == "Not used", "empty row text");
             for (const QString &kind : {QStringLiteral("geoip"), QStringLiteral("geosite")}) {
-                require(manager->findChild<QPushButton *>(kind + "Download")->isVisible()
-                    && manager->findChild<QPushButton *>(kind + "Choose")->isVisible()
-                    && !manager->findChild<QPushButton *>(kind + "Actions")->isVisible()
-                    && !label(manager, kind + "Status")->isVisible(), "empty row exposes Download and Choose file directly");
+                require(manager->findChild<QPushButton *>(kind + "Actions")->isVisible()
+                    && manager->findChild<QAction *>(kind + "Install")->isVisible()
+                    && manager->findChild<QAction *>(kind + "ChooseAction")->isVisible()
+                    && !manager->findChild<QAction *>(kind + "Update")->isVisible()
+                    && !manager->findChild<QAction *>(kind + "Clear")->isVisible()
+                    && !label(manager, kind + "Status")->isVisible(), "empty row offers install and own file");
             }
+            require(manager->findChild<QPushButton *>("geodataInstallAll")->isVisible(), "install action shown when not default");
             require(!manager->findChild<QToolButton *>("geodataDetails")->isVisible()
                 && !manager->findChild<QPlainTextEdit *>("geodataInformation")->isVisible(), "no disclosure without files or errors");
             require(!manager->findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Apply)->isEnabled(), "Apply needs a change");
             auto *source = label(manager, "geodataSource");
-            auto *table = manager->findChild<QTableWidget *>("geodataTable");
+            auto *table = manager->findChild<QFrame *>("geodataCard");
             require(source->isVisible() && source->mapTo(manager, QPoint()).y() < table->mapTo(manager, QPoint()).y(),
                     "download source sits above the table");
             require(manager->width() == 520, "compact manager width");
@@ -109,13 +310,17 @@ struct ConnectionManagementTest {
         require(selection->apply({{"geoip", ip}, {"geosite", site}}, fake, {}, &error), "select synthetic databases");
         forget();
         open([&](QDialog *manager) {
-            require(label(manager, "geoipStatus")->text() == "Checked" && label(manager, "geositeStatus")->text() == "Checked", "checked rows");
+            require(label(manager, "geoipStatus")->property("status").toString() == "Checked" && label(manager, "geositeStatus")->property("status").toString() == "Checked", "checked rows");
             auto *file = label(manager, "geoipFile");
             require(file->text() != QFileInfo(ip).fileName() && file->text().contains("…")
                 && file->toolTip() == QDir::toNativeSeparators(ip), "long names elide with the full path available");
             require(manager->width() == 520, "long names never widen the manager");
             require(manager->findChild<QPushButton *>("geoipActions")->isVisible()
-                && !manager->findChild<QPushButton *>("geoipDownload")->isVisible(), "populated row uses the row menu");
+                && manager->findChild<QAction *>("geoipInstall")->isVisible()
+                && manager->findChild<QAction *>("geoipChooseAction")->text() == "Choose another file…"
+                && label(manager, "geoipStatus")->property("line").toString() == "Own file"
+                && label(manager, "geoipSource")->text() == "Own file" && !label(manager, "geoipStatus")->isVisible(),
+                "own file row names its source");
             auto *details = manager->findChild<QToolButton *>("geodataDetails");
             require(details->isVisible() && details->text() == "File information", "file information offered");
             details->click();
@@ -130,7 +335,7 @@ struct ConnectionManagementTest {
         forget();
         open([&](QDialog *manager) {
             for (const QString &kind : {QStringLiteral("geoip"), QStringLiteral("geosite")})
-                require(label(manager, kind + "Status")->text() == "Validation unavailable", "unsupported validator status");
+                require(label(manager, kind + "Status")->property("status").toString() == "Validation unavailable", "unsupported validator status");
             require(label(manager, "geositeFile")->text() == "sites.dat", "file name survives validator failure");
             manager->findChild<QToolButton *>("geodataDetails")->click();
             const QString facts = manager->findChild<QPlainTextEdit *>("geodataInformation")->toPlainText();
@@ -142,7 +347,7 @@ struct ConnectionManagementTest {
         qputenv("BIMERON_FAKE_GEODATA", "rejected");
         forget();
         open([&](QDialog *manager) {
-            require(label(manager, "geoipStatus")->text() == "Invalid database", "authoritative rejection");
+            require(label(manager, "geoipStatus")->property("status").toString() == "Invalid database", "authoritative rejection");
             manager->findChild<QToolButton *>("geodataDetails")->click();
             require(manager->findChild<QPlainTextEdit *>("geodataInformation")->toPlainText().contains("geodata_invalid"),
                     "rejection reason shown");
@@ -153,12 +358,12 @@ struct ConnectionManagementTest {
         forget();
         require(QFile::rename(site, site + ".moved"), "hide site database");
         open([&](QDialog *manager) {
-            require(label(manager, "geoipStatus")->text() == "Checked" && label(manager, "geositeStatus")->text() == "File not found"
+            require(label(manager, "geoipStatus")->property("status").toString() == "Checked" && label(manager, "geositeStatus")->property("status").toString() == "File not found"
                 && label(manager, "geositeFile")->text() == "sites.dat", "mixed success and missing file");
             auto *apply = manager->findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Apply);
             manager->findChild<QAction *>("geositeClear")->trigger();
             QApplication::processEvents();
-            require(label(manager, "geositeFile")->text() == "No file selected" && apply->isEnabled(), "clear changes only the draft");
+            require(label(manager, "geositeFile")->text() == "Not used" && apply->isEnabled(), "disabling changes only the draft");
         });
         require(QFile::rename(site + ".moved", site), "restore site database");
 
@@ -183,7 +388,7 @@ struct ConnectionManagementTest {
             manager->findChild<QAction *>("geoipUpdate")->trigger();
             require(waitFor([&] { return !download.busy("geoip"); }), "update failure completes");
             QApplication::processEvents();
-            require(label(manager, "geoipStatus")->text() == "Checked" && label(manager, "geoipFile")->toolTip() == QDir::toNativeSeparators(ip)
+            require(label(manager, "geoipStatus")->property("status").toString() == "Checked" && label(manager, "geoipFile")->toolTip() == QDir::toNativeSeparators(ip)
                 && label(manager, "geodataMessage")->text() == "Countries · Update failed. The current file is kept.", "failed update keeps the file");
         }, &download);
         // A downloaded candidate that the validator rejects never replaces the selection.
@@ -193,7 +398,7 @@ struct ConnectionManagementTest {
             manager->findChild<QAction *>("geoipUpdate")->trigger();
             require(waitFor([&] { QApplication::processEvents();
                 return !download.busy("geoip") && !label(manager, "geodataMessage")->text().isEmpty(); }), "candidate rejection completes");
-            require(label(manager, "geoipStatus")->text() == "Checked"
+            require(label(manager, "geoipStatus")->property("status").toString() == "Checked"
                 && label(manager, "geodataMessage")->text() == "Countries · Update failed: Invalid database", "rejected candidate keeps the file");
             qputenv("BIMERON_FAKE_GEODATA", "ok");
         }, &download);
@@ -344,11 +549,11 @@ struct ConnectionManagementTest {
                 auto *cancel = manager->findChild<QPushButton *>("geoipCancel");
                 auto *apply = manager->findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Apply);
                 require(!bar->isVisible() && !cancel->isVisible() && !apply->isEnabled(), "passive inspection has no transfer UI or unsafe Apply");
-                require(status->text() == (cached ? "Checked" : "Checking…"), "cached result or explicit initial checking");
+                require(status->property("status").toString() == (cached ? "Checked" : "Checking…"), "cached result or explicit initial checking");
                 if (cached) require(!selection->catalogsBusy(), "cached reopen starts no Core process");
                 require(waitFor([&] { return !selection->catalogsBusy(); }), "passive catalog completes");
                 QApplication::processEvents();
-                require(status->text() == (missing ? "File not found" : "Checked"), "passive validation result");
+                require(status->property("status").toString() == (missing ? "File not found" : "Checked"), "passive validation result");
                 require(manager->findChild<QLabel *>("geoipFile")->text() == "selected.dat", "file name stays visible in every state");
                 require(!bar->isVisible() && !cancel->isVisible(), "passive success and failure hide progress");
                 require(manager->width() == 520, "compact manager width");
@@ -383,16 +588,16 @@ struct ConnectionManagementTest {
             QString error; require(selection->apply({{"geoip", manual}}, core, {}, &error), "prior shared selection");
         }
         const auto expected = selection->paths();
-        // Download for an empty row; Update from the row menu once a file is selected.
+        // Install for an empty row (no shipped copy in tests, so it downloads); Update once
+        // a Loyalsoldier file is selected.
         const auto startDownload = [](QDialog *manager) {
-            auto *get = manager->findChild<QPushButton *>("geoipDownload");
-            if (get->isVisible()) get->click();
-            else manager->findChild<QAction *>("geoipUpdate")->trigger();
+            auto *update = manager->findChild<QAction *>("geoipUpdate");
+            if (update->isVisible()) update->trigger();
+            else manager->findChild<QAction *>("geoipInstall")->trigger();
         };
         QTimer::singleShot(500, &parent, [&] {
             auto *manager = qobject_cast<QDialog *>(QApplication::activeModalWidget());
             require(manager, "feedback manager");
-            auto *get = manager->findChild<QPushButton *>("geoipDownload");
             auto *actions = manager->findChild<QPushButton *>("geoipActions");
             auto *cancel = manager->findChild<QPushButton *>("geoipCancel");
             auto *bar = manager->findChild<QProgressBar *>("geoipProgress");
@@ -400,15 +605,15 @@ struct ConnectionManagementTest {
             const auto *status = manager->findChild<QLabel *>("geoipStatus");
             require(waitFor([&] { return !selection->catalogsBusy(); }), "initial prior validation");
             QApplication::processEvents();
-            const QString fileBefore = file->text(), statusBefore = status->text();
+            const QString fileBefore = file->text(), statusBefore = status->property("status").toString();
             startDownload(manager); QApplication::processEvents();
-            require(!get->isVisible() && !actions->isVisible() && cancel->isVisible() && cancel->isEnabled(), "single Cancel replaces row actions");
+            require(!actions->isVisible() && cancel->isVisible() && cancel->isEnabled(), "single Cancel replaces row actions");
             require(!bar->isTextVisible() && bar->isVisible(), "row progress has no percent reservation");
             download.progress("geoip", 50, 100); QApplication::processEvents();
             if (!destination.isEmpty()) require(manager->grab().save(destination + ".transfer.png"), "transfer screenshot");
             cancel->click(); QApplication::processEvents();
-            require(!download.busy("geoip") && !bar->isVisible() && (get->isVisible() || actions->isVisible()), "row cancellation restores actions");
-            require(file->text() == fileBefore && status->text() == statusBefore, "cancellation keeps the current file and status");
+            require(!download.busy("geoip") && !bar->isVisible() && actions->isVisible(), "row cancellation restores actions");
+            require(file->text() == fileBefore && status->property("status").toString() == statusBefore, "cancellation keeps the current file and status");
             startDownload(manager); network.replies.first()->finish();
             require(waitFor([&] { return !download.busy("geoip"); }), "retry HTTP failure");
             QApplication::processEvents();
@@ -417,8 +622,8 @@ struct ConnectionManagementTest {
             require(core.isEmpty() ? !message->isVisible()
                 : message->isVisible() && message->text() == QObject::tr("Countries") + " · " + QObject::tr("Update failed. The current file is kept."),
                 "failed attempt reported once, separately from the current file");
-            if (core.isEmpty()) require(status->isVisible() && status->text() == QObject::tr("Download failed"), "empty row shows the failed download");
-            else require(status->text() == statusBefore, "failed update keeps the current file status");
+            if (core.isEmpty()) require(status->isVisible() && status->property("status").toString() == QObject::tr("Download failed"), "empty row shows the failed download");
+            else require(status->property("status").toString() == statusBefore, "failed update keeps the current file status");
             auto *details = manager->findChild<QToolButton *>("geodataDetails");
             require(details->isVisible() && details->focusPolicy() != Qt::NoFocus && !details->accessibleName().isEmpty(), "accessible error disclosure");
             if (!destination.isEmpty()) require(manager->grab().save(destination + ".failure.png"), "error screenshot");
@@ -480,7 +685,7 @@ struct ConnectionManagementTest {
                     QStringList groups; QString failure;
                     require(!selection->cachedCatalog(core, "geoip", completedPath, &groups, &failure), "completed candidate catalog released");
                     require(!QFile::exists(completedPath), "completed candidate removed");
-                    const QString status = manager->findChild<QLabel *>("geoipStatus")->text();
+                    const QString status = manager->findChild<QLabel *>("geoipStatus")->property("status").toString();
                     const QString message = manager->findChild<QLabel *>("geodataMessage")->text();
                     require(status == QObject::tr("Checked") && (valid ? message.isEmpty()
                         : message == QObject::tr("Countries") + " · " + QObject::tr("Update failed: %1").arg(QObject::tr("Invalid database"))),
@@ -602,10 +807,10 @@ struct ConnectionManagementTest {
         QTimer::singleShot(500, &editor, [&] {
             auto *manager = qobject_cast<QDialog *>(QApplication::activeModalWidget());
             require(manager && manager->objectName() == "sharedGeoDataDialog", "shared manager cancellation fixture");
-            require(manager->findChild<QLabel *>("geoipStatus")->text() == "Checked", "manual shared candidate is checked");
+            require(manager->findChild<QLabel *>("geoipStatus")->property("status").toString() == "Checked", "manual shared candidate is checked");
             QFile corrupt(updated); require(corrupt.open(QIODevice::WriteOnly), "modify manual candidate"); corrupt.write("invalid"); corrupt.close();
             QTimer::singleShot(500, manager, [manager] {
-                require(manager->findChild<QLabel *>("geoipStatus")->text() == "Invalid database", "manual mutation invalidates the checked state");
+                require(manager->findChild<QLabel *>("geoipStatus")->property("status").toString() == "Invalid database", "manual mutation invalidates the checked state");
                 require(!manager->findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Apply)->isEnabled(), "invalid candidate disables Apply");
                 manager->reject();
             });
@@ -1174,6 +1379,20 @@ struct ConnectionManagementTest {
             QString error;
             require(GeoDataSelection::instance()->apply(state == "empty" || state == "failed" ? GeoDataSelection::Paths{}
                 : GeoDataSelection::Paths{{"geoip", ip}, {"geosite", site}}, fake, {}, &error), "preview selection");
+            // Loyalsoldier states: shipped release on both rows, optionally with a failing check.
+            if (state == "loyalsoldier" || state == "loyalsoldier-error" || state == "mixed-sources") {
+                GeoDataSelection::Selection defaults = GeoDataSelection::instance()->selection();
+                for (const QString &kind : GeoDataSelection::kinds()) {
+                    defaults.sources[kind] = GeoDataSelection::Source::Loyalsoldier;
+                    defaults.tags[kind] = "202611112204";
+                }
+                if (state == "mixed-sources") { defaults.sources["geosite"] = GeoDataSelection::Source::Custom; defaults.tags["geosite"].clear(); }
+                defaults.autoUpdate = true;
+                require(GeoDataSelection::instance()->apply(defaults, fake, {}, &error), "preview Loyalsoldier selection");
+                QSettings().setValue("geodata/lastCheck", QDateTime::currentDateTimeUtc());
+                QSettings().setValue("geodata/lastCheckFailed", false);
+                if (state == "loyalsoldier-error") qputenv("BIMERON_FAKE_GEODATA", "unsupported");
+            }
             if (state == "unsupported") qputenv("BIMERON_FAKE_GEODATA", "unsupported");
             if (state == "mixed") QFile::remove(site);
             GeoDataFixture::Network network;
@@ -1182,7 +1401,7 @@ struct ConnectionManagementTest {
             QTimer::singleShot(300, &window, [&] {
                 auto *manager = qobject_cast<QDialog *>(QApplication::activeModalWidget());
                 require(manager, "preview manager");
-                if (state == "failed") manager->findChild<QPushButton *>("geoipDownload")->click();
+                if (state == "failed") manager->findChild<QAction *>("geoipInstall")->trigger();
                 require(waitFor([&] {
                     QApplication::processEvents();
                     return !GeoDataSelection::instance()->catalogsBusy() && !download.busy("geoip");
@@ -1199,7 +1418,7 @@ struct ConnectionManagementTest {
             });
             manageSharedGeoData(&window, fake, QString(), {}, &download);
             qputenv("BIMERON_FAKE_GEODATA", "ok");
-            GeoDataSelection::instance()->apply({}, fake, {}, &error);
+            GeoDataSelection::instance()->apply(GeoDataSelection::Paths{}, fake, {}, &error);
             return 0;
         }
         const int settingsPreview = app.arguments().indexOf("--settings-preview");

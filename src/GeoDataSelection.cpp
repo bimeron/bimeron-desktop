@@ -13,6 +13,9 @@
 #include <QJsonDocument>
 #include <QProcess>
 #include <QSettings>
+#include <QRegularExpression>
+#include <QJsonObject>
+#include <QStandardPaths>
 #include <QSet>
 #include <QUuid>
 
@@ -88,15 +91,161 @@ QJsonObject document(const QString &core, const QString &text, const QJsonArray 
 }
 }
 
+namespace {
+constexpr auto sourcesKey = "geodata/sources";
+constexpr auto tagsKey = "geodata/tags";
+constexpr auto autoUpdateKey = "geodata/autoUpdate";
+
+QString sourceName(GeoDataSelection::Source source) {
+    switch (source) {
+    case GeoDataSelection::Source::Loyalsoldier: return QStringLiteral("loyalsoldier");
+    case GeoDataSelection::Source::Custom: return QStringLiteral("custom");
+    case GeoDataSelection::Source::None: return QStringLiteral("none");
+    }
+    return {};
+}
+GeoDataSelection::Source parseSource(const QString &name) {
+    if (name == "custom") return GeoDataSelection::Source::Custom;
+    if (name == "none") return GeoDataSelection::Source::None;
+    return GeoDataSelection::Source::Loyalsoldier;
+}
+bool insideDirectory(const QString &path, const QString &directory) {
+    if (path.isEmpty() || directory.isEmpty() || !QDir::isAbsolutePath(path)) return false;
+    const QString root = QDir::cleanPath(QFileInfo(directory).absoluteFilePath()) + '/';
+    const QString file = QDir::cleanPath(QFileInfo(path).absoluteFilePath());
+    return file.startsWith(root, Qt::CaseInsensitive);
+}
+}
+
+QStringList GeoDataSelection::kinds() { return {QStringLiteral("geoip"), QStringLiteral("geosite")}; }
+
 GeoDataSelection::GeoDataSelection(QObject *parent) : QObject(parent) {
-    const auto saved = QSettings().value(settingsKey).toMap();
-    for (const auto &kind : {QString("geoip"), QString("geosite")}) paths_[kind] = saved.value(kind).toString();
+    QSettings settings;
+    const auto saved = settings.value(settingsKey).toMap();
+    const auto savedTags = settings.value(tagsKey).toMap();
+    for (const QString &kind : kinds()) {
+        paths_[kind] = saved.value(kind).toString();
+        tags_[kind] = savedTags.value(kind).toString();
+    }
+    autoUpdate_ = settings.value(autoUpdateKey, true).toBool();
+    bool dirty = false;
+    if (settings.contains(sourcesKey)) {
+        const auto savedSources = settings.value(sourcesKey).toMap();
+        for (const QString &kind : kinds()) sources_[kind] = parseSource(savedSources.value(kind).toString());
+    } else {
+        // First run of this version: a path in the managed download store came from the
+        // Loyalsoldier download, any other path is the user's own file, and an empty
+        // selection becomes the shipped Loyalsoldier default.
+        for (const QString &kind : kinds()) {
+            const QString path = paths_.value(kind);
+            sources_[kind] = path.isEmpty() || insideDirectory(path, managedDirectory()) ? Source::Loyalsoldier : Source::Custom;
+        }
+        dirty = true;
+    }
+    // A newer package can ship a newer release, and a managed copy can disappear.
+    for (const QString &kind : kinds()) {
+        if (sources_.value(kind) != Source::Loyalsoldier) continue;
+        const Release release = loyalsoldierRelease(kind);
+        if (release.path != paths_.value(kind) || release.tag != tags_.value(kind)) {
+            paths_[kind] = release.path;
+            tags_[kind] = release.tag;
+            dirty = true;
+        }
+    }
+    if (dirty) {
+        Selection current = selection();
+        QString ignored;
+        persist(current, &ignored);
+    }
 }
 GeoDataSelection *GeoDataSelection::instance() {
     static auto *selection = new GeoDataSelection(QCoreApplication::instance());
     return selection;
 }
 GeoDataSelection::Paths GeoDataSelection::paths() const { return paths_; }
+GeoDataSelection::Selection GeoDataSelection::selection() const { return {paths_, sources_, tags_, autoUpdate_}; }
+GeoDataSelection::Source GeoDataSelection::source(const QString &kind) const { return sources_.value(kind, Source::None); }
+bool GeoDataSelection::autoUpdate() const { return autoUpdate_; }
+
+QString GeoDataSelection::bundledDirectory() {
+    const QString overridden = qEnvironmentVariable("BIMERON_BUNDLED_GEODATA");
+    if (!overridden.isEmpty()) return QDir::cleanPath(overridden);
+#ifdef Q_OS_WIN
+    return QDir::cleanPath(QCoreApplication::applicationDirPath() + "/geodata");
+#else
+    return QDir::cleanPath(QCoreApplication::applicationDirPath() + "/../share/bimeron/geodata");
+#endif
+}
+QString GeoDataSelection::managedDirectory() {
+    return QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation) + "/geodata";
+}
+GeoDataSelection::Release GeoDataSelection::bundledRelease(const QString &kind) {
+    const QDir directory(bundledDirectory());
+    QFile manifest(directory.filePath("release.json"));
+    if (!manifest.open(QIODevice::ReadOnly)) return {};
+    const auto object = QJsonDocument::fromJson(manifest.read(64 * 1024)).object();
+    const QString tag = object.value("tag").toString();
+    const QString path = directory.filePath(kind + ".dat");
+    if (!QRegularExpression("^[0-9]{12}$").match(tag).hasMatch() || !QFileInfo(path).isFile()) return {};
+    return {tag, QDir::cleanPath(path)};
+}
+GeoDataSelection::Release GeoDataSelection::loyalsoldierRelease(const QString &kind) const {
+    const Release bundled = bundledRelease(kind);
+    const bool current = sources_.value(kind) == Source::Loyalsoldier && QFileInfo(paths_.value(kind)).isFile();
+    if (!current) return bundled;
+    // A migrated download has no known tag; keep it until an update records one.
+    if (bundled.path.isEmpty() || tags_.value(kind).isEmpty() || tags_.value(kind) >= bundled.tag)
+        return {tags_.value(kind), paths_.value(kind)};
+    return bundled;
+}
+QString GeoDataSelection::releaseDate(const QString &tag) {
+    const QDateTime time = QDateTime::fromString(tag, "yyyyMMddHHmm");
+    return time.isValid() ? time.date().toString("dd.MM.yyyy") : tag;
+}
+
+QStringList GeoDataSelection::requiredKinds(const QString &text) {
+    QStringList result;
+    bool rule = false;
+    for (const QString &raw : text.split('\n')) {
+        const QString line = raw.trimmed();
+        if (line.startsWith('[')) { rule = line.compare("[Rule]", Qt::CaseInsensitive) == 0; continue; }
+        if (!rule || line.startsWith('#') || line.startsWith(';')) continue;
+        const QString key = line.section('=', 0, 0).trimmed();
+        if (!line.contains('=')) continue;
+        if (key.compare("GeoIP", Qt::CaseInsensitive) == 0 && !result.contains("geoip")) result << "geoip";
+        if (key.compare("GeoSite", Qt::CaseInsensitive) == 0 && !result.contains("geosite")) result << "geosite";
+    }
+    return result;
+}
+
+QString GeoDataSelection::withoutRules(const QString &text, const QStringList &kinds) {
+    if (kinds.isEmpty()) return text;
+    QStringList lines = text.split('\n');
+    int start = -1;
+    const auto finish = [&](int end) {
+        if (start < 0) return;
+        bool matches = false;
+        for (int i = start + 1; i < end; ++i) {
+            const QString line = lines[i].trimmed();
+            if (line.startsWith('#') || line.startsWith(';') || !line.contains('=')) continue;
+            const QString key = line.section('=', 0, 0).trimmed().toLower();
+            matches |= (key == "geoip" && kinds.contains("geoip")) || (key == "geosite" && kinds.contains("geosite"));
+        }
+        if (matches) for (int i = start; i < end; ++i) {
+            const QString line = lines[i].trimmed();
+            if (!line.isEmpty() && !line.startsWith('#') && !line.startsWith(';')) lines[i] = "# " + lines[i];
+        }
+        start = -1;
+    };
+    for (int i = 0; i < lines.size(); ++i) {
+        const QString line = lines[i].trimmed();
+        if (!line.startsWith('[')) continue;
+        finish(i);
+        if (line.compare("[Rule]", Qt::CaseInsensitive) == 0) start = i;
+    }
+    finish(lines.size());
+    return lines.join('\n');
+}
 
 QString GeoDataSelection::failureStatus(CatalogFailure failure) {
     switch (failure) {
@@ -238,10 +387,12 @@ QStringList GeoDataSelection::inspect(const QString &core, const QString &kind, 
 }
 
 QString GeoDataSelection::materialize(const QString &text, const QString &profilePath, const QString &core,
-                                     const Paths &paths, QString *error, const QString &validationDirectory) {
+                                     const Paths &paths, QString *error, const QString &validationDirectory,
+                                     QStringList *skipped) {
     QString local;
     if (!error) error = &local;
     error->clear();
+    if (skipped) skipped->clear();
     // Older CLIs remain usable for profiles without active GeoData fields.
     // Disabled blocks are comments and need neither a catalog nor a bridge.
     if (!QRegularExpression(R"((?m)^\s*Geo(?:IP|Site)\s*=)").match(text).hasMatch()) return text;
@@ -258,35 +409,62 @@ QString GeoDataSelection::materialize(const QString &text, const QString &profil
     if (active.isEmpty()) return text;
     if (profilePath.isEmpty()) { *error = tr("A final profile path is required for GeoData validation."); return {}; }
     QJsonArray operations;
+    QStringList unavailable;
     for (auto it = active.cbegin(); it != active.cend(); ++it) {
         const QString selected = paths.value(it.key());
-        if (selected.isEmpty()) { *error = tr("No shared %1 database is selected.").arg(it.key()); return {}; }
+        if (selected.isEmpty()) {
+            // Saving is allowed without a database; connecting is blocked separately.
+            if (skipped) { unavailable << it.key(); continue; }
+            *error = tr("No shared %1 database is selected.").arg(it.key()); return {};
+        }
         const QString absolute = QDir::isAbsolutePath(selected) ? QFileInfo(selected).absoluteFilePath()
             : QFileInfo(QFileInfo(profilePath).absoluteDir(), selected).absoluteFilePath();
         const auto groups = inspect(core, it.key(), absolute, error);
-        if (!error->isEmpty()) return {};
+        if (!error->isEmpty()) {
+            if (skipped) { error->clear(); unavailable << it.key(); continue; }
+            return {};
+        }
         for (const auto &id : it.value()) if (!groups.contains(id.trimmed().toLower())) {
             *error = tr("The %1 database does not contain active group %2.").arg(it.key(), id.trimmed()); return {};
         }
         operations.append(QJsonObject{{"op", "set_field"}, {"section", "GeoData"},
             {"key", it.key() == "geoip" ? "GeoIPFile" : "GeoSiteFile"}, {"value", selected}});
     }
-    const auto patched = document(core, text, operations, error);
-    if (!error->isEmpty()) return {};
-    const QString result = patched.value("profile").toString();
+    QString result = text;
+    if (!operations.isEmpty()) {
+        const auto patched = document(core, text, operations, error);
+        if (!error->isEmpty()) return {};
+        result = patched.value("profile").toString();
+    }
     if (result.toUtf8().size() > 65536) { *error = tr("The profile exceeds the 64 KiB limit."); return {}; }
     if (!validationDirectory.isEmpty() && !ProfileStore::importReferencesSafe(result.toUtf8(), error)) return {};
+    // Core rejects rules without their database, so the validation copy omits rules of
+    // unavailable kinds; the returned profile keeps them unchanged.
+    const QString checked = withoutRules(result, unavailable);
     const QString temporary = (validationDirectory.isEmpty() ? QFileInfo(profilePath).absoluteDir() : QDir(validationDirectory)).filePath(
         ".bimeron-geodata-" + QUuid::createUuid().toString(QUuid::WithoutBraces) + ".conf");
-    if (!ProfileStore::writeConfig(temporary, result.toUtf8(), error)) return {};
+    if (!ProfileStore::writeConfig(temporary, checked.toUtf8(), error)) return {};
     const auto validation = run(core, {"validate", "--json", temporary}, {}, error);
     const bool removed = QFile::remove(temporary);
     if (error->isEmpty()) *error = geoDataValidationError(QJsonDocument(validation).toJson(QJsonDocument::Compact));
     if (error->isEmpty() && !removed) *error = tr("Could not remove the protected validation file.");
+    if (skipped && error->isEmpty()) *skipped = unavailable;
     return error->isEmpty() ? result : QString();
 }
 
 bool GeoDataSelection::apply(const Paths &paths, const QString &core, const QList<Profile> &profiles, QString *error) {
+    Selection candidate = selection();
+    for (const QString &kind : kinds()) {
+        const QString path = paths.value(kind);
+        if (path == paths_.value(kind)) continue;
+        candidate.paths[kind] = path;
+        candidate.sources[kind] = path.isEmpty() ? Source::None : Source::Custom;
+        candidate.tags[kind].clear();
+    }
+    return apply(candidate, core, profiles, error);
+}
+
+bool GeoDataSelection::apply(const Selection &requested, const QString &core, const QList<Profile> &profiles, QString *error) {
     QString local;
     if (!error) error = &local;
     error->clear();
@@ -300,16 +478,24 @@ bool GeoDataSelection::apply(const Paths &paths, const QString &core, const QLis
         }
         return inspectedGroups.value(key);
     };
-    Paths candidate;
-    for (const auto &kind : {QString("geoip"), QString("geosite")}) candidate[kind] = paths.value(kind);
-    for (auto it = candidate.cbegin(); it != candidate.cend(); ++it) {
+    Selection candidate;
+    candidate.autoUpdate = requested.autoUpdate;
+    for (const QString &kind : kinds()) {
+        candidate.paths[kind] = requested.paths.value(kind);
+        candidate.sources[kind] = candidate.paths[kind].isEmpty() ? Source::None : requested.sources.value(kind, Source::Custom);
+        candidate.tags[kind] = candidate.sources[kind] == Source::Loyalsoldier ? requested.tags.value(kind) : QString();
+    }
+    for (auto it = candidate.paths.cbegin(); it != candidate.paths.cend(); ++it) {
         if (it.value().isEmpty()) continue;
         // Relative manual selections are checked in each affected profile's directory.
         if (QDir::isAbsolutePath(it.value())) groupsFor(it.key(), it.value());
         else if (profiles.isEmpty()) *error = tr("Relative database paths require a managed profile.");
         if (!error->isEmpty()) return false;
     }
-    for (const auto &profile : profiles) {
+    // With no database selected there are no groups to check against profile rules.
+    bool anySelected = false;
+    for (const QString &path : candidate.paths) anySelected |= !path.isEmpty();
+    for (const auto &profile : anySelected ? profiles : QList<Profile>{}) {
         QFile file(profile.path);
         // Unreadable entries cannot run; normal Save/Start preparation remains fail-closed.
         if (!file.open(QIODevice::ReadOnly)) continue;
@@ -325,8 +511,9 @@ bool GeoDataSelection::apply(const Paths &paths, const QString &core, const QLis
             if (!rule.value("enabled").toBool() || (matcher != "GeoIP" && matcher != "GeoSite")) continue;
             if (!rule.value("error").toString().isEmpty()) { *error = tr("An active GeoData rule is invalid."); break; }
             const QString kind = matcher == "GeoIP" ? "geoip" : "geosite";
-            const QString selected = candidate.value(kind);
-            if (selected.isEmpty()) { *error = tr("No shared %1 database is selected.").arg(kind); break; }
+            const QString selected = candidate.paths.value(kind);
+            // A disabled database is allowed; such profiles cannot connect until it returns.
+            if (selected.isEmpty()) continue;
             const QString absolute = QDir::isAbsolutePath(selected) ? selected : QFileInfo(profile.path).dir().absoluteFilePath(selected);
             const auto groups = groupsFor(kind, absolute);
             if (!error->isEmpty()) break;
@@ -337,21 +524,41 @@ bool GeoDataSelection::apply(const Paths &paths, const QString &core, const QLis
         }
         if (!error->isEmpty()) { *error = profile.name + ": " + *error; return false; }
     }
-    if (candidate == paths_) return true;
+    if (candidate.paths == paths_ && candidate.sources == sources_ && candidate.tags == tags_
+        && candidate.autoUpdate == autoUpdate_) return true;
+    if (!persist(candidate, error)) return false;
+    emit changed();
+    return true;
+}
+
+bool GeoDataSelection::persist(const Selection &candidate, QString *error) {
     QSettings settings;
-    const bool hadPrevious = settings.contains(settingsKey);
-    const QVariant previous = settings.value(settingsKey);
-    QVariantMap map;
-    for (auto it = candidate.cbegin(); it != candidate.cend(); ++it) map.insert(it.key(), it.value());
-    settings.setValue(settingsKey, map);
+    const QStringList keys{settingsKey, sourcesKey, tagsKey, autoUpdateKey};
+    QMap<QString, QVariant> previous;
+    for (const QString &key : keys) if (settings.contains(key)) previous.insert(key, settings.value(key));
+    QVariantMap paths, sources, tags;
+    for (const QString &kind : kinds()) {
+        paths.insert(kind, candidate.paths.value(kind));
+        sources.insert(kind, sourceName(candidate.sources.value(kind, Source::None)));
+        tags.insert(kind, candidate.tags.value(kind));
+    }
+    settings.setValue(settingsKey, paths);
+    settings.setValue(sourcesKey, sources);
+    settings.setValue(tagsKey, tags);
+    settings.setValue(autoUpdateKey, candidate.autoUpdate);
     settings.sync();
     if (settings.status() != QSettings::NoError) {
-        if (hadPrevious) settings.setValue(settingsKey, previous); else settings.remove(settingsKey);
+        for (const QString &key : keys) {
+            if (previous.contains(key)) settings.setValue(key, previous.value(key)); else settings.remove(key);
+        }
         settings.sync();
-        *error = tr("Could not save the shared GeoData selection. The previous selection is retained."); return false;
+        *error = tr("Could not save the shared GeoData selection. The previous selection is retained.");
+        return false;
     }
-    paths_ = candidate;
-    emit changed();
+    paths_ = candidate.paths;
+    sources_ = candidate.sources;
+    tags_ = candidate.tags;
+    autoUpdate_ = candidate.autoUpdate;
     return true;
 }
 
