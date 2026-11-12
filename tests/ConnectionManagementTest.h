@@ -1812,6 +1812,7 @@ struct ConnectionManagementTest {
             window.store_ = ProfileStore(directory.filePath("profiles"));
             window.profiles_.clear();
             window.validationExecutable_ = QCoreApplication::applicationFilePath();
+            window.developerMode_ = true;
             QTimer::singleShot(0, [&] {
                 auto *add = qobject_cast<QDialog *>(QApplication::activeModalWidget());
                 require(add, "native creation Add dialog");
@@ -1991,6 +1992,7 @@ struct ConnectionManagementTest {
                 check(dialog->findChildren<QLineEdit *>().size() == 4, "SSH identity and known hosts retained");
                 check(dialog->findChild<QPushButton *>("browseProfileFile"), "File browse shares the add form");
                 check(dialog->findChild<QPushButton *>("createProfileInEditor"), "Create editor action is available");
+                check(!dialog->findChild<QPushButton *>("createNativeProfile"), "IKEv2 creation is limited to developer mode");
                 fields[0]->setText(QDir::homePath() + "/profile.conf");
                 check(fields[1]->isHidden(), "Typed absolute path hides profile name");
                 check(dialog->findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Save)->isEnabled(), "File import does not require a name");
@@ -2011,6 +2013,9 @@ struct ConnectionManagementTest {
                     check(editor, "Create action opens profile editor");
                     auto *sources = editor->findChild<QComboBox *>("keySource");
                     check(sources && sources->isEnabled() && sources->findData("SS") < 0, "New editor has no URI source choices");
+                    check(editor->findChild<QLineEdit *>("windowsProfile")->isHidden()
+                        && editor->findChild<QLineEdit *>("nativeServerName")->isHidden()
+                        && editor->findChild<QWidget *>("nativeProfileActions")->isHidden(), "New editor hides IKEv2 rows");
                     if (!capture.isEmpty()) {
                         QCoreApplication::processEvents();
                         check(editor->grab().save(capture + ".editor.png"), "capture actual creation editor");
