@@ -1298,6 +1298,7 @@ void MainWindow::editProfile(int row) {
         return valid;
     };
     ProfileEditorDialog dialog(QString::fromUtf8(originalData), capabilities_, this, validateDraft, validationExecutable_, profiles_[row].path);
+    dialog.setDeveloperMode(developerMode_);
     while (dialog.exec() == QDialog::Accepted) {
         QString error;
         const QString prepared = GeoDataSelection::materialize(dialog.configText(), profiles_[row].path,

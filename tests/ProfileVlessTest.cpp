@@ -501,6 +501,97 @@ static void vmessTransports(const QString &directory) {
     require(editor.findChild<QLineEdit *>("parameterVMessMode")->property("coreProblem").toBool());
 }
 
+// Developer-only conversion between a link and fields through Core.
+static void accessConversion() {
+    const QJsonObject caps{{"vpn", true}, {"proxy", true}, {"access_conversion", true}};
+    const QString core = qEnvironmentVariable("BIMERON_PRESERVATION_CORE");
+    const auto accepted = [](const QString &, CoreFailure *) { return true; };
+    const QString link = "[Profile]\nVersion = 1\nName = Link\n\n[AccessKey]\nTrojan = trojan://SENTINEL@example.com:443\n";
+    const auto shown = [](ProfileEditorDialog &editor) { return !editor.findChild<QWidget *>("accessConversion")->isHidden(); };
+    {
+        // Absent outside developer mode, without the capability, without a
+        // Core CLI and for new drafts.
+        ProfileEditorDialog ordinary(link, caps, nullptr, accepted, "bimeron");
+        require(!shown(ordinary));
+        ProfileEditorDialog older(link, QJsonObject{{"vpn", true}, {"proxy", true}}, nullptr, accepted, "bimeron");
+        older.setDeveloperMode(true);
+        require(!shown(older));
+        ProfileEditorDialog noCore(link, caps);
+        noCore.setDeveloperMode(true);
+        require(!shown(noCore));
+        ProfileEditorDialog draft({}, caps, nullptr, accepted, "bimeron", {}, true);
+        draft.setDeveloperMode(true);
+        require(!shown(draft));
+    }
+    if (core.isEmpty()) return;
+    const QString uuid = "123e4567-e89b-12d3-a456-426614174000";
+    const QByteArray vmess = R"({"v":"2","add":"example.com","port":"443","id":"123e4567-e89b-12d3-a456-426614174000","net":"ws","path":"/ws","tls":"tls"})";
+    const QStringList sources{
+        "SS = ss://" + QString::fromLatin1(QByteArray("aes-256-gcm:SENTINEL").toBase64(QByteArray::Base64UrlEncoding | QByteArray::OmitTrailingEquals)) + "@example.com:8388",
+        "SOCKS5 = socks5://alice:SENTINEL@example.com:1080",
+        "VLESS = vless://" + uuid + "@example.com:443?encryption=none&security=tls&type=ws&path=%2Fws",
+        "Hysteria2 = hy2://SENTINEL@example.com:443?sni=front.example",
+        "SSH = ssh://alice@example.com:2222",
+        "VMess = vmess://" + QString::fromLatin1(vmess.toBase64()),
+        "Trojan = trojan://SENTINEL@example.com:443",
+        "TUIC = tuic://" + uuid + ":SENTINEL@example.com:443",
+        "AnyTLS = anytls://SENTINEL@example.com:443",
+        "HTTP = https://alice:SENTINEL@example.com:443",
+        "Naive = naive+https://alice:SENTINEL@example.com:443",
+        "Naive = naive+quic://alice:SENTINEL@example.com:443",
+        "MASQUE = masque://example.com:443"};
+    const QString rule = "\n[Rule]\nCIDR = 10.0.0.0/8\nAction = direct\n";
+    for (const QString &source : sources) {
+        const QString field = source.section(" = ", 0, 0);
+        const QString profile = "[Profile]\nVersion = 1\nName = Convert\n\n[AccessKey]\n" + source + "\n" + rule;
+        ProfileEditorDialog editor(profile, caps, nullptr, accepted, core);
+        editor.setDeveloperMode(true);
+        require(shown(editor));
+        auto *sourceBox = editor.findChild<QComboBox *>("keySource");
+        auto *toFields = editor.findChild<QPushButton *>("convertAccessToFields");
+        auto *toLink = editor.findChild<QPushButton *>("convertAccessToLink");
+        auto *tabs = editor.findChild<QTabWidget *>();
+        require(sourceBox->currentData().toString() == field && toFields->isEnabled() && !toLink->isEnabled());
+        toFields->click();
+        const QString fields = editor.configText();
+        // The form shows explicit settings; the other content is unchanged.
+        require(sourceBox->currentData().toString().startsWith("Explicit") && tabs->isTabEnabled(0));
+        require(fields.contains("Type = ") && !fields.contains(field + " = ") && fields.contains(rule) && fields.contains("Name = Convert"));
+        require(editor.findChild<QLineEdit *>("server")->text() == "example.com");
+        require(editor.findChild<QPlainTextEdit *>("rawConfig")->toPlainText() == fields);
+        require(!toFields->isEnabled() && toLink->isEnabled());
+        toLink->click();
+        const QString linked = editor.configText();
+        require(sourceBox->currentData().toString() == field && tabs->isTabEnabled(0));
+        require(linked.contains(field + " = ") && !linked.contains("Type = ") && linked.contains(rule));
+        // Nothing is stored: cancelling a changed draft asks to discard it.
+        bool asked = false;
+        if (linked != profile) {
+            QTimer::singleShot(0, [&asked] {
+                auto *box = qobject_cast<QMessageBox *>(QApplication::activeModalWidget());
+                require(box);
+                asked = true;
+                for (auto *button : box->buttons()) if (box->buttonRole(button) == QMessageBox::DestructiveRole) button->click();
+            });
+        }
+        editor.findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Cancel)->click();
+        require(asked == (linked != profile) && editor.result() == QDialog::Rejected);
+    }
+    // A Core refusal keeps the draft and never shows secrets.
+    const QString invalid = "[Profile]\nVersion = 1\n\n[AccessKey]\nType = hysteria2\nServer = example.com\nPort = 443\nPassword = SENTINEL\nALPN = h2\n";
+    ProfileEditorDialog editor(invalid, caps, nullptr, accepted, core);
+    editor.setDeveloperMode(true);
+    bool reported = false;
+    QTimer::singleShot(0, [&reported] {
+        auto *box = qobject_cast<QMessageBox *>(QApplication::activeModalWidget());
+        require(box && box->objectName() == "accessConversionFailed" && !box->text().contains("SENTINEL"));
+        reported = true;
+        box->accept();
+    });
+    editor.findChild<QPushButton *>("convertAccessToLink")->click();
+    require(reported && editor.configText() == invalid);
+}
+
 static void parameterForms(const QString &directory) {
     const QJsonObject caps{{"vpn", true}, {"proxy", true}};
     const QString head = "[Profile]\nVersion = 1\nName = Parameters\n[AccessKey]\n";
@@ -2331,6 +2422,7 @@ int main(int argc, char **argv) {
         if (source == "Explicitvmess") require(reopened.findChild<QLineEdit *>("parameterVMessTLS")->text() == "tls");
     }
     vmessTransports(temporary.path());
+    accessConversion();
     require(temporary.isValid());
     QSettings::setDefaultFormat(QSettings::IniFormat);
     QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, temporary.path());

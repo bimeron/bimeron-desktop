@@ -25,6 +25,9 @@ public:
                                  const QString &coreExecutable = {}, const QString &profilePath = {}, bool create = false);
     ~ProfileEditorDialog() override;
     QString configText() const;
+    // Developer sessions may convert the access source between a link and
+    // fields when Core reports access_conversion.
+    void setDeveloperMode(bool enabled);
 
 protected:
     void reject() override;
@@ -135,6 +138,10 @@ private:
     bool rawOnly_ = false;
     bool vlessMultiModeConfigured_ = false;
     bool keyRevealed_ = false;
+    bool developerMode_ = false;
+    QWidget *accessConversion_ = nullptr;
+    void convertAccess(bool toFields);
+    void ensureSourceItem(const QString &source);
     QString originalText_;
     QString loadedText_;
     QString visualBaseline_;
