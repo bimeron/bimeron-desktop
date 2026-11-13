@@ -250,7 +250,7 @@ private:
     QMenu *trayMenu_ = nullptr;
     QAction *trayStatusAction_ = nullptr;
     QAction *trayTrafficAction_ = nullptr;
-    QString trayTraffic_ = tr("Traffic: РІР‚вЂќ");
+    QString trayTraffic_ = tr("Traffic: —");
     QStackedWidget *pages_ = nullptr;
     QString state_ = "unknown";
     QString activeFileProtocol_;
