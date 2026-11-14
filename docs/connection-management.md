@@ -156,3 +156,6 @@ developer and quit exclusion remains in force until the operation actually exits
 Restart requires verified ownership, graceful stop, exit and cleanup before a new
 start; separate emergency recovery authorization cannot be inferred from restart
 consent. See [service actions](service-actions.md) for current CLI capability limits.
+
+Bounded reconnect progress and last-error tooltips are specified in
+[Reconnect recovery](reconnect-attempts.md); this is a Desktop 0.3.0 release gate.

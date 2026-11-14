@@ -224,3 +224,14 @@ inline QString coreCodeText(const CoreErrorCatalog &catalog, const QString &code
     if (!catalog.contains(code)) return {};
     return catalog.text(code, {}, language);
 }
+
+// Old services may return arbitrary error text. Never expose it as a code or
+// render it as rich text; only bounded catalog-style identifiers are eligible.
+inline QString coreConnectionProblemText(const CoreErrorCatalog &catalog, const QString &code) {
+    static const QRegularExpression identifier(QStringLiteral("^[a-z][a-z0-9_]{0,127}$"));
+    if (code.isEmpty()) return {};
+    const QString fallback = QCoreApplication::translate("CoreProblems", "Connection interrupted. Error details are unavailable.");
+    if (!identifier.match(code).hasMatch()) return fallback;
+    const QString message = coreCodeText(catalog, code);
+    return code + "\n" + (message.isEmpty() ? fallback : message.toHtmlEscaped());
+}
