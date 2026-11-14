@@ -1622,3 +1622,15 @@ warned that dxcompiler.dll and dxil.dll were unavailable; no build failed.
 No elevation, VM acceptance, service installation or host network change was run.
 Release remains blocked on the documented real UAC/polkit gates and the upcoming
 Core candidate re-freeze requires new pins, packages and verification.
+
+Reconnect-candidate verification (2026-11-14): Core 0e08a5c8 archive and extracted
+broker pins replaced e1cada7d together. The full four-package script completed;
+Windows x64 and WSL Linux amd64 CTest each passed 10/10. Final extracted package
+files match stage, executable architectures/pins, Wintun and GeoData. Two stale
+local Windows output backups were preserved outside compiler output after rejecting
+the first MSI, then all four packages were regenerated and reverified. The existing
+Windows directory-copy install rule requires clean compiler output and package
+inventory review. See release-0.3.0.md for final hashes and evidence. ARM64 remains
+compile/package-only; the existing missing DX compiler DLL warning remains.
+VM acceptance of this new Desktop/Core pair and final publication approval remain
+outstanding. No performance-sensitive path or packaging flow was changed.

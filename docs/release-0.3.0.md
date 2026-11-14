@@ -155,3 +155,41 @@ Pins, all four packages and VM acceptance must be renewed separately.
 ## Reconnect candidate supersedes earlier evidence
 
 The current Core candidate is 0e08a5c8a114060ac0b53bbcc534b18c76d1aed4, merged through Core PR #137 after green CI. It supersedes e1cada7d; the earlier package hashes above are historical and must not be used for this candidate. The signed manifest SHA-256 is 7117c15801a3d99fbcc919e31fccd49e4036959cfb407f99352138d977041c63. Archive and extracted executable pins are updated together. Compatibility and production signing key are unchanged. Rebuild all four packages and repeat pair/VM acceptance before publication.
+
+## Reconnect candidate package verification (2026-11-14)
+
+Source: release/0.3.0 at f6c002e (including reconnect merge c674446), Core
+0e08a5c8a114060ac0b53bbcc534b18c76d1aed4. The final full package-all.ps1
+run produced exactly two MSI and two DEB packages. Windows x64 CTest passed
+10/10 (33.06 s), WSL Linux amd64 CTest passed 10/10 (26.63 s), including the
+new reconnect fixtures, payload gates and embedded repair resource hashes.
+Both ARM64 targets compiled and packaged; neither ARM64 runtime was executed.
+
+Fresh administrative MSI extraction and dpkg-deb extraction matched every file
+against stage (43 Windows amd64, 40 Windows arm64, 15 per Linux target).
+All PE/ELF target machines, four Core/broker executable pins, adjacent Windows
+Wintun/license bytes and bundled GeoData hashes/license passed. Both MSI metadata
+projections retain ProductVersion 0.3.0 and the existing UpgradeCode; DEB metadata
+is version 0.3.0 with the expected architecture, and archive binaries are mode 755.
+No test executable, backup binary or local update feed is in the final payload.
+
+The first MSI was rejected because two pre-existing local backup executables in
+the Windows amd64 build output were copied by the existing directory install rule.
+Those files were preserved outside the compiler output in ignored build evidence,
+then the complete packaging script was rerun. Only the final hashes below apply.
+The directory-copy rule still requires output hygiene and explicit inventory review.
+ARM64 Qt deployment warns about missing dxcompiler.dll/dxil.dll; builds pass, but
+native ARM64 GUI behavior remains unverified. Diff review and git diff --check
+passed. No performance-sensitive change requires benchmarks/profiling.
+
+Logs, inventory projections and verification.json are under ignored
+build/release-0.3.0-reconnect. No installed service or host network was changed.
+New-candidate VM reconnect, repair/UAC/polkit, clean-install and upgrade acceptance
+remain outstanding and block publication. Previous VM results do not accept this pair.
+
+| Package | Size | SHA-256 |
+|---|---|---|
+| `bimeron-desktop-0.3.0-linux-amd64.deb` | 36369758 | `37a9d7e7d8735e406040540dd45f32c0371182c3127e590eb5081abb961dd432` |
+| `bimeron-desktop-0.3.0-linux-arm64.deb` | 33700408 | `6569f2180a874e7dd64850abfe77bd5ff3399970231ebc1fb178316c927f3a40` |
+| `bimeron-desktop-0.3.0-windows-amd64.msi` | 49078272 | `5e981ffecbbac323c9b13c101c907592b58dbd0f9f84256ec5ba173d64d88eb8` |
+| `bimeron-desktop-0.3.0-windows-arm64.msi` | 37646336 | `09272394f4b27e8e8893da65d1facde201dc8f536d96ff47ac5c61eacb9c89d3` |
