@@ -38,12 +38,12 @@ native IKEv2 remain deferred (issue #23).
 
 ## Core input
 
-The currently pinned Core `v0.3.0-beta.2` lacks the `explicit_access` capability
+The previously bundled Core `v0.3.0-beta.2` lacks the `explicit_access` capability
 and structured problems, so with it the explicit protocol forms stay hidden and
 Core problems cannot navigate to fields. Desktop 0.3.0 therefore pins Core
 `v0.4.0-beta.1`, which is being prepared separately.
 
-Pin it only after it is published with signed update metadata and:
+Use a verified frozen candidate for local acceptance; publication requires signed metadata and:
 
 - reports `explicit_access` and structured problems through the bundled CLI and
   service;
@@ -53,16 +53,16 @@ Pin it only after it is published with signed update metadata and:
   payload, licenses and Wintun digests.
 
 Candidate status (2026-11-14): Core `v0.4.0-beta.1` from commit
-`e1cada7d5bce89fd9ce75c3344f92b1f2a69d47c` is built and frozen but not tagged.
-It supersedes candidate `272e6027`, whose repair broker rejected its own signed
+`0e08a5c8a114060ac0b53bbcc534b18c76d1aed4` is built and frozen but not tagged.
+It supersedes `e1cada7d` by adding bounded reconnect recovery, and candidate `272e6027`, whose repair broker rejected its own signed
 manifest because it accepted only GUI bounds `[0.2.0, 0.2.1)` (bimeron-core#133).
 Its assets are published unchanged only after VM acceptance of this Desktop
 candidate. The signed manifest (SHA-256
-`24d3894afcdc247f426032d70d7d64bc79b7c69479eec98cda6771e2d3f517e8`) has GUI
+`7117c15801a3d99fbcc919e31fccd49e4036959cfb407f99352138d977041c63`) has GUI
 bounds `[0.3.0, 0.3.1)`, IPC 1, profile format 1 and key `7370a2d8cf890e5e`;
 its four archive hashes and four extracted executable hashes match `cmake/core-release.cmake`. The local candidate
 ZIPs populate `.tools/core`, where `scripts/fetch-core.cmake` verifies them
-offline. The Windows amd64 CLI reports revision `e1cada7d` and lists all explicit
+offline. The Windows amd64 CLI reports revision `0e08a5c8` and lists all explicit
 protocols in `explicit_access`.
 
 Desktop 0.2.0 is not inside these bounds and keeps its current Core until the
@@ -82,7 +82,7 @@ and Linux amd64 real polkit VM acceptance passes:
 - Alternate-administrator credentials on Windows.
 
 Any wrong attribution, duplicate mutation or failed rollback blocks release.
-ARM64 remains compile/package-only. The pinned Core `e1cada7d` fixes the online repair-acquisition window bug;
+ARM64 remains compile/package-only. The pinned Core `0e08a5c8` includes bounded reconnect recovery and fixes the online repair-acquisition window bug;
 packages must be rebuilt from these pins before VM acceptance.
 
 ## Version
@@ -151,3 +151,7 @@ Desktop #48 and Core #136 require [bounded reconnect recovery](reconnect-attempt
 The frozen e1cada7d candidate does not satisfy this gate. Core must merge the
 fix with green CI, then the release thread freezes a new candidate from master.
 Pins, all four packages and VM acceptance must be renewed separately.
+
+## Reconnect candidate supersedes earlier evidence
+
+The current Core candidate is 0e08a5c8a114060ac0b53bbcc534b18c76d1aed4, merged through Core PR #137 after green CI. It supersedes e1cada7d; the earlier package hashes above are historical and must not be used for this candidate. The signed manifest SHA-256 is 7117c15801a3d99fbcc919e31fccd49e4036959cfb407f99352138d977041c63. Archive and extracted executable pins are updated together. Compatibility and production signing key are unchanged. Rebuild all four packages and repeat pair/VM acceptance before publication.
