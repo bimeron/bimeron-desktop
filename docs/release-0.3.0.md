@@ -52,6 +52,17 @@ Pin it only after it is published with signed update metadata and:
 - has four archive hashes verified against exact source/version, architecture,
   payload, licenses and Wintun digests.
 
+Candidate status (2026-11-14): Core `v0.4.0-beta.1` from commit
+`272e6027f8e786c385d5b5509cd80dda155eafd2` is built and frozen but not tagged.
+Its assets are published unchanged only after VM acceptance of this Desktop
+candidate. The signed manifest (SHA-256
+`a1e3132b7d77cee181d4811f022819d0cdbf305d1f573270449b92d648e59a9d`) has GUI
+bounds `[0.3.0, 0.3.1)`, IPC 1, profile format 1 and key `7370a2d8cf890e5e`;
+its four archive hashes match `cmake/core-release.cmake`. The local candidate
+ZIPs populate `.tools/core`, where `scripts/fetch-core.cmake` verifies them
+offline. The Windows amd64 CLI reports revision `272e6027` and lists all explicit
+protocols in `explicit_access`.
+
 Desktop 0.2.0 is not inside these bounds and keeps its current Core until the
 user installs Desktop 0.3.0. Test keys and local-update builds are not release
 inputs. Core publication is not authorized by this document.

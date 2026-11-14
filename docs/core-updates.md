@@ -16,7 +16,7 @@ The restored [connection management](connection-management.md) uses the same sig
 update policy, serializes connection actions with administrative operations and
 verifies hello plus authoritative status before restoring a profile once.
 
-The updater implements IPC protocol `1` and profile format `1`. Published core `v0.2.0-beta.1` has reviewed GUI bounds `[0.2.0, 0.2.1)`, so Desktop `0.2.0` can consider it when beta updates are enabled. Older published core `v0.1.0-beta.3` has bounds `[0.1.0, 0.1.2)` and remains ineligible for GUI `0.1.5`.
+The updater implements IPC protocol `1` and profile format `1`. Published core `v0.2.0-beta.1` has reviewed GUI bounds `[0.2.0, 0.2.1)`, so Desktop `0.2.0` can consider it when beta updates are enabled. Older published core `v0.1.0-beta.3` has bounds `[0.1.0, 0.1.2)` and remains ineligible for GUI `0.1.5`. Core `v0.4.0-beta.1`, bundled with Desktop `0.3.0`, has reviewed GUI bounds `[0.3.0, 0.3.1)`; Desktop `0.2.0` intentionally does not consider it and receives it by upgrading Desktop.
 
 The GUI checks the public `bimeron/bimeron-core` GitHub Releases at startup and periodically, and can check on demand from Settings. Checks and downloads are quiet. Stable is the default channel; beta releases are considered only when the user enables beta updates. A missing signing key, no signed compatible release, network failure, or a malformed release never triggers an unsigned fallback. A build configured with an empty key says "Signed updates are not available yet" and does not run the legacy bundled-core `service update` command.
 
