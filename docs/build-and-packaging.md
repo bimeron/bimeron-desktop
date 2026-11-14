@@ -1535,7 +1535,7 @@ and the target pin. GUI-only builds can omit it. PE/ELF checks remain mandatory.
 Updating the bundled core version: after updating the archive pins and verifying
 and extracting all four ZIPs, hash each bimeron(.exe) and update the four
 BIMERON_CORE_EXECUTABLE_SHA256 pins together with version, revision and archive
-pins. Executable pins identify extracted bytes, not ZIP bytes. The current pins are for the re-frozen
+pins. Executable pins identify extracted bytes, not ZIP bytes. Core archives use a fixed file time, so a replaced payload can keep an older mtime; CMake therefore embeds configure-time copies under `build/<target>/repair-bootstrap/<sha256>/`, and any byte change regenerates the GUI resources. `repair-resource-test` checks the embedded broker digest. The current pins are for the re-frozen
 Core candidate `e1cada7d`, which fixes the online repair-acquisition window bug.
 
 Upgrade from brokerless 0.2.0 installs the broker and protected GUI bootstrap.
