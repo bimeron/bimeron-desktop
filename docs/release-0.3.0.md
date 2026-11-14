@@ -246,3 +246,24 @@ service-update, retry IPC projections and final-state results. No secret/profile
 contents are included in tracked documentation. Real UAC/polkit, alternate-admin,
 repair/bootstrap failure paths, protocol server interoperability, new-GUI visual
 checks and complete Linux install/upgrade acceptance remain release gates.
+
+## Ubuntu 22.04 compatibility package set (2026-11-14)
+
+This set supersedes the previous package hashes. Source implementation: 3ebe2cd.
+See linux-compatibility.md for specification, exact test results and limitations.
+Both Linux packages are now built against Ubuntu 22.04 Qt 6.2/GCC 11/glibc 2.35,
+with generated runtime dependencies and a mandatory packaging-script ABI check.
+Windows x64 and Ubuntu 22.04/24.04 amd64 tests passed 10/10 each. Both ARM64
+packages built without runtime execution. All four extracted payloads, architectures,
+pins, modes, metadata and licenses were verified. The ordinary-user Linux GUI
+launched natively and established IPC after root CLI service installation.
+This resolves the earlier Qt dependency installation blocker. Native polkit/repair,
+new-package upgrade scenarios and all other outstanding release gates remain;
+there is no publication approval or full release acceptance claim.
+
+| Package | Size | SHA-256 |
+|---|---|---|
+| `bimeron-desktop-0.3.0-linux-amd64.deb` | 38368604 | `6dc42da2d9d3fd59ca4427a7adc10e708f973ac38868b96853ad7298ee596ac1` |
+| `bimeron-desktop-0.3.0-linux-arm64.deb` | 35592224 | `107a90cee150bac10ef9369e0372a05d980f54b851f3cdc57b9e439836a6366d` |
+| `bimeron-desktop-0.3.0-windows-amd64.msi` | 49078272 | `29efce252fa90ee0db8b3ec890d03dc34ad6f903fb3f091ead2b124894f03ee9` |
+| `bimeron-desktop-0.3.0-windows-arm64.msi` | 37646336 | `130dea205b9141b41094b1fa85e5c29df70794a7c7be6a3c34a96535c155a55f` |

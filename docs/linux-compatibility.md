@@ -35,3 +35,38 @@ must pass on both Qt generations. Linux packaging checks ELF symbol versions
 before staging and derives runtime library dependencies with dpkg-shlibdeps.
 Native amd64 CI uses Ubuntu 22.04; arm64 CI on Ubuntu 24.04 additionally checks
 newer system Qt compatibility, without claiming baseline package acceptance.
+
+## Verification (2026-11-14)
+
+Implementation: 3ebe2cd on release/0.3.0; Core remains 0e08a5c8. The native
+Ubuntu 22.04 VM used stock Qt 6.2.4, GCC 11.4 and glibc 2.35. CMake 3.31.10
+was installed as a build tool for schema-6 presets. Both amd64 and arm64 DEBs
+built successfully there. Source/packaging overlay hashes on the VM match the
+local implementation files. Generated state and tools remain outside Git.
+
+Native Ubuntu 22.04 amd64 CTest passed 10/10 (18.32 s); Windows x64 passed
+10/10 (28.44 s); newer system Qt on Ubuntu 24.04 WSL passed 10/10 (18.15 s).
+The Ubuntu 22.04 binary also stayed running against Ubuntu 24.04 system libraries
+in an isolated offscreen smoke run (intentional timeout exit 124). Both Windows
+architectures were rebuilt and packaged; both ARM64 targets are compile/package
+only. Hosted CI was updated but not pushed or executed for this change.
+
+The DEB installs/configures on Ubuntu 22.04 without third-party repositories.
+Its generated dependencies include libc6 >=2.34 and libstdc++6 >=11, not the
+newer host's runtime. ldd has no missing libraries. GUI launched as the ordinary
+test user; a native X11 window capture shows the rendered application. Root CLI
+installation/start of the packaged Core service for UID 1000 then established
+GUI IPC readiness (Disconnected), with matching Core/broker hashes. This is not
+real polkit consent, repair/bootstrap, VPN-server interoperability or upgrade
+acceptance. The VM is left with the GUI and service running, VPN disconnected.
+
+Both DEBs passed the ELF ABI gate; the previously built Qt 6.4 binary was
+correctly rejected for requiring Qt_6.4. Fresh MSI/DEB extraction verified every
+file against final staging (43/40 Windows files; 15 per Linux target), PE/ELF
+architectures, Core/broker pins, Wintun and GeoData/license hashes, executable
+modes, version/architecture metadata and the retained MSI UpgradeCode. No test
+or backup binaries were packaged. The existing ARM64 Qt DX compiler DLL warning
+remains; native ARM64 GUI behavior is unverified. Diff/security/regression review
+and git diff --check passed; no unresolved implementation finding was identified.
+No benchmark/profile was applicable. Final packages/hashes are in release-0.3.0.md.
+Ignored evidence is under build/ubuntu2204-compat, including native GUI captures.
