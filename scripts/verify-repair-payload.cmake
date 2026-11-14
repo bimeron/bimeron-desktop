@@ -1,0 +1,6 @@
+include("${CMAKE_CURRENT_LIST_DIR}/../cmake/core-release.cmake")
+file(SHA256 "${BIMERON_REPAIR_PAYLOAD}" actual)
+string(REPLACE "-" "_" target "${BIMERON_REPAIR_TARGET}")
+if(NOT actual STREQUAL BIMERON_CORE_EXECUTABLE_SHA256_${target})
+    message(FATAL_ERROR "Staged repair broker does not match target executable pin")
+endif()

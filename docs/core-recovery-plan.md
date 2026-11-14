@@ -834,10 +834,10 @@ the API accepts no source path, digest or arbitrary command. See sibling Core
 
 Outstanding acceptance blockers:
 
-- Old packages do not contain the new protected broker. Optional reviewed-payload
-  packaging and protected discovery are implemented, but migration/bootstrap when
-  that trust root is absent is not. The current pinned Core archives lack the new
-  API. No writable downloaded executable is elevated as a substitute.
+- Desktop 0.3.0 packages ship the pinned Core executable as a separate protected
+  broker and embedded GUI resource. Migration from brokerless 0.2.0 and bootstrap
+  remain VM acceptance gates. The Core online repair-acquisition window bug is
+  being fixed in a re-frozen candidate. No writable download is elevated.
 - A live legacy developer daemon cannot be adopted from the v1 journal, which
   contains no durable process identity. New durable privileged launch records and
   authenticated live reconciliation remain unfinished. A dead transition can be

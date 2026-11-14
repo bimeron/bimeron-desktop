@@ -69,12 +69,19 @@ inputs. Core publication is not authorized by this document.
 
 ## Repair broker
 
-Packages do not include the separate protected repair broker
-(`BIMERON_REPAIR_BROKER` stays empty), as in 0.2.0. One-click recovery covers
-what the installed package payload allows and reports unrecoverable cases
-explicitly; release notes do not promise broker-based repair. Packaging the
-broker needs security review and UAC/polkit VM acceptance and is deferred to a
-later release (see the follow-up issue linked from #46).
+Packages ship the pinned Core executable as the protected repair broker and embed
+it in the GUI for bootstrap. Release is **BLOCKED** until Windows x64 real UAC
+and Linux amd64 real polkit VM acceptance passes:
+
+- Clean install and upgrade from brokerless 0.2.0.
+- Repair of removed/corrupted service executable.
+- Missing separate broker bootstrapped from the protected GUI without a second elevation.
+- Denial/retry/repeated clicks/close-reopen with prompt counting.
+- Alternate-administrator credentials on Windows.
+
+Any wrong attribution, duplicate mutation or failed rollback blocks release.
+ARM64 remains compile/package-only. The Core online repair-acquisition window bug
+is being fixed in a re-frozen Core candidate; update all pins and packages together.
 
 ## Version
 

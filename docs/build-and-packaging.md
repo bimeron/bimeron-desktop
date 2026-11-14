@@ -77,7 +77,7 @@ The packaging scripts run the fetch step and configure with `BIMERON_REQUIRE_GEO
 ### Updating the bundled core version
 
 1. Inspect the desired published release of `bimeron/bimeron-core` and its `SHA256SUMS` file. Confirm it contains Windows and Linux archives for amd64 and arm64 with the expected binaries, Wintun files and licenses.
-2. Change the tag, its full 40-character lowercase commit in `BIMERON_CORE_REVISION` and four matching SHA-256 values in `cmake/core-release.cmake`. The commit is the `revision` reported by the release binary's `version` command and must equal the tag's commit. Verify that the published helper supports `-source`, then set `BIMERON_CORE_RELEASE_SUPPORTS_SOURCE_UPDATE` to `TRUE`. Update the repository URL, target lists or filenames there only if the release format changed. Do not use a floating `latest` URL; prereleases may not be returned by GitHub's latest-release endpoint.
+2. Update the executable pins together with the archive pins after verified extraction (including candidate re-freezes). Change the tag, its full 40-character lowercase commit in `BIMERON_CORE_REVISION` and four matching SHA-256 values in `cmake/core-release.cmake`. The commit is the `revision` reported by the release binary's `version` command and must equal the tag's commit. Verify that the published helper supports `-source`, then set `BIMERON_CORE_RELEASE_SUPPORTS_SOURCE_UPDATE` to `TRUE`. Update the repository URL, target lists or filenames there only if the release format changed. Do not use a floating `latest` URL; prereleases may not be returned by GitHub's latest-release endpoint.
 3. Fetch on both platforms, or run the full package scripts. Check that the extracted core binaries and Wintun DLLs match their target architectures. A package configuration with the default core root runs the pinned binary's `version` command when it can execute on the build host (Windows amd64 and Linux amd64 on the usual hosts) and fails if the reported revision differs from `BIMERON_CORE_REVISION`; ARM64 payloads that cannot run there rely on the archive hashes. Local candidate roots skip this check.
 4. Build all four packages and verify their payloads and metadata using the review steps below. Record the chosen core tag in the release notes. A core release does not change an already installed desktop package automatically. The installed service can be updated independently only from a compatible signed release after the user confirms installation.
 
@@ -182,7 +182,7 @@ If there is any error, the script ends and should not be considered a successful
 
 ## Building one configuration
 
-Fetch core first with `cmake -DBIMERON_CORE_PLATFORM=windows -P scripts/fetch-core.cmake` on Windows or `cmake -DBIMERON_CORE_PLATFORM=linux -P scripts/fetch-core.cmake` on Linux. Add `-DBIMERON_REQUIRE_CORE=ON` to the `cmake --preset` configure command for package builds. The commands below assume the core files have already been fetched.
+Fetch core first with `cmake -DBIMERON_CORE_PLATFORM=windows -P scripts/fetch-core.cmake` on Windows or `cmake -DBIMERON_CORE_PLATFORM=linux -P scripts/fetch-core.cmake` on Linux. Add `-DBIMERON_REQUIRE_CORE=ON` to the `cmake --preset` configure command for package builds. The commands below assume the core files have already been fetched. Each package configure also requires explicit `-DBIMERON_REPAIR_BROKER=<absolute .tools/core/target/bimeron(.exe)>` and `-DBIMERON_REPAIR_BROKER_SHA256=<SHA-256 of that executable>` arguments; append both to the configure commands below. The scripts supply these automatically.
 
 The default payload directory is `.tools/core`. If it must be elsewhere, pass the same absolute `-DBIMERON_CORE_ROOT=<path>` to the fetch command and the CMake configure command. The automated package scripts use the default directory.
 
@@ -231,6 +231,7 @@ The manual Linux `cpack` commands create packages in `/tmp/bimeron-desktop-packa
 The `stage/windows-amd64` or `stage/windows-arm64` tree is the source of the MSI content. Next to `bimeron-desktop.exe` are installed:
 
 - `bimeron-core.exe` of the same architecture;
+- `repair/bimeron-repair.exe`, with adjacent architecture-matched `wintun.dll` and `WINTUN-LICENSE.txt`;
 - `wintun.dll` of the same architecture;
 - necessary DLLs and Qt plugins;
 - architecture-matched MSVC redistributable DLLs, copied from the installed Visual Studio toolchain (`VCRUNTIME140_1.dll` is x64-only; the ARM64 redist directory's unused x64 compatibility copy is excluded);
@@ -267,6 +268,7 @@ DEB installs:
 ```text
 /usr/bin/bimeron-desktop
 /usr/bin/bimeron-core
+/usr/libexec/bimeron/repair/bimeron-repair
 /usr/share/applications/bimeron.desktop
 /usr/share/icons/hicolor/64x64/apps/bimeron.png
 /usr/share/doc/bimeron-desktop/THIRD_PARTY_NOTICES.txt
@@ -1511,7 +1513,7 @@ and does not run or replace editor geometry acceptance. Normal CTest continues
 to exercise the full editor/manager fixtures. The fixture anchors the picker to the primary screen. Use fresh `order-screen-*`
 basenames and read `.catalog.json` for measured DPR. Build/package flow is unchanged.
 
-### Repair broker development payload
+### Protected repair broker package payload
 
 The one-session repair implementation adds an independently installed broker path:
 `repair/bimeron-repair.exe` under the Windows MSI installation directory, and
@@ -1524,22 +1526,21 @@ when a separate GUI in `build/` is expected to discover the staged broker.
 Copying the protected files alone does not register their location. The GUI
 revalidates the registered executable and its ancestry before use.
 
-For isolated development staging, set `BIMERON_REPAIR_BROKER` to a reviewed native
-Core build with the repair-session API, and `BIMERON_REPAIR_BROKER_SHA256` to its
-reviewed digest. Configuration rejects missing or mismatched payloads. Select the
-matching architecture explicitly; configuration verifies PE machine or ELF64 machine identifiers and rejects a mismatch.
-The current pinned release does not supply this broker. Leaving the option empty
-retains the existing package payload and does not provide one-click repair support.
-A release must pin reviewed broker bytes for all four targets before claiming that
-support. No package or installed-service validation has been performed for this
-new payload layout. A wholly absent protected installation cannot bootstrap from
-an unsigned writable download: the missing trust root is an explicit failure.
+Release packages ship the same pinned Core executable as the protected repair
+broker. Package scripts explicitly reset its path and computed digest on every
+configure and verify the staged broker against its target executable pin before
+CPack. BIMERON_REQUIRE_CORE requires a broker matching both the supplied digest
+and the target pin. GUI-only builds can omit it. PE/ELF checks remain mandatory.
 
-Existing older MSI/DEB installations have no separate broker. Discovery alone does
-not retrofit them. Missing-adjacent-helper repair is available only after a package
-containing the separate protected broker has been installed. A copied GUI can
-use that installation; a machine with only an older package still lacks the
-required broker trust root. This remains an unmet migration requirement.
+Updating the bundled core version: after updating the archive pins and verifying
+and extracting all four ZIPs, hash each bimeron(.exe) and update the four
+BIMERON_CORE_EXECUTABLE_SHA256 pins together with version, revision and archive
+pins. Executable pins identify extracted bytes, not ZIP bytes. This also applies
+to the upcoming re-frozen Core candidate fixing the online repair-acquisition
+window bug. Archive/version/revision pins are unchanged by this packaging change.
+
+Upgrade from brokerless 0.2.0 installs the broker and protected GUI bootstrap.
+Migration and elevation behavior remain VM acceptance gates.
 
 ### Embedded protected-GUI repair bootstrap
 
@@ -1565,21 +1566,22 @@ The existing release pins are unchanged. Real UAC/polkit acceptance is outstandi
 
 Independent bootstrap negative fixtures: `python tests/RepairPayloadNegativeTest.py`
 executes the production CMake validation block in temporary script mode with inert
-PE/ELF header bytes. Twenty cases cover absent payload, wrong digest, wrong target
+PE/ELF header bytes. Thirty-two cases include required-but-empty brokers, wrong
+target pins, positive acceptance, absent payload, wrong digest, wrong target
 architecture, truncated headers, and bytes changed after the reviewed digest was
 computed, for both supported architectures on both formats. No fixture is executed
 or embedded. This is configure-gate evidence, not native executable validation or
 verification/use race protection. There are no production test switches.
 
-Outstanding audit concerns: Linux bootstrap closes its verified file before
-`execl(path)`, so these tests do not establish rejection of concurrent privileged
-path replacement. Windows `authenticatedChild` closes its temporary child handle
-before returning; retained identity through consent needs separate review and
-native process tests. Alternate-credential UAC attribution, PID reuse, retained
-handle lifetime, and one-dispatch behavior across failure/close/reopen remain
-unproven by this fixture. Real positive embedding awaits fresh reviewed four-target
-Core paths, hashes, revision and dirty qualification; real UAC/polkit acceptance
-remains pending. No package or release validation is implied.
+Bootstrap audit status: Linux uses O_NOFOLLOW, descriptor hashing and fexecve
+in src/RepairBootstrap.cpp. Windows authenticatedChild returns an owned handle
+bound to the socket. Alternate-administrator attribution, prompt counts, retained
+handle lifetime and single dispatch across failures/repeated clicks/close-reopen
+remain VM acceptance gates. Release remains blocked as described in release-0.3.0.md.
+
+repair-payload-test registers the Python gate fixtures alongside msi-inventory-test.
+Broker-enabled builds run repair-resource-test to hash the embedded Qt resource
+against the configured digest; the existing *-test* install exclusion covers it.
 
 ## Optional offline MSI inventory
 
@@ -1606,3 +1608,18 @@ Inventory projections now require exact supported observed table layouts and
 Summary WordCount flags. Unsupported layouts fail closed. WordCount and cabinet
 metadata do not authenticate releases or establish installed/cache state; extracted
 stage sources remain derived artifacts. See the tracked per-hash source ledger.
+
+
+Repair package integration verification (2026-11-14): the cached four Core ZIPs
+verified, 32 production configure-gate cases passed, and Windows x64 plus WSL
+Linux amd64 CTest each passed 10/10, including embedded-resource hashing.
+The complete package-all.ps1 run produced exactly two MSI and two DEB 0.3.0
+packages. Fresh MSI administrative extraction and WSL dpkg-deb extraction verified
+all broker paths, executable pins and PE/ELF target machines, Windows adjacent
+Wintun/license bytes and absence of *-test* files. Both ARM64 targets compiled and
+packaged without runtime execution. Diff review and git diff --check passed.
+Benchmarks/profiling are inapplicable to this packaging change. Qt ARM64 deployment
+warned that dxcompiler.dll and dxil.dll were unavailable; no build failed.
+No elevation, VM acceptance, service installation or host network change was run.
+Release remains blocked on the documented real UAC/polkit gates and the upcoming
+Core candidate re-freeze requires new pins, packages and verification.
