@@ -3961,7 +3961,11 @@ void MainWindow::updateCoreAvailability() {
              ready ? tr("Responding") : tr("Not established")));
     if (repairRefresh_) repairRefresh_->setEnabled(!busy);
     // A native owner snapshot is the authoritative connection presentation.
-    if (!ready && !nativeOwnerBlocked_) {
+    // A pending status refresh blocks controls, but does not invalidate the
+    // connection snapshot already received from an available Core.
+    const bool connectionAvailable = !repairSession_ && helloReady_ && !cleanupBlocked_
+        && !development_->failed() && !development_->busy();
+    if (!connectionAvailable && !nativeOwnerBlocked_) {
         connectionLabel_->setText(startupPreparationPending_ || availabilityVerificationDeadline_
             ? tr("Preparing connection…") : tr("Could not prepare connection"));
         connectionLabel_->setStyleSheet(themedStyle(startupPreparationPending_ || availabilityVerificationDeadline_
