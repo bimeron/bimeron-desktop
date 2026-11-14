@@ -4075,7 +4075,12 @@ void MainWindow::refreshServiceStatus() {
         }
         const QString output = QString::fromUtf8(standardOutput).trimmed();
         const QHash<QString, QString> states{{"1", tr("stopped")}, {"2", tr("starting")}, {"3", tr("stopping")}, {"4", tr("Running")}, {"5", tr("resuming")}, {"6", tr("pausing")}, {"7", tr("paused")}};
-        const QString code = QRegularExpression(QStringLiteral("^Service state: ([1-7])$")).match(output).captured(1);
+        const QHash<QString, QString> stateNames{{"1", "stopped"}, {"2", "start_pending"},
+            {"3", "stop_pending"}, {"4", "running"}, {"5", "continue_pending"},
+            {"6", "pause_pending"}, {"7", "paused"}};
+        const auto match = QRegularExpression(QStringLiteral("^Service state: ([1-7])(?: \\(([a-z_]+)\\))?$")).match(output);
+        QString code = match.captured(1);
+        if (!match.captured(2).isEmpty() && match.captured(2) != stateNames.value(code)) code.clear();
         serviceStateCode_ = code;
         const QString state = states.value(code, tr("unknown"));
         serviceObservation_ = code == "1" ? ServiceObservation::Stopped

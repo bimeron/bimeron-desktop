@@ -2711,7 +2711,7 @@
   "Application components: %1\nSystem service: %2\nConnection to service: %3": "Компоненты приложения: %1\nСистемная служба: %2\nСвязь со службой: %3",
   "Available": "Доступны",
   "Missing": "Отсутствуют",
-  "Not established": "Не установлено",
+  "Not established": "Не определено",
   "Not installed": "Не установлена",
   "Running": "Работает",
   "Stopped": "Остановлена",
