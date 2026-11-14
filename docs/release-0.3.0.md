@@ -193,3 +193,56 @@ remain outstanding and block publication. Previous VM results do not accept this
 | `bimeron-desktop-0.3.0-linux-arm64.deb` | 33700408 | `6569f2180a874e7dd64850abfe77bd5ff3399970231ebc1fb178316c927f3a40` |
 | `bimeron-desktop-0.3.0-windows-amd64.msi` | 49078272 | `5e981ffecbbac323c9b13c101c907592b58dbd0f9f84256ec5ba173d64d88eb8` |
 | `bimeron-desktop-0.3.0-windows-arm64.msi` | 37646336 | `09272394f4b27e8e8893da65d1facde201dc8f536d96ff47ac5c61eacb9c89d3` |
+
+## New-candidate VM acceptance (2026-11-14, partial)
+
+Windows 10 STD: verified final MSI SHA-256
+5e981ffecbbac323c9b13c101c907592b58dbd0f9f84256ec5ba173d64d88eb8
+before installation. Removed the prior local 0.3.0 package, installed the published
+0.2.0 MSI, then upgraded to this 0.3.0 package. All successful MSI operations
+returned 0. The first old-MSI invocation with a forward-slash path returned 1619;
+retrying with the native Windows path succeeded. No dependency or check was bypassed.
+The original service executable hash and connected session survived package changes;
+all three profile files and the profile index retained their exact bytes.
+Installed GUI/Core/broker hashes match the final package payload. No VM checkpoint
+was restored or deleted, and no other Windows VM was used.
+
+Updated the VM service through the installed protected CLI with the reviewed
+executable digest. The service now reports 0.4.0-beta.1, revision 0e08a5c8,
+modified=false and Service state: 4 (running); its executable equals the bundled
+Core/broker pin. The original VM profile validated and connected through CLI.
+This is an administrator CLI update and manual CLI reconnection, not GUI signed-feed,
+UAC consent or automatic GUI reconnection acceptance.
+
+A separate VLESS TLS profile targeting closed loopback port 1 validated, then
+produced IPC reconnect progress 1/3, 2/3 and 3/3 with transport_check_failed.
+It terminated in failed with Attempt=4, ReconnectAttempt=3, ReconnectLimit=3 and
+the same cause. A subsequent start of the unchanged original profile connected
+and omitted both reconnect fields, with empty LastError. The temporary test profile
+was removed; the VM service remains running with the original profile connected.
+The test script used process-only execution-policy bypass after confirming that
+MachinePolicy/UserPolicy were Undefined; no machine policy was changed.
+
+Observation: Stop after terminal failure returns session_stop_failed because
+Engine.Stop returns the completed run's original error. The subsequent Start works;
+this is not evidence that cleanup failed. GUI recovery/quit behavior for this
+case remains unverified. Neither connection interruption after success nor native
+GUI counter/tooltips, transient presentation and service-dialog appearance were
+observed in this run. The existing interactive GUI process survived installation,
+so its in-memory version is not accepted as the new GUI merely from the file hash.
+
+Linux: recovered the previously configured SSH access to the dedicated
+Bimeron Test Ubuntu 22.04 LTS VM and booted it. The copied DEB matched the final
+SHA-256. dpkg unpacked it but could not configure it: libqt6widgets6 and
+libqt6network6 require >=6.4, whereas the VM's stock repositories offer 6.2.4;
+qt6-translations-l10n is also absent. Core/broker version commands reported the
+correct candidate. Removed the incomplete package afterwards; no service was
+installed and no dependency requirements were weakened. The VM remains running.
+A suitable Qt >=6.4 Linux VM is required for GUI/polkit acceptance. The existing
+WSL package build and tests are not a substitute for this VM gate.
+
+Evidence: ignored build/release-0.3.0-reconnect/vm contains MSI logs, upgrade,
+service-update, retry IPC projections and final-state results. No secret/profile
+contents are included in tracked documentation. Real UAC/polkit, alternate-admin,
+repair/bootstrap failure paths, protocol server interoperability, new-GUI visual
+checks and complete Linux install/upgrade acceptance remain release gates.
