@@ -2710,6 +2710,7 @@ struct ConnectionManagementTest {
         int starts = 0, stops = 0, requests = 0;
         qint64 bytes = 100;
         bool holdStart = false, holdStop = false, dropped = false, invalidCursor = false, failStop = false, failStart = false;
+        bool checkStartRefresh = false, checkedStartRefresh = false;
         QPointer<QLocalSocket> stopSocket;
         QJsonObject stopRequest;
         const auto respond = [&](QLocalSocket *socket, const QJsonObject &request, QJsonObject extra = {}) {
@@ -2756,6 +2757,18 @@ struct ConnectionManagementTest {
                     auto session = status.value("Session").toObject();
                     session.insert("active", false);
                     status = {{"State", "disconnected"}, {"Session", session}};
+                } else if (command == "status" && checkStartRefresh) {
+                    checkStartRefresh = false;
+                    require(window.statusNeeded_, "accepted start requires fresh status");
+                    const QString color = window.connectionLabel_->styleSheet();
+                    window.poll();
+                    require(window.connectionLabel_->text() == "Connecting…"
+                            && window.connectionLabel_->styleSheet() == color,
+                            "status refresh must preserve accepted start presentation");
+                    require(!window.connectButton_->isEnabled(), "refresh still blocks controls");
+                    checkedStartRefresh = true;
+                    QTimer::singleShot(150, socket, [&, socket, request] { respond(socket, request); });
+                    return;
                 } else if (command == "events") {
                     extra = {{"cursor", 12}, {"dropped", dropped}};
                     if (invalidCursor) extra.insert("error", "invalid_cursor");
@@ -2798,11 +2811,13 @@ struct ConnectionManagementTest {
         auto session = status.value("Session").toObject();
         session.insert("active", false);
         status = {{"State", "disconnected"}, {"Session", session}};
+        checkStartRefresh = true;
         respond(stopSocket, stopRequest);
         require(waitFor([&] { return starts == 1 && window.operation_.isEmpty() && !window.statusNeeded_ && !window.core_.busy(); }),
                 "successful cleanup must start target exactly once");
         require(window.state_ == "connecting" && window.activeProfileId_ == window.profiles_[1].id,
                 "start acceptance is connecting, not connected");
+        require(checkedStartRefresh, "delayed post-start refresh was exercised");
 
         status.insert("State", "connected");
         request("status");

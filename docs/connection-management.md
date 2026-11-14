@@ -156,3 +156,20 @@ developer and quit exclusion remains in force until the operation actually exits
 Restart requires verified ownership, graceful stop, exit and cleanup before a new
 start; separate emergency recovery authorization cannot be inferred from restart
 consent. See [service actions](service-actions.md) for current CLI capability limits.
+
+## Status refresh presentation
+
+A routine status refresh after an accepted start, or after missed events, must
+preserve the latest authoritative connection text and color while IPC remains
+available. Pending synchronization alone is not a preparation failure. Controls
+remain blocked until synchronization completes. Transport loss, cleanup failures
+and repair/developer transitions retain the existing availability error handling.
+Acceptance: an accepted start followed by a delayed status reply stays Connecting;
+there is one start request, and genuine IPC loss still shows preparation failure.
+
+Validation (2026-11-14): Windows x64 Release GUI-only build and CTest passed
+9/9, including the delayed post-start status fixture and existing IPC-loss and
+cleanup-failure checks. Diff review found no additional issues. Benchmarks and
+profiling are not applicable to this presentation-only change. No release packages
+were prepared; Linux and ARM64 validation and the original Windows 10 upgrade VM
+scenario remain outstanding. Core, package pins and build flow are unchanged.
