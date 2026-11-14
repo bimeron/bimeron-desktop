@@ -53,14 +53,16 @@ Pin it only after it is published with signed update metadata and:
   payload, licenses and Wintun digests.
 
 Candidate status (2026-11-14): Core `v0.4.0-beta.1` from commit
-`272e6027f8e786c385d5b5509cd80dda155eafd2` is built and frozen but not tagged.
+`e1cada7d5bce89fd9ce75c3344f92b1f2a69d47c` is built and frozen but not tagged.
+It supersedes candidate `272e6027`, whose repair broker rejected its own signed
+manifest because it accepted only GUI bounds `[0.2.0, 0.2.1)` (bimeron-core#133).
 Its assets are published unchanged only after VM acceptance of this Desktop
 candidate. The signed manifest (SHA-256
-`a1e3132b7d77cee181d4811f022819d0cdbf305d1f573270449b92d648e59a9d`) has GUI
+`24d3894afcdc247f426032d70d7d64bc79b7c69479eec98cda6771e2d3f517e8`) has GUI
 bounds `[0.3.0, 0.3.1)`, IPC 1, profile format 1 and key `7370a2d8cf890e5e`;
-its four archive hashes match `cmake/core-release.cmake`. The local candidate
+its four archive hashes and four extracted executable hashes match `cmake/core-release.cmake`. The local candidate
 ZIPs populate `.tools/core`, where `scripts/fetch-core.cmake` verifies them
-offline. The Windows amd64 CLI reports revision `272e6027` and lists all explicit
+offline. The Windows amd64 CLI reports revision `e1cada7d` and lists all explicit
 protocols in `explicit_access`.
 
 Desktop 0.2.0 is not inside these bounds and keeps its current Core until the
@@ -80,8 +82,8 @@ and Linux amd64 real polkit VM acceptance passes:
 - Alternate-administrator credentials on Windows.
 
 Any wrong attribution, duplicate mutation or failed rollback blocks release.
-ARM64 remains compile/package-only. The Core online repair-acquisition window bug
-is being fixed in a re-frozen Core candidate; update all pins and packages together.
+ARM64 remains compile/package-only. The pinned Core `e1cada7d` fixes the online repair-acquisition window bug;
+packages must be rebuilt from these pins before VM acceptance.
 
 ## Version
 

@@ -836,8 +836,8 @@ Outstanding acceptance blockers:
 
 - Desktop 0.3.0 packages ship the pinned Core executable as a separate protected
   broker and embedded GUI resource. Migration from brokerless 0.2.0 and bootstrap
-  remain VM acceptance gates. The Core online repair-acquisition window bug is
-  being fixed in a re-frozen candidate. No writable download is elevated.
+  remain VM acceptance gates. The pinned Core `e1cada7d` accepts its own
+  release compatibility window for online repair acquisition. No writable download is elevated.
 - A live legacy developer daemon cannot be adopted from the v1 journal, which
   contains no durable process identity. New durable privileged launch records and
   authenticated live reconciliation remain unfinished. A dead transition can be
