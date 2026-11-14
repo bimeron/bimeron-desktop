@@ -1184,3 +1184,37 @@ native CTest suites passed across the focused runs; developer-mode-test passed
 in 8.51 seconds after correcting both component preconditions. Twenty production
 configure-gate negative fixtures also passed. No concurrent profile-creation code
 or documentation is part of this PR snapshot.
+
+## Service diagnostics probe compatibility (2026-11-14)
+
+Specification and acceptance criteria: the passive `service status` probe accepts
+both the legacy numeric line and the named SCM state line emitted by frozen Core
+`e1cada7d` (`Service state: 4 (running)`). Accept only codes 1 through 7 and their
+matching canonical names; reject unknown codes, mismatched names and extra output.
+Exit failures retain existing failure handling. Probe parsing is independent of
+IPC readiness and the installed service version. Unknown observations must not be
+translated as a missing installation. Regression fixtures must exercise the real
+subprocess completion path without accessing an installed service or the network.
+This is a Desktop-only correction; Core pins and packaging remain unchanged.
+
+Root cause: Desktop required the complete stdout to be the legacy numeric-only
+line. Windows Core e1cada7d uses QueryServiceStatus and formatServiceState, which
+adds the canonical name. This does not query the daemon's IPC or depend on its
+version, so both an upgraded old service and a clean 0.4.0 service are affected.
+Linux in that revision still prints the numeric-only line. IPC readiness is a
+separate observation and can correctly remain ready when the probe is malformed.
+The Russian translation of `Not established` now says `Не определено`, reserving
+`Не установлена` for confirmed absence. Current and last-failed probe details
+remain separate retained evidence.
+
+Validation: Windows x64 Release GUI-only configure/build succeeded with Python
+checks required and Qt deployment disabled. CI-equivalent CTest with the documented
+Qt environment and 60-second timeout passed 9/9 (31.92 seconds), including named
+states 1-7, legacy states, invalid named responses and rendered running findings.
+No broker resource test is registered in this GUI-only configuration. Diff review
+and git diff --check passed; no additional security/regression findings remain.
+Benchmarks/profiling are not applicable to this passive parser correction.
+This is not release validation: no packages or four-target release matrix were
+built; ARM64 and Linux checks remain outstanding because shared source changed.
+Repeat upgraded and clean-install Windows VM acceptance with the corrected GUI.
+No installed service or host network was changed.

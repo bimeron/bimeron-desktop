@@ -2200,6 +2200,25 @@ struct ConnectionManagementTest {
                     && window.log_->toPlainText().contains("secret-probe-fixture"), "actual probe diagnostics retained in details, report and Journal");
                 if (mode == "valid") require(report.value("failedProbe").toObject().value("category").toString() == "malformed-response", "failed probe retained after successful refresh");
             }
+            for (int code = 1; code <= 7; ++code) {
+                window.probeTestMode_ = QString("named-%1").arg(code);
+                window.refreshServiceStatus();
+                require(waitFor([&] { return !window.serviceStatusProcess_; }), "named SCM fixture completes");
+                require(window.serviceStateCode_ == QString::number(code) && window.probeCategory_ == "observed",
+                    "frozen Core named state accepted");
+                require(window.serviceObservation_ == (code == 1 ? MainWindow::ServiceObservation::Stopped
+                    : code == 4 ? MainWindow::ServiceObservation::Running : code == 7 ? MainWindow::ServiceObservation::Paused
+                    : MainWindow::ServiceObservation::Transitional), "named state observation");
+                if (code == 4) require(window.repairFindings_->text().contains("System service: Running"),
+                    "named running state rendered in service diagnostics");
+            }
+            for (const QString mode : {QString("mismatched"), QString("extra"), QString("unknown-state")}) {
+                window.probeTestMode_ = mode;
+                window.refreshServiceStatus();
+                require(waitFor([&] { return !window.serviceStatusProcess_; }), "invalid named SCM fixture completes");
+                require(window.probeCategory_ == "malformed-response" && window.serviceStateCode_.isEmpty(),
+                    "invalid named states rejected");
+            }
             for (const QString mode : {QString("starting"), QString("stopping")}) {
                 window.probeTestMode_ = mode;
                 window.refreshServiceStatus();
