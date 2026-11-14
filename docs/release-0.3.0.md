@@ -119,3 +119,28 @@ higher ProductVersion; the DEB version is higher than `0.2.0`.
 No performance-sensitive product change is planned, so new benchmarks/profiling
 are inapplicable unless an actual regression requires investigation. No build,
 package or runtime result is claimed by this acceptance document.
+
+## Local candidate evidence (2026-11-14)
+
+Source: `release/0.3.0` at `d12265c`, Core candidate `e1cada7d`.
+`scripts/package-all.ps1` produced exactly four packages:
+
+| Package | Size | SHA-256 |
+|---|---|---|
+| `bimeron-desktop-0.3.0-windows-amd64.msi` | 60010496 | `dafe3a18f1ffbf717367a69bcaec810b99529f5bc045cb187e5e3a844cb5befd` |
+| `bimeron-desktop-0.3.0-windows-arm64.msi` | 37642240 | `4f247e067f602f2103029a38832b85fccbb542479a54276e98539986a7fef69e` |
+| `bimeron-desktop-0.3.0-linux-amd64.deb` | 36370586 | `01e0df2269e5b9703beddeb871ad3e03c8e91978a085f186ac9274cea881b447` |
+| `bimeron-desktop-0.3.0-linux-arm64.deb` | 33692704 | `258c2c54602f7da6ae62b68cd0092582f87b8818725ebb5c533a4877cf90b853` |
+
+- Windows x64 and Linux amd64 (WSL) CTest: 10/10 each, including
+  `repair-resource-test` and `repair-payload-test` (32 configure-gate cases).
+- MSI administrative extraction and `dpkg-deb -x`: bundled Core and repair
+  broker equal the executable pins for every target; Windows brokers have the
+  architecture-matched `wintun.dll`; DEB brokers are mode 755 ELF of the target
+  architecture; DEB metadata reports 0.3.0 and the target architecture; no
+  `*-test*` files in any package.
+- ARM64 is compile/package-only. VM acceptance has not been run.
+
+An earlier package set from `469be43` was rejected: its GUI embedded the
+superseded `272e6027` broker because Core archives use a fixed file time and
+the resource was not regenerated. `d12265c` embeds digest-named copies.
