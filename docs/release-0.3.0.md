@@ -67,6 +67,15 @@ Desktop 0.2.0 is not inside these bounds and keeps its current Core until the
 user installs Desktop 0.3.0. Test keys and local-update builds are not release
 inputs. Core publication is not authorized by this document.
 
+## Repair broker
+
+Packages do not include the separate protected repair broker
+(`BIMERON_REPAIR_BROKER` stays empty), as in 0.2.0. One-click recovery covers
+what the installed package payload allows and reports unrecoverable cases
+explicitly; release notes do not promise broker-based repair. Packaging the
+broker needs security review and UAC/polkit VM acceptance and is deferred to a
+later release (see the follow-up issue linked from #46).
+
 ## Version
 
 Set the project version to `0.3.0`. The MSI keeps the existing UpgradeCode with a
