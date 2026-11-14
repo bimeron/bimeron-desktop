@@ -173,3 +173,6 @@ cleanup-failure checks. Diff review found no additional issues. Benchmarks and
 profiling are not applicable to this presentation-only change. No release packages
 were prepared; Linux and ARM64 validation and the original Windows 10 upgrade VM
 scenario remain outstanding. Core, package pins and build flow are unchanged.
+
+Bounded reconnect progress and last-error tooltips are specified in
+[Reconnect recovery](reconnect-attempts.md); this is a Desktop 0.3.0 release gate.

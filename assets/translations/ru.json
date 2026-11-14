@@ -1,4 +1,6 @@
 {
+  "Reconnecting… (%1/%2)": "Переподключение… (%1/%2)",
+  "Connection interrupted. Error details are unavailable.": "Соединение прервано. Подробности ошибки недоступны.",
   "Native IKEv2 requires an approved Core/Desktop artifact pair and fresh admission.": "Для Native IKEv2 необходимы одобренная пара артефактов Core/Desktop и новый допуск.",
   "Preparing Windows profile review...": "Подготовка проверки профиля Windows...",
   "Windows profile plan is ready for review.": "План профиля Windows готов к проверке.",

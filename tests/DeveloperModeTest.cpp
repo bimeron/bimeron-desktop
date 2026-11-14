@@ -566,6 +566,7 @@ int main(int argc, char **argv) {
     ConnectionManagementTest::geoDataRoutingNotice();
     ConnectionManagementTest::sharedGeoDataPreparation();
     ConnectionManagementTest::settingsGeoDataChecking();
+    ConnectionManagementTest::reconnectProgress();
     DevelopmentCore backend(temporary.filePath("missing-helper"));
     bool completed = false;
     QObject::connect(&backend, &DevelopmentCore::completed, &backend, [&](bool success) {

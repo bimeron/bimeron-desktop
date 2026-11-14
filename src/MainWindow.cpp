@@ -2107,6 +2107,7 @@ void MainWindow::resetMeasurements() {
 }
 
 void MainWindow::invalidateConnection(bool preserveServiceProbe) {
+    connectionLabel_->setToolTip({});
     clearSSHAuthentication();
     sshSeen_.clear();
     sshAuthSupported_ = true;
@@ -2659,6 +2660,17 @@ void MainWindow::handleStatus(const QJsonObject &status) {
     if ((state_ != "connecting" && state_ != "reconnecting") || nativeSession_) clearSSHAuthentication();
     const QHash<QString, QString> labels{{"disconnected", tr("Disconnected")}, {"connecting", tr("Connecting…")}, {"connected", tr("Connected")}, {"reconnecting", tr("Reconnecting…")}, {"stopping", tr("Disconnecting…")}, {"failed", tr("Connection failed")}};
     QString connectionText = labels.value(state_, tr("Unknown state"));
+    if (state_ == "reconnecting") {
+        const double attempt = status.value("ReconnectAttempt").toDouble();
+        const double limit = status.value("ReconnectLimit").toDouble();
+        if (status.value("ReconnectAttempt").isDouble() && status.value("ReconnectLimit").isDouble()
+            && attempt >= 1 && attempt <= limit && limit <= 2147483647
+            && attempt == static_cast<int>(attempt) && limit == static_cast<int>(limit))
+            connectionText = tr("Reconnecting… (%1/%2)").arg(static_cast<int>(attempt)).arg(static_cast<int>(limit));
+    }
+    connectionLabel_->setToolTip((state_ == "reconnecting" || state_ == "failed")
+        ? coreConnectionProblemText(errorCatalog(), status.value("LastError").toString()) : QString());
+
     if (state_ != "connected" || nativeSession_) resetMeasurements();
     if (state_ == "connected") {
         const auto displayEndpoint = [](QString endpoint) {

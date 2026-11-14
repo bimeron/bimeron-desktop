@@ -39,6 +39,51 @@
 // Uses only temporary profiles/settings, a private pipe/socket and this test's
 // validate subcommand. Never reaches a system endpoint or privileged helper.
 struct ConnectionManagementTest {
+    static void reconnectProgress() {
+        const QVariant previousLanguage = QSettings().value("app/language");
+        const QVariant previousNotifications = QSettings().value("app/notifications");
+        MainWindow window;
+        window.core_.cancel();
+        window.validationExecutable_ = "missing-core";
+        window.helloReady_ = true;
+        window.statusNeeded_ = false;
+        window.startupPreparationPending_ = false;
+        window.cleanupBlocked_ = false;
+        window.repairSession_ = false;
+        window.development_->failed_ = false;
+        window.development_->busy_ = false;
+        QSettings().setValue("app/notifications", false);
+        JsonTranslator translator;
+        require(translator.load(QFileInfo(QString::fromUtf8(__FILE__)).dir().filePath("../assets/translations/ru.json")), "load reconnect translator");
+        const auto catalog = CoreErrorCatalog::fromJson(R"({"version":1,"codes":{"unclassified":{"en":"Unknown","ru":"Неизвестная ошибка"},"transport_check_failed":{"en":"Server connectivity check failed.","ru":"Сервер не прошёл проверку подключения."}}})");
+        for (const QString language : {QStringLiteral("en"), QStringLiteral("ru")}) {
+            QSettings().setValue("app/language", language);
+            if (language == "ru") QCoreApplication::installTranslator(&translator);
+            for (int attempt = 1; attempt <= 3; ++attempt) {
+                window.handleStatus({{"State", "reconnecting"}, {"ReconnectAttempt", attempt}, {"ReconnectLimit", 3}, {"LastError", "transport_check_failed"}});
+                require(window.connectionLabel_->text() == (language == "ru" ? QString("Переподключение… (%1/3)") : QString("Reconnecting… (%1/3)")).arg(attempt), "localized reconnect progress");
+                require(window.connectionLabel_->toolTip().startsWith("transport_check_failed\n"), "status tooltip retains code");
+            }
+            require(coreConnectionProblemText(catalog, "transport_check_failed") == "transport_check_failed\n" + (language == "ru" ? QString("Сервер не прошёл проверку подключения.") : QString("Server connectivity check failed.")), "localized problem and code");
+            for (const QJsonObject invalid : {QJsonObject{}, QJsonObject{{"ReconnectAttempt", 0}, {"ReconnectLimit", 3}}, QJsonObject{{"ReconnectAttempt", 4}, {"ReconnectLimit", 3}}, QJsonObject{{"ReconnectAttempt", 1.5}, {"ReconnectLimit", 3}}, QJsonObject{{"ReconnectAttempt", "1"}, {"ReconnectLimit", 3}}}) {
+                auto status = invalid; status["State"] = "reconnecting";
+                window.handleStatus(status);
+                require(window.connectionLabel_->text() == MainWindow::tr("Reconnecting…"), "legacy/invalid progress");
+                require(window.connectionLabel_->toolTip().isEmpty(), "missing problem clears tooltip");
+            }
+            window.handleStatus({{"State", "failed"}, {"LastError", "transport_check_failed"}});
+            require(window.connectionLabel_->toolTip().startsWith("transport_check_failed\n"), "failed cause");
+            window.handleStatus({{"State", "connected"}});
+            require(window.connectionLabel_->toolTip().isEmpty(), "success clears tooltip");
+            require(!coreConnectionProblemText(catalog, "vless://secret <b>bad</b>").contains("secret"), "legacy errors stay private");
+            if (language == "ru") QCoreApplication::removeTranslator(&translator);
+        }
+        if (previousLanguage.isValid()) QSettings().setValue("app/language", previousLanguage);
+        else QSettings().remove("app/language");
+        if (previousNotifications.isValid()) QSettings().setValue("app/notifications", previousNotifications);
+        else QSettings().remove("app/notifications");
+    }
+
     // Routing tab: a rule whose database is unavailable keeps Enabled and Type editable,
     // disables Target, explains the block, and does not prevent saving. Needs a real Core
     // for the profile document bridge.

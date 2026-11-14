@@ -144,3 +144,10 @@ Source: `release/0.3.0` at `81abc6c` (translation update after `d12265c`), Core 
 An earlier package set from `469be43` was rejected: its GUI embedded the
 superseded `272e6027` broker because Core archives use a fixed file time and
 the resource was not regenerated. `d12265c` embeds digest-named copies.
+
+## Reconnect recovery release blocker
+
+Desktop #48 and Core #136 require [bounded reconnect recovery](reconnect-attempts.md).
+The frozen e1cada7d candidate does not satisfy this gate. Core must merge the
+fix with green CI, then the release thread freezes a new candidate from master.
+Pins, all four packages and VM acceptance must be renewed separately.
