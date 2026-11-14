@@ -758,7 +758,11 @@ static void formRowVisibility() {
             require(fields[i]->parentWidget() == &page && labels[i]->parentWidget() == &page);
         }
         for (int r = 0; r < form->rowCount(); ++r) {
+#if QT_VERSION >= QT_VERSION_CHECK(6, 4, 0)
             require(form->isRowVisible(r) == visible[r]);
+#endif
+            if (auto *label = form->itemAt(r, QFormLayout::LabelRole))
+                require(label->widget() && label->widget()->isVisible() == visible[r]);
             QLayoutItem *item = form->itemAt(r, r == 0 || r == 9 ? QFormLayout::SpanningRole : QFormLayout::FieldRole);
             require(item && item->widget() && item->widget()->isVisible() == visible[r]);
         }

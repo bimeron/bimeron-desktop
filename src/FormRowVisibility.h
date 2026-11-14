@@ -20,8 +20,18 @@ inline void setFormRowVisible(QFormLayout *form, int row, bool visible)
 {
     if (!form || row < 0 || row >= form->rowCount())
         return;
+#if QT_VERSION < QT_VERSION_CHECK(6, 4, 0)
+    // Qt 6.2 has no row-visibility API. All callers use widget rows, so
+    // hiding both items lets QFormLayout omit the row from its geometry.
+    for (auto role : {QFormLayout::LabelRole, QFormLayout::FieldRole, QFormLayout::SpanningRole}) {
+        if (auto *item = form->itemAt(row, role)) {
+            if (auto *widget = item->widget()) widget->setVisible(visible);
+        }
+    }
+#else
     form->setRowVisible(row, visible);
-#if QT_VERSION < QT_VERSION_CHECK(6, 4, 3)
+#endif
+#if QT_VERSION >= QT_VERSION_CHECK(6, 4, 0) && QT_VERSION < QT_VERSION_CHECK(6, 4, 3)
     if (visible)
         return;
     const bool spanning = form->itemAt(row, QFormLayout::SpanningRole) != nullptr;
@@ -50,7 +60,11 @@ inline void setFormRowVisible(QFormLayout *form, QWidget *widget, bool visible)
     QFormLayout::ItemRole role;
     form->getWidgetPosition(widget, &row, &role);
     if (row < 0) {
+#if QT_VERSION >= QT_VERSION_CHECK(6, 4, 0)
         form->setRowVisible(widget, visible); // Preserve Qt's invalid-widget warning.
+#else
+        qWarning("setFormRowVisible: widget is not in this form");
+#endif
         return;
     }
     setFormRowVisible(form, row, visible);

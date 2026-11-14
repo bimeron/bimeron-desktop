@@ -21,7 +21,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - runner: ubuntu-24.04
+          - runner: ubuntu-22.04
             arch: amd64
           - runner: ubuntu-24.04-arm
             arch: arm64
@@ -32,7 +32,7 @@ jobs:
       - name: Install Qt and build tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake ninja-build g++ qt6-base-dev qt6-base-dev-tools
+          sudo apt-get install -y cmake ninja-build g++ qt6-base-dev qt6-base-dev-tools libgl1-mesa-dev qt6-qpa-plugins qt6-translations-l10n
       - name: Configure
         run: cmake -S . -B build/ci -G Ninja -DCMAKE_BUILD_TYPE=Release -DBIMERON_REQUIRE_PYTHON_TESTS=ON
       - name: Build

@@ -7,7 +7,7 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
 
-find_package(Qt6 6.4 REQUIRED COMPONENTS Widgets Network)
+find_package(Qt6 6.2 REQUIRED COMPONENTS Widgets Network)
 set(BIMERON_CORE_UPDATE_PUBLIC_KEY "bk6SfABmDG88uhUupYT+ia6dtSrpHbnGaBCfYvihJF0=" CACHE STRING "Base64 Ed25519 public key for signed core updates")
 add_library(core-update STATIC
     src/CoreUpdate.cpp src/CoreUpdate.h
@@ -538,7 +538,8 @@ else()
     set(CPACK_DEBIAN_PACKAGE_NAME "bimeron-desktop")
     set(CPACK_DEBIAN_PACKAGE_ARCHITECTURE "${BIMERON_PACKAGE_ARCH}")
     set(CPACK_DEBIAN_PACKAGE_DEPENDS
-        "libqt6widgets6 (>= 6.4), libqt6network6 (>= 6.4), qt6-translations-l10n, iproute2, nftables, pkexec, systemd")
+        "libqt6widgets6 (>= 6.2), libqt6network6 (>= 6.2), qt6-qpa-plugins, qt6-translations-l10n, iproute2, nftables, pkexec, systemd")
+    set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
     set(CPACK_DEBIAN_PACKAGE_SECTION "net")
 endif()
 

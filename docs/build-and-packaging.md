@@ -101,7 +101,7 @@ Current presets are designed for:
 
 - Windows 10/11;
 - PowerShell 7 or Windows PowerShell with support for the script used;
-- CMake 3.21 or later;
+- CMake 3.25 or later for the schema-6 presets (manual configuration requires 3.21);
 - Visual Studio Build Tools 2026 with C++ toolchain installed in `C:/Program Files (x86)/Microsoft Visual Studio/18/BuildTools`;
 - Qt 6.8.3:
   - x64: `C:/Qt/6.8.3/msvc2022_64`;
@@ -116,12 +116,12 @@ If Visual Studio/Qt versions or paths change, you must first update and check `C
 
 ### Linux/WSL
 
-The Linux presets are designed for an amd64 Debian/Ubuntu host. They build amd64 natively and cross-compile arm64. For this host you need at least:
+Linux release DEBs use Ubuntu 22.04 with system Qt 6.2 and GCC 11 as the runtime ABI baseline. The Linux presets are designed for an amd64 build host at that baseline. They build amd64 natively and cross-compile arm64. For this host you need at least:
 
 ```bash
 sudo apt update
 sudo apt install cmake ninja-build g++ qt6-base-dev qt6-base-dev-tools \
-  qt6-translations-l10n dpkg-dev fakeroot
+  qt6-translations-l10n qt6-qpa-plugins libgl1-mesa-dev dpkg-dev fakeroot
 ```
 
 For ARM64 cross-compilation you additionally need:
@@ -212,6 +212,7 @@ To manually launch `cpack`, WiX 3 must be available in `PATH`. Run `package-all.
 cmake --preset linux-amd64-release -DBIMERON_REQUIRE_CORE=ON
 cmake --build --preset linux-amd64-release
 cmake --install build/linux-amd64
+cmake -DBIMERON_LINUX_EXECUTABLE="$PWD/build/linux-amd64/bimeron-desktop" -P scripts/verify-linux-abi.cmake
 cpack --preset linux-amd64-release
 ```
 
@@ -221,6 +222,7 @@ cpack --preset linux-amd64-release
 cmake --preset linux-arm64-release -DBIMERON_REQUIRE_CORE=ON
 cmake --build --preset linux-arm64-release
 cmake --install build/linux-arm64
+cmake -DBIMERON_LINUX_EXECUTABLE="$PWD/build/linux-arm64/bimeron-desktop" -P scripts/verify-linux-abi.cmake
 cpack --preset linux-arm64-release
 ```
 
@@ -290,8 +292,8 @@ In Settings, `Start Bimeron with Linux` enables application launch at user login
 Qt does not nest in DEB. The package declares system dependencies:
 
 ```text
-libqt6widgets6 (>= 6.4)
-libqt6network6 (>= 6.4)
+libqt6widgets6 (>= 6.2)
+libqt6network6 (>= 6.2)
 qt6-translations-l10n
 iproute2
 nftables
@@ -1634,3 +1636,36 @@ inventory review. See release-0.3.0.md for final hashes and evidence. ARM64 rema
 compile/package-only; the existing missing DX compiler DLL warning remains.
 VM acceptance of this new Desktop/Core pair and final publication approval remain
 outstanding. No performance-sensitive path or packaging flow was changed.
+
+## Ubuntu 22.04 Linux release baseline
+
+See [Linux compatibility](linux-compatibility.md) for specification and acceptance.
+Build release DEBs on Ubuntu 22.04 with stock Qt 6.2.4, glibc 2.35 and GCC 11;
+newer build hosts can silently introduce newer runtime symbol requirements.
+The configure/build/package presets use schema 6 and require CMake >=3.25
+(the project itself can configure without presets with CMake >=3.21). Ubuntu
+22.04's CMake 3.22 can build manually; install a newer CMake in an isolated build
+tool environment when using the preset scripts. It is not a runtime dependency.
+The baseline build dependencies additionally include libgl1-mesa-dev. ARM64
+cross-builds need the matching arm64 Qt/OpenGL development packages and GCC 11
+cross-compiler, with amd64 host tools retained. On Ubuntu amd64, restrict archive
+and security repository entries to arch=amd64 before adding arm64; arm64 Jammy
+entries use ports.ubuntu.com/ubuntu-ports with main/universe and updates/security.
+
+scripts/package-linux.sh checks the GUI's ELF symbol requirements before staging:
+GLIBC <=2.35, GLIBCXX <=3.4.29, CXXABI <=1.3.13 and versioned Qt <=6.2.
+A failed gate requires rebuilding on the baseline, not weakening dependencies.
+CPack also runs dpkg-shlibdeps so actual runtime library requirements are declared,
+including libc/libstdc++/Qt libraries. The DEB explicitly requires qt6-qpa-plugins
+and qt6-translations-l10n. Qt is still supplied by ordinary distribution packages.
+
+The full Windows/WSL script requires a baseline WSL build environment for its Linux
+phase. On this host the existing WSL is Ubuntu 24.04: build the two MSIs with
+scripts/package-all.ps1 -WindowsOnly, build both DEBs on the Ubuntu 22.04 VM using
+scripts/package-linux.sh, then copy only the final DEBs into dist. Build Windows
+first because its script clears existing distributables. Keep native Linux build
+state/stage on that build host and use its own verified Core/GeoData caches; copy
+only final packages and test evidence back. Recheck all four hashes and metadata.
+Ubuntu 24.04 remains a newer-library CI target; amd64 CI now checks stock 22.04.
+This does not claim Ubuntu 18.04/20.04, arbitrary derivatives or ARM64 runtime
+acceptance. Native install/GUI/polkit and upgrade tests remain release gates.
