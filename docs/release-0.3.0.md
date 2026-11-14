@@ -122,15 +122,15 @@ package or runtime result is claimed by this acceptance document.
 
 ## Local candidate evidence (2026-11-14)
 
-Source: `release/0.3.0` at `d12265c`, Core candidate `e1cada7d`.
+Source: `release/0.3.0` at `81abc6c` (translation update after `d12265c`), Core candidate `e1cada7d`.
 `scripts/package-all.ps1` produced exactly four packages:
 
 | Package | Size | SHA-256 |
 |---|---|---|
-| `bimeron-desktop-0.3.0-windows-amd64.msi` | 60010496 | `dafe3a18f1ffbf717367a69bcaec810b99529f5bc045cb187e5e3a844cb5befd` |
-| `bimeron-desktop-0.3.0-windows-arm64.msi` | 37642240 | `4f247e067f602f2103029a38832b85fccbb542479a54276e98539986a7fef69e` |
-| `bimeron-desktop-0.3.0-linux-amd64.deb` | 36370586 | `01e0df2269e5b9703beddeb871ad3e03c8e91978a085f186ac9274cea881b447` |
-| `bimeron-desktop-0.3.0-linux-arm64.deb` | 33692704 | `258c2c54602f7da6ae62b68cd0092582f87b8818725ebb5c533a4877cf90b853` |
+| `bimeron-desktop-0.3.0-windows-amd64.msi` | 60010496 | `21eacb49c9223b72fd52bed1ec53dfce23d0b27682a998205186ad14e2cad988` |
+| `bimeron-desktop-0.3.0-windows-arm64.msi` | 37642240 | `f09e3b13e816d706a82eeb61d7417c9579fce8a87514f0820f3249644f84a248` |
+| `bimeron-desktop-0.3.0-linux-amd64.deb` | 36370590 | `058228b8bfe190eb9f0289f15ffc4d0e16ec355d77a70bf5eff0cca845029bb2` |
+| `bimeron-desktop-0.3.0-linux-arm64.deb` | 33692644 | `375a8a36a8923952b80c6963e31f22a281e3dc191318df42c60a62f440881275` |
 
 - Windows x64 and Linux amd64 (WSL) CTest: 10/10 each, including
   `repair-resource-test` and `repair-payload-test` (32 configure-gate cases).
