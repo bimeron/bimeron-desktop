@@ -23,6 +23,8 @@
 #include "ProfileEditorDialog.h"
 #include "GeoDataSelection.h"
 #include "WindowsTheme.h"
+#include "WindowPlacement.h"
+#include <cstdlib>
 #include <QLayout>
 #include <QTabWidget>
 #include <QToolButton>
@@ -1702,6 +1704,57 @@ struct ConnectionManagementTest {
         QCoreApplication::processEvents();
         require(window.grab().save(destination), "connection preview image");
         return 0;
+    }
+
+    // Acceptance: the service dialog keeps its whole frame, including the
+    // title bar, inside the available screen area after it is shown or resized.
+    static void serviceDialogPlacement() {
+        using WindowPlacement::fittedFramePosition;
+        const QRect desk(0, 0, 1280, 800);
+        const QRect parent(280, 100, 720, 600);
+        require(fittedFramePosition(QRect(410, 300, 460, 150), desk, parent) == QPoint(410, 300),
+                "a frame inside the screen keeps its position");
+        require(fittedFramePosition(QRect(410, -30, 460, 150), desk, parent) == QPoint(409, 324),
+                "a frame above the screen is centered over the parent");
+        require(fittedFramePosition(QRect(410, -30, 460, 150), desk, {}) == QPoint(410, 0),
+                "without a parent the frame is moved down to the top edge");
+        require(fittedFramePosition(QRect(410, 0, 460, 1000), desk, parent).y() == 0,
+                "a frame taller than the screen keeps its title bar at the top edge");
+        require(fittedFramePosition(QRect(1100, 300, 460, 150), desk.translated(-1280, 0), {}) == QPoint(-460, 300),
+                "frames are clamped on screens with negative coordinates");
+
+        MainWindow window;
+        window.core_.cancel();
+        window.developerMode_ = true;
+        window.core_.setEndpoint("bimeron-placement-" + QUuid::createUuid().toString());
+        for (auto *timer : window.findChildren<QTimer *>()) timer->stop();
+        window.resize(720, 600);
+        const QRect available = window.screen()->availableGeometry();
+        window.move(available.center() - QPoint(360, 300));
+        window.show();
+        auto *dialog = window.coreManagement_;
+        const auto settled = [&] {
+            return waitFor([&] {
+                return dialog->isVisible() && available.contains(dialog->frameGeometry());
+            }, 3000);
+        };
+        window.openCoreManagement();
+        require(settled(), "service dialog opens inside the screen");
+        dialog->move(dialog->frameGeometry().x(), available.top() - 200);
+        window.helloReady_ = true;
+        window.statusNeeded_ = false;
+        window.serviceObservation_ = MainWindow::ServiceObservation::Running;
+        window.state_ = "disconnected";
+        window.updateCoreAvailability();
+        require(settled(), "a resized service dialog returns its title bar to the screen");
+        dialog->reject();
+        dialog->move(dialog->frameGeometry().x(), available.top() - 200);
+        window.openCoreManagement();
+        require(settled(), "a reopened service dialog is inside the screen");
+        const QPoint center = dialog->frameGeometry().center();
+        require(std::abs(center.x() - window.frameGeometry().center().x()) <= 1,
+                "a corrected dialog is centered over the main window");
+        dialog->reject();
     }
 
     static int quitFixture(QApplication &app, bool stop) {
