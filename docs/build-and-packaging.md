@@ -1559,6 +1559,24 @@ Windows retains the child and authenticates ancestry, creation time, protected
 image and embedded digest before sending consent. Cache directories currently
 remain across upgrades; no garbage collection is claimed.
 
+The same elevated bootstrap also restores missing package-owned broker files:
+Windows derives `repair/` from its own protected GUI directory; Linux requires
+`/usr/bin` and derives `/usr/libexec/bimeron/repair`. Windows restores missing
+adjacent Wintun DLL/license from the embedded resources. Present identical files
+are untouched. Differing files, unsafe ancestry, reparse points and symlinks are
+refused with a diagnostic, without overwriting package-owned bytes or requesting
+another elevation. Cache and package provisioning share verified temporary-file
+hashing and atomic no-replace rename; Linux reads with O_NOFOLLOW and hashes the
+opened descriptor. Unsupported Linux GUI layouts refuse package provisioning.
+`core-update-test` exercises this primitive with temporary inert bytes and injected
+path policies; it never writes protected package paths or elevates.
+
+Profile imports strip one UTF-8 BOM before validation/storage, retain the original
+64 KiB input bound and reject invalid UTF-8. `profile-vless-test` checks storage,
+BOM/invalid/duplicate-BOM inputs and bounds; `developer-mode-test` exercises the
+actual MainWindow importer. File paths from selection, paste and file URLs use
+that importer; there is no separate drag/drop file-import implementation.
+
 This requires a protected updated GUI built with the reviewed payload. Old GUIs
 and wholly writable portable installations cannot supply that entry point.
 The existing Ed25519 update public key is available; Authenticode publisher

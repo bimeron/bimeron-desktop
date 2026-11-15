@@ -2,12 +2,14 @@
 #include "CoreUpdater.h"
 #include "TrustedCore.h"
 #include "RepairBootstrap.h"
+#include "RepairBootstrap_p.h"
 #include "monocypher-ed25519.h"
 #include "miniz.h"
 
 #include <QCoreApplication>
 #include <QCryptographicHash>
 #include <QDir>
+#include <QDateTime>
 #include <QFileInfo>
 #include <QFile>
 #include <QJsonArray>
@@ -36,6 +38,76 @@ int main(int argc, char **argv) {
     require(!RepairBootstrap::authenticatedChild(0, 0), "bootstrap rejects absent parent/process identity");
     require(!TrustedCore::protectedDirectory("relative/path"), "bootstrap rejects relative output directory");
     require(!TrustedCore::protectedDirectory(QCoreApplication::applicationFilePath()), "bootstrap rejects regular file as directory");
+    {
+        QTemporaryDir fixture;
+        require(fixture.isValid(), "bootstrap fixture directory");
+        const QString target = fixture.filePath("repair/bimeron-repair");
+        const auto directoryPolicy = [&](const QString &path) {
+            return path.startsWith(fixture.path()) && QFileInfo(path).isDir() && !QFileInfo(path).isSymLink();
+        };
+        const auto filePolicy = [&](const QString &path) {
+            return directoryPolicy(QFileInfo(path).absolutePath()) && QFileInfo(path).isFile() && !QFileInfo(path).isSymLink();
+        };
+        QString error;
+        const auto provision = [&](const QByteArray &bytes) {
+            return RepairBootstrap::detail::provision(target, bytes, directoryPolicy, filePolicy, &error);
+        };
+        require(provision("embedded fixture"), "missing package broker restored");
+        const auto modified = QFileInfo(target).lastModified();
+        require(provision("embedded fixture") && QFileInfo(target).lastModified() == modified,
+            "identical package broker untouched");
+        require(!provision("different") && error.contains(target), "differing package broker reported");
+        QFile actual(target);
+        require(actual.open(QIODevice::ReadOnly) && actual.readAll() == "embedded fixture", "package bytes retained");
+        actual.close();
+        require(!RepairBootstrap::detail::provision(fixture.filePath("unsafe/broker"), "fixture",
+            [](const QString &) { return false; }, filePolicy, &error), "unsafe parent refused");
+        require(!QFileInfo::exists(fixture.filePath("unsafe")), "unsafe parent not created");
+        const QString raced = fixture.filePath("repair/raced");
+        const auto racingPolicy = [&](const QString &path) {
+            if (QFileInfo(path).fileName().startsWith(".repair-")) {
+                QFile competitor(raced);
+                require(competitor.open(QIODevice::WriteOnly) && competitor.write("package-owned") == 13,
+                    "create concurrent package file");
+            }
+            return filePolicy(path);
+        };
+        require(!RepairBootstrap::detail::provision(raced, "embedded fixture", directoryPolicy, racingPolicy, &error),
+            "atomic publication refuses concurrent differing file");
+        QFile concurrent(raced);
+        require(concurrent.open(QIODevice::ReadOnly) && concurrent.readAll() == "package-owned",
+            "concurrent package file never overwritten");
+        require(QDir(fixture.filePath("repair")).entryList({".repair-*"}, QDir::Files | QDir::Hidden).isEmpty(),
+            "failed publication removes temporary file");
+        for (const QString &name : {QString("wintun.dll"), QString("WINTUN-LICENSE.txt")}) {
+            const QString adjacent = fixture.filePath("repair/" + name);
+            require(RepairBootstrap::detail::provision(adjacent, "runtime fixture", directoryPolicy, filePolicy, &error),
+                "missing adjacent runtime file restored");
+            require(RepairBootstrap::detail::provision(adjacent, "runtime fixture", directoryPolicy, filePolicy, &error),
+                "identical adjacent runtime retained");
+            require(!RepairBootstrap::detail::provision(adjacent, "different runtime", directoryPolicy, filePolicy, &error),
+                "different adjacent runtime refused");
+        }
+
+        require(!RepairBootstrap::detail::provision(target, "embedded fixture", directoryPolicy,
+            [](const QString &) { return false; }, &error), "unsafe existing leaf refused");
+#ifndef Q_OS_WIN
+        require(QFile::remove(target) && QFile::link("missing-destination", target), "dangling symlink fixture");
+        require(!provision("embedded fixture"), "dangling symlink refused");
+        const QString redirected = fixture.filePath("redirected");
+        require(QFile::link(fixture.filePath("repair"), redirected), "symlink parent fixture");
+        require(!RepairBootstrap::detail::provision(redirected + "/broker", "fixture", directoryPolicy, filePolicy, &error),
+            "actual symlink parent refused");
+
+        require(!QFileInfo::exists(fixture.filePath("repair/missing-destination")), "symlink not followed");
+        require(RepairBootstrap::detail::packageDirectory("/usr/bin/bimeron-desktop") ==
+            "/usr/libexec/bimeron/repair", "Linux package path derived from GUI");
+        require(RepairBootstrap::detail::packageDirectory("/tmp/bimeron-desktop").isEmpty(), "unsupported layout refused");
+#else
+        require(RepairBootstrap::detail::packageDirectory("C:/Program Files/Bimeron/bimeron-desktop.exe") ==
+            "C:/Program Files/Bimeron/repair", "Windows package path derived from GUI");
+#endif
+    }
     CoreUpdater configured;
     const QByteArray configuredKey = QByteArray::fromBase64(BIMERON_CORE_UPDATE_PUBLIC_KEY);
     require(configured.available() == (configuredKey.size() == 32), "configured signing key availability is wrong");

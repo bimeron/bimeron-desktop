@@ -24,6 +24,7 @@ public:
     explicit ProfileStore(const QString &root = {});
     QList<Profile> load(QString *error = nullptr) const;
     bool save(const QList<Profile> &profiles, QString *error = nullptr) const;
+    static bool normalizeImport(QByteArray &data);
     QString importConfig(const QString &source, QString *error = nullptr) const;
     QString createConfig(const QString &name, const QString &key, QString *error = nullptr,
                          const QString &identityFile = {}, const QString &knownHostsFile = {}) const;
