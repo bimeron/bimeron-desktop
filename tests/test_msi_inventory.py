@@ -75,12 +75,20 @@ class InventoryTests(unittest.TestCase):
         tree = ET.parse(ROOT / 'packaging/windows/options.wxs')
         ns = {'w': 'http://schemas.microsoft.com/wix/2006/wi'}
         actions = tree.findall('.//w:CustomAction', ns)
-        self.assertEqual([a.attrib['Id'] for a in actions], ['LaunchBimeron'])
+        self.assertEqual([a.attrib['Id'] for a in actions], ['LaunchBimeron', 'SetInstallerCoreUpdate', 'InstallerCoreUpdate'])
         self.assertEqual(actions[0].attrib['ExeCommand'], '"[INSTALL_ROOT]bimeron-desktop.exe"')
         publish = tree.find('.//w:Publish[@Event="DoAction"]', ns)
         self.assertEqual(publish.attrib['Value'], 'LaunchBimeron')
         self.assertIn('NOT Installed', publish.text)
-        self.assertEqual(tree.findall('.//w:InstallExecuteSequence', ns), [])
+        sequence = tree.find('.//w:InstallExecuteSequence', ns)
+        scheduled = sequence.findall('w:Custom', ns)
+        self.assertEqual([(a.attrib['Action'], a.attrib['After'], a.text) for a in scheduled], [
+            ('SetInstallerCoreUpdate', 'InstallFiles', 'NOT REMOVE'),
+            ('InstallerCoreUpdate', 'SetInstallerCoreUpdate', 'NOT REMOVE')])
+        self.assertEqual(actions[1].attrib['Property'], 'InstallerCoreUpdate')
+        self.assertEqual(actions[1].attrib['Value'], '"[INSTALL_ROOT]bimeron-desktop.exe" --installer-update-core')
+        self.assertEqual(actions[2].attrib, dict(Id='InstallerCoreUpdate', BinaryKey='WixCA',
+            DllEntry='WixQuietExec64', Execute='deferred', Impersonate='no', Return='ignore'))
         cmake = (ROOT / 'CMakeLists.txt').read_text()
         self.assertIn('E93DE42D-1F4F-4227-8056-1086581CCE51', cmake)
         self.assertIn('set(CPACK_WIX_UI_REF "BimeronUI")', cmake)

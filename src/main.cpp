@@ -1,3 +1,4 @@
+#include "InstallerCore.h"
 #include "MainWindow.h"
 #include "RepairBootstrap.h"
 #include <cstring>
@@ -85,6 +86,10 @@ private:
 };
 
 int main(int argc, char *argv[]) {
+    if (argc == 2 && std::strcmp(argv[1], "--installer-update-core") == 0) {
+        QCoreApplication app(argc, argv);
+        return InstallerCore::update();
+    }
     if (argc > 1 && std::strcmp(argv[1], "repair-session") == 0)
         return RepairBootstrap::run(argc, argv);
     QApplication app(argc, argv);

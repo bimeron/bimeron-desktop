@@ -15,7 +15,7 @@ The project produces four system packages:
 
 The version is specified once in `project(BimeronDesktop VERSION ...)` of the `CMakeLists.txt` file. Before release, change it there, rebuild all four packages and make sure that the version appears in their names and metadata. Windows uses `amd64` in project-owned names while Visual Studio and WiX still use their required `x64` architecture identifier.
 
-The desktop source version is `0.3.0`. Release preparation pins the four frozen Core `v0.4.0-beta.1` candidate ZIPs from commit `0e08a5c8a114060ac0b53bbcc534b18c76d1aed4`. This candidate is not yet tagged or published; its assets are published unchanged only after Desktop 0.3.0 VM acceptance. Verified local ZIPs can populate `.tools/core` for offline packaging; clean-checkout downloads remain unavailable until Core publication. Its signed-update contract is GUI `[0.3.0, 0.3.1)`, IPC 1, profile format 1 and the existing production key; Desktop 0.2.0 is intentionally outside it. The bundled CLI reports `explicit_access`. See [release acceptance](release-0.3.0.md). A package upgrade does not itself replace the installed service.
+The desktop source version is `0.3.0`. Release preparation pins the four frozen Core `v0.4.0-beta.1` candidate ZIPs from commit `0e08a5c8a114060ac0b53bbcc534b18c76d1aed4`. This candidate is not yet tagged or published; its assets are published unchanged only after Desktop 0.3.0 VM acceptance. Verified local ZIPs can populate `.tools/core` for offline packaging; clean-checkout downloads remain unavailable until Core publication. Its signed-update contract is GUI `[0.3.0, 0.3.1)`, IPC 1, profile format 1 and the existing production key; Desktop 0.2.0 is intentionally outside it. The bundled CLI reports `explicit_access`. See [release acceptance](release-0.3.0.md). Desktop 0.3.0 best-effort updates an installed older service to the bundle; see installer service servicing below.
 
 The Windows amd64 `0.2.0` VM package, its Core payload, signed GUI-driven update, installed-service rollback, IPC `hello`, and automatic VM profile reconnection results are recorded in [the VM check](vm-core-0.2.0-beta.1-check.md). The positive signed GUI path was repeated with the final Core assets through a local release-list override in the test build. Tampering and direct-helper rollback with those final bytes passed; the other installed package targets remain untested. The normal installed GUI discovered and installed the published Core through GitHub Releases in the Windows amd64 VM; see the VM check.
 
@@ -79,7 +79,7 @@ The packaging scripts run the fetch step and configure with `BIMERON_REQUIRE_GEO
 1. Inspect the desired published release of `bimeron/bimeron-core` and its `SHA256SUMS` file. Confirm it contains Windows and Linux archives for amd64 and arm64 with the expected binaries, Wintun files and licenses.
 2. Update the executable pins together with the archive pins after verified extraction (including candidate re-freezes). Change the tag, its full 40-character lowercase commit in `BIMERON_CORE_REVISION` and four matching SHA-256 values in `cmake/core-release.cmake`. The commit is the `revision` reported by the release binary's `version` command and must equal the tag's commit. Verify that the published helper supports `-source`, then set `BIMERON_CORE_RELEASE_SUPPORTS_SOURCE_UPDATE` to `TRUE`. Update the repository URL, target lists or filenames there only if the release format changed. Do not use a floating `latest` URL; prereleases may not be returned by GitHub's latest-release endpoint.
 3. Fetch on both platforms, or run the full package scripts. Check that the extracted core binaries and Wintun DLLs match their target architectures. A package configuration with the default core root runs the pinned binary's `version` command when it can execute on the build host (Windows amd64 and Linux amd64 on the usual hosts) and fails if the reported revision differs from `BIMERON_CORE_REVISION`; ARM64 payloads that cannot run there rely on the archive hashes. Local candidate roots skip this check.
-4. Build all four packages and verify their payloads and metadata using the review steps below. Record the chosen core tag in the release notes. A core release does not change an already installed desktop package automatically. The installed service can be updated independently only from a compatible signed release after the user confirms installation.
+4. Build all four packages and verify their payloads and metadata using the review steps below. Record the chosen core tag in the release notes. A core release does not change an already installed desktop package automatically. Outside package installation, the installed service can be updated independently from a compatible signed release after the user confirms installation.
 
 ### Signed service updates
 
@@ -1683,3 +1683,39 @@ remains Bimeron Desktop. Windows Run value Bimeron and its command are unchanged
 no startup migration or StartupApproved write is required. MSI shortcuts and
 Linux desktop/autostart entries already use Bimeron. See
 [display-name acceptance](application-display-name.md) for validation and limits.
+
+## Desktop 0.3.0 installer service servicing
+
+The accepted [installer update specification](core-updates.md#desktop-030-installer-service-update-accepted)
+supersedes historical package-only service preservation for 0.3.0. MSI and DEB
+must best-effort update only an installed older Core after payload installation,
+without a second elevation prompt or network download. Unknown versions skip.
+VPN replacement interrupts the session; installer reconnection is not provided.
+Native installer and ARM64 runtime checks remain release gates.
+
+The implementation uses the existing GUI executable's headless
+`--installer-update-core` entry before QApplication/settings/plugins. No new
+packaged executable or runtime dependency is added. WiX 3 WixQuietExec64 runs
+it deferred, without impersonation, after InstallFiles, with Return=ignore and
+NOT REMOVE (also covering repair). Its captured output goes to the MSI log.
+DEB postinst calls it only for configure, as root, and catches startup failure.
+Windows discovery reads BimeronCore SCM configuration; Linux accepts the standard
+Core-owned unit and fixed /usr/local/lib/bimeron/bimeron-core path. Unsupported
+registration layouts skip. Both CLI executable paths require existing protected
+path checks. CLI version queries have a 10-second deadline; replacement waits
+for Core's own bounded operation/rollback rather than killing it mid-recovery.
+CTest installer-core-test covers SemVer and injected decisions without servicing
+the host. No package or VM run is part of these checks.
+
+Installer service update verification (2026-11-15): Windows x64 Release build
+(build/windows-amd64, Qt deployment OFF) and WSL Linux amd64 Release build
+(build/linux-amd64) passed. CTest passed 11/11 on Windows and 10/10 on Linux.
+After adding subprocess fixtures, focused installer-core-test passed again on
+both. Fixtures execute only themselves for JSON version and nonzero exit checks.
+The initial inventory-test failure was the historical no-custom-action assertion;
+the revised test checks the exact new actions, elevation, ignore policy and order.
+Source diff/security review and git diff --check passed. No benchmarks/profiling
+apply. No final packages, dist writes, installed-service operations or VM checks
+were performed. These GUI-only builds omit the optional embedded broker-resource
+test. ARM64 and native MSI/DEB servicing remain release gates; this shared code
+can affect both ARM64 targets, so they are deferred, not declared unaffected.

@@ -62,7 +62,7 @@ The first local bootstrap packages used core commit `676c6ee`, followed by candi
 - Validate source swap and incorrect digest rejection before service stop, IPC `hello` failure reporting, and rollback through the core tests. Linux shows the helper's diagnostic, including health-check and rollback errors. Windows elevation does not return the helper's stderr to the GUI, so the GUI shows the nonzero exit code, explains the possible rollback, and refreshes service state. A live installed-service test requires an explicit maintenance window because it interrupts VPN connectivity.
 - Keep the reviewed candidate's signature and compatibility checks intact. Do not publish or replace GitHub release assets as part of local package verification.
 
-## GUI package upgrade specification
+## Historical GUI package upgrade specification (before 0.3.0)
 
 The next GUI package version is `0.1.1`, giving Windows Installer and Debian a monotonic package upgrade from `0.1.0`. Preserve the MSI UpgradeCode and install directory. The MSI upgrade must replace the bundled `bimeron-core.exe` with the trusted helper without invoking `service update` or changing the installed service. The DEB upgrade must likewise replace `/usr/bin/bimeron-core` while preserving user settings and the service. A GUI installed in a user-writable directory still cannot run privileged core updates.
 
@@ -103,3 +103,27 @@ Acceptance criteria:
 - Enabling the checkbox lets all update checks in the current run consider beta releases.
 - After quitting and relaunching, the checkbox is unchecked even if an older installation stored `app/coreBetaUpdates=true`.
 - No update check reads the old settings key.
+
+## Desktop 0.3.0 installer service update (accepted)
+
+MSI x64/ARM64 and DEB amd64/arm64 update an installed older Core to the bundled
+version, using the protected bundled CLI and its verified source-update contract.
+No installed service means no service installation. Equal, newer, unknown or
+unparseable versions are skipped and logged. SemVer prerelease ordering applies.
+The service executable's `version` JSON is read without IPC after OS service
+registration discovery; `service status` exposes no version. Windows `describe`
+changes the description and must not be used for discovery.
+
+Run after package files are installed, elevated without another prompt. Pass
+`service update -source <bundled absolute path> -version <bundled version>
+-sha256 <bundled executable SHA-256>`. Failure is logged and never fails package
+installation; Core owns verification and rollback. Rollback failure remains a
+service recovery risk and must be reported, never described as guaranteed recovery.
+A connected VPN is interrupted; the installer does not reconnect it. The user
+can reconnect in the GUI afterward. No beta checkbox or network feed is involved.
+
+Acceptance: older updates once; equal/newer/invalid/absent skip; update failure
+continues installation. Test SemVer numeric prereleases, stable precedence and
+invalid versions on Windows/Linux through CTest. Native MSI/DEB upgrade, failure
+rollback and ARM64 runtime remain release acceptance gates. Preserve settings,
+Core pins and clean-install behavior. Performance benchmarking is inapplicable.
