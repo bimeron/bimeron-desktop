@@ -337,3 +337,22 @@ code-signed.
 
 VM acceptance on these exact packages (Windows x64, Windows ARM64, Linux amd64)
 is in progress and blocks publication.
+
+## Repair-verification candidate supersedes d1fc1f48 (2026-11-15)
+
+Windows x64 acceptance of the d1fc1f48 packages failed two release gates: a
+present-but-corrupted service executable was not replaced, and repair under
+alternate-administrator (over-the-shoulder) elevation timed out and rolled back
+because the elevated broker could not open the owner-only service pipe. Fixed in
+bimeron-core #140 / PR #141 (green CI): repair hashes the installed executable
+against the protected broker bytes and replaces differing images with staged
+verification, readiness and rollback; Windows readiness under another
+administrator uses a separate SYSTEM/Administrators-only read-only pipe bound to
+the SCM PID, and the owner-only command pipe ACL is unchanged. The current Core
+candidate is master b9d733277dad097d2c52ee3db687b416ee921c86, re-frozen as
+v0.4.0-beta.1 with the production key; signed manifest SHA-256
+d79c202d625229a6be6025e1283badd3f008c0b9ba79b751d55891c26fb2df47; compatibility
+unchanged. Archive and executable pins were updated together and verified by
+extraction. All earlier package tables are superseded; packages and VM
+acceptance are renewed. The installer also replaces an equal-version service
+with a different executable (#55).
