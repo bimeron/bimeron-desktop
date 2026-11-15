@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(BimeronDesktop VERSION 0.2.0 LANGUAGES C CXX)
+project(BimeronDesktop VERSION 0.3.0 LANGUAGES C CXX)
 
 set(BIMERON_PACKAGE_ARCH "unknown" CACHE STRING "Architecture name used in package files")
 
@@ -7,7 +7,7 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
 
-find_package(Qt6 6.4 REQUIRED COMPONENTS Widgets Network)
+find_package(Qt6 6.2 REQUIRED COMPONENTS Widgets Network)
 set(BIMERON_CORE_UPDATE_PUBLIC_KEY "bk6SfABmDG88uhUupYT+ia6dtSrpHbnGaBCfYvihJF0=" CACHE STRING "Base64 Ed25519 public key for signed core updates")
 add_library(core-update STATIC
     src/CoreUpdate.cpp src/CoreUpdate.h
@@ -51,7 +51,8 @@ qt_add_resources(bimeron-desktop "translations"
     BASE "${CMAKE_CURRENT_SOURCE_DIR}/assets/translations"
     FILES "${CMAKE_CURRENT_SOURCE_DIR}/assets/translations/ru.json")
 if(WIN32)
-    target_sources(bimeron-desktop PRIVATE app.rc)
+    configure_file(app.rc.in "${CMAKE_CURRENT_BINARY_DIR}/app.rc" @ONLY)
+    target_sources(bimeron-desktop PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/app.rc")
     add_custom_command(TARGET bimeron-desktop POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "${CMAKE_CURRENT_SOURCE_DIR}/third_party/monocypher/LICENSE"
@@ -96,6 +97,17 @@ endif()
 
 include(CTest)
 if(BUILD_TESTING)
+    if(WIN32)
+        set(display_metadata_arch amd64)
+        if(CMAKE_CXX_COMPILER_ARCHITECTURE_ID STREQUAL "ARM64")
+            set(display_metadata_arch arm64)
+        endif()
+        add_test(NAME application-display-metadata-test
+            COMMAND powershell.exe -NoProfile -ExecutionPolicy Bypass -File
+                "${CMAKE_CURRENT_SOURCE_DIR}/tests/ApplicationDisplayMetadataTest.ps1"
+                -Executable "$<TARGET_FILE:bimeron-desktop>"
+                -Version "${PROJECT_VERSION}" -Architecture "${display_metadata_arch}")
+    endif()
     add_executable(developer-mode-test tests/DeveloperModeTest.cpp ${BIMERON_DESKTOP_SOURCES})
     qt_add_resources(developer-mode-test "test-icons"
         PREFIX "/icons" BASE "${CMAKE_CURRENT_SOURCE_DIR}/assets/icons" FILES ${BIMERON_ICON_FILES})
@@ -184,6 +196,7 @@ if(BUILD_TESTING)
         find_package(Python3 COMPONENTS Interpreter QUIET)
     endif()
     if(Python3_Interpreter_FOUND)
+        add_test(NAME repair-payload-test COMMAND "${Python3_EXECUTABLE}" -B "${CMAKE_CURRENT_SOURCE_DIR}/tests/RepairPayloadNegativeTest.py")
         add_test(NAME msi-inventory-test
             COMMAND "${Python3_EXECUTABLE}" -B -m unittest discover -s tests -p test_msi_inventory.py
             WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
@@ -253,6 +266,9 @@ else()
 endif()
 set(BIMERON_REPAIR_BROKER "" CACHE FILEPATH "Reviewed target-architecture repair broker payload")
 set(BIMERON_REPAIR_BROKER_SHA256 "" CACHE STRING "Reviewed repair broker SHA-256")
+if(BIMERON_REQUIRE_CORE AND NOT BIMERON_REPAIR_BROKER)
+    message(FATAL_ERROR "Package build requires a repair broker")
+endif()
 if(BIMERON_REPAIR_BROKER)
     if(NOT EXISTS "${BIMERON_REPAIR_BROKER}" OR NOT BIMERON_REPAIR_BROKER_SHA256 MATCHES "^[0-9a-fA-F]+$")
         message(FATAL_ERROR "Repair broker requires an existing payload and reviewed SHA-256")
@@ -261,6 +277,9 @@ if(BIMERON_REPAIR_BROKER)
     string(TOLOWER "${BIMERON_REPAIR_BROKER_SHA256}" repair_broker_expected)
     if(NOT repair_broker_digest STREQUAL repair_broker_expected)
         message(FATAL_ERROR "Repair broker SHA-256 mismatch")
+    endif()
+    if(BIMERON_REQUIRE_CORE AND NOT repair_broker_digest STREQUAL BIMERON_CORE_EXECUTABLE_SHA256_${BIMERON_CORE_PLATFORM}_${BIMERON_PACKAGE_ARCH})
+        message(FATAL_ERROR "Repair broker does not match target executable pin")
     endif()
     file(READ "${BIMERON_REPAIR_BROKER}" repair_magic LIMIT 4 HEX)
     if(WIN32)
@@ -298,13 +317,35 @@ if(BIMERON_REPAIR_BROKER)
     if(NOT DEFINED repair_expected_header OR NOT repair_header STREQUAL repair_expected_header)
         message(FATAL_ERROR "Repair broker architecture mismatch for ${BIMERON_PACKAGE_ARCH}")
     endif()
-    set_source_files_properties("${BIMERON_REPAIR_BROKER}" PROPERTIES QT_RESOURCE_ALIAS broker)
-    qt_add_resources(bimeron-desktop repair-bootstrap PREFIX "/repair-bootstrap" FILES "${BIMERON_REPAIR_BROKER}")
+    if(BUILD_TESTING)
+        add_executable(repair-resource-test tests/RepairResourceTest.cpp)
+        target_link_libraries(repair-resource-test PRIVATE Qt6::Core)
+        add_test(NAME repair-resource-test COMMAND repair-resource-test "${repair_broker_digest}")
+    endif()
+    # Core release archives use a fixed file time, so a replaced payload can keep
+    # the old mtime and rcc would not rebuild. Embed configure-time copies whose
+    # paths contain the content digest, so any byte change regenerates resources.
+    function(bimeron_repair_resource_copy source out_var)
+        file(SHA256 "${source}" digest)
+        get_filename_component(name "${source}" NAME)
+        set(copy "${CMAKE_CURRENT_BINARY_DIR}/repair-bootstrap/${digest}/${name}")
+        file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/repair-bootstrap/${digest}")
+        file(COPY_FILE "${source}" "${copy}" ONLY_IF_DIFFERENT)
+        set(${out_var} "${copy}" PARENT_SCOPE)
+    endfunction()
+    bimeron_repair_resource_copy("${BIMERON_REPAIR_BROKER}" repair_broker_resource)
+    set_source_files_properties("${repair_broker_resource}" PROPERTIES QT_RESOURCE_ALIAS broker)
+    qt_add_resources(bimeron-desktop repair-bootstrap PREFIX "/repair-bootstrap" FILES "${repair_broker_resource}")
+    if(BUILD_TESTING)
+        qt_add_resources(repair-resource-test repair-bootstrap-test PREFIX "/repair-bootstrap" FILES "${repair_broker_resource}")
+    endif()
     if(WIN32)
-        set_source_files_properties("${BIMERON_WINTUN_DLL}" PROPERTIES QT_RESOURCE_ALIAS wintun.dll)
-        set_source_files_properties("${BIMERON_WINTUN_LICENSE}" PROPERTIES QT_RESOURCE_ALIAS WINTUN-LICENSE.txt)
+        bimeron_repair_resource_copy("${BIMERON_WINTUN_DLL}" repair_wintun_resource)
+        bimeron_repair_resource_copy("${BIMERON_WINTUN_LICENSE}" repair_wintun_license_resource)
+        set_source_files_properties("${repair_wintun_resource}" PROPERTIES QT_RESOURCE_ALIAS wintun.dll)
+        set_source_files_properties("${repair_wintun_license_resource}" PROPERTIES QT_RESOURCE_ALIAS WINTUN-LICENSE.txt)
         qt_add_resources(bimeron-desktop repair-bootstrap-runtime PREFIX "/repair-bootstrap"
-            FILES "${BIMERON_WINTUN_DLL}" "${BIMERON_WINTUN_LICENSE}")
+            FILES "${repair_wintun_resource}" "${repair_wintun_license_resource}")
         install(PROGRAMS "${BIMERON_REPAIR_BROKER}" DESTINATION repair RENAME bimeron-repair.exe)
         foreach(repair_runtime BIMERON_WINTUN_DLL BIMERON_WINTUN_LICENSE)
             if(NOT EXISTS "${${repair_runtime}}")
@@ -401,6 +442,12 @@ if(WIN32)
         USE_SOURCE_PERMISSIONS
         PATTERN "core-update*" EXCLUDE
         PATTERN "*-test*" EXCLUDE)
+    # windeployqt ships Qt DLLs under LGPL-3.0; ship its notice and license texts.
+    install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/third_party/qt/QT-NOTICE.txt" DESTINATION .)
+    install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/third_party/qt/LGPL-3.0.txt"
+        DESTINATION . RENAME QT-LGPL-3.0.txt)
+    install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/third_party/qt/GPL-3.0.txt"
+        DESTINATION . RENAME QT-GPL-3.0.txt)
     set(CMAKE_INSTALL_SYSTEM_RUNTIME_DESTINATION ".")
     set(CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS_SKIP TRUE)
     include(InstallRequiredSystemLibraries)
@@ -509,8 +556,17 @@ else()
     set(CPACK_DEBIAN_PACKAGE_NAME "bimeron-desktop")
     set(CPACK_DEBIAN_PACKAGE_ARCHITECTURE "${BIMERON_PACKAGE_ARCH}")
     set(CPACK_DEBIAN_PACKAGE_DEPENDS
-        "libqt6widgets6 (>= 6.4), libqt6network6 (>= 6.4), qt6-translations-l10n, iproute2, nftables, pkexec, systemd")
+        "libqt6widgets6 (>= 6.2), libqt6network6 (>= 6.2), qt6-qpa-plugins, qt6-translations-l10n, iproute2, nftables, pkexec, systemd")
+    set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
     set(CPACK_DEBIAN_PACKAGE_SECTION "net")
+    set(CPACK_DEBIAN_PACKAGE_CONTROL_EXTRA "${CMAKE_SOURCE_DIR}/packaging/linux/postinst")
+    set(CPACK_DEBIAN_PACKAGE_CONTROL_STRICT_PERMISSION TRUE)
 endif()
 
+if(BUILD_TESTING)
+    add_executable(installer-core-test tests/InstallerCoreTest.cpp)
+    target_include_directories(installer-core-test PRIVATE src)
+    target_link_libraries(installer-core-test PRIVATE Qt6::Core)
+    add_test(NAME installer-core-test COMMAND installer-core-test)
+endif()
 include(CPack)

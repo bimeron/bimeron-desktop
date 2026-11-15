@@ -6,17 +6,17 @@
 
 A build configured with `BIMERON_LOCAL_UPDATE_TESTING=ON` may read a local GitHub-shaped release-list JSON from the absolute path in `BIMERON_TEST_RELEASES_JSON`. Asset URLs in that list must be `file:` URLs for regular files under the list file's directory. This test build uses the normal release selection, Ed25519 manifest verification, compatibility gate, archive size and SHA-256 verification, extraction, elevation, IPC check, and reconnection code. Only the source of bytes changes. It must not fetch network URLs and must reject files outside the feed directory, including symbolic-link escapes. A normal build has no local-feed code or environment-variable override and continues to use GitHub Releases and the pinned public key.
 
-Acceptance criteria: a signed unreviewed manifest, a bad signature, and a changed ZIP never become installable; a signed reviewed manifest using the pinned production key can reach the update prompt and the installed VM service only after the same verifier accepts it. A temporary test key may exercise negative cases but must never enter a production package or repository. Keep the test MSI and its test feed confined to a disposable Windows VM. The signed `gui_reviewed: true` local candidate passed the Windows amd64 GUI path described in [the VM check](vm-core-0.2.0-beta.1-check.md); normal GitHub discovery remains a separate release check.
+Acceptance criteria: a signed unreviewed manifest, a bad signature, and a changed ZIP never become installable; a signed reviewed manifest using the pinned production key can reach the update prompt and the installed VM service only after the same verifier accepts it. A temporary test key may exercise negative cases but must never enter a production package or repository. Keep the test MSI and its test feed confined to a disposable Windows VM. The signed `gui_reviewed: true` local candidate passed the Windows amd64 GUI path described in [the VM check](dev/vm-core-0.2.0-beta.1-check.md); normal GitHub discovery remains a separate release check.
 
 Since Bimeron Desktop 0.1.2, the installed Windows or Linux core service can update independently of the desktop package. The package's bundled core remains the bootstrap and recovery copy. The running service's `hello.core.version`, not the bundled file, is the installed version. Desktop, core, IPC, and profile-format versions are independent.
 
-`gui_reviewed` records reviewed compatibility with the specified GUI range, not feature parity or visual-editor coverage of every Core protocol. A Core release can ship independently of complete GUI support. A new tag alone establishes neither published signed assets nor runtime compatibility. See the [Core/Desktop integration contract](core-desktop-integration-contract.md) for source, CLI, active-service and bundle distinctions. Historical update/reconnection results below do not establish connectivity of the reviewed navigation baseline, where connection controls and regular polling were disabled.
+`gui_reviewed` records reviewed compatibility with the specified GUI range, not feature parity or visual-editor coverage of every Core protocol. A Core release can ship independently of complete GUI support. A new tag alone establishes neither published signed assets nor runtime compatibility. See the [Core/Desktop integration contract](dev/core-desktop-integration-contract.md) for source, CLI, active-service and bundle distinctions. Historical update/reconnection results below do not establish connectivity of the reviewed navigation baseline, where connection controls and regular polling were disabled.
 
 The restored [connection management](connection-management.md) uses the same signed
 update policy, serializes connection actions with administrative operations and
 verifies hello plus authoritative status before restoring a profile once.
 
-The updater implements IPC protocol `1` and profile format `1`. Published core `v0.2.0-beta.1` has reviewed GUI bounds `[0.2.0, 0.2.1)`, so Desktop `0.2.0` can consider it when beta updates are enabled. Older published core `v0.1.0-beta.3` has bounds `[0.1.0, 0.1.2)` and remains ineligible for GUI `0.1.5`.
+The updater implements IPC protocol `1` and profile format `1`. Published core `v0.2.0-beta.1` has reviewed GUI bounds `[0.2.0, 0.2.1)`, so Desktop `0.2.0` can consider it when beta updates are enabled. Older published core `v0.1.0-beta.3` has bounds `[0.1.0, 0.1.2)` and remains ineligible for GUI `0.1.5`. Core `v0.4.0-beta.1`, bundled with Desktop `0.3.0`, has reviewed GUI bounds `[0.3.0, 0.3.1)`; Desktop `0.2.0` intentionally does not consider it and receives it by upgrading Desktop.
 
 The GUI checks the public `bimeron/bimeron-core` GitHub Releases at startup and periodically, and can check on demand from Settings. Checks and downloads are quiet. Stable is the default channel; beta releases are considered only when the user enables beta updates. A missing signing key, no signed compatible release, network failure, or a malformed release never triggers an unsigned fallback. A build configured with an empty key says "Signed updates are not available yet" and does not run the legacy bundled-core `service update` command.
 
@@ -62,7 +62,7 @@ The first local bootstrap packages used core commit `676c6ee`, followed by candi
 - Validate source swap and incorrect digest rejection before service stop, IPC `hello` failure reporting, and rollback through the core tests. Linux shows the helper's diagnostic, including health-check and rollback errors. Windows elevation does not return the helper's stderr to the GUI, so the GUI shows the nonzero exit code, explains the possible rollback, and refreshes service state. A live installed-service test requires an explicit maintenance window because it interrupts VPN connectivity.
 - Keep the reviewed candidate's signature and compatibility checks intact. Do not publish or replace GitHub release assets as part of local package verification.
 
-## GUI package upgrade specification
+## Historical GUI package upgrade specification (before 0.3.0)
 
 The next GUI package version is `0.1.1`, giving Windows Installer and Debian a monotonic package upgrade from `0.1.0`. Preserve the MSI UpgradeCode and install directory. The MSI upgrade must replace the bundled `bimeron-core.exe` with the trusted helper without invoking `service update` or changing the installed service. The DEB upgrade must likewise replace `/usr/bin/bimeron-core` while preserving user settings and the service. A GUI installed in a user-writable directory still cannot run privileged core updates.
 
@@ -103,3 +103,37 @@ Acceptance criteria:
 - Enabling the checkbox lets all update checks in the current run consider beta releases.
 - After quitting and relaunching, the checkbox is unchecked even if an older installation stored `app/coreBetaUpdates=true`.
 - No update check reads the old settings key.
+
+## Desktop 0.3.0 installer service update (accepted)
+
+MSI x64/ARM64 and DEB amd64/arm64 update an installed older Core to the bundled
+version, using the protected bundled CLI and its verified source-update contract.
+No installed service means no service installation. Newer, unknown or
+unparseable versions are skipped and logged. At equal SemVer precedence, compare
+SHA-256 of the registered service executable with the bundled executable; different
+bytes update, identical bytes skip. If the installed hash is unavailable, compare
+full 40-hex revisions from their version JSON; unknown identity skips and logs.
+Hash comparison takes priority over revision, including when revisions match.
+The bundle hash is mandatory for the update command. Windows uses the protected
+SCM ImagePath; Linux uses the standard unit ExecStart and fixed protected Core
+path, retaining existing registration restrictions. No IPC is used. SemVer prerelease ordering applies.
+The service executable's `version` JSON is read without IPC after OS service
+registration discovery; `service status` exposes no version. Windows `describe`
+changes the description and must not be used for discovery.
+
+Run after package files are installed, elevated without another prompt. Pass
+`service update -source <bundled absolute path> -version <bundled version>
+-sha256 <bundled executable SHA-256>`. Failure is logged and never fails package
+installation; Core owns verification and rollback. Rollback failure remains a
+service recovery risk and must be reported, never described as guaranteed recovery.
+A connected VPN is interrupted; the installer does not reconnect it. The user
+can reconnect in the GUI afterward. No beta checkbox or network feed is involved.
+
+Acceptance: older updates once; equal with different hash (or different full
+revision when hash is unavailable) updates once; identical bytes skip even if
+revisions differ; equal with unknown identity skips; newer/invalid/absent skip
+even with different builds; unreadable bundle skips; update failure
+continues installation. Test SemVer numeric prereleases, stable precedence and
+invalid versions on Windows/Linux through CTest. Native MSI/DEB upgrade, failure
+rollback and ARM64 runtime remain release acceptance gates. Preserve settings,
+Core pins and clean-install behavior. Performance benchmarking is inapplicable.

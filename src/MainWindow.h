@@ -101,6 +101,7 @@ private:
     void reconnectActiveProfile();
     bool controlBlocked() const;
     bool cleanDisconnected() const;
+    bool profileHeldBySession(const QString &profileId) const;
     bool canActivateProfile(int row) const;
     void invalidateConnection(bool preserveServiceProbe = false);
     quint64 serviceProbeGeneration_ = 0;

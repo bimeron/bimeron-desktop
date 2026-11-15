@@ -24,10 +24,10 @@ Observed in source (not yet a reproduced live failure):
 - Existing service actions, trusted helper execution, peer checks, cleanup gates,
   signed updates and emergency network recovery already exist. Reuse them.
 
-Read before implementation: [service actions](service-actions.md),
-[developer mode](developer-mode.md), [connection management](connection-management.md),
-[core updates](core-updates.md), and the relevant Core integration contract.
-Read the complete [build documentation](build-and-packaging.md) before changing
+Read before implementation: [service actions](../service-actions.md),
+[developer mode](../developer-mode.md), [connection management](../connection-management.md),
+[core updates](../core-updates.md), and the relevant Core integration contract.
+Read the complete [build documentation](../build-and-packaging.md) before changing
 build files, dependencies, scripts, packaging or architecture paths. No such flow
 change is planned. Verify current startup/autostart behavior before modifying it.
 
@@ -834,10 +834,10 @@ the API accepts no source path, digest or arbitrary command. See sibling Core
 
 Outstanding acceptance blockers:
 
-- Old packages do not contain the new protected broker. Optional reviewed-payload
-  packaging and protected discovery are implemented, but migration/bootstrap when
-  that trust root is absent is not. The current pinned Core archives lack the new
-  API. No writable downloaded executable is elevated as a substitute.
+- Desktop 0.3.0 packages ship the pinned Core executable as a separate protected
+  broker and embedded GUI resource. Migration from brokerless 0.2.0 and bootstrap
+  remain VM acceptance gates. The pinned Core `e1cada7d` accepts its own
+  release compatibility window for online repair acquisition. No writable download is elevated.
 - A live legacy developer daemon cannot be adopted from the v1 journal, which
   contains no durable process identity. New durable privileged launch records and
   authenticated live reconciliation remain unfinished. A dead transition can be
@@ -883,7 +883,7 @@ independently; earlier final/review/measured prefixes are superseded evidence.
 
 Files touched by this implementation in Desktop (pre-existing edits preserved):
 `CMakeLists.txt`, `assets/translations/ru.json`, `docs/build-and-packaging.md`,
-`docs/core-recovery-plan.md`, `docs/service-actions.md`,
+`docs/dev/core-recovery-plan.md`, `docs/service-actions.md`,
 `packaging/windows/options.wxs`, `src/ConnectionRepair.h`,
 `src/DevelopmentCore.cpp`, `src/DevelopmentCore.h`, `src/MainWindow.cpp`,
 `src/MainWindow.h`, `src/TrustedCore.cpp`, `src/TrustedCore.h`,
@@ -1184,3 +1184,104 @@ native CTest suites passed across the focused runs; developer-mode-test passed
 in 8.51 seconds after correcting both component preconditions. Twenty production
 configure-gate negative fixtures also passed. No concurrent profile-creation code
 or documentation is part of this PR snapshot.
+
+## Service diagnostics probe compatibility (2026-11-14)
+
+Specification and acceptance criteria: the passive `service status` probe accepts
+both the legacy numeric line and the named SCM state line emitted by frozen Core
+`e1cada7d` (`Service state: 4 (running)`). Accept only codes 1 through 7 and their
+matching canonical names; reject unknown codes, mismatched names and extra output.
+Exit failures retain existing failure handling. Probe parsing is independent of
+IPC readiness and the installed service version. Unknown observations must not be
+translated as a missing installation. Regression fixtures must exercise the real
+subprocess completion path without accessing an installed service or the network.
+This is a Desktop-only correction; Core pins and packaging remain unchanged.
+
+Root cause: Desktop required the complete stdout to be the legacy numeric-only
+line. Windows Core e1cada7d uses QueryServiceStatus and formatServiceState, which
+adds the canonical name. This does not query the daemon's IPC or depend on its
+version, so both an upgraded old service and a clean 0.4.0 service are affected.
+Linux in that revision still prints the numeric-only line. IPC readiness is a
+separate observation and can correctly remain ready when the probe is malformed.
+The Russian translation of `Not established` now says `Не определено`, reserving
+`Не установлена` for confirmed absence. Current and last-failed probe details
+remain separate retained evidence.
+
+Validation: Windows x64 Release GUI-only configure/build succeeded with Python
+checks required and Qt deployment disabled. CI-equivalent CTest with the documented
+Qt environment and 60-second timeout passed 9/9 (31.92 seconds), including named
+states 1-7, legacy states, invalid named responses and rendered running findings.
+No broker resource test is registered in this GUI-only configuration. Diff review
+and git diff --check passed; no additional security/regression findings remain.
+Benchmarks/profiling are not applicable to this passive parser correction.
+This is not release validation: no packages or four-target release matrix were
+built; ARM64 and Linux checks remain outstanding because shared source changed.
+Repeat upgraded and clean-install Windows VM acceptance with the corrected GUI.
+No installed service or host network was changed.
+
+## Service dialog placement on Windows 11 (2026-11-15)
+
+Observed during Windows 11 ARM64 acceptance of Desktop 0.3.0: after a service
+repair, the service dialog ("Ready to connect") was horizontally centered over
+the main window, but its client area started at the top screen edge. The title
+bar and frame were above the screen, so the dialog looked frameless and could
+not be moved. The dialog is an ordinary modal `QDialog` with a content-sized
+fixed layout; it uses no frameless, popup or tool window flags.
+
+Specification and acceptance criteria: whenever the service dialog is shown or
+changes size, its whole frame, including the title bar, stays inside the
+available geometry of its screen. A frame that already fits keeps its position,
+so the dialog does not jump while repair states change its height. A frame that
+does not fit is centered over the main window and clamped to the available
+area; a frame taller than that area keeps its title bar at the top edge.
+Minimized, maximized and full-screen states are left unchanged.
+
+Root cause status: the exact trigger was not reproduced. Windows 10 x64 at
+100%, 150% and 200% scaling placed the dialog correctly through open,
+executing, verifying, ready and reopen states. Qt centers a dialog when it is
+shown and clamps the computed frame position to the top edge; on the Windows 11
+VM the resulting position excluded the real frame height. The correction
+therefore re-checks the real frame geometry one event-loop turn after Show and
+Resize events (`src/WindowPlacement.h`) instead of depending on Qt's initial
+estimate.
+
+Regression coverage: `developer-mode-test` checks the placement calculation
+(fitting, centering, oversized frames, negative screen coordinates) and the live
+dialog: a dialog moved above the screen returns inside it after a state change
+resizes it and after it is reopened, centered over the main window. Without the
+correction the live check fails.
+
+Validation: Windows x64 Release build and CTest 10/10 passed. The placement
+check also passed on the Qt offscreen platform used by Linux CI. Windows ARM64
+and Linux builds were not run locally.
+
+Windows 11 ARM64 acceptance (2026-11-15): `package-all.ps1 -WindowsOnly`
+produced both 0.3.0 MSIs. The ARM64 MSI (SHA-256
+`bdc2bb56480024b1f61e97fcb5c321187ba54b30fe3fb9b7a32a55ef9a338a87`) extracted
+to 41 AA64 PE files with no `*-test*` files; Core and broker match the pinned
+`246e9f90...` executable. It upgraded the installed 0.3.0 in the VM; the
+installed GUI hash matched the build. With the service stopped and its
+executable moved aside, the user ran Fix connection, Restore and UAC approval
+from the GUI launched from the Start menu. The service returned to Running with the pinned
+executable, and the user reported the "Ready to connect" dialog correct, with a
+visible, movable title bar. The temporary executable backup was removed.
+
+## Package broker restoration and UTF-8 import (accepted, 2026-11-15)
+
+During the existing elevated protected-GUI bootstrap, restore missing package
+broker bytes as well as the digest-named cache. Derive Windows repair/ from the
+GUI directory; derive Linux libexec/bimeron/repair from the GUI's bin/ prefix.
+Never use caller-supplied paths. Restore missing Windows Wintun DLL/license too.
+Present identical files remain untouched; differing, redirected or unsafe files
+and parents fail with a diagnostic, never overwrite. Use protected ancestry,
+verified temporary bytes and atomic no-replace publication; Linux uses
+O_NOFOLLOW and descriptor hashing. No additional elevation is allowed.
+Acceptance fixtures cover missing, identical, different and unsafe parents,
+including symlink leaves. Existing child authentication and cache execution stay.
+
+Profile import accepts exactly one leading UTF-8 BOM and stores without it.
+The 64 KiB bound applies before normalization and invalid UTF-8 still fails.
+File selection, file URLs and pasted paths converge on the same rule; there is
+no separate drag/drop file importer.
+Fixtures cover BOM, invalid UTF-8, duplicate BOM and the original size bound.
+No release pins, frozen candidate, package build or dist write is included.

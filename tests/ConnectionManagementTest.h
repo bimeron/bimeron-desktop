@@ -23,9 +23,12 @@
 #include "ProfileEditorDialog.h"
 #include "GeoDataSelection.h"
 #include "WindowsTheme.h"
+#include "WindowPlacement.h"
+#include <cstdlib>
 #include <QLayout>
 #include <QTabWidget>
 #include <QToolButton>
+#include <QToolTip>
 #include <QTableWidget>
 #include <QAction>
 #include <QScreen>
@@ -39,6 +42,117 @@
 // Uses only temporary profiles/settings, a private pipe/socket and this test's
 // validate subcommand. Never reaches a system endpoint or privileged helper.
 struct ConnectionManagementTest {
+    static void reconnectProgress() {
+        const QVariant previousLanguage = QSettings().value("app/language");
+        const QVariant previousNotifications = QSettings().value("app/notifications");
+        MainWindow window;
+        window.core_.cancel();
+        window.validationExecutable_ = "missing-core";
+        window.helloReady_ = true;
+        window.statusNeeded_ = false;
+        window.startupPreparationPending_ = false;
+        window.cleanupBlocked_ = false;
+        window.repairSession_ = false;
+        window.development_->failed_ = false;
+        window.development_->busy_ = false;
+        QSettings().setValue("app/notifications", false);
+        JsonTranslator translator;
+        require(translator.load(QFileInfo(QString::fromUtf8(__FILE__)).dir().filePath("../assets/translations/ru.json")), "load reconnect translator");
+        const auto catalog = CoreErrorCatalog::fromJson(R"({"version":1,"codes":{"unclassified":{"en":"Unknown","ru":"Неизвестная ошибка"},"transport_check_failed":{"en":"Server connectivity check failed.","ru":"Сервер не прошёл проверку подключения."}}})");
+        for (const QString language : {QStringLiteral("en"), QStringLiteral("ru")}) {
+            QSettings().setValue("app/language", language);
+            if (language == "ru") QCoreApplication::installTranslator(&translator);
+            for (int attempt = 1; attempt <= 3; ++attempt) {
+                window.handleStatus({{"State", "reconnecting"}, {"ReconnectAttempt", attempt}, {"ReconnectLimit", 3}, {"LastError", "transport_check_failed"}});
+                require(window.connectionLabel_->text() == (language == "ru" ? QString("Переподключение… (%1/3)") : QString("Reconnecting… (%1/3)")).arg(attempt), "localized reconnect progress");
+                require(window.connectionLabel_->toolTip().startsWith("transport_check_failed\n"), "status tooltip retains code");
+            }
+            require(coreConnectionProblemText(catalog, "transport_check_failed") == "transport_check_failed\n" + (language == "ru" ? QString("Сервер не прошёл проверку подключения.") : QString("Server connectivity check failed.")), "localized problem and code");
+            for (const QJsonObject invalid : {QJsonObject{}, QJsonObject{{"ReconnectAttempt", 0}, {"ReconnectLimit", 3}}, QJsonObject{{"ReconnectAttempt", 4}, {"ReconnectLimit", 3}}, QJsonObject{{"ReconnectAttempt", 1.5}, {"ReconnectLimit", 3}}, QJsonObject{{"ReconnectAttempt", "1"}, {"ReconnectLimit", 3}}}) {
+                auto status = invalid; status["State"] = "reconnecting";
+                window.handleStatus(status);
+                require(window.connectionLabel_->text() == MainWindow::tr("Reconnecting…"), "legacy/invalid progress");
+                require(window.connectionLabel_->toolTip().isEmpty(), "missing problem clears tooltip");
+            }
+            window.handleStatus({{"State", "failed"}, {"LastError", "transport_check_failed"}});
+            require(window.connectionLabel_->toolTip().startsWith("transport_check_failed\n"), "failed cause");
+            window.handleStatus({{"State", "connected"}});
+            require(window.connectionLabel_->toolTip().isEmpty(), "success clears tooltip");
+            require(!coreConnectionProblemText(catalog, "vless://secret <b>bad</b>").contains("secret"), "legacy errors stay private");
+            if (language == "ru") QCoreApplication::removeTranslator(&translator);
+        }
+        if (previousLanguage.isValid()) QSettings().setValue("app/language", previousLanguage);
+        else QSettings().remove("app/language");
+        if (previousNotifications.isValid()) QSettings().setValue("app/notifications", previousNotifications);
+        else QSettings().remove("app/notifications");
+    }
+
+    // Core keeps the last session's profile_id after failed/disconnected. Only a live,
+    // starting, reconnecting or stopping session may block deleting that profile.
+    static void inactiveSessionProfileRemoval() {
+        QTemporaryDir directory;
+        require(directory.isValid(), "profile removal fixture directory");
+        MainWindow window;
+        window.core_.cancel();
+        for (auto *timer : window.findChildren<QTimer *>()) timer->stop();
+        window.store_ = ProfileStore(directory.filePath("profiles"));
+        window.helloReady_ = true;
+        window.statusNeeded_ = false;
+        window.startupPreparationPending_ = false;
+        const auto addProfile = [&](const QString &name) {
+            const QString path = directory.filePath(name + ".conf");
+            QFile file(path);
+            require(file.open(QIODevice::WriteOnly) && file.write("[Interface]\nMode = proxy\n") > 0, "write removal fixture");
+            file.close();
+            auto profiles = window.store_.load();
+            profiles.push_back({ProfileStore::identity(path), name, path});
+            require(window.store_.save(profiles), "save removal fixture index");
+            window.refreshProfiles();
+            return path;
+        };
+        struct Case { QString state; bool active; bool held; };
+        const QList<Case> cases{
+            {"connecting", true, true}, {"connected", true, true}, {"reconnecting", true, true},
+            {"stopping", true, true}, {"connected", false, true}, {"disconnected", true, true},
+            {"failed", false, false}, {"disconnected", false, false}};
+        for (const auto &scenario : cases) {
+            const QString path = addProfile("Removal fixture");
+            const QString id = ProfileStore::identity(path);
+            window.handleStatus({{"State", scenario.state}, {"Session", QJsonObject{
+                {"id", "removal-session"}, {"active", scenario.active},
+                {"profile_id", id}, {"profile_name", "Removal fixture"}}}});
+            require(window.profileHeldBySession(id) == scenario.held, "session hold follows state and activity");
+            require(!window.profileHeldBySession(QString{}), "empty identity is never held");
+            window.profileList_->setCurrentRow(window.profiles_.size() - 1, QItemSelectionModel::ClearAndSelect);
+            QString shown;
+            QTimer::singleShot(0, [&] {
+                auto *message = qobject_cast<QMessageBox *>(QApplication::activeModalWidget());
+                require(message, "removal shows a dialog");
+                shown = message->text();
+                for (auto *button : message->buttons()) {
+                    const auto role = message->buttonRole(button);
+                    if (role == QMessageBox::DestructiveRole || role == QMessageBox::AcceptRole) { button->click(); return; }
+                }
+                message->close();
+            });
+            window.removeProfile();
+            require(shown.contains(scenario.held ? "Disconnect the active session first." : "Delete profile"), "removal dialog matches session hold");
+            require(QFileInfo::exists(path) == scenario.held, "inactive session profile is removable");
+            require(window.profiles_.size() == (scenario.held ? 1 : 0), "index follows removal");
+            if (scenario.held) {
+                window.handleStatus({{"State", "disconnected"}});
+                QTimer::singleShot(0, [&] {
+                    auto *message = qobject_cast<QMessageBox *>(QApplication::activeModalWidget());
+                    require(message, "cleanup removal dialog");
+                    for (auto *button : message->buttons())
+                        if (message->buttonRole(button) == QMessageBox::DestructiveRole) { button->click(); return; }
+                });
+                window.removeProfile();
+                require(window.profiles_.isEmpty() && !QFileInfo::exists(path), "fixture removed after session ends");
+            }
+        }
+    }
+
     // Routing tab: a rule whose database is unavailable keeps Enabled and Type editable,
     // disables Target, explains the block, and does not prevent saving. Needs a real Core
     // for the profile document bridge.
@@ -1593,6 +1707,57 @@ struct ConnectionManagementTest {
         return 0;
     }
 
+    // Acceptance: the service dialog keeps its whole frame, including the
+    // title bar, inside the available screen area after it is shown or resized.
+    static void serviceDialogPlacement() {
+        using WindowPlacement::fittedFramePosition;
+        const QRect desk(0, 0, 1280, 800);
+        const QRect parent(280, 100, 720, 600);
+        require(fittedFramePosition(QRect(410, 300, 460, 150), desk, parent) == QPoint(410, 300),
+                "a frame inside the screen keeps its position");
+        require(fittedFramePosition(QRect(410, -30, 460, 150), desk, parent) == QPoint(409, 324),
+                "a frame above the screen is centered over the parent");
+        require(fittedFramePosition(QRect(410, -30, 460, 150), desk, {}) == QPoint(410, 0),
+                "without a parent the frame is moved down to the top edge");
+        require(fittedFramePosition(QRect(410, 0, 460, 1000), desk, parent).y() == 0,
+                "a frame taller than the screen keeps its title bar at the top edge");
+        require(fittedFramePosition(QRect(1100, 300, 460, 150), desk.translated(-1280, 0), {}) == QPoint(-460, 300),
+                "frames are clamped on screens with negative coordinates");
+
+        MainWindow window;
+        window.core_.cancel();
+        window.developerMode_ = true;
+        window.core_.setEndpoint("bimeron-placement-" + QUuid::createUuid().toString());
+        for (auto *timer : window.findChildren<QTimer *>()) timer->stop();
+        window.resize(720, 600);
+        const QRect available = window.screen()->availableGeometry();
+        window.move(available.center() - QPoint(360, 300));
+        window.show();
+        auto *dialog = window.coreManagement_;
+        const auto settled = [&] {
+            return waitFor([&] {
+                return dialog->isVisible() && available.contains(dialog->frameGeometry());
+            }, 3000);
+        };
+        window.openCoreManagement();
+        require(settled(), "service dialog opens inside the screen");
+        dialog->move(dialog->frameGeometry().x(), available.top() - 200);
+        window.helloReady_ = true;
+        window.statusNeeded_ = false;
+        window.serviceObservation_ = MainWindow::ServiceObservation::Running;
+        window.state_ = "disconnected";
+        window.updateCoreAvailability();
+        require(settled(), "a resized service dialog returns its title bar to the screen");
+        dialog->reject();
+        dialog->move(dialog->frameGeometry().x(), available.top() - 200);
+        window.openCoreManagement();
+        require(settled(), "a reopened service dialog is inside the screen");
+        const QPoint center = dialog->frameGeometry().center();
+        require(std::abs(center.x() - window.frameGeometry().center().x()) <= 1,
+                "a corrected dialog is centered over the main window");
+        dialog->reject();
+    }
+
     static int quitFixture(QApplication &app, bool stop) {
         QLocalServer server;
         require(server.listen("bimeron-exit-" + QUuid::createUuid().toString()), "exit fixture endpoint");
@@ -2037,7 +2202,42 @@ struct ConnectionManagementTest {
             window.development_->restoreService_ = false;
         }
     }
+    static void bomImport() {
+        QTemporaryDir directory;
+        require(directory.isValid(), "BOM import fixture");
+        MainWindow window;
+        window.core_.cancel();
+        window.core_.setEndpoint("bom-import-" + QUuid::createUuid().toString());
+        for (auto *timer : window.findChildren<QTimer *>()) timer->stop();
+        window.validationExecutable_ = QCoreApplication::applicationFilePath();
+        window.store_ = ProfileStore(directory.filePath("store"));
+        window.profiles_.clear();
+        const QByteArray config("[Profile]\nName = BOM fixture\n[AccessKey]\nSOCKS5 = socks5://localhost:1080\n[Interface]\nMode = proxy\n");
+        const QString source = directory.filePath("BOM fixture.conf");
+        int dialogs = 0;
+        QTimer dismiss;
+        QObject::connect(&dismiss, &QTimer::timeout, [&] {
+            if (auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget())) {
+                ++dialogs; dialog->reject();
+            }
+        });
+        dismiss.start(10);
+        QString error;
+        require(ProfileStore::writeConfig(source, QByteArray::fromHex("efbbbf") + config, &error), "write BOM import");
+        require(window.importProfile(source) && dialogs == 0, "GUI accepts BOM profile without correction");
+        require(window.profiles_.size() == 1, "BOM profile added once");
+        QFile stored(window.profiles_[0].path);
+        require(stored.open(QIODevice::ReadOnly) && stored.readAll() == config, "GUI stores without BOM");
+        QFile original(source);
+        require(original.open(QIODevice::ReadOnly) && original.readAll() == QByteArray::fromHex("efbbbf") + config,
+            "BOM source retained");
+        original.close();
+        require(ProfileStore::writeConfig(source, config + QByteArray::fromHex("c328"), &error), "write invalid UTF-8 import");
+        require(!window.importProfile(source) && dialogs == 1 && window.profiles_.size() == 1,
+            "GUI rejects invalid UTF-8 before validation/storage");
+    }
     static void run() {
+        bomImport();
         repairQuitOwnership();
         {
             MainWindow window;
@@ -2127,6 +2327,16 @@ struct ConnectionManagementTest {
                 "failed repair or rollback never relaunches elevation");
             require(window.log_->toPlainText().contains("Service repair failed:"), "terminal repair failure reaches Journal");
             window.startRepairSession();
+            window.finishServiceCommand(127, "Error creating textual authentication agent: no controlling terminal");
+            require(!window.repairSession_ && !window.helloReady_
+                && window.repairFailure_.contains("127")
+                && window.repairHistory_.join('\n').contains("no controlling terminal"),
+                "elevation failure retains diagnostics without claiming broker success");
+            window.startRepairSession();
+            window.finishServiceCommand(126);
+            require(window.servicePermissionCanceled_ && !window.repairSession_ && !window.helloReady_,
+                "canceled authorization is terminal and retryable");
+            window.startRepairSession();
             const int consentLaunches = launches;
             QLocalServer consentServer;
             const QString consentEndpoint = "repair-consent-" + QUuid::createUuid().toString(QUuid::Id128);
@@ -2199,6 +2409,25 @@ struct ConnectionManagementTest {
                     && window.coreManagementDetails_->text().contains("secret-probe-fixture")
                     && window.log_->toPlainText().contains("secret-probe-fixture"), "actual probe diagnostics retained in details, report and Journal");
                 if (mode == "valid") require(report.value("failedProbe").toObject().value("category").toString() == "malformed-response", "failed probe retained after successful refresh");
+            }
+            for (int code = 1; code <= 7; ++code) {
+                window.probeTestMode_ = QString("named-%1").arg(code);
+                window.refreshServiceStatus();
+                require(waitFor([&] { return !window.serviceStatusProcess_; }), "named SCM fixture completes");
+                require(window.serviceStateCode_ == QString::number(code) && window.probeCategory_ == "observed",
+                    "frozen Core named state accepted");
+                require(window.serviceObservation_ == (code == 1 ? MainWindow::ServiceObservation::Stopped
+                    : code == 4 ? MainWindow::ServiceObservation::Running : code == 7 ? MainWindow::ServiceObservation::Paused
+                    : MainWindow::ServiceObservation::Transitional), "named state observation");
+                if (code == 4) require(window.repairFindings_->text().contains("System service: Running"),
+                    "named running state rendered in service diagnostics");
+            }
+            for (const QString mode : {QString("mismatched"), QString("extra"), QString("unknown-state")}) {
+                window.probeTestMode_ = mode;
+                window.refreshServiceStatus();
+                require(waitFor([&] { return !window.serviceStatusProcess_; }), "invalid named SCM fixture completes");
+                require(window.probeCategory_ == "malformed-response" && window.serviceStateCode_.isEmpty(),
+                    "invalid named states rejected");
             }
             for (const QString mode : {QString("starting"), QString("stopping")}) {
                 window.probeTestMode_ = mode;
@@ -2437,6 +2666,16 @@ struct ConnectionManagementTest {
             window.profiles_.clear();
             window.validationExecutable_ = QCoreApplication::applicationFilePath();
             window.developerMode_ = true;
+#ifndef Q_OS_WIN
+            QTimer::singleShot(0, [&] {
+                auto *add = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+                require(add, "native creation Add dialog");
+                require(!add->findChild<QPushButton *>("createNativeProfile"), "IKEv2 creation is Windows-only");
+                add->reject();
+            });
+            window.addProfile();
+            require(window.profiles_.isEmpty(), "non-Windows Add dialog creates no profile");
+#else
             QTimer::singleShot(0, [&] {
                 auto *add = qobject_cast<QDialog *>(QApplication::activeModalWidget());
                 require(add, "native creation Add dialog");
@@ -2454,6 +2693,7 @@ struct ConnectionManagementTest {
             });
             window.addProfile();
             require(window.profiles_.isEmpty() && QDir(directory.path()).entryList(QDir::Files).isEmpty(), "cancel creates no profile");
+#endif
             for (int scenario = 0; scenario < 5; ++scenario) {
                 const bool available = scenario != 0;
                 const bool successful = scenario >= 3;
@@ -2617,11 +2857,28 @@ struct ConnectionManagementTest {
                 check(dialog->findChild<QPushButton *>("browseProfileFile"), "File browse shares the add form");
                 check(dialog->findChild<QPushButton *>("createProfileInEditor"), "Create editor action is available");
                 check(!dialog->findChild<QPushButton *>("createNativeProfile"), "IKEv2 creation is limited to developer mode");
+                QToolButton *uriHelp = nullptr;
+                for (auto *button : dialog->findChildren<QToolButton *>())
+                    if (button->text() == "?") uriHelp = button;
+                check(uriHelp, "Add profile offers protocol help");
+                uriHelp->click();
+                QCoreApplication::processEvents();
+                check(QToolTip::text().contains(".conf") && !QToolTip::text().contains(".ssconf"),
+                    "Protocol help lists only supported configuration files");
+                QToolTip::hideText();
                 fields[0]->setText(QDir::homePath() + "/profile.conf");
                 check(fields[1]->isHidden(), "Typed absolute path hides profile name");
                 check(dialog->findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Save)->isEnabled(), "File import does not require a name");
                 fields[0]->setText("relative.conf");
                 check(!dialog->findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Save)->isEnabled(), "Relative path is not accepted");
+                for (const QString &path : {QDir::homePath() + "/profile.ssconf", QDir::homePath() + "/profile.SSCONF",
+                         QUrl::fromLocalFile(QDir::homePath() + "/profile.ssconf").toString()}) {
+                    fields[0]->setText(path);
+                    check(!dialog->findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Save)->isEnabled()
+                            && fields[0]->toolTip().contains("ssconf://"), "SSConf file is rejected with link guidance");
+                }
+                fields[0]->setText("ssconf://example.invalid/key");
+                check(fields[1]->isVisible(), "ssconf:// link remains a supported key");
                 for (const QString &path : {QUrl::fromLocalFile(QDir::homePath() + "/profile.conf").toString(), QString("~/profile.conf"), "\"" + QDir::homePath() + "/profile.conf\""}) {
                     fields[0]->setText(path);
                     check(fields[1]->isHidden() && dialog->findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Save)->isEnabled(), "File URL, home path and quoted path accepted without name");
@@ -2691,6 +2948,7 @@ struct ConnectionManagementTest {
         int starts = 0, stops = 0, requests = 0;
         qint64 bytes = 100;
         bool holdStart = false, holdStop = false, dropped = false, invalidCursor = false, failStop = false, failStart = false;
+        bool checkStartRefresh = false, checkedStartRefresh = false;
         QPointer<QLocalSocket> stopSocket;
         QJsonObject stopRequest;
         const auto respond = [&](QLocalSocket *socket, const QJsonObject &request, QJsonObject extra = {}) {
@@ -2737,6 +2995,18 @@ struct ConnectionManagementTest {
                     auto session = status.value("Session").toObject();
                     session.insert("active", false);
                     status = {{"State", "disconnected"}, {"Session", session}};
+                } else if (command == "status" && checkStartRefresh) {
+                    checkStartRefresh = false;
+                    require(window.statusNeeded_, "accepted start requires fresh status");
+                    const QString color = window.connectionLabel_->styleSheet();
+                    window.poll();
+                    require(window.connectionLabel_->text() == "Connecting…"
+                            && window.connectionLabel_->styleSheet() == color,
+                            "status refresh must preserve accepted start presentation");
+                    require(!window.connectButton_->isEnabled(), "refresh still blocks controls");
+                    checkedStartRefresh = true;
+                    QTimer::singleShot(150, socket, [&, socket, request] { respond(socket, request); });
+                    return;
                 } else if (command == "events") {
                     extra = {{"cursor", 12}, {"dropped", dropped}};
                     if (invalidCursor) extra.insert("error", "invalid_cursor");
@@ -2779,11 +3049,13 @@ struct ConnectionManagementTest {
         auto session = status.value("Session").toObject();
         session.insert("active", false);
         status = {{"State", "disconnected"}, {"Session", session}};
+        checkStartRefresh = true;
         respond(stopSocket, stopRequest);
         require(waitFor([&] { return starts == 1 && window.operation_.isEmpty() && !window.statusNeeded_ && !window.core_.busy(); }),
                 "successful cleanup must start target exactly once");
         require(window.state_ == "connecting" && window.activeProfileId_ == window.profiles_[1].id,
                 "start acceptance is connecting, not connected");
+        require(checkedStartRefresh, "delayed post-start refresh was exercised");
 
         status.insert("State", "connected");
         request("status");

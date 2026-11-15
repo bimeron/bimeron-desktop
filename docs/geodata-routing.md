@@ -1,7 +1,7 @@
 # GeoData routing
 
 Tracking: [Desktop #18](https://github.com/bimeron/bimeron-desktop/issues/18).
-Implementation and acceptance checklist: [implementation plan](geodata-routing-plan.md).
+Implementation and acceptance checklist: [implementation plan](dev/geodata-routing-plan.md).
 
 The Routing tab uses the Core document CLI to preserve profile text while editing
 ordered CIDR, Domain, GeoIP and GeoSite rules. This requires a Core containing the
@@ -172,7 +172,7 @@ Package pins and signed-update approval remain separate release work. Supported
 packages remain Windows MSI and Debian DEB for amd64/ARM64. No package artifacts or bundled databases are introduced by this feature.
 Explicit GUI downloads do not change Core behavior or package pins.
 
-See [verification and remaining limits](geodata-routing-verification.md) for
+See [verification and remaining limits](dev/geodata-routing-verification.md) for
 actual local build/test evidence and release gaps.
 
 The profile dialog retains its existing 680 by 520 initial size (620 by 460
@@ -218,7 +218,7 @@ lowercase lookup/enumeration. Bang does not mean policy negation; attribute
 selectors (`@`), controls, non-ASCII and empty IDs remain invalid. The pinned
 202611012203 files now pass checksum, catalog and synthetic bang-rule validation.
 Older published/installed Core builds still require separate compatibility checks. Desktop does not filter or rewrite checksum-verified data.
-See [verification](geodata-routing-verification.md) for exact evidence and limits.
+See [verification](dev/geodata-routing-verification.md) for exact evidence and limits.
 
 
 GeoIP labels follow the application language: for example United States (US) in

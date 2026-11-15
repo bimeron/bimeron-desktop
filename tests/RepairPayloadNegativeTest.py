@@ -9,8 +9,8 @@ import tempfile
 
 root = Path(__file__).resolve().parents[1]
 source = (root / 'CMakeLists.txt').read_text()
-start = source.index('if(BIMERON_REPAIR_BROKER)')
-end = source.index('    set_source_files_properties', start)
+start = source.index('if(BIMERON_REQUIRE_CORE AND NOT BIMERON_REPAIR_BROKER)')
+end = source.index('    if(BUILD_TESTING)', start)
 gate = source[start:end] + '\nendif()\n'
 
 def pe(machine):
@@ -35,6 +35,9 @@ with tempfile.TemporaryDirectory(prefix='bimeron-negative-') as directory:
         for index, arch in enumerate(['amd64', 'arm64']):
             good = bytes(factory(machines[index]))
             cases = [
+                ('required-empty', good, None, 'requires a repair broker'),
+                ('wrong-pin', good, None, 'target executable pin'),
+                ('positive', good, None, ''),
                 ('absent', None, '0' * 64, 'existing payload'),
                 ('digest', good, '0' * 64, 'SHA-256 mismatch'),
                 ('architecture', bytes(factory(machines[1-index])), None, 'architecture mismatch'),
@@ -48,10 +51,13 @@ with tempfile.TemporaryDirectory(prefix='bimeron-negative-') as directory:
                     payload.write_bytes(data)
                 digest = digest or hashlib.sha256(data).hexdigest()
                 script.write_text(f'set(WIN32 {"TRUE" if windows else "FALSE"})\n'
+                    f'set(BIMERON_REQUIRE_CORE ON)\n'
+                    f'set(BIMERON_CORE_PLATFORM {"windows" if windows else "linux"})\n'
+                    f'set(BIMERON_CORE_EXECUTABLE_SHA256_{"windows" if windows else "linux"}_{arch} {"0" * 64 if name == "wrong-pin" else digest})\n'
                     f'set(BIMERON_PACKAGE_ARCH {arch})\n'
-                    f'set(BIMERON_REPAIR_BROKER "{payload.as_posix()}")\n'
+                    f'set(BIMERON_REPAIR_BROKER "{"" if name == "required-empty" else payload.as_posix()}")\n'
                     f'set(BIMERON_REPAIR_BROKER_SHA256 {digest})\n' + gate)
                 result = subprocess.run(['cmake', '-P', str(script)], capture_output=True, text=True)
-                assert result.returncode != 0 and expected in result.stderr, (windows, arch, name, result.stdout, result.stderr)
+                assert (result.returncode == 0 if name == "positive" else result.returncode != 0 and expected in result.stderr), (windows, arch, name, result.stdout, result.stderr)
                 count += 1
-    print(f'{count} production configure-gate negative cases passed; no payload executed')
+    print(f'{count} production configure-gate cases passed (including positive cases); no payload executed')

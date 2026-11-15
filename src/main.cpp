@@ -1,3 +1,4 @@
+#include "InstallerCore.h"
 #include "MainWindow.h"
 #include "RepairBootstrap.h"
 #include <cstring>
@@ -85,6 +86,10 @@ private:
 };
 
 int main(int argc, char *argv[]) {
+    if (argc == 2 && std::strcmp(argv[1], "--installer-update-core") == 0) {
+        QCoreApplication app(argc, argv);
+        return InstallerCore::update();
+    }
     if (argc > 1 && std::strcmp(argv[1], "repair-session") == 0)
         return RepairBootstrap::run(argc, argv);
     QApplication app(argc, argv);
@@ -103,6 +108,7 @@ int main(int argc, char *argv[]) {
     app.setStyle(new AppStyle(app.style()));
     QCoreApplication::setOrganizationName(QStringLiteral("Bimeron"));
     QCoreApplication::setApplicationName(QStringLiteral("Bimeron Desktop"));
+    QGuiApplication::setApplicationDisplayName(QStringLiteral("Bimeron"));
     applyThemePalette(app);
     QCoreApplication::setApplicationVersion(QStringLiteral(BIMERON_GUI_VERSION));
     const QString configuredLanguage = QSettings().value("app/language").toString();

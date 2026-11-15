@@ -1,0 +1,28 @@
+Qt notice for Bimeron Desktop Windows packages
+
+Bimeron Desktop for Windows includes unmodified dynamic libraries and plugins of
+the Qt framework, version 6.8.3, deployed by windeployqt (for example
+Qt6Core.dll, Qt6Gui.dll, Qt6Network.dll, Qt6Svg.dll, Qt6Widgets.dll and the
+platform, style, image format and TLS plugins).
+
+Copyright (C) The Qt Company Ltd. and other contributors.
+
+Qt is used under the GNU Lesser General Public License version 3 (LGPL-3.0).
+The license text is in LGPL-3.0.txt; it incorporates the GNU General Public
+License version 3, whose text is in GPL-3.0.txt.
+
+Bimeron Desktop links Qt dynamically. You may replace the Qt libraries in the
+installation directory with your own compatible, modified builds of Qt 6.8.3.
+
+The complete corresponding source code of Qt 6.8.3 is available from
+https://download.qt.io/archive/qt/6.8/6.8.3/single/ and
+https://code.qt.io/cgit/qt/ (tag v6.8.3). The Qt libraries in this package were
+not modified.
+
+Qt itself contains third-party components (for example zlib, libpng,
+FreeType, HarfBuzz, PCRE2 and libjpeg) under their own licenses. Their
+attributions and license texts are listed at
+https://doc.qt.io/qt-6.8/licenses-used-in-qt.html and in the Qt source code.
+
+Linux packages do not include Qt; they use the Qt libraries provided by the
+operating system.

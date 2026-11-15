@@ -42,7 +42,10 @@ if (-not (Test-Path (Join-Path $wixRoot "candle.exe"))) {
 $env:PATH = "$wixRoot;$env:PATH"
 
 foreach ($preset in @("windows-amd64-release", "windows-arm64-release")) {
-    cmake --preset $preset -DBIMERON_REQUIRE_CORE=ON "-DBIMERON_CORE_ROOT=$(Join-Path $sourceRoot '.tools/core')" `
+    $target = $preset -replace "-release$", ""
+    $broker = Join-Path $sourceRoot ".tools/core/$target/bimeron.exe"
+    $brokerDigest = (Get-FileHash -LiteralPath $broker -Algorithm SHA256).Hash.ToLowerInvariant()
+    cmake --preset $preset "-DBIMERON_REPAIR_BROKER=$broker" "-DBIMERON_REPAIR_BROKER_SHA256=$brokerDigest" -DBIMERON_REQUIRE_CORE=ON "-DBIMERON_CORE_ROOT=$(Join-Path $sourceRoot '.tools/core')" `
         -DBIMERON_REQUIRE_GEODATA=ON "-DBIMERON_GEODATA_ROOT=$(Join-Path $sourceRoot '.tools/geodata')"
     if ($LASTEXITCODE -ne 0) { throw "Configure failed: $preset" }
     cmake --build --preset $preset
@@ -67,6 +70,8 @@ foreach ($preset in @("windows-amd64-release", "windows-arm64-release")) {
             throw "Wrong PE architecture: $($file.FullName)"
         }
     }
+    cmake "-DBIMERON_REPAIR_PAYLOAD=$stagePath/repair/bimeron-repair.exe" "-DBIMERON_REPAIR_TARGET=$target" -P "$PSScriptRoot/verify-repair-payload.cmake"
+    if ($LASTEXITCODE -ne 0) { throw "Staged repair broker verification failed: $preset" }
     cpack --preset $preset -C Release
     if ($LASTEXITCODE -ne 0) { throw "Packaging failed: $preset" }
 }

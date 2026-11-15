@@ -2,19 +2,19 @@
 
 ## Status and implementation gate
 
-Step 4 [consumer Windows decision proposal](ikev2-installation-contract.md#step-4-decision-proposal-consumer-windows-lifecycle)
+Step 4 [consumer Windows decision proposal](dev/ikev2-installation-contract.md#step-4-decision-proposal-consumer-windows-lifecycle)
 recommends investigating offline package servicing separated from Core runtime
 ownership/recovery, without mandatory managed policy or a new broker by default.
 This replaces the next-work recommendation below, not accepted security guarantees.
 Threat-scope acceptance, maintenance exclusion and RAS/DNS/WFP recovery evidence
 remain prerequisites; GUI stays off. Steps 2/3 remain historical proposals.
 
-Step 2 follow-up: [unified installation and first GUI contract](ikev2-installation-contract.md)
+Step 2 follow-up: [unified installation and first GUI contract](dev/ikev2-installation-contract.md)
 is **PROPOSED / REVIEW PENDING**. It reconciles Core/Desktop ownership, semantic
 interfaces, first-connection dependencies and remaining security decisions. It
 does not extend the earlier acceptance below or authorize native enablement.
 
-Step 3 [concrete design decisions](ikev2-installation-contract.md#step-3-concrete-decisions-and-remaining-feasibility-boundaries)
+Step 3 [concrete design decisions](dev/ikev2-installation-contract.md#step-3-concrete-decisions-and-remaining-feasibility-boundaries)
 now fix durable Intent/lease history, atomic participating admission, bounded
 wire/plan encoding and detached exact-pair approval. The selected engineering
 design is not user/security acceptance or native evidence. MSI action/session
@@ -180,7 +180,7 @@ transaction owner or terminal settlement authority. No production evidence exist
 
 ### Proposed Core installation controller (selected architecture; review pending)
 
-The [Step 2 contract](ikev2-installation-contract.md) adds shared design-only
+The [Step 2 contract](dev/ikev2-installation-contract.md) adds shared design-only
 interfaces and an ordered first-GUI plan. Core's companion is
 `docs/IKEV2_INSTALLATION_CONTRACT.MD` on its isolated planning branch; its older
 `docs/NATIVE_ENROLLMENT_SPEC.MD` trusted-invocation route is historical. Production
@@ -499,8 +499,9 @@ before lifting the Desktop implementation gate.
 Import protected UTF-8 native .conf files with Profile and IKEv2 sections and no
 AccessKey. Keep the 64 KiB bound and selected-Core validation. Reject mixed
 sources through Core validation; invalid imports leave no retained profile.
-Preserve bytes, BOM/line endings, relative-reference safety, atomic replacement
-and effective ACLs. No-op saves remain byte-identical.
+Import removes one leading UTF-8 BOM from the stored copy and preserves other
+bytes and line endings. Retain relative-reference safety, atomic replacement
+and effective ACLs. Editing no-op saves remain byte-identical.
 
 Use an explicit native backend discriminator in ProfileConnectionInfo, without
 reinterpreting packet connectable semantics. The native form contains

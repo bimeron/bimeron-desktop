@@ -194,13 +194,23 @@ bool ProfileStore::save(const QList<Profile> &profiles, QString *error) const {
     return writeConfig(index_, QJsonDocument(array).toJson(), error);
 }
 
+bool ProfileStore::normalizeImport(QByteArray &data) {
+    if (data.size() > 64 * 1024) return false;
+    if (data.startsWith(QByteArray::fromHex("efbbbf"))) data.remove(0, 3);
+    return QString::fromUtf8(data).toUtf8() == data;
+}
+
 QString ProfileStore::importConfig(const QString &source, QString *error) const {
     QFile input(source);
     if (!input.open(QIODevice::ReadOnly)) {
         if (error) *error = input.errorString();
         return {};
     }
-    const QByteArray data = input.read(64 * 1024 + 1);
+    QByteArray data = input.read(64 * 1024 + 1);
+    if (!normalizeImport(data)) {
+        if (error) *error = QObject::tr("The profile must be valid UTF-8 and at most 64 KiB.");
+        return {};
+    }
     QSet<QString> sections;
     for (const auto &line : QString::fromUtf8(data).split('\n')) sections.insert(sectionName(line));
     if (data.size() > 64 * 1024 || !sections.contains("Profile")

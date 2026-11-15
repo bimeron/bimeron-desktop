@@ -3,7 +3,7 @@
 ## GUI configuration writing contract
 
 The reusable platform-neutral behavior is defined in the
-[GUI profile editing contract](gui-profile-editing-contract.md).
+[GUI profile editing contract](dev/gui-profile-editing-contract.md).
 
 Desktop owns formatting of edited fields; Core remains unchanged and validates
 the resulting configuration. Changed/new fields use `Key = Value`, quoting only
@@ -142,7 +142,7 @@ Integrate stage 6 before rebasing stage 8 native IKEv2 changes. Coordinate share
 editor/header, profile tests, translations and contract documentation sequentially.
 Keep IKEv2 outside packet forms and daemon start. Preserve stages 2/3/4/5/7.
 
-The current v0.2.0-beta.1 bundle does not implement these new protocols. Published
+The v0.2.0-beta.1 bundle of that time did not implement these new protocols. Published
 target assets, four archive hashes, signed compatibility metadata, runtime checks
 and the complete MSI/DEB release matrix remain a separate pre-release dependency.
 

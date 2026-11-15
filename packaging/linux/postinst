@@ -1,0 +1,6 @@
+#!/bin/sh
+# Service servicing is deliberately best effort, including loader/start failures.
+if [ "$1" = configure ]; then
+    /usr/bin/bimeron-desktop --installer-update-core || echo 'Bimeron installer Core: helper failed; package continues' >&2
+fi
+exit 0

@@ -317,6 +317,15 @@ int main(int argc, char **argv) {
     if (argc == 3 && std::strcmp(argv[1], "--repair-probe-fixture") == 0) {
         if (std::strcmp(argv[2], "failed") == 0) { std::fprintf(stderr, "password=secret-probe-fixture"); return 7; }
         if (std::strcmp(argv[2], "missing") == 0) { std::fprintf(stderr, "service not installed"); return 1; }
+        const char *namedStates[] = {"stopped", "start_pending", "stop_pending", "running", "continue_pending", "pause_pending", "paused"};
+        for (int code = 1; code <= 7; ++code) {
+            if (QString::fromLocal8Bit(argv[2]) == QString("named-%1").arg(code)) {
+                std::printf("Service state: %d (%s)\n", code, namedStates[code - 1]); return 0;
+            }
+        }
+        if (std::strcmp(argv[2], "mismatched") == 0) { std::puts("Service state: 4 (stopped)"); return 0; }
+        if (std::strcmp(argv[2], "extra") == 0) { std::puts("Service state: 4 (running)\nextra"); return 0; }
+        if (std::strcmp(argv[2], "unknown-state") == 0) { std::puts("Service state: 8 (unknown)"); return 0; }
         if (std::strcmp(argv[2], "stopped") == 0) { std::printf("Service state: 1\n"); return 0; }
         if (std::strcmp(argv[2], "starting") == 0) { std::printf("Service state: 2\n"); return 0; }
         if (std::strcmp(argv[2], "stopping") == 0) { std::printf("Service state: 3\n"); return 0; }
@@ -551,12 +560,15 @@ int main(int argc, char **argv) {
     NativeIKEv2SessionTest::run();
     ConnectionManagementTest::profileGeometry(app, temporary.filePath("profile-geometry.png"));
     ConnectionManagementTest::run();
+    ConnectionManagementTest::serviceDialogPlacement();
     ConnectionManagementTest::geoDataManagerStates();
     ConnectionManagementTest::autoConnectSelector();
     ConnectionManagementTest::geoDataDefaults();
     ConnectionManagementTest::geoDataRoutingNotice();
     ConnectionManagementTest::sharedGeoDataPreparation();
     ConnectionManagementTest::settingsGeoDataChecking();
+    ConnectionManagementTest::reconnectProgress();
+    ConnectionManagementTest::inactiveSessionProfileRemoval();
     DevelopmentCore backend(temporary.filePath("missing-helper"));
     bool completed = false;
     QObject::connect(&backend, &DevelopmentCore::completed, &backend, [&](bool success) {

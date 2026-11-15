@@ -15,6 +15,7 @@
 #include "RoutingCompatibility.h"
 #include <QTemporaryDir>
 #include "TrustedCore.h"
+#include "WindowPlacement.h"
 
 #include <QColor>
 #include <QApplication>
@@ -750,6 +751,11 @@ QWidget *MainWindow::settingsPage() {
     auto *content = new QWidget;
     auto *layout = new QVBoxLayout(content);
     scroll->setWidget(content);
+    // QScrollArea::setWidget() fills the content with the palette's Window
+    // colour. The page background comes from the style sheet instead, and the
+    // Linux system theme leaves the palette untouched, so keep both transparent.
+    content->setAutoFillBackground(false);
+    scroll->viewport()->setAutoFillBackground(false);
     outer->addWidget(scroll, 1);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(12);
@@ -954,6 +960,7 @@ QWidget *MainWindow::settingsPage() {
     coreManagement_ = new QDialog(this);
     coreManagement_->setWindowTitle(tr("Bimeron service"));
     coreManagement_->setModal(true);
+    new WindowPlacement::KeepFrameOnScreen(coreManagement_, this);
     auto *dialogLayout = new QVBoxLayout(coreManagement_);
     dialogLayout->setContentsMargins(18, 16, 18, 16);
     dialogLayout->setSpacing(12);
@@ -1422,7 +1429,7 @@ void MainWindow::editProfile(int row) {
         refreshProfiles();
         for (int index = 0; index < profiles_.size(); ++index)
             if (profiles_[index].id == editedId) profileList_->setCurrentRow(index);
-        if (editedId == activeProfileId_ && state_ != "disconnected")
+        if (profileHeldBySession(editedId))
             QMessageBox::information(this, tr("Reconnect required"), tr("Changes have been saved and will apply after disconnecting and reconnecting."));
         break;
     }
@@ -1443,7 +1450,7 @@ void MainWindow::addProfile() {
     uriHelp->setAccessibleName(tr("Supported protocol URIs"));
     connect(uriHelp, &QToolButton::clicked, &dialog, [uriHelp] {
         QToolTip::showText(uriHelp->mapToGlobal(QPoint(0, uriHelp->height())),
-            QStringLiteral("ss://, ssconf://, socks5://, vless://,\nhysteria2://, hy2://, vmess://, trojan://, tuic://,\nhttp://, https://, anytls://,\nnaive+https://, naive+quic://, masque://, ssh://") + "\n\n" + tr("Files: .conf, .ssconf. Choose a file or enter its absolute path."), uriHelp, uriHelp->rect());
+            QStringLiteral("ss://, ssconf://, socks5://, vless://,\nhysteria2://, hy2://, vmess://, trojan://, tuic://,\nhttp://, https://, anytls://,\nnaive+https://, naive+quic://, masque://, ssh://") + "\n\n" + tr("Files: .conf. Choose a file or enter its absolute path."), uriHelp, uriHelp->rect());
     });
     hintRow->addWidget(hint, 1);
     hintRow->addWidget(uriHelp);
@@ -1496,14 +1503,20 @@ void MainWindow::addProfile() {
     inputRow->addWidget(browseConfig);
     layout->addLayout(inputRow);
     connect(browseConfig, &QPushButton::clicked, &dialog, [&] {
-        const QString path = QFileDialog::getOpenFileName(&dialog, tr("Import configuration"), {}, tr("Bimeron (*.conf *.ssconf);;All files (*)"));
+        const QString path = QFileDialog::getOpenFileName(&dialog, tr("Import configuration"), {}, tr("Bimeron (*.conf);;All files (*)"));
         if (!path.isEmpty()) key->setText(QFileInfo(path).absoluteFilePath());
     });
     layout->addWidget(paste);
     layout->addWidget(sshFiles);
     bool createNative = false;
-    // Native IKEv2 creation is not a finished user workflow yet.
-    if (developerMode_) {
+    // Native IKEv2 creation is not a finished user workflow yet, and the native
+    // backend exists only on Windows.
+#ifdef Q_OS_WIN
+    const bool nativeCreationAvailable = developerMode_;
+#else
+    const bool nativeCreationAvailable = false;
+#endif
+    if (nativeCreationAvailable) {
         auto *native = new QPushButton(tr("Create IKEv2 profile"));
         native->setObjectName("createNativeProfile");
         native->setAutoDefault(false);
@@ -1573,7 +1586,7 @@ void MainWindow::addProfile() {
         const QUrl endpoint("ss://" + body.mid(body.lastIndexOf('@') + 1));
         return !endpoint.host().isEmpty() && endpoint.port() > 0;
     };
-    const auto filePath = [](QString value) {
+    const auto localPath = [](QString value) {
         value = value.trimmed();
         if (value.size() > 1 && value.front() == '"' && value.back() == '"') value = value.mid(1, value.size() - 2);
         if (value.startsWith("file:", Qt::CaseInsensitive)) {
@@ -1583,6 +1596,13 @@ void MainWindow::addProfile() {
         } else if (value.contains("://")) return QString();
         if (value.startsWith("~/")) value = QDir::homePath() + value.mid(1);
         return QFileInfo(value).isAbsolute() ? QDir::cleanPath(value) : QString();
+    };
+    // Dynamic SSConf is a link source only; a file with that extension is not a supported import format.
+    const auto ssconfFile = [&localPath](const QString &value) {
+        return QFileInfo(localPath(value)).suffix().compare(QStringLiteral("ssconf"), Qt::CaseInsensitive) == 0;
+    };
+    const auto filePath = [&localPath, &ssconfFile](const QString &value) {
+        return ssconfFile(value) ? QString() : localPath(value);
     };
     bool nameEdited = false;
     bool keyValid = false;
@@ -1600,7 +1620,8 @@ void MainWindow::addProfile() {
     connect(identity, &QLineEdit::textChanged, &dialog, updateSave);
     connect(key, &QLineEdit::textChanged, &dialog, [&](const QString &value) {
         keyValid = isKey(value);
-        key->setToolTip(!value.trimmed().isEmpty() && !keyValid && filePath(value).isEmpty() ? tr("Enter an absolute file path or a supported connection link.") : QString());
+        key->setToolTip(ssconfFile(value) ? tr("SSConf files are not supported. Paste the ssconf:// link instead.")
+            : !value.trimmed().isEmpty() && !keyValid && filePath(value).isEmpty() ? tr("Enter an absolute file path or a supported connection link.") : QString());
         nameLabel->setVisible(keyValid);
         name->setVisible(keyValid);
         sshFiles->setVisible(keyValid && value.startsWith("ssh://"));
@@ -1757,16 +1778,17 @@ bool MainWindow::importProfile(const QString &source) {
     if (!correctionDirectory.isValid()) { QMessageBox::warning(this, tr("Import failed"), tr("Cannot create a protected import draft directory.")); return false; }
     QFile input(source);
     if (!input.open(QIODevice::ReadOnly)) { QMessageBox::warning(this, tr("Import failed"), input.errorString()); return false; }
-    const QByteArray imported = input.read(64 * 1024 + 1);
+    QByteArray imported = input.read(64 * 1024 + 1);
+    const bool hadBom = imported.startsWith(QByteArray::fromHex("efbbbf"));
     input.close();
     if (imported.size() > 64 * 1024) { QMessageBox::warning(this, tr("Import failed"), tr("The profile exceeds the 64 KiB limit.")); return false; }
-    if (QString::fromUtf8(imported).toUtf8() != imported) {
+    if (!ProfileStore::normalizeImport(imported)) {
         QMessageBox::warning(this, tr("Import failed"), tr("The profile must be valid UTF-8 and at most 64 KiB.")); return false;
     }
     QStringList skipped;
     const QString sharedDraft = GeoDataSelection::materialize(QString::fromUtf8(imported), source,
         validationExecutable_, GeoDataSelection::instance()->paths(), &error, correctionDirectory.path(), &skipped);
-    if (error.isEmpty() && sharedDraft.toUtf8() != imported) {
+    if (error.isEmpty() && (hadBom || sharedDraft.toUtf8() != imported)) {
         correctionPath = correctionDirectory.filePath("shared.conf");
         if (!correctionDirectory.isValid() || !ProfileStore::writeConfig(correctionPath, sharedDraft.toUtf8(), &error)) {
             QMessageBox::warning(this, tr("Import failed"), error); return false;
@@ -1838,7 +1860,7 @@ bool MainWindow::importProfile(const QString &source) {
 void MainWindow::removeProfile() {
     const int row = profileList_->currentRow();
     if (row < 0 || !profileList_->currentItem()->isSelected()) return;
-    if (profiles_[row].id == activeProfileId_) {
+    if (profileHeldBySession(profiles_[row].id)) {
         QMessageBox::information(this, tr("Profile in use"), tr("Disconnect the active session first."));
         return;
     }
@@ -2051,6 +2073,14 @@ bool MainWindow::cleanDisconnected() const {
     return state_ == "disconnected" && !sessionActive_ && !cleanupBlocked_;
 }
 
+// Core keeps reporting the last session's profile after failed/disconnected; that
+// session is inactive and already cleaned up, so it no longer holds the profile.
+bool MainWindow::profileHeldBySession(const QString &profileId) const {
+    return !profileId.isEmpty() && profileId == activeProfileId_
+        && (sessionActive_ || state_ == "connecting" || state_ == "connected"
+            || state_ == "reconnecting" || state_ == "stopping");
+}
+
 bool MainWindow::canActivateProfile(int row) const {
     if (row < 0 || row >= profiles_.size() || !helloReady_ || statusNeeded_ || controlBlocked()
         || nativeSession_ || !operation_.isEmpty() || state_ == "stopping"
@@ -2107,6 +2137,7 @@ void MainWindow::resetMeasurements() {
 }
 
 void MainWindow::invalidateConnection(bool preserveServiceProbe) {
+    connectionLabel_->setToolTip({});
     clearSSHAuthentication();
     sshSeen_.clear();
     sshAuthSupported_ = true;
@@ -2659,6 +2690,17 @@ void MainWindow::handleStatus(const QJsonObject &status) {
     if ((state_ != "connecting" && state_ != "reconnecting") || nativeSession_) clearSSHAuthentication();
     const QHash<QString, QString> labels{{"disconnected", tr("Disconnected")}, {"connecting", tr("Connecting…")}, {"connected", tr("Connected")}, {"reconnecting", tr("Reconnecting…")}, {"stopping", tr("Disconnecting…")}, {"failed", tr("Connection failed")}};
     QString connectionText = labels.value(state_, tr("Unknown state"));
+    if (state_ == "reconnecting") {
+        const double attempt = status.value("ReconnectAttempt").toDouble();
+        const double limit = status.value("ReconnectLimit").toDouble();
+        if (status.value("ReconnectAttempt").isDouble() && status.value("ReconnectLimit").isDouble()
+            && attempt >= 1 && attempt <= limit && limit <= 2147483647
+            && attempt == static_cast<int>(attempt) && limit == static_cast<int>(limit))
+            connectionText = tr("Reconnecting… (%1/%2)").arg(static_cast<int>(attempt)).arg(static_cast<int>(limit));
+    }
+    connectionLabel_->setToolTip((state_ == "reconnecting" || state_ == "failed")
+        ? coreConnectionProblemText(errorCatalog(), status.value("LastError").toString()) : QString());
+
     if (state_ != "connected" || nativeSession_) resetMeasurements();
     if (state_ == "connected") {
         const auto displayEndpoint = [](QString endpoint) {
@@ -2813,8 +2855,9 @@ bool MainWindow::prepareSharedGeoData(const QString &path, QString *error, QStri
     if (!input.open(QIODevice::ReadOnly)) { *error = input.errorString(); return false; }
     const QByteArray original = input.read(64 * 1024 + 1); input.close();
     if (original.size() > 64 * 1024) { *error = tr("The profile exceeds the 64 KiB limit."); return false; }
-    if (QString::fromUtf8(original).toUtf8() != original) { *error = tr("The profile must be valid UTF-8 and at most 64 KiB."); return false; }
-    const QString prepared = GeoDataSelection::materialize(QString::fromUtf8(original), path,
+    QByteArray normalized = original;
+    if (!ProfileStore::normalizeImport(normalized)) { *error = tr("The profile must be valid UTF-8 and at most 64 KiB."); return false; }
+    const QString prepared = GeoDataSelection::materialize(QString::fromUtf8(normalized), path,
         validationExecutable_.isEmpty() ? (development_->local() ? development_->path() : coreExecutablePath()) : validationExecutable_,
         GeoDataSelection::instance()->paths(), error, {}, skipped);
     if (!error->isEmpty()) return false;
@@ -3604,6 +3647,7 @@ void MainWindow::finishServiceCommand(int exitCode, const QString &details) {
             else if (repairFailure_.isEmpty()) repairFailure_ = tr("Failed step: %1 (code %2)")
                 .arg(serviceCommandDescription_).arg(exitCode);
             repairHistory_.append(repairFailure_);
+            if (!details.trimmed().isEmpty()) repairHistory_.append(safeCoreDiagnostic(details.toUtf8()));
             availabilityVerificationFailed_ = true;
             appendLog(tr("Service repair failed: %1").arg(repairFailure_));
         }
@@ -3961,7 +4005,11 @@ void MainWindow::updateCoreAvailability() {
              ready ? tr("Responding") : tr("Not established")));
     if (repairRefresh_) repairRefresh_->setEnabled(!busy);
     // A native owner snapshot is the authoritative connection presentation.
-    if (!ready && !nativeOwnerBlocked_) {
+    // A pending status refresh blocks controls, but does not invalidate the
+    // connection snapshot already received from an available Core.
+    const bool connectionAvailable = !repairSession_ && helloReady_ && !cleanupBlocked_
+        && !development_->failed() && !development_->busy();
+    if (!connectionAvailable && !nativeOwnerBlocked_) {
         connectionLabel_->setText(startupPreparationPending_ || availabilityVerificationDeadline_
             ? tr("Preparing connection…") : tr("Could not prepare connection"));
         connectionLabel_->setStyleSheet(themedStyle(startupPreparationPending_ || availabilityVerificationDeadline_
@@ -4075,7 +4123,12 @@ void MainWindow::refreshServiceStatus() {
         }
         const QString output = QString::fromUtf8(standardOutput).trimmed();
         const QHash<QString, QString> states{{"1", tr("stopped")}, {"2", tr("starting")}, {"3", tr("stopping")}, {"4", tr("Running")}, {"5", tr("resuming")}, {"6", tr("pausing")}, {"7", tr("paused")}};
-        const QString code = QRegularExpression(QStringLiteral("^Service state: ([1-7])$")).match(output).captured(1);
+        const QHash<QString, QString> stateNames{{"1", "stopped"}, {"2", "start_pending"},
+            {"3", "stop_pending"}, {"4", "running"}, {"5", "continue_pending"},
+            {"6", "pause_pending"}, {"7", "paused"}};
+        const auto match = QRegularExpression(QStringLiteral("^Service state: ([1-7])(?: \\(([a-z_]+)\\))?$")).match(output);
+        QString code = match.captured(1);
+        if (!match.captured(2).isEmpty() && match.captured(2) != stateNames.value(code)) code.clear();
         serviceStateCode_ = code;
         const QString state = states.value(code, tr("unknown"));
         serviceObservation_ = code == "1" ? ServiceObservation::Stopped

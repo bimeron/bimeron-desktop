@@ -5,7 +5,7 @@
 This is the stage 7 specification and implementation contract. Acceptance criteria below are not
 runtime evidence. The baseline is Desktop 33788a8 and reviewed Core
 9f527efe0a4959786084675f1ff795edb8a0d910. The target integration version is Core v0.3.0-beta.1 at that exact SHA.
-The bundled v0.2.0-beta.1 does not
+The v0.2.0-beta.1 bundled at that time did not
 support SSH. Do not change the bundle pin or signed update gate for this work.
 
 ## Profiles

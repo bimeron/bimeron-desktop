@@ -15,11 +15,11 @@ The project produces four system packages:
 
 The version is specified once in `project(BimeronDesktop VERSION ...)` of the `CMakeLists.txt` file. Before release, change it there, rebuild all four packages and make sure that the version appears in their names and metadata. Windows uses `amd64` in project-owned names while Visual Studio and WiX still use their required `x64` architecture identifier.
 
-The desktop source version is `0.2.0`. Release preparation excludes the deferred Desktop IKEv2 branch and pins the four frozen Core `v0.3.0-beta.2` candidate ZIPs from commit `66d84d8f4dcfc6ada625eb11894b19feea51b7ba`. This candidate is not yet tagged or published. Verified local ZIPs can populate `.tools/core` for offline packaging; clean-checkout downloads remain unavailable until Core publication. Its intended signed-update contract is GUI `[0.2.0, 0.2.1)`, IPC 1, profile format 1 and the existing production key. The production signature and exact GUI verification have passed for all four archives; publication is still pending. See [release acceptance](release-0.2.0.md). A package upgrade does not itself replace the installed service.
+The desktop source version is `0.3.0`. Release preparation pins the four frozen Core `v0.4.0-beta.1` candidate ZIPs from commit `5fcadd7129613afef557a0cc4c9fffcb856203e8`. This candidate is not yet tagged or published; its assets are published unchanged only after Desktop 0.3.0 VM acceptance. Verified local ZIPs can populate `.tools/core` for offline packaging; clean-checkout downloads remain unavailable until Core publication. Its signed-update contract is GUI `[0.3.0, 0.3.1)`, IPC 1, profile format 1 and the existing production key; Desktop 0.2.0 is intentionally outside it. The bundled CLI reports `explicit_access`. See [release acceptance](release-0.3.0.md). Desktop 0.3.0 best-effort updates an installed older service to the bundle; see installer service servicing below.
 
-The Windows amd64 `0.2.0` VM package, its Core payload, signed GUI-driven update, installed-service rollback, IPC `hello`, and automatic VM profile reconnection results are recorded in [the VM check](vm-core-0.2.0-beta.1-check.md). The positive signed GUI path was repeated with the final Core assets through a local release-list override in the test build. Tampering and direct-helper rollback with those final bytes passed; the other installed package targets remain untested. The normal installed GUI discovered and installed the published Core through GitHub Releases in the Windows amd64 VM; see the VM check.
+The Windows amd64 `0.2.0` VM package, its Core payload, signed GUI-driven update, installed-service rollback, IPC `hello`, and automatic VM profile reconnection results are recorded in [the VM check](dev/vm-core-0.2.0-beta.1-check.md). The positive signed GUI path was repeated with the final Core assets through a local release-list override in the test build. Tampering and direct-helper rollback with those final bytes passed; the other installed package targets remain untested. The normal installed GUI discovered and installed the published Core through GitHub Releases in the Windows amd64 VM; see the VM check.
 
-For isolated GUI update testing, configure a separate build with `-DBIMERON_LOCAL_UPDATE_TESTING=ON`. With `BUILD_TESTING=ON`, also provide `-DBIMERON_LOCAL_UPDATE_TEST_PUBLIC_KEY=<ephemeral-test-public-key>` for the optional feed fixture executable; its private seed stays in ignored local build state and never enters the MSI. Its MSI name carries `-local-update-test`, and it reads only the local release list named by `BIMERON_TEST_RELEASES_JSON`; it accepts only local assets beneath that list's directory. Never use this test build for release packaging. The normal configuration keeps GitHub Releases and the pinned production public key. The Windows amd64 test MSI hash and VM results are in [the VM check](vm-core-0.2.0-beta.1-check.md). See [the signed update specification](core-updates.md) for acceptance criteria.
+For isolated GUI update testing, configure a separate build with `-DBIMERON_LOCAL_UPDATE_TESTING=ON`. With `BUILD_TESTING=ON`, also provide `-DBIMERON_LOCAL_UPDATE_TEST_PUBLIC_KEY=<ephemeral-test-public-key>` for the optional feed fixture executable; its private seed stays in ignored local build state and never enters the MSI. Its MSI name carries `-local-update-test`, and it reads only the local release list named by `BIMERON_TEST_RELEASES_JSON`; it accepts only local assets beneath that list's directory. Never use this test build for release packaging. The normal configuration keeps GitHub Releases and the pinned production public key. The Windows amd64 test MSI hash and VM results are in [the VM check](dev/vm-core-0.2.0-beta.1-check.md). See [the signed update specification](core-updates.md) for acceptance criteria.
 
 The normal `0.2.0` build pinned the published `v0.2.0-beta.1` archives and produced both MSI and both DEB packages. Windows amd64 and Linux amd64 `core-update-test` and `profile-vless-test` passed; both ARM64 targets compiled and packaged without runtime testing. The staged Windows amd64 Core SHA-256 is `174c288a5771d55c48e446fce3deef1f6fc7092d615f8277b5cc2aac75486f0f`, matching the verified release archive. A normal installed-GUI update through GitHub Releases passed in the Windows amd64 VM. The detailed outcome text was tested from a protected install; all four packages were then rebuilt and checked, and the clean Windows amd64 MSI was installed in the VM. The later profile-list changes require another package build before release.
 
@@ -51,7 +51,7 @@ All directories are generated locally and excluded from Git:
 
 ## Core release inputs
 
-Both packaging scripts use the pinned Bimeron Core version in `cmake/core-release.cmake`. The current `v0.3.0-beta.2` candidate includes the required `-source` helper; its four frozen ZIP hashes are pinned together. They must match the signed manifest and actual published assets before release approval. `scripts/fetch-core.cmake` verifies the pinned archives on Windows and Linux, including cached candidate ZIPs. A sibling core checkout is not required. The version, its full commit (`BIMERON_CORE_REVISION`) and the hashes must be updated together when upgrading core. About uses the pinned version and commit to tell the bundled release from development Core builds; see [Core build identity](core-identity.md).
+Both packaging scripts use the pinned Bimeron Core version in `cmake/core-release.cmake`. The current `v0.4.0-beta.1` candidate includes the required `-source` helper; its four frozen ZIP hashes are pinned together. They must match the signed manifest and actual published assets before release approval. `scripts/fetch-core.cmake` verifies the pinned archives on Windows and Linux, including cached candidate ZIPs. A sibling core checkout is not required. The version, its full commit (`BIMERON_CORE_REVISION`) and the hashes must be updated together when upgrading core. About uses the pinned version and commit to tell the bundled release from development Core builds; see [Core build identity](dev/core-identity.md).
 
 Acceptance criteria: a clean checkout can build the two DEBs on native Linux without PowerShell or WSL; Windows with WSL can build all four packages; Windows without WSL can build two MSI packages with `-WindowsOnly`; an archive that fails the pinned hash check cannot be packaged. Each installed core binary must match the verified published archive for its architecture.
 
@@ -77,15 +77,15 @@ The packaging scripts run the fetch step and configure with `BIMERON_REQUIRE_GEO
 ### Updating the bundled core version
 
 1. Inspect the desired published release of `bimeron/bimeron-core` and its `SHA256SUMS` file. Confirm it contains Windows and Linux archives for amd64 and arm64 with the expected binaries, Wintun files and licenses.
-2. Change the tag, its full 40-character lowercase commit in `BIMERON_CORE_REVISION` and four matching SHA-256 values in `cmake/core-release.cmake`. The commit is the `revision` reported by the release binary's `version` command and must equal the tag's commit. Verify that the published helper supports `-source`, then set `BIMERON_CORE_RELEASE_SUPPORTS_SOURCE_UPDATE` to `TRUE`. Update the repository URL, target lists or filenames there only if the release format changed. Do not use a floating `latest` URL; prereleases may not be returned by GitHub's latest-release endpoint.
+2. Update the executable pins together with the archive pins after verified extraction (including candidate re-freezes). Change the tag, its full 40-character lowercase commit in `BIMERON_CORE_REVISION` and four matching SHA-256 values in `cmake/core-release.cmake`. The commit is the `revision` reported by the release binary's `version` command and must equal the tag's commit. Verify that the published helper supports `-source`, then set `BIMERON_CORE_RELEASE_SUPPORTS_SOURCE_UPDATE` to `TRUE`. Update the repository URL, target lists or filenames there only if the release format changed. Do not use a floating `latest` URL; prereleases may not be returned by GitHub's latest-release endpoint.
 3. Fetch on both platforms, or run the full package scripts. Check that the extracted core binaries and Wintun DLLs match their target architectures. A package configuration with the default core root runs the pinned binary's `version` command when it can execute on the build host (Windows amd64 and Linux amd64 on the usual hosts) and fails if the reported revision differs from `BIMERON_CORE_REVISION`; ARM64 payloads that cannot run there rely on the archive hashes. Local candidate roots skip this check.
-4. Build all four packages and verify their payloads and metadata using the review steps below. Record the chosen core tag in the release notes. A core release does not change an already installed desktop package automatically. The installed service can be updated independently only from a compatible signed release after the user confirms installation.
+4. Build all four packages and verify their payloads and metadata using the review steps below. Record the chosen core tag in the release notes. A core release does not change an already installed desktop package automatically. Outside package installation, the installed service can be updated independently from a compatible signed release after the user confirms installation.
 
 ### Signed service updates
 
 `BIMERON_CORE_UPDATE_PUBLIC_KEY` is a CMake cache string containing the standard-base64 32-byte Ed25519 public key for `bimeron/bimeron-core` update manifests. Its default is the published `v0.1.0-beta.3` key (`bk6SfABmDG88uhUupYT+ia6dtSrpHbnGaBCfYvihJF0=`, key ID `7370a2d8cf890e5e`); the private key is never included. Existing build directories can cache an old empty override, so verify this cache value when rebuilding them. An empty override disables signed updates. Key rotation requires a GUI release that trusts the successor before core switches signing keys; the current implementation accepts one key and must be extended for overlapping keys before rotation.
 
-The release candidate package scripts pin Core `v0.3.0-beta.2` from commit `66d84d8f4dcfc6ada625eb11894b19feea51b7ba`, with `-source` support. An older installed service can be replaced by the new bundled helper. The GUI refuses direct updates when its bundled helper lacks `-source` or its package path is writable by ordinary users. Historical `0.2.0` packages used published Core `v0.2.0-beta.1` at `6e0c171505be8e349d5f42570f7ceb3e50ac6697`; earlier local packages bundled `v0.1.0-beta.3` at `ff489b8ee0a0f4394f381d5273d6a3d92dab48c1`, whose service-update compatibility excludes GUI `0.1.5`.
+The release candidate package scripts pin Core `v0.4.0-beta.1` from commit `5fcadd7129613afef557a0cc4c9fffcb856203e8`, with `-source` support. An older installed service can be replaced by the new bundled helper. The GUI refuses direct updates when its bundled helper lacks `-source` or its package path is writable by ordinary users. Published Desktop `0.2.0` packages used Core `v0.3.0-beta.2` at `66d84d8f4dcfc6ada625eb11894b19feea51b7ba`; earlier `0.2.0` candidates used published Core `v0.2.0-beta.1` at `6e0c171505be8e349d5f42570f7ceb3e50ac6697`; earlier local packages bundled `v0.1.0-beta.3` at `ff489b8ee0a0f4394f381d5273d6a3d92dab48c1`, whose service-update compatibility excludes GUI `0.1.5`.
 
 The `ff489b8` prepared files were published without rebuilding. The downloaded GitHub assets matched the prepared bytes, the signed manifest, and `SHA256SUMS`. The GUI verified the exact manifest signature and extracted all four desktop archives. At that time, `cmake/core-release.cmake` pinned the four hashes of those published ZIPs. A normal package build must reset `BIMERON_CORE_ROOT` to `.tools/core` so a cached local override cannot package an older candidate. The four GUI `0.1.1` packages built after this correction contain core `ff489b8`; MSI and DEB payload hashes match the published binaries.
 
@@ -101,7 +101,7 @@ Current presets are designed for:
 
 - Windows 10/11;
 - PowerShell 7 or Windows PowerShell with support for the script used;
-- CMake 3.21 or later;
+- CMake 3.25 or later for the schema-6 presets (manual configuration requires 3.21);
 - Visual Studio Build Tools 2026 with C++ toolchain installed in `C:/Program Files (x86)/Microsoft Visual Studio/18/BuildTools`;
 - Qt 6.8.3:
   - x64: `C:/Qt/6.8.3/msvc2022_64`;
@@ -116,12 +116,12 @@ If Visual Studio/Qt versions or paths change, you must first update and check `C
 
 ### Linux/WSL
 
-The Linux presets are designed for an amd64 Debian/Ubuntu host. They build amd64 natively and cross-compile arm64. For this host you need at least:
+Linux release DEBs use Ubuntu 22.04 with system Qt 6.2 and GCC 11 as the runtime ABI baseline. The Linux presets are designed for an amd64 build host at that baseline. They build amd64 natively and cross-compile arm64. For this host you need at least:
 
 ```bash
 sudo apt update
 sudo apt install cmake ninja-build g++ qt6-base-dev qt6-base-dev-tools \
-  qt6-translations-l10n dpkg-dev fakeroot
+  qt6-translations-l10n qt6-qpa-plugins libgl1-mesa-dev dpkg-dev fakeroot
 ```
 
 For ARM64 cross-compilation you additionally need:
@@ -182,7 +182,7 @@ If there is any error, the script ends and should not be considered a successful
 
 ## Building one configuration
 
-Fetch core first with `cmake -DBIMERON_CORE_PLATFORM=windows -P scripts/fetch-core.cmake` on Windows or `cmake -DBIMERON_CORE_PLATFORM=linux -P scripts/fetch-core.cmake` on Linux. Add `-DBIMERON_REQUIRE_CORE=ON` to the `cmake --preset` configure command for package builds. The commands below assume the core files have already been fetched.
+Fetch core first with `cmake -DBIMERON_CORE_PLATFORM=windows -P scripts/fetch-core.cmake` on Windows or `cmake -DBIMERON_CORE_PLATFORM=linux -P scripts/fetch-core.cmake` on Linux. Add `-DBIMERON_REQUIRE_CORE=ON` to the `cmake --preset` configure command for package builds. The commands below assume the core files have already been fetched. Each package configure also requires explicit `-DBIMERON_REPAIR_BROKER=<absolute .tools/core/target/bimeron(.exe)>` and `-DBIMERON_REPAIR_BROKER_SHA256=<SHA-256 of that executable>` arguments; append both to the configure commands below. The scripts supply these automatically.
 
 The default payload directory is `.tools/core`. If it must be elsewhere, pass the same absolute `-DBIMERON_CORE_ROOT=<path>` to the fetch command and the CMake configure command. The automated package scripts use the default directory.
 
@@ -212,6 +212,7 @@ To manually launch `cpack`, WiX 3 must be available in `PATH`. Run `package-all.
 cmake --preset linux-amd64-release -DBIMERON_REQUIRE_CORE=ON
 cmake --build --preset linux-amd64-release
 cmake --install build/linux-amd64
+cmake -DBIMERON_LINUX_EXECUTABLE="$PWD/build/linux-amd64/bimeron-desktop" -P scripts/verify-linux-abi.cmake
 cpack --preset linux-amd64-release
 ```
 
@@ -221,6 +222,7 @@ cpack --preset linux-amd64-release
 cmake --preset linux-arm64-release -DBIMERON_REQUIRE_CORE=ON
 cmake --build --preset linux-arm64-release
 cmake --install build/linux-arm64
+cmake -DBIMERON_LINUX_EXECUTABLE="$PWD/build/linux-arm64/bimeron-desktop" -P scripts/verify-linux-abi.cmake
 cpack --preset linux-arm64-release
 ```
 
@@ -231,6 +233,7 @@ The manual Linux `cpack` commands create packages in `/tmp/bimeron-desktop-packa
 The `stage/windows-amd64` or `stage/windows-arm64` tree is the source of the MSI content. Next to `bimeron-desktop.exe` are installed:
 
 - `bimeron-core.exe` of the same architecture;
+- `repair/bimeron-repair.exe`, with adjacent architecture-matched `wintun.dll` and `WINTUN-LICENSE.txt`;
 - `wintun.dll` of the same architecture;
 - necessary DLLs and Qt plugins;
 - architecture-matched MSVC redistributable DLLs, copied from the installed Visual Studio toolchain (`VCRUNTIME140_1.dll` is x64-only; the ARM64 redist directory's unused x64 compatibility copy is excluded);
@@ -239,6 +242,7 @@ The `stage/windows-amd64` or `stage/windows-arm64` tree is the source of the MSI
 - `CORE-LICENSE.txt`;
 - `THIRD_PARTY_NOTICES.txt`.
 - `MONOCYPHER-LICENSE.txt` and `MINIZ-LICENSE.txt`;
+- `QT-NOTICE.txt`, `QT-LGPL-3.0.txt` and `QT-GPL-3.0.txt` for the deployed Qt libraries (LGPL-3.0; see `third_party/README.md`);
 - `geodata\geoip.dat`, `geodata\geosite.dat`, `geodata\release.json`, `geodata\SOURCE.txt` and `geodata\LICENSE.txt` (pinned Loyalsoldier databases, GPL-3.0).
 
 The install rule excludes `core-update.lib` and every file matching `*-test*` (all test executables, such as `core-update-test.exe`, `developer-mode-test.exe`, `profile-vless-test.exe`, `geodata-download-test.exe`, `geodata-selection-test.exe` and `offline-ikev2-failure-test.exe`, plus any linker byproducts) from the MSI even though they share the Visual Studio output directory with the GUI. Name every new test target `*-test` so this rule covers it; no shipped file may match that pattern. Use a fresh `stage/upgrade-windows-*` prefix for local upgrade-test packages so previously staged test artifacts cannot survive an incremental install.
@@ -258,6 +262,8 @@ Installer:
 
 The MSI must default to `C:\Program Files\Bimeron\` and must not detect an unrelated RouteLine installation as an upgrade. An older local MSI accidentally reused RouteLine's upgrade GUID and offered `C:\Program Files\RouteLine\`; do not install that package. Bimeron has no published desktop releases, so the GUID was replaced before its first release. Do not change the new GUID after release: a different GUID makes Windows treat the package as a different product. A disposable Windows Sandbox test confirmed that the specific local `0.1.0` MSI replaces the bundled core when installed over the cached installed `0.1.0` MSI. GUI `0.1.1` also replaces it and has a higher ProductVersion, providing a clear package upgrade on Windows and Debian.
 
+Package removal does not own the Core service. Uninstalling the MSI or removing the DEB leaves the installed `BimeronCore` service (Windows: `C:\Program Files\Bimeron Core`) running and keeps user profiles and settings; this matches 0.2.0 and was observed on Windows ARM64 during 0.3.0 acceptance. To remove the service, run `bimeron-core service uninstall` elevated before removing the package. Release notes state this.
+
 The `v0.1.5` GitHub pre-release distributes unsigned MSI packages with an explicit warning that Windows may show an unknown-publisher prompt. A future signed release requires a code signing certificate and a separate secure `signtool` step; the certificate and private key must not be stored in the repository.
 
 ## Linux DEB contents
@@ -267,6 +273,7 @@ DEB installs:
 ```text
 /usr/bin/bimeron-desktop
 /usr/bin/bimeron-core
+/usr/libexec/bimeron/repair/bimeron-repair
 /usr/share/applications/bimeron.desktop
 /usr/share/icons/hicolor/64x64/apps/bimeron.png
 /usr/share/doc/bimeron-desktop/THIRD_PARTY_NOTICES.txt
@@ -288,8 +295,8 @@ In Settings, `Start Bimeron with Linux` enables application launch at user login
 Qt does not nest in DEB. The package declares system dependencies:
 
 ```text
-libqt6widgets6 (>= 6.4)
-libqt6network6 (>= 6.4)
+libqt6widgets6 (>= 6.2)
+libqt6network6 (>= 6.2)
 qt6-translations-l10n
 iproute2
 nftables
@@ -340,7 +347,7 @@ target or package payload. See [connection management](connection-management.md)
 for the runtime and separately authorized live-check boundaries.
 
 `offline-ikev2-failure-test` links only Qt Core and runs the disconnected
-header-only parser from [the offline failure parser](ikev2-offline-error-parser.md)
+header-only parser from [the offline failure parser](dev/ikev2-offline-error-parser.md)
 against `tests/fixtures/ikev2-error-draft-v1.json` and
 `tests/fixtures/ikev2-error-raw-addendum-v1.json`, passed as absolute source-tree
 paths. It verifies both fixture SHA-256 values, so `.gitattributes` marks them
@@ -453,14 +460,14 @@ The current bundle pin is not evidence of support for these new protocols.
 
 ## Foreground installer feasibility prototype (not enabled)
 
-Step 4 [consumer Windows decision proposal](ikev2-installation-contract.md#step-4-decision-proposal-consumer-windows-lifecycle)
+Step 4 [consumer Windows decision proposal](dev/ikev2-installation-contract.md#step-4-decision-proposal-consumer-windows-lifecycle)
 recommends evaluating offline MSI payload servicing separated from Core runtime
 ownership/recovery. It supersedes the disconnected-codec-first recommendation below.
 No mandatory managed policy, installer restructuring or security-scope change is
 accepted yet. Supported packaging, bundle pins and native disablement are unchanged;
 ordinary-user cached maintenance and recovery-before-deletion are explicit gates.
 
-The [Step 2 unified installation contract](ikev2-installation-contract.md) is a
+The [Step 2 unified installation contract](dev/ikev2-installation-contract.md) is a
 review-pending proposal for Core-owned installation, enrollment, participating-host
 admission and terminal settlement. It supplies dependencies and acceptance for
 first Windows amd64 GUI IKEv2 use, not a new supported packaging flow. The current
@@ -468,7 +475,7 @@ bundle pin, fail-closed prototype exports and production disablement stay unchan
 Future package integration must prevent old/cached ungated routes, prove protected
 action/preload authority and preserve rollback/service restoration before enablement.
 
-Step 3 [concrete decisions](ikev2-installation-contract.md#step-3-concrete-decisions-and-remaining-feasibility-boundaries)
+Step 3 [concrete decisions](dev/ikev2-installation-contract.md#step-3-concrete-decisions-and-remaining-feasibility-boundaries)
 select a separate ProgramData authority/WAL and bounded paired wire/plan contract.
 Future artifact approval is detached: freeze final Core/Desktop/DLL/MSI bytes,
 inspect the effective package and evidence, then independently sign approval of
@@ -1511,7 +1518,7 @@ and does not run or replace editor geometry acceptance. Normal CTest continues
 to exercise the full editor/manager fixtures. The fixture anchors the picker to the primary screen. Use fresh `order-screen-*`
 basenames and read `.catalog.json` for measured DPR. Build/package flow is unchanged.
 
-### Repair broker development payload
+### Protected repair broker package payload
 
 The one-session repair implementation adds an independently installed broker path:
 `repair/bimeron-repair.exe` under the Windows MSI installation directory, and
@@ -1524,22 +1531,20 @@ when a separate GUI in `build/` is expected to discover the staged broker.
 Copying the protected files alone does not register their location. The GUI
 revalidates the registered executable and its ancestry before use.
 
-For isolated development staging, set `BIMERON_REPAIR_BROKER` to a reviewed native
-Core build with the repair-session API, and `BIMERON_REPAIR_BROKER_SHA256` to its
-reviewed digest. Configuration rejects missing or mismatched payloads. Select the
-matching architecture explicitly; configuration verifies PE machine or ELF64 machine identifiers and rejects a mismatch.
-The current pinned release does not supply this broker. Leaving the option empty
-retains the existing package payload and does not provide one-click repair support.
-A release must pin reviewed broker bytes for all four targets before claiming that
-support. No package or installed-service validation has been performed for this
-new payload layout. A wholly absent protected installation cannot bootstrap from
-an unsigned writable download: the missing trust root is an explicit failure.
+Release packages ship the same pinned Core executable as the protected repair
+broker. Package scripts explicitly reset its path and computed digest on every
+configure and verify the staged broker against its target executable pin before
+CPack. BIMERON_REQUIRE_CORE requires a broker matching both the supplied digest
+and the target pin. GUI-only builds can omit it. PE/ELF checks remain mandatory.
 
-Existing older MSI/DEB installations have no separate broker. Discovery alone does
-not retrofit them. Missing-adjacent-helper repair is available only after a package
-containing the separate protected broker has been installed. A copied GUI can
-use that installation; a machine with only an older package still lacks the
-required broker trust root. This remains an unmet migration requirement.
+Updating the bundled core version: after updating the archive pins and verifying
+and extracting all four ZIPs, hash each bimeron(.exe) and update the four
+BIMERON_CORE_EXECUTABLE_SHA256 pins together with version, revision and archive
+pins. Executable pins identify extracted bytes, not ZIP bytes. Core archives use a fixed file time, so a replaced payload can keep an older mtime; CMake therefore embeds configure-time copies under `build/<target>/repair-bootstrap/<sha256>/`, and any byte change regenerates the GUI resources. `repair-resource-test` checks the embedded broker digest. The current pins are for the re-frozen
+Core candidate `5fcadd71`, which includes the repair window fix, bounded reconnect recovery, a clean stop after terminal reconnect failure (bimeron-core #138) and repair of differing service executables plus alternate-administrator readiness (bimeron-core #140), and first-attempt repair after an abnormal Windows service exit (bimeron-core #142), service updates that keep the previous service state (bimeron-core #146) and reclaiming a stale Bimeron Wintun adapter (bimeron-core #147).
+
+Upgrade from brokerless 0.2.0 installs the broker and protected GUI bootstrap.
+Migration and elevation behavior remain VM acceptance gates.
 
 ### Embedded protected-GUI repair bootstrap
 
@@ -1555,6 +1560,24 @@ Windows retains the child and authenticates ancestry, creation time, protected
 image and embedded digest before sending consent. Cache directories currently
 remain across upgrades; no garbage collection is claimed.
 
+The same elevated bootstrap also restores missing package-owned broker files:
+Windows derives `repair/` from its own protected GUI directory; Linux requires
+`/usr/bin` and derives `/usr/libexec/bimeron/repair`. Windows restores missing
+adjacent Wintun DLL/license from the embedded resources. Present identical files
+are untouched. Differing files, unsafe ancestry, reparse points and symlinks are
+refused with a diagnostic, without overwriting package-owned bytes or requesting
+another elevation. Cache and package provisioning share verified temporary-file
+hashing and atomic no-replace rename; Linux reads with O_NOFOLLOW and hashes the
+opened descriptor. Unsupported Linux GUI layouts refuse package provisioning.
+`core-update-test` exercises this primitive with temporary inert bytes and injected
+path policies; it never writes protected package paths or elevates.
+
+Profile imports strip one UTF-8 BOM before validation/storage, retain the original
+64 KiB input bound and reject invalid UTF-8. `profile-vless-test` checks storage,
+BOM/invalid/duplicate-BOM inputs and bounds; `developer-mode-test` exercises the
+actual MainWindow importer. File paths from selection, paste and file URLs use
+that importer; there is no separate drag/drop file-import implementation.
+
 This requires a protected updated GUI built with the reviewed payload. Old GUIs
 and wholly writable portable installations cannot supply that entry point.
 The existing Ed25519 update public key is available; Authenticode publisher
@@ -1565,21 +1588,22 @@ The existing release pins are unchanged. Real UAC/polkit acceptance is outstandi
 
 Independent bootstrap negative fixtures: `python tests/RepairPayloadNegativeTest.py`
 executes the production CMake validation block in temporary script mode with inert
-PE/ELF header bytes. Twenty cases cover absent payload, wrong digest, wrong target
+PE/ELF header bytes. Thirty-two cases include required-but-empty brokers, wrong
+target pins, positive acceptance, absent payload, wrong digest, wrong target
 architecture, truncated headers, and bytes changed after the reviewed digest was
 computed, for both supported architectures on both formats. No fixture is executed
 or embedded. This is configure-gate evidence, not native executable validation or
 verification/use race protection. There are no production test switches.
 
-Outstanding audit concerns: Linux bootstrap closes its verified file before
-`execl(path)`, so these tests do not establish rejection of concurrent privileged
-path replacement. Windows `authenticatedChild` closes its temporary child handle
-before returning; retained identity through consent needs separate review and
-native process tests. Alternate-credential UAC attribution, PID reuse, retained
-handle lifetime, and one-dispatch behavior across failure/close/reopen remain
-unproven by this fixture. Real positive embedding awaits fresh reviewed four-target
-Core paths, hashes, revision and dirty qualification; real UAC/polkit acceptance
-remains pending. No package or release validation is implied.
+Bootstrap audit status: Linux uses O_NOFOLLOW, descriptor hashing and fexecve
+in src/RepairBootstrap.cpp. Windows authenticatedChild returns an owned handle
+bound to the socket. Alternate-administrator attribution, prompt counts, retained
+handle lifetime and single dispatch across failures/repeated clicks/close-reopen
+remain VM acceptance gates. Release remains blocked as described in release-0.3.0.md.
+
+repair-payload-test registers the Python gate fixtures alongside msi-inventory-test.
+Broker-enabled builds run repair-resource-test to hash the embedded Qt resource
+against the configured digest; the existing *-test* install exclusion covers it.
 
 ## Optional offline MSI inventory
 
@@ -1599,10 +1623,153 @@ configuration prints a status message and skips only this test, because Python i
 not a build or packaging dependency. CI configures with
 `-DBIMERON_REQUIRE_PYTHON_TESTS=ON`, which turns a missing interpreter into a
 configuration error so the test cannot silently drop out of CI. The checks use saved fixtures and pass on
-Linux and Windows. See [scope and observed artifacts](ikev2-msi-compatibility.md); this procedure
+Linux and Windows. See [scope and observed artifacts](dev/ikev2-msi-compatibility.md); this procedure
 does not replace release/runtime acceptance or establish installed/cache state.
 
 Inventory projections now require exact supported observed table layouts and
 Summary WordCount flags. Unsupported layouts fail closed. WordCount and cabinet
 metadata do not authenticate releases or establish installed/cache state; extracted
 stage sources remain derived artifacts. See the tracked per-hash source ledger.
+
+
+Repair package integration verification (2026-11-14): the cached four Core ZIPs
+verified, 32 production configure-gate cases passed, and Windows x64 plus WSL
+Linux amd64 CTest each passed 10/10, including embedded-resource hashing.
+The complete package-all.ps1 run produced exactly two MSI and two DEB 0.3.0
+packages. Fresh MSI administrative extraction and WSL dpkg-deb extraction verified
+all broker paths, executable pins and PE/ELF target machines, Windows adjacent
+Wintun/license bytes and absence of *-test* files. Both ARM64 targets compiled and
+packaged without runtime execution. Diff review and git diff --check passed.
+Benchmarks/profiling are inapplicable to this packaging change. Qt ARM64 deployment
+warned that dxcompiler.dll and dxil.dll were unavailable; no build failed.
+No elevation, VM acceptance, service installation or host network change was run.
+Release remains blocked on the documented real UAC/polkit gates and the upcoming
+Core candidate re-freeze requires new pins, packages and verification.
+
+Reconnect-candidate verification (2026-11-14): Core 0e08a5c8 archive and extracted
+broker pins replaced e1cada7d together. The full four-package script completed;
+Windows x64 and WSL Linux amd64 CTest each passed 10/10. Final extracted package
+files match stage, executable architectures/pins, Wintun and GeoData. Two stale
+local Windows output backups were preserved outside compiler output after rejecting
+the first MSI, then all four packages were regenerated and reverified. The existing
+Windows directory-copy install rule requires clean compiler output and package
+inventory review. See release-0.3.0.md for final hashes and evidence. ARM64 remains
+compile/package-only; the existing missing DX compiler DLL warning remains.
+VM acceptance of this new Desktop/Core pair and final publication approval remain
+outstanding. No performance-sensitive path or packaging flow was changed.
+
+## Ubuntu 22.04 Linux release baseline
+
+See [Linux compatibility](linux-compatibility.md) for specification and acceptance.
+Build release DEBs on Ubuntu 22.04 with stock Qt 6.2.4, glibc 2.35 and GCC 11;
+newer build hosts can silently introduce newer runtime symbol requirements.
+The configure/build/package presets use schema 6 and require CMake >=3.25
+(the project itself can configure without presets with CMake >=3.21). Ubuntu
+22.04's CMake 3.22 can build manually; install a newer CMake in an isolated build
+tool environment when using the preset scripts. It is not a runtime dependency.
+The baseline build dependencies additionally include libgl1-mesa-dev. ARM64
+cross-builds need the matching arm64 Qt/OpenGL development packages and GCC 11
+cross-compiler, with amd64 host tools retained. On Ubuntu amd64, restrict archive
+and security repository entries to arch=amd64 before adding arm64; arm64 Jammy
+entries use ports.ubuntu.com/ubuntu-ports with main/universe and updates/security.
+
+scripts/package-linux.sh checks the GUI's ELF symbol requirements before staging:
+GLIBC <=2.35, GLIBCXX <=3.4.29, CXXABI <=1.3.13 and versioned Qt <=6.2.
+A failed gate requires rebuilding on the baseline, not weakening dependencies.
+CPack also runs dpkg-shlibdeps so actual runtime library requirements are declared,
+including libc/libstdc++/Qt libraries. The DEB explicitly requires qt6-qpa-plugins
+and qt6-translations-l10n. Qt is still supplied by ordinary distribution packages.
+
+The full Windows/WSL script requires a baseline WSL build environment for its Linux
+phase. On this host the existing WSL is Ubuntu 24.04: build the two MSIs with
+scripts/package-all.ps1 -WindowsOnly, build both DEBs on the Ubuntu 22.04 VM using
+scripts/package-linux.sh, then copy only the final DEBs into dist. Build Windows
+first because its script clears existing distributables. Keep native Linux build
+state/stage on that build host and use its own verified Core/GeoData caches; copy
+only final packages and test evidence back. Recheck all four hashes and metadata.
+Ubuntu 24.04 remains a newer-library CI target; amd64 CI now checks stock 22.04.
+This does not claim Ubuntu 18.04/20.04, arbitrary derivatives or ARM64 runtime
+acceptance. Native install/GUI/polkit and upgrade tests remain release gates.
+
+## Desktop display metadata
+
+Windows builds configure app.rc.in into build/<target>/app.rc using the project
+version. The GUI PE FileDescription and ProductName are Bimeron; InternalName and
+OriginalFilename retain bimeron-desktop and bimeron-desktop.exe. The existing
+icon remains embedded. No publisher or signing metadata is introduced.
+Qt applicationDisplayName is Bimeron, while applicationName/settings identity
+remains Bimeron Desktop. Windows Run value Bimeron and its command are unchanged;
+no startup migration or StartupApproved write is required. MSI shortcuts and
+Linux desktop/autostart entries already use Bimeron. See
+[display-name acceptance](dev/application-display-name.md) for validation and limits.
+
+## Desktop 0.3.0 installer service servicing
+
+The accepted [installer update specification](core-updates.md#desktop-030-installer-service-update-accepted)
+supersedes historical package-only service preservation for 0.3.0. MSI and DEB
+must best-effort update an installed older Core, or an equal-version Core with
+a different executable build, after payload installation,
+without a second elevation prompt or network download. Unknown versions skip.
+VPN replacement interrupts the session; installer reconnection is not provided.
+Native installer and ARM64 runtime checks remain release gates.
+
+The implementation uses the existing GUI executable's headless
+`--installer-update-core` entry before QApplication/settings/plugins. No new
+packaged executable or runtime dependency is added. WiX 3 WixQuietExec64 runs
+it deferred, without impersonation, after InstallFiles, with Return=ignore and
+NOT REMOVE (also covering repair). Its captured output goes to the MSI log.
+DEB postinst calls it only for configure, as root, and catches startup failure.
+Windows discovery reads BimeronCore SCM configuration; Linux accepts the standard
+Core-owned unit and fixed /usr/local/lib/bimeron/bimeron-core path. Unsupported
+registration layouts skip. Both CLI executable paths require existing protected
+path checks. CLI version queries have a 10-second deadline; replacement waits
+for Core's own bounded operation/rollback rather than killing it mid-recovery.
+CTest installer-core-test covers SemVer and injected decisions without servicing
+the host. No package or VM run is part of these checks.
+
+Installer service update verification (2026-11-15): Windows x64 Release build
+(build/windows-amd64, Qt deployment OFF) and WSL Linux amd64 Release build
+(build/linux-amd64) passed. CTest passed 11/11 on Windows and 10/10 on Linux.
+After adding subprocess fixtures, focused installer-core-test passed again on
+both. Fixtures execute only themselves for JSON version and nonzero exit checks.
+The initial inventory-test failure was the historical no-custom-action assertion;
+the revised test checks the exact new actions, elevation, ignore policy and order.
+Source diff/security review and git diff --check passed. No benchmarks/profiling
+apply. No final packages, dist writes, installed-service operations or VM checks
+were performed. These GUI-only builds omit the optional embedded broker-resource
+test. ARM64 and native MSI/DEB servicing remain release gates; this shared code
+can affect both ARM64 targets, so they are deferred, not declared unaffected.
+
+Equal-version installer servicing compares SHA-256 of the protected registered
+service executable and bundle. If the installed hash cannot be read, full
+40-hex CLI revisions are compared; unknown identity skips and logs. Hashes take
+priority over revisions. Newer versions never downgrade; the bundle hash remains
+mandatory for source update. Discovery and execution retain existing protection
+checks and do not use IPC. No release packages are rebuilt by this change.
+
+Equal-build comparison verification (2026-11-15): GUI-only Release builds passed
+on Windows x64 and WSL Linux amd64; full CTest passed 11/11 and 10/10 respectively.
+The first Windows test invocation preceded the developer fixture link; the full
+suite was rerun after build completion. Installer fixtures cover equal prereleases
+with different/identical hashes, hash priority over revision, full-revision fallback,
+unknown identity, newer/invalid/absent decisions, hash I/O and nonfatal failure.
+Diff/security review and git diff --check passed. No performance-sensitive runtime
+path changed; benchmarks/profiling are inapplicable. No packages, dist changes,
+service operations or VM acceptance were performed. ARM64 CI compilation/runtime
+checks and native installer acceptance remain separate release evidence.
+
+Package broker/BOM verification (2026-11-15): Windows x64 Release build passed
+with Qt deployment OFF; full CTest passed 11/11 with QT_QPA_PLATFORM=offscreen,
+QT_QPA_PLATFORM_PLUGIN_PATH and QT_QPA_FONTDIR=C:/Windows/Fonts as documented.
+The native-platform attempt failed in the existing clipboard fixture with Windows
+OleSetClipboard 0x800401d0; this is not native clipboard acceptance. An initial
+offscreen run without the documented font directory failed a GeoData label check.
+WSL Linux amd64 Release build and full CTest passed 10/10. The initial Windows
+provisioning fixture found a retained QTemporaryFile native handle preventing
+MoveFileEx (error 32); destroying that object before rename fixed the cause.
+The old BOM-preserving import assertions were updated to the accepted normalized
+storage rule. Diff/security review and git diff --check passed. No benchmark or
+profiling applies to this explicit cold repair/import path. No package, dist,
+pin, frozen candidate, installed service or network changes were made. Builds
+omit optional embedded-resource fixtures; provisioning uses inert test bytes.
+ARM64 CI and real UAC/polkit package restoration remain separate evidence.
