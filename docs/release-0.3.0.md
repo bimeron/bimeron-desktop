@@ -315,3 +315,25 @@ production key 7370a2d8cf890e5e; signed manifest SHA-256
 unchanged (GUI [0.3.0, 0.3.1), IPC 1, profile 1). Archive and executable pins
 were updated together. All previous package hashes, including the "Final package
 set" above, are superseded; all four packages and VM acceptance are renewed.
+
+## Final package set with Core d1fc1f48 (2026-11-15)
+
+Supersedes every earlier package table. Source: release/0.3.0 at 74e6f91
+(Core d1fc1f48, installer Core service update, #51, #53, #54, Windows-only
+IKEv2 action). Windows MSIs: scripts/package-all.ps1 -WindowsOnly; Windows x64
+CTest 12/12. DEBs: scripts/package-linux.sh on the Ubuntu 22.04 VM from a git
+archive of the same commit with the pinned Core ZIPs; Ubuntu 22.04 amd64 CTest
+11/11. Extracted payloads: Core and repair broker equal the executable pins for
+all four targets; Windows Wintun beside the broker; DEB brokers mode 755 with
+the correct ELF machine; Version 0.3.0; no test files. Packages are not
+code-signed.
+
+| Package | Size | SHA-256 |
+|---|---|---|
+| `bimeron-desktop-0.3.0-windows-amd64.msi` | 49328128 | `3f19f4538a985ae2a58599d0323fdf960c7828f2adb7445108ea2a911a45a93b` |
+| `bimeron-desktop-0.3.0-windows-arm64.msi` | 37896192 | `985442c1220902cd0e7e6a31d9ccd5ac0920984e1287e9b664509f7f0430590e` |
+| `bimeron-desktop-0.3.0-linux-amd64.deb` | 38388394 | `60a7c30181aa2f0dcbe46eb0ac1063677ac7f776cd003338ffdea08c274fcbe1` |
+| `bimeron-desktop-0.3.0-linux-arm64.deb` | 35606680 | `e409d64c4c48ed34764785f880e871f6a15ba21c8b71288a794279a0723e9c04` |
+
+VM acceptance on these exact packages (Windows x64, Windows ARM64, Linux amd64)
+is in progress and blocks publication.
