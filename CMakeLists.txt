@@ -442,6 +442,12 @@ if(WIN32)
         USE_SOURCE_PERMISSIONS
         PATTERN "core-update*" EXCLUDE
         PATTERN "*-test*" EXCLUDE)
+    # windeployqt ships Qt DLLs under LGPL-3.0; ship its notice and license texts.
+    install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/third_party/qt/QT-NOTICE.txt" DESTINATION .)
+    install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/third_party/qt/LGPL-3.0.txt"
+        DESTINATION . RENAME QT-LGPL-3.0.txt)
+    install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/third_party/qt/GPL-3.0.txt"
+        DESTINATION . RENAME QT-GPL-3.0.txt)
     set(CMAKE_INSTALL_SYSTEM_RUNTIME_DESTINATION ".")
     set(CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS_SKIP TRUE)
     include(InstallRequiredSystemLibraries)

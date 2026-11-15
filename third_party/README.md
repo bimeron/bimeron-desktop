@@ -6,3 +6,5 @@
 - Loyalsoldier `v2ray-rules-dat` license (GPL-3.0), `loyalsoldier-v2ray-rules-dat/LICENSE`, from `https://github.com/Loyalsoldier/v2ray-rules-dat` at commit `9a1fbf47e0a1f673eac87ebe90178db5ecd7d21c`. It covers the default country and site databases shipped unmodified in packages; no code from that project is compiled. See `docs/build-and-packaging.md`.
 
 Monocypher and miniz are compiled into the desktop executable. The update verifier uses only Monocypher's Ed25519 check and miniz's ZIP reader. Their licenses are copied into MSI and DEB payloads.
+
+- Qt notice (`qt/QT-NOTICE.txt`) with the GNU LGPL-3.0 (`qt/LGPL-3.0.txt`) and GPL-3.0 (`qt/GPL-3.0.txt`) texts from `https://www.gnu.org/licenses/`. Windows MSI packages deploy unmodified Qt 6.8.3 DLLs and plugins through windeployqt and install these files as `QT-NOTICE.txt`, `QT-LGPL-3.0.txt` and `QT-GPL-3.0.txt`. Linux DEBs depend on the system Qt and do not ship Qt.
