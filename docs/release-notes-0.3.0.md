@@ -50,6 +50,10 @@ The packages are not code-signed. Windows may show an unknown-publisher warning;
 - Installing the Desktop package does not replace the running Core service. Bimeron offers the Core update through its signed update check; Windows may ask to restart after the upgrade, but this is not required for Bimeron to work.
 - Core `v0.4.0-beta.1` update metadata accepts Desktop `[0.3.0, 0.3.1)`. Desktop 0.2.0 does not receive this Core; upgrade Desktop first.
 
+## Uninstalling
+
+Removing the Desktop package keeps the Bimeron Core service installed and running, as in 0.2.0. To remove the service too, run `bimeron-core service uninstall` from an administrator command prompt (Windows, in `C:\Program Files\Bimeron`) or with `sudo` (Linux) before removing the Desktop package. User profiles and settings are kept.
+
 ## Known limitations
 
 - This is a pre-release.

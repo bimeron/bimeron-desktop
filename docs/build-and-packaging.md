@@ -261,6 +261,8 @@ Installer:
 
 The MSI must default to `C:\Program Files\Bimeron\` and must not detect an unrelated RouteLine installation as an upgrade. An older local MSI accidentally reused RouteLine's upgrade GUID and offered `C:\Program Files\RouteLine\`; do not install that package. Bimeron has no published desktop releases, so the GUID was replaced before its first release. Do not change the new GUID after release: a different GUID makes Windows treat the package as a different product. A disposable Windows Sandbox test confirmed that the specific local `0.1.0` MSI replaces the bundled core when installed over the cached installed `0.1.0` MSI. GUI `0.1.1` also replaces it and has a higher ProductVersion, providing a clear package upgrade on Windows and Debian.
 
+Package removal does not own the Core service. Uninstalling the MSI or removing the DEB leaves the installed `BimeronCore` service (Windows: `C:\Program Files\Bimeron Core`) running and keeps user profiles and settings; this matches 0.2.0 and was observed on Windows ARM64 during 0.3.0 acceptance. To remove the service, run `bimeron-core service uninstall` elevated before removing the package. Release notes state this.
+
 The `v0.1.5` GitHub pre-release distributes unsigned MSI packages with an explicit warning that Windows may show an unknown-publisher prompt. A future signed release requires a code signing certificate and a separate secure `signtool` step; the certificate and private key must not be stored in the repository.
 
 ## Linux DEB contents
