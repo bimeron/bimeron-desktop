@@ -51,7 +51,8 @@ qt_add_resources(bimeron-desktop "translations"
     BASE "${CMAKE_CURRENT_SOURCE_DIR}/assets/translations"
     FILES "${CMAKE_CURRENT_SOURCE_DIR}/assets/translations/ru.json")
 if(WIN32)
-    target_sources(bimeron-desktop PRIVATE app.rc)
+    configure_file(app.rc.in "${CMAKE_CURRENT_BINARY_DIR}/app.rc" @ONLY)
+    target_sources(bimeron-desktop PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/app.rc")
     add_custom_command(TARGET bimeron-desktop POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "${CMAKE_CURRENT_SOURCE_DIR}/third_party/monocypher/LICENSE"
@@ -96,6 +97,17 @@ endif()
 
 include(CTest)
 if(BUILD_TESTING)
+    if(WIN32)
+        set(display_metadata_arch amd64)
+        if(CMAKE_CXX_COMPILER_ARCHITECTURE_ID STREQUAL "ARM64")
+            set(display_metadata_arch arm64)
+        endif()
+        add_test(NAME application-display-metadata-test
+            COMMAND powershell.exe -NoProfile -ExecutionPolicy Bypass -File
+                "${CMAKE_CURRENT_SOURCE_DIR}/tests/ApplicationDisplayMetadataTest.ps1"
+                -Executable "$<TARGET_FILE:bimeron-desktop>"
+                -Version "${PROJECT_VERSION}" -Architecture "${display_metadata_arch}")
+    endif()
     add_executable(developer-mode-test tests/DeveloperModeTest.cpp ${BIMERON_DESKTOP_SOURCES})
     qt_add_resources(developer-mode-test "test-icons"
         PREFIX "/icons" BASE "${CMAKE_CURRENT_SOURCE_DIR}/assets/icons" FILES ${BIMERON_ICON_FILES})

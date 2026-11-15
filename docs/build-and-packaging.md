@@ -1669,3 +1669,15 @@ only final packages and test evidence back. Recheck all four hashes and metadata
 Ubuntu 24.04 remains a newer-library CI target; amd64 CI now checks stock 22.04.
 This does not claim Ubuntu 18.04/20.04, arbitrary derivatives or ARM64 runtime
 acceptance. Native install/GUI/polkit and upgrade tests remain release gates.
+
+## Desktop display metadata
+
+Windows builds configure app.rc.in into build/<target>/app.rc using the project
+version. The GUI PE FileDescription and ProductName are Bimeron; InternalName and
+OriginalFilename retain bimeron-desktop and bimeron-desktop.exe. The existing
+icon remains embedded. No publisher or signing metadata is introduced.
+Qt applicationDisplayName is Bimeron, while applicationName/settings identity
+remains Bimeron Desktop. Windows Run value Bimeron and its command are unchanged;
+no startup migration or StartupApproved write is required. MSI shortcuts and
+Linux desktop/autostart entries already use Bimeron. See
+[display-name acceptance](application-display-name.md) for validation and limits.

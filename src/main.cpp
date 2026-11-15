@@ -103,6 +103,7 @@ int main(int argc, char *argv[]) {
     app.setStyle(new AppStyle(app.style()));
     QCoreApplication::setOrganizationName(QStringLiteral("Bimeron"));
     QCoreApplication::setApplicationName(QStringLiteral("Bimeron Desktop"));
+    QGuiApplication::setApplicationDisplayName(QStringLiteral("Bimeron"));
     applyThemePalette(app);
     QCoreApplication::setApplicationVersion(QStringLiteral(BIMERON_GUI_VERSION));
     const QString configuredLanguage = QSettings().value("app/language").toString();
