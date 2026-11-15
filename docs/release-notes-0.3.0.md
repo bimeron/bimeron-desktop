@@ -29,7 +29,7 @@ Bimeron Desktop 0.3.0 pre-release for Windows and Debian/Ubuntu, amd64 and ARM64
 
 ## Bundled Core
 
-Bimeron Core `v0.4.0-beta.1`, commit `0e08a5c8`.
+Bimeron Core `v0.4.0-beta.1`, commit `d1fc1f48`.
 
 ## Packages
 

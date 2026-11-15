@@ -301,3 +301,17 @@ not tested. The packages are not code-signed.
 | `bimeron-desktop-0.3.0-linux-arm64.deb` | 35598666 | `2fe7adaa13616ea7562d891dd5ccabc197527473b94d696fc5b6f9a49499fe19` |
 
 Final VM acceptance on these exact packages is in progress and blocks publication.
+
+## Stop-after-failure candidate supersedes 0e08a5c8 (2026-11-15)
+
+Linux acceptance found that after reconnect exhaustion (failed, attempt 4)
+Core Engine.Stop replayed the stored session error: `stop` returned
+session_stop_failed and the service exited with status 1, so repair rejected
+the stopped service ("service cleanup unconfirmed"). Fixed in bimeron-core #138
+/ PR #139 (green CI). The current Core candidate is master
+d1fc1f480fd009ec7103d337ec0a04634eab43e1, re-frozen as v0.4.0-beta.1 with the
+production key 7370a2d8cf890e5e; signed manifest SHA-256
+67423b5e920816537a1d07715afdcf63b28ed79be012dab2d3e01de910a3c661; compatibility
+unchanged (GUI [0.3.0, 0.3.1), IPC 1, profile 1). Archive and executable pins
+were updated together. All previous package hashes, including the "Final package
+set" above, are superseded; all four packages and VM acceptance are renewed.
