@@ -22,6 +22,7 @@ Bimeron Desktop 0.3.0 pre-release for Windows and Debian/Ubuntu, amd64 and ARM64
 - Connecting no longer flashes a "Failed to prepare the connection" error before succeeding.
 - Repair keeps elevation failure details in diagnostics.
 - A profile can be deleted after its connection failed or ended.
+- The service dialog keeps its title bar on screen on Windows 11.
 - Stopping after a failed reconnection completes cleanly, so service repair works afterwards.
 - The Developer-mode IKEv2 creation action is shown only on Windows.
 - Preserve ShadowTLS drafts when editing profiles.
