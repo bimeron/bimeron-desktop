@@ -1253,6 +1253,15 @@ correction the live check fails.
 
 Validation: Windows x64 Release build and CTest 10/10 passed. The placement
 check also passed on the Qt offscreen platform used by Linux CI. Windows ARM64
-and Linux builds were not run locally. Acceptance requires repeating the Windows
-11 ARM64 repair scenario and confirming that the dialog has a visible, movable
-title bar.
+and Linux builds were not run locally.
+
+Windows 11 ARM64 acceptance (2026-11-15): `package-all.ps1 -WindowsOnly`
+produced both 0.3.0 MSIs. The ARM64 MSI (SHA-256
+`bdc2bb56480024b1f61e97fcb5c321187ba54b30fe3fb9b7a32a55ef9a338a87`) extracted
+to 41 AA64 PE files with no `*-test*` files; Core and broker match the pinned
+`246e9f90...` executable. It upgraded the installed 0.3.0 in the VM; the
+installed GUI hash matched the build. With the service stopped and its
+executable moved aside, the user ran Fix connection, Restore and UAC approval
+from the GUI launched from the Start menu. The service returned to Running with the pinned
+executable, and the user reported the "Ready to connect" dialog correct, with a
+visible, movable title bar. The temporary executable backup was removed.
