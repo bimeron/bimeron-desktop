@@ -394,3 +394,18 @@ Packages are not code-signed.
 
 VM acceptance on these exact packages (Windows x64, Windows ARM64, Linux amd64)
 is in progress and blocks publication.
+
+## Service-update and stale-adapter candidate supersedes bf165b2b (2026-11-16)
+
+Final acceptance of the bf165b2b packages found two more Core blockers. On
+Windows ARM64 the installer-driven `service update` refused a service that had
+not started since boot (SCM 1077) and stop-stage failures returned before
+rollback was armed (bimeron-core #145 / PR #146). On Windows x64 every
+connection failed with adapter_name_in_use, persisting after reboot, because an
+absent Wintun device node from an interrupted session kept the interface alias
+(bimeron-core #135 / PR #147; Core now reclaims only its own stale adapter).
+The current Core candidate is master 5fcadd7129613afef557a0cc4c9fffcb856203e8,
+frozen as v0.4.0-beta.1 with the production key; signed manifest SHA-256
+c590b312761d24eae3c50489ddff35c102205b90ffed95369dc852749392fdaf; compatibility
+unchanged. SHA256SUMS and the four extracted executables were verified locally
+before pinning. All earlier package tables are superseded.
