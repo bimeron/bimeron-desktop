@@ -356,3 +356,17 @@ unchanged. Archive and executable pins were updated together and verified by
 extraction. All earlier package tables are superseded; packages and VM
 acceptance are renewed. The installer also replaces an equal-version service
 with a different executable (#55).
+
+## First-attempt repair candidate supersedes b9d73327 (2026-11-16)
+
+Repair after an abnormal Windows service exit (for example a killed Core
+process) needed a second attempt because Inspect still rejected the stopped
+service ("service cleanup unconfirmed"). Fixed in bimeron-core PR #142 (merged
+with green CI; master also gained #143 and #144). The current Core candidate is
+master bf165b2bc8951dc08d5e6b68561528d65d1c18e0, re-frozen as v0.4.0-beta.1 with
+the production key; signed manifest SHA-256
+176229da849ec76c498d15778dfd7f79f5e345eead64e9267964164ab3ae201e; compatibility
+unchanged. Archive and executable pins were updated together and verified by
+extraction. The Windows MSIs additionally ship the Qt LGPL notice and license
+texts. All earlier package tables are superseded; packages and VM acceptance are
+renewed.
