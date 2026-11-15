@@ -1427,7 +1427,7 @@ void MainWindow::editProfile(int row) {
         refreshProfiles();
         for (int index = 0; index < profiles_.size(); ++index)
             if (profiles_[index].id == editedId) profileList_->setCurrentRow(index);
-        if (editedId == activeProfileId_ && state_ != "disconnected")
+        if (profileHeldBySession(editedId))
             QMessageBox::information(this, tr("Reconnect required"), tr("Changes have been saved and will apply after disconnecting and reconnecting."));
         break;
     }
@@ -1843,7 +1843,7 @@ bool MainWindow::importProfile(const QString &source) {
 void MainWindow::removeProfile() {
     const int row = profileList_->currentRow();
     if (row < 0 || !profileList_->currentItem()->isSelected()) return;
-    if (profiles_[row].id == activeProfileId_) {
+    if (profileHeldBySession(profiles_[row].id)) {
         QMessageBox::information(this, tr("Profile in use"), tr("Disconnect the active session first."));
         return;
     }
@@ -2054,6 +2054,14 @@ bool MainWindow::controlBlocked() const {
 
 bool MainWindow::cleanDisconnected() const {
     return state_ == "disconnected" && !sessionActive_ && !cleanupBlocked_;
+}
+
+// Core keeps reporting the last session's profile after failed/disconnected; that
+// session is inactive and already cleaned up, so it no longer holds the profile.
+bool MainWindow::profileHeldBySession(const QString &profileId) const {
+    return !profileId.isEmpty() && profileId == activeProfileId_
+        && (sessionActive_ || state_ == "connecting" || state_ == "connected"
+            || state_ == "reconnecting" || state_ == "stopping");
 }
 
 bool MainWindow::canActivateProfile(int row) const {

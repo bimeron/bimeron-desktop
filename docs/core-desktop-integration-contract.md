@@ -295,7 +295,11 @@ status after dropped events. On ambiguous start timeout inspect status before
 retrying. IPC unavailable is distinct from disconnected. Stop waits for cleanup;
 profile switching waits for stop before a new start. Do not use shutdown or recover
 as ordinary disconnect/error recovery. Unknown error codes remain safe generic
-failures. Protocol additions do not require transport-specific start commands.
+failures. After terminal `failed` or `disconnected` with `Session.active=false`,
+`Session.profile_id` names only the last run, whose cleanup has completed: that
+profile may be edited or deleted without a stop, and a new start needs no stop
+first. Only an active session or `connecting`, `connected`, `reconnecting` or
+`stopping` holds its profile. Protocol additions do not require transport-specific start commands.
 
 The signed update gate in [core-updates.md](core-updates.md) remains authoritative.
 `gui_reviewed` certifies reviewed compatibility for the specified GUI range and
