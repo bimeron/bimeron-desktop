@@ -742,18 +742,32 @@ static void formRowVisibility() {
         form->activate();
         QApplication::processEvents();
     };
+    // Qt < 6.4 empties hidden rows because it reserves spacing for rows whose
+    // widgets are merely hidden; the layout then cannot report their positions.
+#if QT_VERSION >= QT_VERSION_CHECK(6, 4, 0)
+    const bool hiddenRowsKeepCells = true;
+#else
+    const bool hiddenRowsKeepCells = false;
+#endif
     const auto verify = [&](const QList<bool> &visible) {
         require(form->rowCount() == 10);
         QFormLayout::ItemRole role;
         int row = -1;
+        const auto locatable = [&](int r) { return hiddenRowsKeepCells || visible[r]; };
         form->getWidgetPosition(notice, &row, &role);
-        require(row == 0 && role == QFormLayout::SpanningRole);
+        require(locatable(0) ? row == 0 && role == QFormLayout::SpanningRole : row == -1);
         form->getWidgetPosition(button, &row, &role);
-        require(row == 9 && role == QFormLayout::SpanningRole);
+        require(locatable(9) ? row == 9 && role == QFormLayout::SpanningRole : row == -1);
+        require(notice->isVisible() == visible[0] && button->isVisible() == visible[9]);
         for (int i = 0; i < fields.size(); ++i) {
             form->getWidgetPosition(fields[i], &row, &role);
-            require(row == i + 1 && role == QFormLayout::FieldRole);
-            require(form->labelForField(fields[i]) == labels[i]);
+            if (locatable(i + 1)) {
+                require(row == i + 1 && role == QFormLayout::FieldRole);
+                require(form->labelForField(fields[i]) == labels[i]);
+            } else {
+                require(row == -1 && !form->labelForField(fields[i]));
+            }
+            require(fields[i]->isVisible() == visible[i + 1] && labels[i]->isVisible() == visible[i + 1]);
             require(qobject_cast<QLabel *>(labels[i])->buddy() == fields[i]);
             require(fields[i]->parentWidget() == &page && labels[i]->parentWidget() == &page);
         }
@@ -764,7 +778,7 @@ static void formRowVisibility() {
             if (auto *label = form->itemAt(r, QFormLayout::LabelRole))
                 require(label->widget() && label->widget()->isVisible() == visible[r]);
             QLayoutItem *item = form->itemAt(r, r == 0 || r == 9 ? QFormLayout::SpanningRole : QFormLayout::FieldRole);
-            require(item && item->widget() && item->widget()->isVisible() == visible[r]);
+            require(locatable(r) ? item && item->widget() && item->widget()->isVisible() == visible[r] : !item);
         }
     };
     QList<bool> visible(10, true);
@@ -799,6 +813,26 @@ static void formRowVisibility() {
         verify(visible);
         require(fields.last()->geometry().bottom() < button->geometry().top());
     }
+    // Hidden rows must not reserve vertical spacing: a form whose rows are all
+    // hidden is only as tall as its margins, and hiding rows between two visible
+    // ones leaves exactly one spacing gap. Qt 6.2 kept a gap per hidden row.
+    const QMargins margins = form->contentsMargins();
+    for (int r = 0; r < form->rowCount(); ++r) setFormRowVisible(form, r, false);
+    settle(320);
+    require(form->sizeHint().height() == margins.top() + margins.bottom());
+    setFormRowVisible(form, fields[0], true);
+    setFormRowVisible(form, fields[1], true);
+    settle(320);
+    const int adjacent = form->sizeHint().height();
+    const int adjacentGap = fields[1]->geometry().top() - fields[0]->geometry().bottom();
+    setFormRowVisible(form, fields[1], false);
+    setFormRowVisible(form, fields.last(), true);
+    settle(320);
+    require(form->sizeHint().height() == adjacent);
+    require(fields.last()->geometry().top() - fields[0]->geometry().bottom() == adjacentGap);
+    for (int r = 0; r < form->rowCount(); ++r) setFormRowVisible(form, r, true);
+    settle(320);
+    require(fields.last()->geometry().bottom() < button->geometry().top());
 }
 
 static void nativeRegressions(const QString &directory) {
@@ -2247,6 +2281,30 @@ static void coreProblemPresentation() {
     }
 }
 
+static void protocolTabLayout() {
+    // The Protocol tab keeps its ShadowTLS section at the top. With no visible
+    // protocol parameter rows, the parameter form must collapse to its margins
+    // instead of reserving a spacing gap for every hidden row (Qt 6.2).
+    const QString text = "[Profile]\nVersion = 1\nName = Layout\n[AccessKey]\nType = shadowsocks\n"
+        "Server = example.invalid\nPort = 443\nMethod = aes-256-gcm\nPassword = SENTINEL\n";
+    ProfileEditorDialog editor(text, QJsonObject{{"vpn", true}, {"proxy", true}});
+    editor.resize(690, 560);
+    editor.show();
+    auto *tabs = editor.findChild<QTabWidget *>();
+    int protocol = -1;
+    for (int i = 0; i < tabs->count(); ++i) if (tabs->tabText(i) == "Protocol") protocol = i;
+    require(protocol >= 0 && tabs->isTabVisible(protocol));
+    tabs->setCurrentIndex(protocol);
+    QApplication::processEvents();
+    QWidget *fields = editor.findChild<QLineEdit *>("parameterID")->parentWidget();
+    const QMargins margins = fields->layout()->contentsMargins();
+    for (auto *edit : fields->findChildren<QLineEdit *>()) require(!edit->isVisible());
+    require(fields->height() == margins.top() + margins.bottom());
+    auto *about = editor.findChild<QLabel *>("shadowAbout");
+    require(about->isVisible() && about->parentWidget() == fields->parentWidget());
+    require(fields->y() == 0 && about->y() < margins.top() + margins.bottom() + 2 * about->height());
+}
+
 int main(int argc, char **argv) {
     require(routingGroupContains({"us", "google"}, " US "));
     require(routingGroupRows({"google", "GOOGLE", "us"}, {" Google ", "US"})
@@ -2513,6 +2571,7 @@ int main(int argc, char **argv) {
     routingHostRegressions(temporary.path());
     parameterForms(temporary.path());
     formRowVisibility();
+    protocolTabLayout();
     nativeRegressions(temporary.path());
     shadowSerialization();
     if (!qEnvironmentVariable("BIMERON_GEODATA_CORE").isEmpty()) shadowSerialization(qEnvironmentVariable("BIMERON_GEODATA_CORE"));

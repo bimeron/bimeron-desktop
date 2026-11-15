@@ -645,6 +645,8 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
     vlessScroll->setWidgetResizable(true);
     vlessScroll->setFrameShape(QFrame::NoFrame);
     vlessScroll->setWidget(vlessPage);
+    vlessPage->setAutoFillBackground(false);
+    vlessScroll->viewport()->setAutoFillBackground(false);
     tabs_->addTab(vlessScroll, tr("VLESS"));
 
     auto *network = new QWidget;
@@ -767,6 +769,8 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
     routingStatusScroll->setMinimumHeight(0);
     routingStatusScroll->setMaximumHeight(64);
     routingStatusScroll->setWidget(routingStatus_);
+    routingStatus_->setAutoFillBackground(false);
+    routingStatusScroll->viewport()->setAutoFillBackground(false);
     routingLayout->addWidget(routingStatusScroll);
     auto *manage = new QPushButton(tr("Manage databases"));
     manage->setObjectName("manageGeodata");

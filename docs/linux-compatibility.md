@@ -28,8 +28,9 @@ This is a compatibility/build change, not a performance-sensitive algorithm.
 Benchmarks/profiling are not applicable unless a regression appears. Existing
 release artifacts are superseded only after successful new package verification.
 
-Qt 6.2 lacks QFormLayout::setRowVisible. The existing widget-row helper hides
-both label and field on that version; newer Qt retains the current API and the
+Qt 6.2 lacks QFormLayout::setRowVisible. On that version the widget-row helper
+hides both label and field and empties the row's cells until it is shown again
+(see "Layout corrections" below); newer Qt retains the current API and the
 6.4.0-6.4.2 upstream-bug workaround. Existing editor geometry/toggle fixtures
 must pass on both Qt generations. Linux packaging checks ELF symbol versions
 before staging and derives runtime library dependencies with dpkg-shlibdeps.
@@ -82,3 +83,43 @@ allowed real polkit dismissal/retry and successful Restore of the stopped servic
 followed by verified IPC Disconnected. See service-actions.md for exact evidence
 and the separate diagnostic-retention fix. This resolves the stopped-service
 launch-context failure, not the other release repair scenarios.
+
+## Layout corrections (2026-11-15)
+
+Two Ubuntu 22.04 (Qt 6.2.4) regressions were reported from the installed GUI:
+
+- Settings: the scrolled page content was grey and did not match the window.
+  `QScrollArea::setWidget()` enables background filling with the palette's
+  Window colour. The page background comes from the style sheet, and the Linux
+  "System" theme leaves the palette untouched, so the content painted the stock
+  Qt grey. Windows always sets Window to the style-sheet colour, which hid it.
+  The Settings content and its viewport, and the profile editor's VLESS and
+  routing-status scroll areas, no longer fill their background, as the other
+  editor scroll areas already did.
+- Profile editor, Protocol tab: the ShadowTLS section was pushed down by a blank
+  band. Qt 6.2's QFormLayout skips only rows with empty cells; a row whose
+  widgets are hidden still receives vertical spacing. The parameter form has 24
+  rows that are usually hidden, which reserved 156 px. The same extra gaps
+  affected every form toggled by the helper, such as the General tab. On
+  Qt < 6.4 the helper now removes a hidden row's widgets from their cells
+  (parent, buddy and visibility are kept) and puts them back when the row is
+  shown, matching setRowVisible. While a row is hidden, itemAt(),
+  labelForField() and getWidgetPosition() do not report its widgets, and rows
+  must not be inserted or removed above it. Qt 6.4+ is unchanged.
+
+Acceptance: the Settings background behind and between cards matches the
+window in the System and Dark themes; with no protocol parameter rows visible,
+the parameter form is only as tall as its margins and ShadowTLS starts at the
+top of the Protocol tab; hidden rows between visible ones add no spacing;
+`formRowVisibility` and `protocolTabLayout` in profile-vless-test cover this and
+pass on Qt 6.2 and Qt 6.8.
+
+Verification: Ubuntu 22.04 VM, stock Qt 6.2.4, staged sources outside the
+`/opt` snapshot. profile-vless-test failed with the previous helper and passed
+with the fix. CTest passed 8/9; geodata-download-test fails with "failure
+handling mismatch" both with and without this change (also in the existing
+`/opt` baseline build), so it is unrelated. Windows x64 (Qt 6.8.3) CTest passed
+10/10. Before/after renders of the real MainWindow and new-profile editor on the
+VM's X display (xcb, System and Dark themes) confirm both fixes and evenly
+spaced General-tab rows. They were made with a temporary uncommitted capture
+mode. Not a performance-sensitive change; no benchmark is applicable.

@@ -750,6 +750,11 @@ QWidget *MainWindow::settingsPage() {
     auto *content = new QWidget;
     auto *layout = new QVBoxLayout(content);
     scroll->setWidget(content);
+    // QScrollArea::setWidget() fills the content with the palette's Window
+    // colour. The page background comes from the style sheet instead, and the
+    // Linux system theme leaves the palette untouched, so keep both transparent.
+    content->setAutoFillBackground(false);
+    scroll->viewport()->setAutoFillBackground(false);
     outer->addWidget(scroll, 1);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(12);
