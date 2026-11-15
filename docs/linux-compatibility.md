@@ -123,3 +123,27 @@ handling mismatch" both with and without this change (also in the existing
 VM's X display (xcb, System and Dark themes) confirm both fixes and evenly
 spaced General-tab rows. They were made with a temporary uncommitted capture
 mode. Not a performance-sensitive change; no benchmark is applicable.
+
+## Installed current GUI on Ubuntu 22.04 (2026-11-15)
+
+Layout fix 8a4f863 was integrated into release/0.3.0 as 4b48df1, together with
+existing repair diagnostics and friendly display-name changes. Rebuilt the amd64
+DEB on the Ubuntu 22.04 VM and passed native CTest 10/10 (18.16 s), the Ubuntu
+22.04 ELF ABI gate and pinned repair-payload verification. APT's downloaded-package
+cache occupied 1.3 GB and was cleared with apt-get clean; available space recovered
+without deleting source, user data or test evidence. The earlier GeoData test
+failure does not reproduce in this full run.
+
+Reinstalled the DEB (dpkg exit 0), verified installed GUI bytes against staging,
+then launched it through the existing local GNOME terminal server as user test,
+not as a child of the SSH/root login. Native screenshot of the installed Settings
+page confirms the corrected uniform background and responding running-service
+indicator. Profiles/index hashes stayed unchanged and the Core service retained
+PID 50730. Core reports failed (attempt 4), so VPN connectivity is not accepted
+by this installation check; no profile connection/start/stop was requested.
+
+GUI SHA-256: 6d60975b1592a56f8bca1ee336f911378f2c9bf521654d3103ee79f8e57fbbec.
+DEB SHA-256: 3074d7b58887281522f363440110dd2c151efea95acd545f12520760b48d8ae3.
+Package, logs and native screenshot are retained under ignored build/linux-vm-current.
+This is an amd64 VM refresh, not a final four-package release freeze; ARM64 and
+Windows packages were not regenerated for this installation request.
