@@ -267,3 +267,15 @@ there is no publication approval or full release acceptance claim.
 | `bimeron-desktop-0.3.0-linux-arm64.deb` | 35592224 | `107a90cee150bac10ef9369e0372a05d980f54b851f3cdc57b9e439836a6366d` |
 | `bimeron-desktop-0.3.0-windows-amd64.msi` | 49078272 | `29efce252fa90ee0db8b3ec890d03dc34ad6f903fb3f091ead2b124894f03ee9` |
 | `bimeron-desktop-0.3.0-windows-arm64.msi` | 37646336 | `130dea205b9141b41094b1fa85e5c29df70794a7c7be6a3c34a96535c155a55f` |
+
+## Linux stopped-service polkit observation (2026-11-15)
+
+Real GNOME-session GUI Restore passed after cancellation/retry, with one
+successful authorized broker invocation, service active and verified IPC ready
+(Disconnected). The reported exit 127 came from the previous SSH/root runuser
+launch lacking a polkit agent in its remote session, before broker execution.
+The installed package and pinned Core bytes were unchanged. See service-actions.md
+and linux-compatibility.md. This does not clear the clean/upgrade, missing/corrupt
+component, bootstrap or remaining Windows gates. The diagnostic-retention source
+fix requires new Desktop packages if included; Core re-freeze is unnecessary for
+this Linux cause.

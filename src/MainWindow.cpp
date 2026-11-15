@@ -3616,6 +3616,7 @@ void MainWindow::finishServiceCommand(int exitCode, const QString &details) {
             else if (repairFailure_.isEmpty()) repairFailure_ = tr("Failed step: %1 (code %2)")
                 .arg(serviceCommandDescription_).arg(exitCode);
             repairHistory_.append(repairFailure_);
+            if (!details.trimmed().isEmpty()) repairHistory_.append(safeCoreDiagnostic(details.toUtf8()));
             availabilityVerificationFailed_ = true;
             appendLog(tr("Service repair failed: %1").arg(repairFailure_));
         }

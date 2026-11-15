@@ -2172,6 +2172,16 @@ struct ConnectionManagementTest {
                 "failed repair or rollback never relaunches elevation");
             require(window.log_->toPlainText().contains("Service repair failed:"), "terminal repair failure reaches Journal");
             window.startRepairSession();
+            window.finishServiceCommand(127, "Error creating textual authentication agent: no controlling terminal");
+            require(!window.repairSession_ && !window.helloReady_
+                && window.repairFailure_.contains("127")
+                && window.repairHistory_.join('\n').contains("no controlling terminal"),
+                "elevation failure retains diagnostics without claiming broker success");
+            window.startRepairSession();
+            window.finishServiceCommand(126);
+            require(window.servicePermissionCanceled_ && !window.repairSession_ && !window.helloReady_,
+                "canceled authorization is terminal and retryable");
+            window.startRepairSession();
             const int consentLaunches = launches;
             QLocalServer consentServer;
             const QString consentEndpoint = "repair-consent-" + QUuid::createUuid().toString(QUuid::Id128);

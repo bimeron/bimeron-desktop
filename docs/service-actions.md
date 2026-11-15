@@ -92,3 +92,56 @@ mutate host services or networking. Native EN/RU light/dark captures at DPR 1 an
 1.5 check containment, fixed bounds, expanded findings and progress. Compilation
 and fixtures do not establish actual UAC/polkit, elevated cleanup, missing-broker
 bootstrap, or ARM64 runtime acceptance. No package, commit or release is implied.
+
+## Linux elevation diagnostics acceptance (2026-11-15)
+
+A GUI started through SSH/root runuser retains the remote root login session,
+ even when its effective UID, DISPLAY and session-bus environment match the desktop.
+The local GNOME polkit agent belongs to the graphical login session. Such a remote
+launch is not native polkit acceptance: pkexec can exit 127 while attempting to
+create a textual agent without a controlling terminal. Launch the installed GUI
+from the local desktop/terminal for authorization testing; never bypass polkit.
+
+Before implementation: retain bounded elevation-process diagnostics in Details
+and the repair report on terminal failure, using the existing diagnostic policy.
+The short failure remains explicit; untrusted stderr must not become a broker
+stage, consent, successful result or readiness evidence. Acceptance covers exit
+127 diagnostics, cancellation (126), a fresh retry, and unchanged requirement for
+successful broker result plus exit plus hello/status. No Core/pin change is needed
+for the remote-session launch defect. Existing historical probe evidence remains
+historical, not a fresh missing-service finding.
+
+Verification: the original installed GUI (DEB SHA-256
+6dc42da2d9d3fd59ca4427a7adc10e708f973ac38868b96853ad7298ee596ac1)
+was relaunched from the local GNOME terminal. Native journal records startup
+consent dismissal, repair consent dismissal at 09:45:02, then one authorized
+repair broker execution at 09:45:06. The GUI records inspection, service start,
+readiness verification and final ready state; systemd reports active and the GUI
+shows Disconnected. Both Core and broker retain executable digest 5bebf5e3.
+No root CLI repair substituted for this test. The installed GUI was not replaced;
+the diagnostic-only source candidate was built and tested separately at
+/opt/bimeron-linux-repair from HEAD 353d31e plus hash-verified source overlays.
+
+Ubuntu 22.04 Qt 6.2.4 candidate CTest passed 9/9 (18.46 s), including the new
+exit-127/cancellation fixtures and existing broker/readiness/consent regressions.
+This GUI-only configuration omits repair-resource-test; embedded Core bytes and
+pins are unchanged. A full-disk environmental failure also reproduces in the
+parent's old GeoData test: only 53 MiB free for a >64 MiB fixture. Final tests used
+an isolated private mount namespace mapping only root's test data directory to
+/run/bimeron-repair-tests (RAM); no global mount or existing data was changed.
+Only this task's compiler object files were removed to recover space; logs remain.
+Windows x64 compiled; the focused developer fixture passed with the documented
+offscreen font environment. ARM64 rebuilds/packages and WSL repeats are not part
+of this diagnostic-only validation; this is not release acceptance. Performance
+benchmarking/profiling is inapplicable. Diff/security review found no changed
+trust, consent, identity, cleanup or readiness boundary. Evidence and captures
+are in ignored build/linux-repair and VM /tmp/bimeron-repair-investigation.
+Any release including the diagnostic improvement needs Desktop rebuild/repack;
+no Core re-freeze or pin change is required by this cause. Other release gates
+remain outstanding.
+
+Final Windows x64 CTest passed 9/9 (23.10 s) with QT_QPA_PLATFORM=offscreen,
+QT_QPA_PLATFORM_PLUGIN_PATH pointing to Qt 6.8.3 platforms, and
+QT_QPA_FONTDIR=C:/Windows/Fonts. The initial missing-font run failed an unrelated
+GeoData label fixture; the corrected environment passed the focused fixture and
+full suite. No product change was made for that environment issue.

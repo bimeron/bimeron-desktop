@@ -70,3 +70,15 @@ remains; native ARM64 GUI behavior is unverified. Diff/security/regression revie
 and git diff --check passed; no unresolved implementation finding was identified.
 No benchmark/profile was applicable. Final packages/hashes are in release-0.3.0.md.
 Ignored evidence is under build/ubuntu2204-compat, including native GUI captures.
+
+## Polkit launch-context correction (2026-11-15)
+
+The earlier SSH/runuser launch reached IPC after root CLI service setup but was
+not in the graphical login session. Its Restore exited 127 because pkexec had
+no agent in that remote root session and could not open /dev/tty. Supplying
+DISPLAY/XAUTHORITY/session-bus environment does not transfer login-session
+membership. Relaunching the unchanged installed GUI from the local GNOME terminal
+allowed real polkit dismissal/retry and successful Restore of the stopped service,
+followed by verified IPC Disconnected. See service-actions.md for exact evidence
+and the separate diagnostic-retention fix. This resolves the stopped-service
+launch-context failure, not the other release repair scenarios.
