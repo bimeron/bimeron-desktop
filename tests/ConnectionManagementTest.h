@@ -84,6 +84,72 @@ struct ConnectionManagementTest {
         else QSettings().remove("app/notifications");
     }
 
+    // Core keeps the last session's profile_id after failed/disconnected. Only a live,
+    // starting, reconnecting or stopping session may block deleting that profile.
+    static void inactiveSessionProfileRemoval() {
+        QTemporaryDir directory;
+        require(directory.isValid(), "profile removal fixture directory");
+        MainWindow window;
+        window.core_.cancel();
+        for (auto *timer : window.findChildren<QTimer *>()) timer->stop();
+        window.store_ = ProfileStore(directory.filePath("profiles"));
+        window.helloReady_ = true;
+        window.statusNeeded_ = false;
+        window.startupPreparationPending_ = false;
+        const auto addProfile = [&](const QString &name) {
+            const QString path = directory.filePath(name + ".conf");
+            QFile file(path);
+            require(file.open(QIODevice::WriteOnly) && file.write("[Interface]\nMode = proxy\n") > 0, "write removal fixture");
+            file.close();
+            auto profiles = window.store_.load();
+            profiles.push_back({ProfileStore::identity(path), name, path});
+            require(window.store_.save(profiles), "save removal fixture index");
+            window.refreshProfiles();
+            return path;
+        };
+        struct Case { QString state; bool active; bool held; };
+        const QList<Case> cases{
+            {"connecting", true, true}, {"connected", true, true}, {"reconnecting", true, true},
+            {"stopping", true, true}, {"connected", false, true}, {"disconnected", true, true},
+            {"failed", false, false}, {"disconnected", false, false}};
+        for (const auto &scenario : cases) {
+            const QString path = addProfile("Removal fixture");
+            const QString id = ProfileStore::identity(path);
+            window.handleStatus({{"State", scenario.state}, {"Session", QJsonObject{
+                {"id", "removal-session"}, {"active", scenario.active},
+                {"profile_id", id}, {"profile_name", "Removal fixture"}}}});
+            require(window.profileHeldBySession(id) == scenario.held, "session hold follows state and activity");
+            require(!window.profileHeldBySession(QString{}), "empty identity is never held");
+            window.profileList_->setCurrentRow(window.profiles_.size() - 1, QItemSelectionModel::ClearAndSelect);
+            QString shown;
+            QTimer::singleShot(0, [&] {
+                auto *message = qobject_cast<QMessageBox *>(QApplication::activeModalWidget());
+                require(message, "removal shows a dialog");
+                shown = message->text();
+                for (auto *button : message->buttons()) {
+                    const auto role = message->buttonRole(button);
+                    if (role == QMessageBox::DestructiveRole || role == QMessageBox::AcceptRole) { button->click(); return; }
+                }
+                message->close();
+            });
+            window.removeProfile();
+            require(shown.contains(scenario.held ? "Disconnect the active session first." : "Delete profile"), "removal dialog matches session hold");
+            require(QFileInfo::exists(path) == scenario.held, "inactive session profile is removable");
+            require(window.profiles_.size() == (scenario.held ? 1 : 0), "index follows removal");
+            if (scenario.held) {
+                window.handleStatus({{"State", "disconnected"}});
+                QTimer::singleShot(0, [&] {
+                    auto *message = qobject_cast<QMessageBox *>(QApplication::activeModalWidget());
+                    require(message, "cleanup removal dialog");
+                    for (auto *button : message->buttons())
+                        if (message->buttonRole(button) == QMessageBox::DestructiveRole) { button->click(); return; }
+                });
+                window.removeProfile();
+                require(window.profiles_.isEmpty() && !QFileInfo::exists(path), "fixture removed after session ends");
+            }
+        }
+    }
+
     // Routing tab: a rule whose database is unavailable keeps Enabled and Type editable,
     // disables Target, explains the block, and does not prevent saving. Needs a real Core
     // for the profile document bridge.
