@@ -28,6 +28,7 @@
 #include <QLayout>
 #include <QTabWidget>
 #include <QToolButton>
+#include <QToolTip>
 #include <QTableWidget>
 #include <QAction>
 #include <QScreen>
@@ -2821,11 +2822,28 @@ struct ConnectionManagementTest {
                 check(dialog->findChild<QPushButton *>("browseProfileFile"), "File browse shares the add form");
                 check(dialog->findChild<QPushButton *>("createProfileInEditor"), "Create editor action is available");
                 check(!dialog->findChild<QPushButton *>("createNativeProfile"), "IKEv2 creation is limited to developer mode");
+                QToolButton *uriHelp = nullptr;
+                for (auto *button : dialog->findChildren<QToolButton *>())
+                    if (button->text() == "?") uriHelp = button;
+                check(uriHelp, "Add profile offers protocol help");
+                uriHelp->click();
+                QCoreApplication::processEvents();
+                check(QToolTip::text().contains(".conf") && !QToolTip::text().contains(".ssconf"),
+                    "Protocol help lists only supported configuration files");
+                QToolTip::hideText();
                 fields[0]->setText(QDir::homePath() + "/profile.conf");
                 check(fields[1]->isHidden(), "Typed absolute path hides profile name");
                 check(dialog->findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Save)->isEnabled(), "File import does not require a name");
                 fields[0]->setText("relative.conf");
                 check(!dialog->findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Save)->isEnabled(), "Relative path is not accepted");
+                for (const QString &path : {QDir::homePath() + "/profile.ssconf", QDir::homePath() + "/profile.SSCONF",
+                         QUrl::fromLocalFile(QDir::homePath() + "/profile.ssconf").toString()}) {
+                    fields[0]->setText(path);
+                    check(!dialog->findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Save)->isEnabled()
+                            && fields[0]->toolTip().contains("ssconf://"), "SSConf file is rejected with link guidance");
+                }
+                fields[0]->setText("ssconf://example.invalid/key");
+                check(fields[1]->isVisible(), "ssconf:// link remains a supported key");
                 for (const QString &path : {QUrl::fromLocalFile(QDir::homePath() + "/profile.conf").toString(), QString("~/profile.conf"), "\"" + QDir::homePath() + "/profile.conf\""}) {
                     fields[0]->setText(path);
                     check(fields[1]->isHidden() && dialog->findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Save)->isEnabled(), "File URL, home path and quoted path accepted without name");

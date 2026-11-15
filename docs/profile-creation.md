@@ -19,6 +19,9 @@ offer parameter-based choices, not URI/key choices. Cover every protocol already
 supported by desktop import: Shadowsocks, SOCKS5, VLESS, Hysteria2, VMess, Trojan,
 TUIC, HTTP, HTTPS, AnyTLS, Naive HTTPS/QUIC, MASQUE and SSH. SSConf is a dynamic
 subscription source, not a separate connection protocol; retain its import.
+Only `ssconf://` links are accepted: `.ssconf` files are not an import format.
+Browse and the format help offer `.conf` files only, and a typed or pasted
+`.ssconf` path keeps Save disabled with guidance to paste the `ssconf://` link.
 Every protocol is saved as explicit `[AccessKey]` options: each typed value has
 its own option in the profile, and no generated share link becomes the source.
 Hysteria2, VMess, TUIC, AnyTLS and Naive QUIC require a Core that lists them in

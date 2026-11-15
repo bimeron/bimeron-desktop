@@ -178,7 +178,7 @@ Important: the default value of `IPv6` for the core parser is `enable`; The GUI 
 
 ### 4.3. Import
 
-Fact: Qt offers `.conf`/`.ssconf` files but expects configuration contents
+Fact: Qt offers `.conf` files but expects configuration contents
 Bimeron with sections; a file with only a URL does not become `.conf` due to the extension.
 The profile is copied to internal storage and verified by CLI `validate`.
 

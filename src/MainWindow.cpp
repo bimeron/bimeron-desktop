@@ -1450,7 +1450,7 @@ void MainWindow::addProfile() {
     uriHelp->setAccessibleName(tr("Supported protocol URIs"));
     connect(uriHelp, &QToolButton::clicked, &dialog, [uriHelp] {
         QToolTip::showText(uriHelp->mapToGlobal(QPoint(0, uriHelp->height())),
-            QStringLiteral("ss://, ssconf://, socks5://, vless://,\nhysteria2://, hy2://, vmess://, trojan://, tuic://,\nhttp://, https://, anytls://,\nnaive+https://, naive+quic://, masque://, ssh://") + "\n\n" + tr("Files: .conf, .ssconf. Choose a file or enter its absolute path."), uriHelp, uriHelp->rect());
+            QStringLiteral("ss://, ssconf://, socks5://, vless://,\nhysteria2://, hy2://, vmess://, trojan://, tuic://,\nhttp://, https://, anytls://,\nnaive+https://, naive+quic://, masque://, ssh://") + "\n\n" + tr("Files: .conf. Choose a file or enter its absolute path."), uriHelp, uriHelp->rect());
     });
     hintRow->addWidget(hint, 1);
     hintRow->addWidget(uriHelp);
@@ -1503,7 +1503,7 @@ void MainWindow::addProfile() {
     inputRow->addWidget(browseConfig);
     layout->addLayout(inputRow);
     connect(browseConfig, &QPushButton::clicked, &dialog, [&] {
-        const QString path = QFileDialog::getOpenFileName(&dialog, tr("Import configuration"), {}, tr("Bimeron (*.conf *.ssconf);;All files (*)"));
+        const QString path = QFileDialog::getOpenFileName(&dialog, tr("Import configuration"), {}, tr("Bimeron (*.conf);;All files (*)"));
         if (!path.isEmpty()) key->setText(QFileInfo(path).absoluteFilePath());
     });
     layout->addWidget(paste);
@@ -1586,7 +1586,7 @@ void MainWindow::addProfile() {
         const QUrl endpoint("ss://" + body.mid(body.lastIndexOf('@') + 1));
         return !endpoint.host().isEmpty() && endpoint.port() > 0;
     };
-    const auto filePath = [](QString value) {
+    const auto localPath = [](QString value) {
         value = value.trimmed();
         if (value.size() > 1 && value.front() == '"' && value.back() == '"') value = value.mid(1, value.size() - 2);
         if (value.startsWith("file:", Qt::CaseInsensitive)) {
@@ -1596,6 +1596,13 @@ void MainWindow::addProfile() {
         } else if (value.contains("://")) return QString();
         if (value.startsWith("~/")) value = QDir::homePath() + value.mid(1);
         return QFileInfo(value).isAbsolute() ? QDir::cleanPath(value) : QString();
+    };
+    // Dynamic SSConf is a link source only; a file with that extension is not a supported import format.
+    const auto ssconfFile = [&localPath](const QString &value) {
+        return QFileInfo(localPath(value)).suffix().compare(QStringLiteral("ssconf"), Qt::CaseInsensitive) == 0;
+    };
+    const auto filePath = [&localPath, &ssconfFile](const QString &value) {
+        return ssconfFile(value) ? QString() : localPath(value);
     };
     bool nameEdited = false;
     bool keyValid = false;
@@ -1613,7 +1620,8 @@ void MainWindow::addProfile() {
     connect(identity, &QLineEdit::textChanged, &dialog, updateSave);
     connect(key, &QLineEdit::textChanged, &dialog, [&](const QString &value) {
         keyValid = isKey(value);
-        key->setToolTip(!value.trimmed().isEmpty() && !keyValid && filePath(value).isEmpty() ? tr("Enter an absolute file path or a supported connection link.") : QString());
+        key->setToolTip(ssconfFile(value) ? tr("SSConf files are not supported. Paste the ssconf:// link instead.")
+            : !value.trimmed().isEmpty() && !keyValid && filePath(value).isEmpty() ? tr("Enter an absolute file path or a supported connection link.") : QString());
         nameLabel->setVisible(keyValid);
         name->setVisible(keyValid);
         sshFiles->setVisible(keyValid && value.startsWith("ssh://"));
