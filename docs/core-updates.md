@@ -108,8 +108,15 @@ Acceptance criteria:
 
 MSI x64/ARM64 and DEB amd64/arm64 update an installed older Core to the bundled
 version, using the protected bundled CLI and its verified source-update contract.
-No installed service means no service installation. Equal, newer, unknown or
-unparseable versions are skipped and logged. SemVer prerelease ordering applies.
+No installed service means no service installation. Newer, unknown or
+unparseable versions are skipped and logged. At equal SemVer precedence, compare
+SHA-256 of the registered service executable with the bundled executable; different
+bytes update, identical bytes skip. If the installed hash is unavailable, compare
+full 40-hex revisions from their version JSON; unknown identity skips and logs.
+Hash comparison takes priority over revision, including when revisions match.
+The bundle hash is mandatory for the update command. Windows uses the protected
+SCM ImagePath; Linux uses the standard unit ExecStart and fixed protected Core
+path, retaining existing registration restrictions. No IPC is used. SemVer prerelease ordering applies.
 The service executable's `version` JSON is read without IPC after OS service
 registration discovery; `service status` exposes no version. Windows `describe`
 changes the description and must not be used for discovery.
@@ -122,7 +129,10 @@ service recovery risk and must be reported, never described as guaranteed recove
 A connected VPN is interrupted; the installer does not reconnect it. The user
 can reconnect in the GUI afterward. No beta checkbox or network feed is involved.
 
-Acceptance: older updates once; equal/newer/invalid/absent skip; update failure
+Acceptance: older updates once; equal with different hash (or different full
+revision when hash is unavailable) updates once; identical bytes skip even if
+revisions differ; equal with unknown identity skips; newer/invalid/absent skip
+even with different builds; unreadable bundle skips; update failure
 continues installation. Test SemVer numeric prereleases, stable precedence and
 invalid versions on Windows/Linux through CTest. Native MSI/DEB upgrade, failure
 rollback and ARM64 runtime remain release acceptance gates. Preserve settings,

@@ -1688,7 +1688,8 @@ Linux desktop/autostart entries already use Bimeron. See
 
 The accepted [installer update specification](core-updates.md#desktop-030-installer-service-update-accepted)
 supersedes historical package-only service preservation for 0.3.0. MSI and DEB
-must best-effort update only an installed older Core after payload installation,
+must best-effort update an installed older Core, or an equal-version Core with
+a different executable build, after payload installation,
 without a second elevation prompt or network download. Unknown versions skip.
 VPN replacement interrupts the session; installer reconnection is not provided.
 Native installer and ARM64 runtime checks remain release gates.
@@ -1719,3 +1720,21 @@ apply. No final packages, dist writes, installed-service operations or VM checks
 were performed. These GUI-only builds omit the optional embedded broker-resource
 test. ARM64 and native MSI/DEB servicing remain release gates; this shared code
 can affect both ARM64 targets, so they are deferred, not declared unaffected.
+
+Equal-version installer servicing compares SHA-256 of the protected registered
+service executable and bundle. If the installed hash cannot be read, full
+40-hex CLI revisions are compared; unknown identity skips and logs. Hashes take
+priority over revisions. Newer versions never downgrade; the bundle hash remains
+mandatory for source update. Discovery and execution retain existing protection
+checks and do not use IPC. No release packages are rebuilt by this change.
+
+Equal-build comparison verification (2026-11-15): GUI-only Release builds passed
+on Windows x64 and WSL Linux amd64; full CTest passed 11/11 and 10/10 respectively.
+The first Windows test invocation preceded the developer fixture link; the full
+suite was rerun after build completion. Installer fixtures cover equal prereleases
+with different/identical hashes, hash priority over revision, full-revision fallback,
+unknown identity, newer/invalid/absent decisions, hash I/O and nonfatal failure.
+Diff/security review and git diff --check passed. No performance-sensitive runtime
+path changed; benchmarks/profiling are inapplicable. No packages, dist changes,
+service operations or VM acceptance were performed. ARM64 CI compilation/runtime
+checks and native installer acceptance remain separate release evidence.

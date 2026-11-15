@@ -39,10 +39,32 @@ inline bool older(const QString &installed, const QString &bundle) {
     }
     return ap.size()<bp.size();
 }
+inline QString digest(const QString &path) {
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly)) return {};
+    QCryptographicHash hash(QCryptographicHash::Sha256);
+    if (!hash.addData(&file)) return {};
+    return QString::fromLatin1(hash.result().toHex());
+}
+inline bool differentBuild(const QString &currentHash, const QString &bundleHash,
+                           const QString &currentRevision, const QString &bundleRevision) {
+    static const QRegularExpression sha("^[0-9a-fA-F]{64}$");
+    static const QRegularExpression revision("^[0-9a-fA-F]{40}$");
+    if (sha.match(currentHash).hasMatch() && sha.match(bundleHash).hasMatch())
+        return currentHash.compare(bundleHash, Qt::CaseInsensitive) != 0;
+    return revision.match(currentRevision).hasMatch() && revision.match(bundleRevision).hasMatch()
+        && currentRevision.compare(bundleRevision, Qt::CaseInsensitive) != 0;
+}
+inline bool shouldUpdate(const QString &current, const QString &bundle, bool buildDiffers) {
+    QStringList a, b;
+    if (!parse(current, a) || !parse(bundle, b)) return false;
+    if (older(current, bundle)) return true;
+    return !older(bundle, current) && buildDiffers;
+}
 // Always return package success; callback failure belongs to Core recovery.
 template<class Update> int serviceDecision(bool installed, const QString &current,
-                                          const QString &bundle, Update update) {
-    if (installed && older(current, bundle)) update();
+                                          const QString &bundle, Update update, bool buildDiffers=false) {
+    if (installed && shouldUpdate(current, bundle, buildDiffers)) update();
     return 0;
 }
 inline bool run(const QString &exe,const QStringList &args,QByteArray &out, int timeout=10000) {
@@ -80,15 +102,22 @@ inline int update() {
     if(service.isEmpty() || !TrustedCore::protectedExecutable(service) || !TrustedCore::protectedExecutable(bundle)) { log("absent or untrusted service/payload; skipped"); return 0; }
     QByteArray a,b;
     if(!run(service,{"version"},a) || !run(bundle,{"version"},b)) {log("version query failed; skipped");return 0;}
-    QString av=QJsonDocument::fromJson(a).object().value("version").toString();
-    QString bv=QJsonDocument::fromJson(b).object().value("version").toString();
-    if(!older(av,bv)) {log("equal, newer or unknown version; skipped");return 0;}
-    QFile f(bundle); if(!f.open(QIODevice::ReadOnly)) {log("payload read failed; skipped");return 0;}
-    QCryptographicHash hash(QCryptographicHash::Sha256); hash.addData(&f); f.close();
+    const auto current=QJsonDocument::fromJson(a).object();
+    const auto payload=QJsonDocument::fromJson(b).object();
+    QString av=current.value("version").toString();
+    QString bv=payload.value("version").toString();
+    QStringList ap,bp;
+    if(!parse(av,ap) || !parse(bv,bp)) {log("unknown version; skipped");return 0;}
+    if(older(bv,av)) {log("newer installed version; skipped");return 0;}
+    const QString bundleHash=digest(bundle);
+    if(bundleHash.isEmpty()) {log("payload hash unavailable; skipped");return 0;}
+    const bool changed= differentBuild(digest(service),bundleHash,
+        current.value("revision").toString(),payload.value("revision").toString());
+    if(!shouldUpdate(av,bv,changed)) {log("equal version, identical or unknown build; skipped");return 0;}
     return serviceDecision(true,av,bv,[&] {
-    bool ok=run(bundle,TrustedCore::updateArguments(bundle,bv,QString::fromLatin1(hash.result().toHex())),a,-1);
+    bool ok=run(bundle,TrustedCore::updateArguments(bundle,bv,bundleHash),a,-1);
     log(ok?"service updated; reconnect VPN in GUI":"update failed; Core rollback applies; package continues");
     if(!ok) fwrite(a.constData(),1,size_t(a.size()),stderr);
-    });
+    },changed);
 }
 }
