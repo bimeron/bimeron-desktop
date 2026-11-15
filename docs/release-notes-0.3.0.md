@@ -21,6 +21,9 @@ Bimeron Desktop 0.3.0 pre-release for Windows and Debian/Ubuntu, amd64 and ARM64
 - Service diagnostics no longer report a running service as not installed or as an invalid response.
 - Connecting no longer flashes a "Failed to prepare the connection" error before succeeding.
 - Repair keeps elevation failure details in diagnostics.
+- A profile can be deleted after its connection failed or ended.
+- Stopping after a failed reconnection completes cleanly, so service repair works afterwards.
+- The Developer-mode IKEv2 creation action is shown only on Windows.
 - Preserve ShadowTLS drafts when editing profiles.
 - Bring Windows UAC consent to the foreground.
 - Avoid a profile editor crash on Qt 6.4.2 when changing visible form rows.
@@ -47,7 +50,7 @@ The packages are not code-signed. Windows may show an unknown-publisher warning;
 ## Upgrade notes
 
 - Upgrade from Desktop 0.2.0 by installing the matching 0.3.0 package over it. Profiles and settings are kept.
-- Installing the Desktop package does not replace the running Core service. Bimeron offers the Core update through its signed update check; Windows may ask to restart after the upgrade, but this is not required for Bimeron to work.
+- If the installed Core service is older than the bundled Core, the installer updates it to the bundled version. A newer service is left unchanged. An active VPN connection is interrupted during this update; reconnect afterwards. Windows may ask to restart after the upgrade, but this is not required for Bimeron to work.
 - Core `v0.4.0-beta.1` update metadata accepts Desktop `[0.3.0, 0.3.1)`. Desktop 0.2.0 does not receive this Core; upgrade Desktop first.
 
 ## Uninstalling
