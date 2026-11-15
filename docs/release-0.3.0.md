@@ -409,3 +409,28 @@ frozen as v0.4.0-beta.1 with the production key; signed manifest SHA-256
 c590b312761d24eae3c50489ddff35c102205b90ffed95369dc852749392fdaf; compatibility
 unchanged. SHA256SUMS and the four extracted executables were verified locally
 before pinning. All earlier package tables are superseded.
+
+## Final package set with Core 5fcadd71 (2026-11-16)
+
+Supersedes every earlier package table. Source: release/0.3.0 at fc8c449
+(Core 5fcadd71); later commits change documentation only. Windows MSIs:
+scripts/package-all.ps1 -WindowsOnly; local Windows x64 CTest passed except
+developer-mode-test, which failed only because another process held the system
+clipboard (known local limitation; the same commit passed all four Desktop CI
+targets on PR #49). DEBs: scripts/package-linux.sh on the Ubuntu 22.04 VM
+(CMAKE_BUILD_PARALLEL_LEVEL=2); Ubuntu 22.04 amd64 CTest 11/11. Payloads: Core
+and repair broker equal the executable pins on all four targets; Qt notice and
+license texts in both MSIs; DEB brokers mode 755 with the correct ELF machine;
+Version 0.3.0; no test files. Packages are not code-signed.
+
+| Package | Size | SHA-256 |
+|---|---|---|
+| `bimeron-desktop-0.3.0-windows-amd64.msi` | 49369088 | `5613888f8f7351c20c3c33a7b612b38508145f1ca565e083cbbf96118f98a037` |
+| `bimeron-desktop-0.3.0-windows-arm64.msi` | 37937152 | `677e9b46edf8cd5425872c3ce3b8d10c0fd4d81536b09137fb34de50c5dc2979` |
+| `bimeron-desktop-0.3.0-linux-amd64.deb` | 38403770 | `0ffbffbc18cca38629ba1f6d10ab12c0734c683e9f7774b1edcc7584f3744f45` |
+| `bimeron-desktop-0.3.0-linux-arm64.deb` | 35623514 | `0374443e8865e4caeed755588bde31667695c33b4de75ea7fe7eb79727789ab9` |
+
+Re-check scope (Desktop unchanged; only Core #146/#147): Linux amd64 PASS
+(installer service update incl. stopped service, one polkit repair). Windows x64
+(alternate administrator, installer update, connect, repair) and Windows ARM64
+(never-started service update, connect) are in progress and block publication.
