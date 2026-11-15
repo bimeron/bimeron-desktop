@@ -2511,6 +2511,16 @@ struct ConnectionManagementTest {
             window.profiles_.clear();
             window.validationExecutable_ = QCoreApplication::applicationFilePath();
             window.developerMode_ = true;
+#ifndef Q_OS_WIN
+            QTimer::singleShot(0, [&] {
+                auto *add = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+                require(add, "native creation Add dialog");
+                require(!add->findChild<QPushButton *>("createNativeProfile"), "IKEv2 creation is Windows-only");
+                add->reject();
+            });
+            window.addProfile();
+            require(window.profiles_.isEmpty(), "non-Windows Add dialog creates no profile");
+#else
             QTimer::singleShot(0, [&] {
                 auto *add = qobject_cast<QDialog *>(QApplication::activeModalWidget());
                 require(add, "native creation Add dialog");
@@ -2528,6 +2538,7 @@ struct ConnectionManagementTest {
             });
             window.addProfile();
             require(window.profiles_.isEmpty() && QDir(directory.path()).entryList(QDir::Files).isEmpty(), "cancel creates no profile");
+#endif
             for (int scenario = 0; scenario < 5; ++scenario) {
                 const bool available = scenario != 0;
                 const bool successful = scenario >= 3;

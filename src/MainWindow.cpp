@@ -1507,8 +1507,14 @@ void MainWindow::addProfile() {
     layout->addWidget(paste);
     layout->addWidget(sshFiles);
     bool createNative = false;
-    // Native IKEv2 creation is not a finished user workflow yet.
-    if (developerMode_) {
+    // Native IKEv2 creation is not a finished user workflow yet, and the native
+    // backend exists only on Windows.
+#ifdef Q_OS_WIN
+    const bool nativeCreationAvailable = developerMode_;
+#else
+    const bool nativeCreationAvailable = false;
+#endif
+    if (nativeCreationAvailable) {
         auto *native = new QPushButton(tr("Create IKEv2 profile"));
         native->setObjectName("createNativeProfile");
         native->setAutoDefault(false);
