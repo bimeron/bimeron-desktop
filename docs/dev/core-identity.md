@@ -39,7 +39,7 @@ The signed update check still receives the raw runtime version; this display cha
 
 ## Pinned release
 
-`cmake/core-release.cmake` pins `BIMERON_CORE_VERSION` and its commit `BIMERON_CORE_REVISION`. CMake passes both to the GUI as `BIMERON_PINNED_CORE_VERSION` and `BIMERON_PINNED_CORE_REVISION`. Package configuration verifies the commit against the pinned binary when that binary runs on the build host; see [Building and packaging](build-and-packaging.md#updating-the-bundled-core-version).
+`cmake/core-release.cmake` pins `BIMERON_CORE_VERSION` and its commit `BIMERON_CORE_REVISION`. CMake passes both to the GUI as `BIMERON_PINNED_CORE_VERSION` and `BIMERON_PINNED_CORE_REVISION`. Package configuration verifies the commit against the pinned binary when that binary runs on the build host; see [Building and packaging](../build-and-packaging.md#updating-the-bundled-core-version).
 
 ## Acceptance criteria
 

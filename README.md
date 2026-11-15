@@ -1,133 +1,122 @@
-# Bimeron Desktop
+# <img src="assets/brand/bimeron.png" alt="" width="32" height="32" align="absmiddle"> Bimeron Desktop
 
-Cross-platform Bimeron GUI client built with C++20 and Qt 6 Widgets.
+Bimeron Desktop is the Windows and Linux app for Bimeron: add an access profile, then connect
+your computer through it in one click.
 
-Draft specification for a separate native macOS client on Swift/SwiftUI:
-[`docs/macos-app-spec.md`](docs/macos-app-spec.md). It describes application behavior,
-core integration options, and acceptance criteria. The macOS GUI is not implemented yet.
+[![CI](https://github.com/bimeron/bimeron-desktop/actions/workflows/ci.yml/badge.svg)](https://github.com/bimeron/bimeron-desktop/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/bimeron/bimeron-desktop?include_prereleases)](https://github.com/bimeron/bimeron-desktop/releases)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-## Build
+The app is a Qt 6 interface for [Bimeron Core](https://github.com/bimeron/bimeron-core). Core runs
+as a system service and handles the tunnel, routing and DNS; the app manages profiles and the
+connection without administrator rights. Each package includes a matching Core.
 
-Click the Desktop version in About five times to restart into a session-only
-Development tab. Choose System service or browse to a local Core executable and
-click Apply. Windows asks for UAC once when Development opens and keeps that GUI
-elevated for the session; Linux elevates individual Core operations. Switching
-disconnects the VPN. Windows needs
-the matching `wintun.dll` beside the local executable. Quit shuts down the local
-daemon and restores a service that this session stopped. Closing to the tray
-keeps the session; the next normal launch hides Development. Theme/language
-restarts also end the developer session. The last valid selected Core path is
-remembered for the next unlock, but never started automatically. See [developer mode](docs/developer-mode.md)
-for lifecycle details and crash limitations.
-The Development tab shows the selected local Core file's modification date and time, not its compilation time.
+**Start here:** [Install](#install) · [Features](#features) · [Build from source](#build-from-source) · [Documentation](docs/README.md)
+
+## Install
+
+Download a package from [Releases](https://github.com/bimeron/bimeron-desktop/releases). Current
+versions are pre-releases.
+
+| System | Architecture | Package |
+| --- | --- | --- |
+| Windows 10 or 11 | x64 | `bimeron-desktop-<version>-windows-amd64.msi` |
+| Windows 10 or 11 | ARM64 | `bimeron-desktop-<version>-windows-arm64.msi` |
+| Ubuntu 22.04 or newer | amd64 | `bimeron-desktop-<version>-linux-amd64.deb` |
+| Ubuntu 22.04 or newer | arm64 | `bimeron-desktop-<version>-linux-arm64.deb` |
+
+The packages are not code-signed, so Windows may warn about an unknown publisher. Compare the
+file's SHA-256 with the value in the release notes before installing.
+
+- **Windows:** run the MSI. The options page adds a Start menu shortcut and launches the app
+  after installation by default; a desktop shortcut is optional.
+  The default location is `C:\Program Files\Bimeron`.
+- **Linux:** install with `sudo apt install ./bimeron-desktop-<version>-linux-<arch>.deb`. The
+  Core service needs systemd and polkit. Newer Debian-based systems with compatible libraries
+  are expected to work but are not tested.
+
+On first launch, Bimeron checks the Core service. If the service is missing or not working,
+the service dialog shows the cause and restores it after one administrator prompt.
+
+### Upgrade
+
+Install the newer package over the existing one. Profiles and settings are kept. If the
+installed Core service is older than the Core in the package, or is the same version but a
+different build, the installer updates it; an active VPN connection is interrupted, so reconnect
+afterwards. A newer service is left unchanged.
+
+### Uninstall
+
+Removing the app keeps the Core service installed and running, as well as your profiles and
+settings. To remove the service, run `bimeron-core service uninstall` before removing the app:
+on Windows from an administrator command prompt in `C:\Program Files\Bimeron`, on Linux with
+`sudo`.
+
+## Features
+
+- **Profiles from links or files.** Paste a link or open a `.conf` profile. Supported links:
+  `ss://`, `ssconf://`, `socks5://`, `vless://`, `hysteria2://`, `hy2://`, `vmess://`,
+  `trojan://`, `tuic://`, `http://`, `https://`, `anytls://`, `naive+https://`,
+  `naive+quic://`, `masque://` and `ssh://`.
+- **Profile editor.** Create a profile from scratch or edit settings field by field; a raw
+  editor is always available. Core checks every profile before it is saved, and problems point
+  to the field that needs a fix.
+- **Routing by country and site.** Send traffic through the tunnel, directly or block it using
+  GeoIP and GeoSite groups. The databases are bundled and can update automatically.
+- **Reliable connection.** After a dropped connection, Bimeron retries up to three times and
+  explains the last error.
+- **Service repair.** One dialog diagnoses the Core service, restores it and exports a
+  diagnostic report.
+- **Signed Core updates.** The app checks GitHub Releases for a newer compatible Core, verifies
+  its signature and asks before replacing the running service. Beta Core releases are offered
+  only after you enable them.
+- **Tray and startup.** Connect, switch profiles and quit from the tray. Start with the system
+  and connect a chosen profile automatically. Closing the window keeps the connection running.
+- **English and Russian**, with light, dark and system themes.
+
+The app talks to the Core service over a local channel (a named pipe on Windows,
+`/run/bimeron/control.sock` on Linux). Profiles are stored in the user's application data
+directory and readable only by the owner.
+
+## Build from source
+
+The app is C++20 with Qt 6 Widgets and builds with CMake presets for four targets:
 
 ```powershell
 cmake --preset windows-amd64-release
 cmake --build --preset windows-amd64-release
-
-cmake --preset windows-arm64-release
-cmake --build --preset windows-arm64-release
 ```
-
-All build artifacts are stored in separate directories by platform and architecture:
-`build/windows-amd64`, `build/windows-arm64`, `build/linux-amd64` and
-`build/linux-arm64`. Qt libraries for Windows are copied automatically.
-GUI builds work without Bimeron Core. To bundle it for local testing, run
-`cmake -DBIMERON_CORE_PLATFORM=windows -P scripts/fetch-core.cmake` on Windows
-or use `linux` on Linux before configuring CMake. The packaging scripts do
-this automatically and require the complete core payload. Core is named
-`bimeron-core.exe` on Windows or `bimeron-core` on Linux. Windows packages
-also include the matching Wintun DLL and license files from the core release.
-Before linking, the build stops a GUI instance running from the executable
-being updated. Unsaved changes in the open editor are lost.
-The core service and VPN session continue to work.
-
-Linux uses the same CMake project and the Qt 6 system package (`qt6-base-dev`).
-The commands are executed inside Linux or WSL:
 
 ```bash
 cmake --preset linux-amd64-release
 cmake --build --preset linux-amd64-release
-
-cmake --preset linux-arm64-release
-cmake --build --preset linux-arm64-release
 ```
 
-Linux ARM64 cross compilation also requires `g++-aarch64-linux-gnu` and
-ARM64 Qt 6 development packages. Windows ARM64 requires Qt 6.8.3 kit
-`msvc2022_arm64`.
+The `windows-arm64-release` and `linux-arm64-release` presets build ARM64. Windows needs
+Visual Studio Build Tools and Qt 6.8.3; Linux builds against Ubuntu 22.04's system Qt 6.2.
+To build all four MSI and DEB packages, run `./scripts/package-all.ps1` on Windows with WSL.
 
-## Packages
+Requirements, the package layout and release checks are in
+[Building and packaging](docs/build-and-packaging.md).
 
-Full description of the environment, artifact structure, MSI and DEB composition, updates,
-testing and diagnostics is in
-[`docs/build-and-packaging.md`](docs/build-and-packaging.md).
+## Documentation
 
-```powershell
-./scripts/package-all.ps1
-```
+The [documentation index](docs/README.md) lists feature descriptions, the build guide and
+release notes. Internal specifications and plans are in [docs/dev](docs/dev/README.md).
 
-On Linux, run `bash scripts/package-linux.sh` for the two DEBs. The Windows
-script collects all four packages and requires WSL. Without WSL, use
-`./scripts/package-all.ps1 -WindowsOnly` for both MSI packages. Clean installation contents
-falls into `stage/<platform>-<architecture>`, and ready-made MSI and DEB - into `dist`.
-Portable WiX for MSI creation is downloaded automatically into an ignored directory
-`.tools`; System installation and administrator rights are not required.
-The names of ready-made packages are all lowercase, for example
-`bimeron-desktop-0.1.0-windows-amd64.msi`.
+## License
 
-MSIs use a permanent upgrade GUID, so the package with the newer version
-updates an existing installation. DEB is updated by standard installation of the package with
-higher version via `apt` or `dpkg`. User settings are
-separately from the program directory and are not deleted during updating.
+Bimeron Desktop is licensed under the [MIT License](LICENSE).
 
-The installed core service can update independently from a compatible signed
-`bimeron/bimeron-core` GitHub Release. The GUI checks and downloads quietly,
-then asks before replacing the service because an active VPN will disconnect.
-Package builds include the production Ed25519 public key and a core with the
-trusted `-source` update helper. Beta core updates require opting in for the
-current GUI session. The installed package directory must not be writable by
-ordinary users. Existing unsigned releases cannot be installed.
-See [the update contract](docs/core-updates.md).
+Packages also contain third-party components under their own licenses:
 
-When you first start the GUI automatically installs the missing core service,
-enables its launch along with the system and starts it. On Windows, UAC is used,
-On Linux bundled core is installed as a systemd service via `pkexec`. Service
-runs as root, and the Unix socket with mode `0600` belongs to the one who installed it
-user; Normal VPN management does not require elevation. Service autostart
-does not connect VPN without explicitly selecting a profile. To install on Linux you need systemd
-and polkit. In WSL, the GUI uses the standard `wsl.exe -u root`, since the owner
-Windows already administers its distribution; separate request for Linux password there
-not shown. You can manage the service manually on the settings page.
+- [Bimeron Core](https://github.com/bimeron/bimeron-core) (MIT, with parts under MPL 2.0) and its
+  `THIRD_PARTY_NOTICES.txt`;
+- Wintun on Windows, under its Prebuilt Binaries License;
+- Qt 6 libraries on Windows, under LGPL-3.0;
+- Monocypher and miniz, compiled into the app;
+- country and site databases from
+  [Loyalsoldier/v2ray-rules-dat](https://github.com/Loyalsoldier/v2ray-rules-dat), under GPL-3.0.
 
-Windows registers the application under the name `Bimeron`. Before installing MSI
-shows English page of advanced options: shortcut in Start menu
-and launch after installation are enabled by default, the desktop shortcut is disabled.
-
-AppImage is not a system installer and is not yet created: it has
-separate delivery and update model. It should be added when accepted
-decision to support distributions outside of Debian/Ubuntu.
-
-The application connects to the `BimeronCore` service via a Windows named pipe or to
-`/run/bimeron/control.sock` on Linux. Profiles are located in the data directory
-applications and receive only the rights of the owner. Closing the window does not stop the VPN,
-unless the user has explicitly enabled the appropriate setting.
-
-The profile dialog accepts `ss://`, `ssconf://`, `socks5://`, `vless://`, `hysteria2://`, and `hy2://` links. Import, editing, and runtime support are separate: see the [Core/Desktop integration contract](docs/core-desktop-integration-contract.md). The current navigation baseline disables connection controls and regular IPC polling. The bundled Core `v0.2.0-beta.1` supports VLESS but predates Hysteria2; validation by a different selected CLI does not establish support in the installed service.
-
-See [Shadowsocks extensions](docs/shadowsocks-profiles.md) for SS2022 and embedded plugin editor support and Core requirements.
-
-For other platform implementations, see the [GUI profile editing contract](docs/gui-profile-editing-contract.md)
-for field formatting, disabled drafts, preservation and save/reopen acceptance cases.
-
-SSH integration targets Core v0.3.0-beta.1; see [SSH profiles](docs/ssh-profiles.md)
-for Desktop behavior, the older bundled Core limitation and verification scope.
-See [Protocol URI import](docs/protocol-uri-import.md) for stage 5 URI coverage, Raw editing and target Core requirements.
-
-Stage 6 adds explicit Trojan, HTTP(S), Naive H2 and MASQUE forms and a separate
-ShadowTLS v3 block for represented compatible explicit profiles. URI sources and
-extended XHTTP remain protected Raw. See [Parameter forms and ShadowTLS](docs/parameter-forms-and-shadowtls.md).
-This does not change the bundled Core or establish runtime interoperability.
-
-See [GeoData routing](docs/geodata-routing.md) for the local database editor,
-Core CLI dependency and routing limitations.
+The packages install the license files of Core, Wintun, Monocypher, miniz and the databases.
+See [third_party](third_party/README.md) for the sources of the vendored components.

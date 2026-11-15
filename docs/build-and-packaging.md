@@ -17,9 +17,9 @@ The version is specified once in `project(BimeronDesktop VERSION ...)` of the `C
 
 The desktop source version is `0.3.0`. Release preparation pins the four frozen Core `v0.4.0-beta.1` candidate ZIPs from commit `b9d733277dad097d2c52ee3db687b416ee921c86`. This candidate is not yet tagged or published; its assets are published unchanged only after Desktop 0.3.0 VM acceptance. Verified local ZIPs can populate `.tools/core` for offline packaging; clean-checkout downloads remain unavailable until Core publication. Its signed-update contract is GUI `[0.3.0, 0.3.1)`, IPC 1, profile format 1 and the existing production key; Desktop 0.2.0 is intentionally outside it. The bundled CLI reports `explicit_access`. See [release acceptance](release-0.3.0.md). Desktop 0.3.0 best-effort updates an installed older service to the bundle; see installer service servicing below.
 
-The Windows amd64 `0.2.0` VM package, its Core payload, signed GUI-driven update, installed-service rollback, IPC `hello`, and automatic VM profile reconnection results are recorded in [the VM check](vm-core-0.2.0-beta.1-check.md). The positive signed GUI path was repeated with the final Core assets through a local release-list override in the test build. Tampering and direct-helper rollback with those final bytes passed; the other installed package targets remain untested. The normal installed GUI discovered and installed the published Core through GitHub Releases in the Windows amd64 VM; see the VM check.
+The Windows amd64 `0.2.0` VM package, its Core payload, signed GUI-driven update, installed-service rollback, IPC `hello`, and automatic VM profile reconnection results are recorded in [the VM check](dev/vm-core-0.2.0-beta.1-check.md). The positive signed GUI path was repeated with the final Core assets through a local release-list override in the test build. Tampering and direct-helper rollback with those final bytes passed; the other installed package targets remain untested. The normal installed GUI discovered and installed the published Core through GitHub Releases in the Windows amd64 VM; see the VM check.
 
-For isolated GUI update testing, configure a separate build with `-DBIMERON_LOCAL_UPDATE_TESTING=ON`. With `BUILD_TESTING=ON`, also provide `-DBIMERON_LOCAL_UPDATE_TEST_PUBLIC_KEY=<ephemeral-test-public-key>` for the optional feed fixture executable; its private seed stays in ignored local build state and never enters the MSI. Its MSI name carries `-local-update-test`, and it reads only the local release list named by `BIMERON_TEST_RELEASES_JSON`; it accepts only local assets beneath that list's directory. Never use this test build for release packaging. The normal configuration keeps GitHub Releases and the pinned production public key. The Windows amd64 test MSI hash and VM results are in [the VM check](vm-core-0.2.0-beta.1-check.md). See [the signed update specification](core-updates.md) for acceptance criteria.
+For isolated GUI update testing, configure a separate build with `-DBIMERON_LOCAL_UPDATE_TESTING=ON`. With `BUILD_TESTING=ON`, also provide `-DBIMERON_LOCAL_UPDATE_TEST_PUBLIC_KEY=<ephemeral-test-public-key>` for the optional feed fixture executable; its private seed stays in ignored local build state and never enters the MSI. Its MSI name carries `-local-update-test`, and it reads only the local release list named by `BIMERON_TEST_RELEASES_JSON`; it accepts only local assets beneath that list's directory. Never use this test build for release packaging. The normal configuration keeps GitHub Releases and the pinned production public key. The Windows amd64 test MSI hash and VM results are in [the VM check](dev/vm-core-0.2.0-beta.1-check.md). See [the signed update specification](core-updates.md) for acceptance criteria.
 
 The normal `0.2.0` build pinned the published `v0.2.0-beta.1` archives and produced both MSI and both DEB packages. Windows amd64 and Linux amd64 `core-update-test` and `profile-vless-test` passed; both ARM64 targets compiled and packaged without runtime testing. The staged Windows amd64 Core SHA-256 is `174c288a5771d55c48e446fce3deef1f6fc7092d615f8277b5cc2aac75486f0f`, matching the verified release archive. A normal installed-GUI update through GitHub Releases passed in the Windows amd64 VM. The detailed outcome text was tested from a protected install; all four packages were then rebuilt and checked, and the clean Windows amd64 MSI was installed in the VM. The later profile-list changes require another package build before release.
 
@@ -51,7 +51,7 @@ All directories are generated locally and excluded from Git:
 
 ## Core release inputs
 
-Both packaging scripts use the pinned Bimeron Core version in `cmake/core-release.cmake`. The current `v0.4.0-beta.1` candidate includes the required `-source` helper; its four frozen ZIP hashes are pinned together. They must match the signed manifest and actual published assets before release approval. `scripts/fetch-core.cmake` verifies the pinned archives on Windows and Linux, including cached candidate ZIPs. A sibling core checkout is not required. The version, its full commit (`BIMERON_CORE_REVISION`) and the hashes must be updated together when upgrading core. About uses the pinned version and commit to tell the bundled release from development Core builds; see [Core build identity](core-identity.md).
+Both packaging scripts use the pinned Bimeron Core version in `cmake/core-release.cmake`. The current `v0.4.0-beta.1` candidate includes the required `-source` helper; its four frozen ZIP hashes are pinned together. They must match the signed manifest and actual published assets before release approval. `scripts/fetch-core.cmake` verifies the pinned archives on Windows and Linux, including cached candidate ZIPs. A sibling core checkout is not required. The version, its full commit (`BIMERON_CORE_REVISION`) and the hashes must be updated together when upgrading core. About uses the pinned version and commit to tell the bundled release from development Core builds; see [Core build identity](dev/core-identity.md).
 
 Acceptance criteria: a clean checkout can build the two DEBs on native Linux without PowerShell or WSL; Windows with WSL can build all four packages; Windows without WSL can build two MSI packages with `-WindowsOnly`; an archive that fails the pinned hash check cannot be packaged. Each installed core binary must match the verified published archive for its architecture.
 
@@ -346,7 +346,7 @@ target or package payload. See [connection management](connection-management.md)
 for the runtime and separately authorized live-check boundaries.
 
 `offline-ikev2-failure-test` links only Qt Core and runs the disconnected
-header-only parser from [the offline failure parser](ikev2-offline-error-parser.md)
+header-only parser from [the offline failure parser](dev/ikev2-offline-error-parser.md)
 against `tests/fixtures/ikev2-error-draft-v1.json` and
 `tests/fixtures/ikev2-error-raw-addendum-v1.json`, passed as absolute source-tree
 paths. It verifies both fixture SHA-256 values, so `.gitattributes` marks them
@@ -459,14 +459,14 @@ The current bundle pin is not evidence of support for these new protocols.
 
 ## Foreground installer feasibility prototype (not enabled)
 
-Step 4 [consumer Windows decision proposal](ikev2-installation-contract.md#step-4-decision-proposal-consumer-windows-lifecycle)
+Step 4 [consumer Windows decision proposal](dev/ikev2-installation-contract.md#step-4-decision-proposal-consumer-windows-lifecycle)
 recommends evaluating offline MSI payload servicing separated from Core runtime
 ownership/recovery. It supersedes the disconnected-codec-first recommendation below.
 No mandatory managed policy, installer restructuring or security-scope change is
 accepted yet. Supported packaging, bundle pins and native disablement are unchanged;
 ordinary-user cached maintenance and recovery-before-deletion are explicit gates.
 
-The [Step 2 unified installation contract](ikev2-installation-contract.md) is a
+The [Step 2 unified installation contract](dev/ikev2-installation-contract.md) is a
 review-pending proposal for Core-owned installation, enrollment, participating-host
 admission and terminal settlement. It supplies dependencies and acceptance for
 first Windows amd64 GUI IKEv2 use, not a new supported packaging flow. The current
@@ -474,7 +474,7 @@ bundle pin, fail-closed prototype exports and production disablement stay unchan
 Future package integration must prevent old/cached ungated routes, prove protected
 action/preload authority and preserve rollback/service restoration before enablement.
 
-Step 3 [concrete decisions](ikev2-installation-contract.md#step-3-concrete-decisions-and-remaining-feasibility-boundaries)
+Step 3 [concrete decisions](dev/ikev2-installation-contract.md#step-3-concrete-decisions-and-remaining-feasibility-boundaries)
 select a separate ProgramData authority/WAL and bounded paired wire/plan contract.
 Future artifact approval is detached: freeze final Core/Desktop/DLL/MSI bytes,
 inspect the effective package and evidence, then independently sign approval of
@@ -1622,7 +1622,7 @@ configuration prints a status message and skips only this test, because Python i
 not a build or packaging dependency. CI configures with
 `-DBIMERON_REQUIRE_PYTHON_TESTS=ON`, which turns a missing interpreter into a
 configuration error so the test cannot silently drop out of CI. The checks use saved fixtures and pass on
-Linux and Windows. See [scope and observed artifacts](ikev2-msi-compatibility.md); this procedure
+Linux and Windows. See [scope and observed artifacts](dev/ikev2-msi-compatibility.md); this procedure
 does not replace release/runtime acceptance or establish installed/cache state.
 
 Inventory projections now require exact supported observed table layouts and
@@ -1700,7 +1700,7 @@ Qt applicationDisplayName is Bimeron, while applicationName/settings identity
 remains Bimeron Desktop. Windows Run value Bimeron and its command are unchanged;
 no startup migration or StartupApproved write is required. MSI shortcuts and
 Linux desktop/autostart entries already use Bimeron. See
-[display-name acceptance](application-display-name.md) for validation and limits.
+[display-name acceptance](dev/application-display-name.md) for validation and limits.
 
 ## Desktop 0.3.0 installer service servicing
 

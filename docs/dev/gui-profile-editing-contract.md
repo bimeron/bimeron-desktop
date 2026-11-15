@@ -116,5 +116,5 @@ API path the implementation supports:
    failure must preserve the original and redact diagnostics.
 
 Desktop implementation details and current verification limits are recorded in
-[Parameter forms and ShadowTLS](parameter-forms-and-shadowtls.md). Other GUI
+[Parameter forms and ShadowTLS](../parameter-forms-and-shadowtls.md). Other GUI
 implementations should record their own evidence against these cases.

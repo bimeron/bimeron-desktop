@@ -10,7 +10,7 @@ the databases to their author and must not present them as Bimeron's own.
 
 This plan builds on the shared database manager in
 [geodata-manager-redesign-plan.md](geodata-manager-redesign-plan.md) and the
-routing behavior in [geodata-routing.md](geodata-routing.md).
+routing behavior in [geodata-routing.md](../geodata-routing.md).
 
 ## Facts that constrain the design
 

@@ -24,10 +24,10 @@ Observed in source (not yet a reproduced live failure):
 - Existing service actions, trusted helper execution, peer checks, cleanup gates,
   signed updates and emergency network recovery already exist. Reuse them.
 
-Read before implementation: [service actions](service-actions.md),
-[developer mode](developer-mode.md), [connection management](connection-management.md),
-[core updates](core-updates.md), and the relevant Core integration contract.
-Read the complete [build documentation](build-and-packaging.md) before changing
+Read before implementation: [service actions](../service-actions.md),
+[developer mode](../developer-mode.md), [connection management](../connection-management.md),
+[core updates](../core-updates.md), and the relevant Core integration contract.
+Read the complete [build documentation](../build-and-packaging.md) before changing
 build files, dependencies, scripts, packaging or architecture paths. No such flow
 change is planned. Verify current startup/autostart behavior before modifying it.
 
@@ -883,7 +883,7 @@ independently; earlier final/review/measured prefixes are superseded evidence.
 
 Files touched by this implementation in Desktop (pre-existing edits preserved):
 `CMakeLists.txt`, `assets/translations/ru.json`, `docs/build-and-packaging.md`,
-`docs/core-recovery-plan.md`, `docs/service-actions.md`,
+`docs/dev/core-recovery-plan.md`, `docs/service-actions.md`,
 `packaging/windows/options.wxs`, `src/ConnectionRepair.h`,
 `src/DevelopmentCore.cpp`, `src/DevelopmentCore.h`, `src/MainWindow.cpp`,
 `src/MainWindow.h`, `src/TrustedCore.cpp`, `src/TrustedCore.h`,

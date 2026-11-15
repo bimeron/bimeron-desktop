@@ -47,8 +47,8 @@ At the Desktop baseline, Add profile accepts `ss://`, `ssconf://`, `socks5://`,
 `vless://`, `hysteria2://` and `hy2://`. Visual forms cover SS, SOCKS5 and VLESS
 explicit parameters and the recognized URI sources; Hysteria2 has URI editing
 but no explicit form. Generic `Key` and existing `File` sources remain available.
-See [VLESS](vless-profiles.md), [SOCKS5](remote-socks5.md),
-[Hysteria2](hysteria2-profiles.md) and [profile labels](profile-list.md).
+See [VLESS](../vless-profiles.md), [SOCKS5](../remote-socks5.md),
+[Hysteria2](../hysteria2-profiles.md) and [profile labels](profile-list.md).
 
 `.conf` import copies the file and then validates the destination with the selected
 CLI. It requires `[Profile]` and `[AccessKey]`, so it does not import native
@@ -59,7 +59,7 @@ supports them.
 
 Connection controls, tray profile actions and regular IPC polling were intentionally
 disabled at the reviewed navigation baseline. They are now restored according to
-[connection management](connection-management.md), using authoritative IPC state
+[connection management](../connection-management.md), using authoritative IPC state
 and isolated regression tests. This does not establish real network interoperability
 for the protocol matrix or change the reviewed bundle range.
 
@@ -76,7 +76,7 @@ The requirements below are acceptance criteria, not runtime evidence.
 
 ## Current preservation behavior
 
-[Profile preservation and secret handling](profile-preservation.md) defines the
+[Profile preservation and secret handling](../profile-preservation.md) defines the
 implemented editor/storage guard and its acceptance tests. Unrepresented profiles
 use protected Raw editing, no-op saves preserve bytes, profile replacement is
 atomic, and untrusted diagnostic text is hidden by default. This does not expand
@@ -131,7 +131,7 @@ requires a selected CLI accepting the profile; it does not imply safe visual sav
 | SOCKS5 | Yes | Yes, after CLI validation | URI and explicit parameters |
 | VLESS | Yes | Yes, after CLI validation | URI inspection/editing and represented explicit fields; advanced explicit settings use Raw |
 | Hysteria2/hy2 | Yes | Conditional; bundle CLI rejects it | URI source; explicit form with `explicit_access` |
-| VMess, Trojan, AnyTLS, TUIC, HTTP/HTTPS, Naive, MASQUE | Yes, with target Core validation | Conditional; old bundle CLI rejects them | Recognized links open as hidden, verbatim link sources; explicit forms (VMess, TUIC, AnyTLS and Naive QUIC with `explicit_access`); see [profile creation](profile-creation.md#explicit-access-protocols) |
+| VMess, Trojan, AnyTLS, TUIC, HTTP/HTTPS, Naive, MASQUE | Yes, with target Core validation | Conditional; old bundle CLI rejects them | Recognized links open as hidden, verbatim link sources; explicit forms (VMess, TUIC, AnyTLS and Naive QUIC with `explicit_access`); see [profile creation](../profile-creation.md#explicit-access-protocols) |
 | SSH | Yes, with target Core validation | Conditional; old bundle CLI rejects it | URI and explicit forms, identity/known_hosts and transient authentication; see SSH profiles |
 | ShadowTLS section | Only as part of a profile, not a standalone URI | Selected CLI validates; installed service must independently support it | Compatible explicit SS/VLESS/Trojan/Naive H2/SSH forms; other sources retain protected Raw |
 | Native IKEv2 | No | Rejected by current AccessKey import requirement | No form; outside the packet connection flow |
@@ -285,7 +285,7 @@ per-transport capability list; do not invent one or bypass a service rejection.
 
 Use IPC version 1, correlated requests, UTF-8 JSON plus LF, bounded reads and
 asynchronous UI handling. Preserve the existing protected pipe/socket and
-[developer backend lifecycle](developer-mode.md). Never silently change endpoint
+[developer backend lifecycle](../developer-mode.md). Never silently change endpoint
 after access denial, incompatibility or local-daemon failure.
 
 After compatible `hello`, read authoritative status; send `start` once with the
@@ -301,7 +301,7 @@ profile may be edited or deleted without a stop, and a new start needs no stop
 first. Only an active session or `connecting`, `connected`, `reconnecting` or
 `stopping` holds its profile. Protocol additions do not require transport-specific start commands.
 
-The signed update gate in [core-updates.md](core-updates.md) remains authoritative.
+The signed update gate in [core-updates.md](../core-updates.md) remains authoritative.
 `gui_reviewed` certifies reviewed compatibility for the specified GUI range and
 evidence, not a complete GUI editor for every Core feature. Core may release
 independently of GUI feature parity. Neither this document nor the new tag changes
@@ -338,7 +338,7 @@ runtime evidence. Local SSH proxy does not automatically reconnect after failure
 
 ### Native IKEv2 boundary
 
-The accepted [stage 8 specification](ikev2-profiles.md) extends this boundary
+The accepted [stage 8 specification](../ikev2-profiles.md) extends this boundary
 with a separate experimental Desktop foreground backend and explicit profile
 preparation/removal. It is not implemented support. Full GUI implementation is
 blocked on a protected Core foreground API and verification of a new agreed
@@ -392,26 +392,26 @@ diff. Check `git diff --check`, local links/anchors and fixed-SHA Core targets;
 review for secrets, unsupported claims and accidental release instructions.
 No build, package, benchmark or profiling run is required for documentation-only
 changes. Full release testing remains governed by
-[build-and-packaging.md](build-and-packaging.md); this document authorizes no release.
+[build-and-packaging.md](../build-and-packaging.md); this document authorizes no release.
 
-Desktop explicit SS extension editing is specified in [Shadowsocks profiles](shadowsocks-profiles.md). Runtime support still requires a compatible Core.
+Desktop explicit SS extension editing is specified in [Shadowsocks profiles](../shadowsocks-profiles.md). Runtime support still requires a compatible Core.
 
 ## Desktop SSH implementation
 
-[SSH profiles](ssh-profiles.md) defines stage 7 Desktop support targeting Core
+[SSH profiles](../ssh-profiles.md) defines stage 7 Desktop support targeting Core
 `v0.3.0-beta.1` at `9f527efe0a4959786084675f1ff795edb8a0d910`.
 It adds SSH import/forms and transient authentication while retaining stages 1-3.
 The older coverage table remains a baseline record. Bundled `v0.2.0-beta.1`
 does not support SSH. Bundle pins, release hashes, signed manifests and compatibility
 gates are one shared pre-release dependency across stages, not part of stage 7.
-See [Protocol URI import](protocol-uri-import.md) for stage 5 URI coverage, Raw editing and target Core requirements.
+See [Protocol URI import](../protocol-uri-import.md) for stage 5 URI coverage, Raw editing and target Core requirements.
 
 Stage 6 adds explicit Trojan, HTTP(S), Naive H2 and MASQUE forms and a separate
 ShadowTLS v3 block for represented compatible explicit profiles. URI sources and
-extended XHTTP remain protected Raw. See [Parameter forms and ShadowTLS](parameter-forms-and-shadowtls.md).
+extended XHTTP remain protected Raw. See [Parameter forms and ShadowTLS](../parameter-forms-and-shadowtls.md).
 This does not change the bundled Core or establish runtime interoperability.
 
 
 GeoIP/GeoSite routing and the Core document CLI boundary are described in
-[GeoData routing](geodata-routing.md). The running endpoint capabilities and
+[GeoData routing](../geodata-routing.md). The running endpoint capabilities and
 selected validator identity remain separate; no bundle pin changes are implied.
