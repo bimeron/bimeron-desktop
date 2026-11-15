@@ -370,3 +370,27 @@ unchanged. Archive and executable pins were updated together and verified by
 extraction. The Windows MSIs additionally ship the Qt LGPL notice and license
 texts. All earlier package tables are superseded; packages and VM acceptance are
 renewed.
+
+## Final package set with Core bf165b2b (2026-11-16)
+
+Supersedes every earlier package table. Source: release/0.3.0 at d49c0d0 (Core
+bf165b2b; installer equal-version build update #55; broker re-provisioning and
+BOM import #56; README/docs #57; Qt LGPL notice and texts in the MSI). Windows
+MSIs: scripts/package-all.ps1 -WindowsOnly; Windows x64 CTest 12/12. DEBs:
+scripts/package-linux.sh on the Ubuntu 22.04 VM from a git archive of the same
+commit (CMAKE_BUILD_PARALLEL_LEVEL=2, because the embedded broker resource
+exhausted VM memory with default parallelism); Ubuntu 22.04 amd64 CTest 11/11.
+Extracted payloads: Core and repair broker equal the executable pins on all four
+targets; QT-NOTICE.txt, QT-LGPL-3.0.txt and QT-GPL-3.0.txt in both MSIs; DEB
+brokers mode 755 with the correct ELF machine; Version 0.3.0; no test files.
+Packages are not code-signed.
+
+| Package | Size | SHA-256 |
+|---|---|---|
+| `bimeron-desktop-0.3.0-windows-amd64.msi` | 49352704 | `feafe5d3c0dfe45a226c8a05b9280ae1a84c2b98e995c982cbf4131beddac3f8` |
+| `bimeron-desktop-0.3.0-windows-arm64.msi` | 37924864 | `e3b420d92c74193930a808d6edf207959836a403a4ed33f191fc368c29de8758` |
+| `bimeron-desktop-0.3.0-linux-amd64.deb` | 38401244 | `65e2ab890c2197dd73c54b4e762373db98a2d9f27b378ca279e973055b44a747` |
+| `bimeron-desktop-0.3.0-linux-arm64.deb` | 35623760 | `03f8c490f651b74b4208af5120aedc5c25eba8a02157591bd5c3c9b1716e25e4` |
+
+VM acceptance on these exact packages (Windows x64, Windows ARM64, Linux amd64)
+is in progress and blocks publication.

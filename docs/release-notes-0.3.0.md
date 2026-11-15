@@ -40,10 +40,10 @@ Choose the MSI for Windows or the DEB for Debian/Ubuntu matching your architectu
 
 | File | SHA-256 |
 |---|---|
-| `bimeron-desktop-0.3.0-windows-amd64.msi` | `3f19f4538a985ae2a58599d0323fdf960c7828f2adb7445108ea2a911a45a93b` |
-| `bimeron-desktop-0.3.0-windows-arm64.msi` | `985442c1220902cd0e7e6a31d9ccd5ac0920984e1287e9b664509f7f0430590e` |
-| `bimeron-desktop-0.3.0-linux-amd64.deb` | `60a7c30181aa2f0dcbe46eb0ac1063677ac7f776cd003338ffdea08c274fcbe1` |
-| `bimeron-desktop-0.3.0-linux-arm64.deb` | `e409d64c4c48ed34764785f880e871f6a15ba21c8b71288a794279a0723e9c04` |
+| `bimeron-desktop-0.3.0-windows-amd64.msi` | `feafe5d3c0dfe45a226c8a05b9280ae1a84c2b98e995c982cbf4131beddac3f8` |
+| `bimeron-desktop-0.3.0-windows-arm64.msi` | `e3b420d92c74193930a808d6edf207959836a403a4ed33f191fc368c29de8758` |
+| `bimeron-desktop-0.3.0-linux-amd64.deb` | `65e2ab890c2197dd73c54b4e762373db98a2d9f27b378ca279e973055b44a747` |
+| `bimeron-desktop-0.3.0-linux-arm64.deb` | `03f8c490f651b74b4208af5120aedc5c25eba8a02157591bd5c3c9b1716e25e4` |
 
 The packages are not code-signed. Windows may show an unknown-publisher warning; verify the SHA-256 above before installing.
 
