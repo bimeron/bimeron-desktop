@@ -430,7 +430,23 @@ Version 0.3.0; no test files. Packages are not code-signed.
 | `bimeron-desktop-0.3.0-linux-amd64.deb` | 38403770 | `0ffbffbc18cca38629ba1f6d10ab12c0734c683e9f7774b1edcc7584f3744f45` |
 | `bimeron-desktop-0.3.0-linux-arm64.deb` | 35623514 | `0374443e8865e4caeed755588bde31667695c33b4de75ea7fe7eb79727789ab9` |
 
-Re-check scope (Desktop unchanged; only Core #146/#147): Linux amd64 PASS
-(installer service update incl. stopped service, one polkit repair). Windows x64
-(alternate administrator, installer update, connect, repair) and Windows ARM64
-(never-started service update, connect) are in progress and block publication.
+Re-check scope (Desktop unchanged; only Core #146/#147), all PASS on these exact
+packages, without user interaction (UAC driven through the Hyper-V virtual
+keyboard, polkit through the stored credential):
+- Linux amd64: installer equal-version build update, stopped-service update keeps
+  the service stopped, one repair with exactly one polkit prompt.
+- Windows ARM64: after a reboot (SCM 1077, never started) the MSI updated the
+  service to the pin and kept it stopped; connection through Core IPC (no GUI
+  session after reboot) with Wintun ARM64, split routes and HTTPS through the
+  tunnel; clean disconnect. A real stale adapter (#147) was not present there.
+- Windows x64: MSI equal-version build update, GUI connection without
+  adapter_name_in_use and no adapter row left after disconnect, one repair with
+  exactly one consent prompt. Alternate-administrator repair (standard user
+  `test`, credentials of a temporary administrator) on the bf165b2b build, whose
+  readiness code is unchanged in 5fcadd71: one credential prompt, broker as the
+  other administrator with the user's GUI as parent, service ready in about
+  1.2 s, no timeout or rollback, service still registered for the user's SID.
+Earlier evidence on these platforms covers the unchanged Desktop features
+(reconnect progress, profile deletion, BOM/.ssconf import, IKEv2 hiding, repair
+variants, broker bootstrap). Evidence is under git-ignored build/vm-*.
+VM acceptance is complete; publication proceeds with owner approval.
