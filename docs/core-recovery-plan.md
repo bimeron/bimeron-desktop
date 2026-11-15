@@ -1218,3 +1218,41 @@ This is not release validation: no packages or four-target release matrix were
 built; ARM64 and Linux checks remain outstanding because shared source changed.
 Repeat upgraded and clean-install Windows VM acceptance with the corrected GUI.
 No installed service or host network was changed.
+
+## Service dialog placement on Windows 11 (2026-11-15)
+
+Observed during Windows 11 ARM64 acceptance of Desktop 0.3.0: after a service
+repair, the service dialog ("Ready to connect") was horizontally centered over
+the main window, but its client area started at the top screen edge. The title
+bar and frame were above the screen, so the dialog looked frameless and could
+not be moved. The dialog is an ordinary modal `QDialog` with a content-sized
+fixed layout; it uses no frameless, popup or tool window flags.
+
+Specification and acceptance criteria: whenever the service dialog is shown or
+changes size, its whole frame, including the title bar, stays inside the
+available geometry of its screen. A frame that already fits keeps its position,
+so the dialog does not jump while repair states change its height. A frame that
+does not fit is centered over the main window and clamped to the available
+area; a frame taller than that area keeps its title bar at the top edge.
+Minimized, maximized and full-screen states are left unchanged.
+
+Root cause status: the exact trigger was not reproduced. Windows 10 x64 at
+100%, 150% and 200% scaling placed the dialog correctly through open,
+executing, verifying, ready and reopen states. Qt centers a dialog when it is
+shown and clamps the computed frame position to the top edge; on the Windows 11
+VM the resulting position excluded the real frame height. The correction
+therefore re-checks the real frame geometry one event-loop turn after Show and
+Resize events (`src/WindowPlacement.h`) instead of depending on Qt's initial
+estimate.
+
+Regression coverage: `developer-mode-test` checks the placement calculation
+(fitting, centering, oversized frames, negative screen coordinates) and the live
+dialog: a dialog moved above the screen returns inside it after a state change
+resizes it and after it is reopened, centered over the main window. Without the
+correction the live check fails.
+
+Validation: Windows x64 Release build and CTest 10/10 passed. The placement
+check also passed on the Qt offscreen platform used by Linux CI. Windows ARM64
+and Linux builds were not run locally. Acceptance requires repeating the Windows
+11 ARM64 repair scenario and confirming that the dialog has a visible, movable
+title bar.

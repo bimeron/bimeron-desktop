@@ -15,6 +15,7 @@
 #include "RoutingCompatibility.h"
 #include <QTemporaryDir>
 #include "TrustedCore.h"
+#include "WindowPlacement.h"
 
 #include <QColor>
 #include <QApplication>
@@ -959,6 +960,7 @@ QWidget *MainWindow::settingsPage() {
     coreManagement_ = new QDialog(this);
     coreManagement_->setWindowTitle(tr("Bimeron service"));
     coreManagement_->setModal(true);
+    new WindowPlacement::KeepFrameOnScreen(coreManagement_, this);
     auto *dialogLayout = new QVBoxLayout(coreManagement_);
     dialogLayout->setContentsMargins(18, 16, 18, 16);
     dialogLayout->setSpacing(12);
