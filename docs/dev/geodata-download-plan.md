@@ -10,7 +10,7 @@ the shared dirty checkout on eat/geodata-routing, preserving existing changes.
 No commits, pushes, PRs, release packages, installed-service changes or Core edits.
 
 Related work: [Desktop #18](https://github.com/bimeron/bimeron-desktop/issues/18),
-[existing routing plan](geodata-routing-plan.md), [routing documentation](geodata-routing.md).
+[existing routing plan](geodata-routing-plan.md), [routing documentation](../geodata-routing.md).
 
 ## Approved scope and visual reference
 

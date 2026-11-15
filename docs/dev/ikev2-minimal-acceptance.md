@@ -14,11 +14,11 @@ in this checkout were used; no active Core/lab checkout or runtime was inspected
 ## Scope and precedence
 
 Reuse [GUI integration obligations and dependency-ordered slices](ikev2-gui-integration-plan.md),
-[profile requirements](ikev2-profiles.md),
+[profile requirements](../ikev2-profiles.md),
 [installation lifecycle decisions](ikev2-installation-contract.md),
-[connection management](connection-management.md),
-[signed Core updates](core-updates.md), and the complete canonical
-[build and packaging flow](build-and-packaging.md). This proposal does not
+[connection management](../connection-management.md),
+[signed Core updates](../core-updates.md), and the complete canonical
+[build and packaging flow](../build-and-packaging.md). This proposal does not
 supersede their gates, settle pending consumer-B/security decisions, change pins,
 or supply an approval/admission producer. Existing production composition is absent.
 

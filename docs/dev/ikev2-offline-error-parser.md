@@ -4,7 +4,7 @@ Specification and acceptance recorded before code, 2026-11-05.
 
 This isolated Desktop task starts clean at `dbcf2dc` on
 `feat/ikev2-offline-error-parser`. Core owns the shared draft schema. The
-read-only proposal in `plan-ikev2-error-contract/docs/ikev2-error-contract-plan.md`
+read-only proposal in `plan-ikev2-error-contract/docs/dev/ikev2-error-contract-plan.md`
 is context, not permission to independently freeze a format. Implementation waits
 for Core's exact frozen fixture path and SHA-256; record them here before code.
 This is a draft fixture contract, not a published protocol.

@@ -2,7 +2,7 @@
 
 ## Contract and scope
 
-This document records the original feature contract. The [Core/Desktop integration contract](core-desktop-integration-contract.md) adds the October 29, 2026 source baselines and separates implemented import/editor behavior from release and runtime evidence. The current navigation baseline disables connection controls and regular polling; connection criteria below remain requirements for their restoration. The bundled `v0.2.0-beta.1` predates Hysteria2.
+This document records the original feature contract. The [Core/Desktop integration contract](dev/core-desktop-integration-contract.md) adds the October 29, 2026 source baselines and separates implemented import/editor behavior from release and runtime evidence. The current navigation baseline disables connection controls and regular polling; connection criteria below remain requirements for their restoration. The bundled `v0.2.0-beta.1` predates Hysteria2.
 
 The Core contract is `bimeron-core` branch `feat/hysteria2-chrome-fingerprints`
 at `81f1ff7`,
@@ -80,7 +80,7 @@ profiles in that form (see [explicit access protocols](profile-creation.md#expli
 3. Update the profile-list documentation and this specification
    to match the final behavior. If implementation changes the scope, revise
    this specification before implementing that change.
-4. The currently pinned published Core `v0.2.0-beta.1` predates Hysteria2.
+4. The published Core `v0.2.0-beta.1` pinned at the time of writing predates Hysteria2.
    A Hysteria2-capable signed and GUI-reviewed release is required before
    updating the package pin. Once published, follow
    `docs/build-and-packaging.md`: update the Core tag and four archive hashes,

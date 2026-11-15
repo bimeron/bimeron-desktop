@@ -952,13 +952,13 @@ CTests passed 5/5. Both ARM64 targets are compile-only on this x64 host. Native
 EN/RU light/dark captures passed at measured DPR 1/1.5/2 with exact 590x350
 minimum size. Real-catalog repeated query/toggle/mode timings, failure diagnosis,
 exact metadata preservation and final review are recorded in
-[the trial report](geosite-picker-trial.md#unified-ordering-and-interaction-implementation--2026-11-03).
+[the trial report](../geosite-picker-trial.md#unified-ordering-and-interaction-implementation--2026-11-03).
 No release/package, dependency, Core, service, commit, push or PR work occurred.
 
 ## Other labels and empty sections follow-up outcome — 2026-11-03
 
 Implemented under explicit user authorization. See the accepted follow-up and
-[actual build/launch results](geosite-picker-trial.md#other-labels-and-empty-sections-implementation-outcome--2026-11-03).
+[actual build/launch results](../geosite-picker-trial.md#other-labels-and-empty-sections-implementation-outcome--2026-11-03).
 All four incremental Release builds passed. Normal Windows x64 GUI launched as
 PID 23816. Tests, CTest, screenshots/visual fixtures, benchmarks and profiling were
 explicitly not run; historical validation above does not validate this delta.

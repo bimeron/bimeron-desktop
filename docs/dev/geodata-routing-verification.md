@@ -77,7 +77,7 @@ is declared unaffected: ARM64 builds passed, but runtime evidence is outstanding
 No packages were built because this is implementation work, not an authorized
 release. A future release must obtain reviewed published Core artifacts, update
 pins/hashes deliberately, and complete the supported package/runtime matrix under
-[build-and-packaging.md](build-and-packaging.md). Existing bundle pins do not
+[build-and-packaging.md](../build-and-packaging.md). Existing bundle pins do not
 include evidence of this new CLI adapter.
 
 

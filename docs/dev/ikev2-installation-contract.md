@@ -21,7 +21,7 @@ The companion Core proposal is `docs/IKEV2_INSTALLATION_CONTRACT.MD` on Core
 based on local `plan/stage-8-ikev2` at
 `943c92d77a9c51587d94db49b3c32bf5b1f2737c`.
 
-This proposal refines the selected Core controller in [IKEv2 profiles](ikev2-profiles.md#proposed-core-installation-controller-selected-architecture-review-pending).
+This proposal refines the selected Core controller in [IKEv2 profiles](../ikev2-profiles.md#proposed-core-installation-controller-selected-architecture-review-pending).
 It supersedes the historical trusted-invocation/callback settlement route only as
 a proposed architecture. Earlier accepted offline work and frozen evidence retain
 their exact scope; no earlier approval transfers to this proposal.

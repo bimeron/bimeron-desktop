@@ -22,7 +22,7 @@ The document distinguishes:
 - **Open Decision** is a choice that cannot be reliably derived from the repositories.
 
 This document does not change the supported builds and packages of Qt Desktop. Their canonical
-the description remains in [build-and-packaging.md](build-and-packaging.md).
+the description remains in [build-and-packaging.md](../build-and-packaging.md).
 
 ## 2. Basis and sources
 
@@ -39,13 +39,13 @@ The specified revisions are the basis for the analysis and are not recommended v
 
 Main desktop sources:
 
-- [MainWindow.cpp](../src/MainWindow.cpp): screens, connections, settings, menus,
+- [MainWindow.cpp](../../src/MainWindow.cpp): screens, connections, settings, menus,
   diagnostics and service maintenance.
-- [ProfileEditorDialog.cpp](../src/ProfileEditorDialog.cpp): visual and text editors.
-- [ProfileStore.cpp](../src/ProfileStore.cpp): creation, import, storage and identity of profiles.
-- [CoreClient.cpp](../src/CoreClient.cpp): local RPC.
-- [main.cpp](../src/main.cpp): localization and one GUI instance.
-- [ru.json](../assets/translations/ru.json): UI localization resource.
+- [ProfileEditorDialog.cpp](../../src/ProfileEditorDialog.cpp): visual and text editors.
+- [ProfileStore.cpp](../../src/ProfileStore.cpp): creation, import, storage and identity of profiles.
+- [CoreClient.cpp](../../src/CoreClient.cpp): local RPC.
+- [main.cpp](../../src/main.cpp): localization and one GUI instance.
+- [ru.json](../../assets/translations/ru.json): UI localization resource.
 
 In the `bimeron-core` repository, the agent needs to read the following files regarding
 its root; they are not nested here to avoid creating an outdated copy:
