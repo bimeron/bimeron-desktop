@@ -1559,6 +1559,24 @@ Windows retains the child and authenticates ancestry, creation time, protected
 image and embedded digest before sending consent. Cache directories currently
 remain across upgrades; no garbage collection is claimed.
 
+The same elevated bootstrap also restores missing package-owned broker files:
+Windows derives `repair/` from its own protected GUI directory; Linux requires
+`/usr/bin` and derives `/usr/libexec/bimeron/repair`. Windows restores missing
+adjacent Wintun DLL/license from the embedded resources. Present identical files
+are untouched. Differing files, unsafe ancestry, reparse points and symlinks are
+refused with a diagnostic, without overwriting package-owned bytes or requesting
+another elevation. Cache and package provisioning share verified temporary-file
+hashing and atomic no-replace rename; Linux reads with O_NOFOLLOW and hashes the
+opened descriptor. Unsupported Linux GUI layouts refuse package provisioning.
+`core-update-test` exercises this primitive with temporary inert bytes and injected
+path policies; it never writes protected package paths or elevates.
+
+Profile imports strip one UTF-8 BOM before validation/storage, retain the original
+64 KiB input bound and reject invalid UTF-8. `profile-vless-test` checks storage,
+BOM/invalid/duplicate-BOM inputs and bounds; `developer-mode-test` exercises the
+actual MainWindow importer. File paths from selection, paste and file URLs use
+that importer; there is no separate drag/drop file-import implementation.
+
 This requires a protected updated GUI built with the reviewed payload. Old GUIs
 and wholly writable portable installations cannot supply that entry point.
 The existing Ed25519 update public key is available; Authenticode publisher
@@ -1738,3 +1756,19 @@ Diff/security review and git diff --check passed. No performance-sensitive runti
 path changed; benchmarks/profiling are inapplicable. No packages, dist changes,
 service operations or VM acceptance were performed. ARM64 CI compilation/runtime
 checks and native installer acceptance remain separate release evidence.
+
+Package broker/BOM verification (2026-11-15): Windows x64 Release build passed
+with Qt deployment OFF; full CTest passed 11/11 with QT_QPA_PLATFORM=offscreen,
+QT_QPA_PLATFORM_PLUGIN_PATH and QT_QPA_FONTDIR=C:/Windows/Fonts as documented.
+The native-platform attempt failed in the existing clipboard fixture with Windows
+OleSetClipboard 0x800401d0; this is not native clipboard acceptance. An initial
+offscreen run without the documented font directory failed a GeoData label check.
+WSL Linux amd64 Release build and full CTest passed 10/10. The initial Windows
+provisioning fixture found a retained QTemporaryFile native handle preventing
+MoveFileEx (error 32); destroying that object before rename fixed the cause.
+The old BOM-preserving import assertions were updated to the accepted normalized
+storage rule. Diff/security review and git diff --check passed. No benchmark or
+profiling applies to this explicit cold repair/import path. No package, dist,
+pin, frozen candidate, installed service or network changes were made. Builds
+omit optional embedded-resource fixtures; provisioning uses inert test bytes.
+ARM64 CI and real UAC/polkit package restoration remain separate evidence.

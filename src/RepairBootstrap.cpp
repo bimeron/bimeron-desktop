@@ -9,6 +9,7 @@
 #include <QProcess>
 #include <QRegularExpression>
 #include <QTemporaryFile>
+#include <QDebug>
 #ifdef Q_OS_WIN
 #include <qt_windows.h>
 #include <tlhelp32.h>
@@ -16,9 +17,101 @@
 #include <unistd.h>
 #include <sys/stat.h>
 #include <fcntl.h>
+#include <sys/syscall.h>
 extern char **environ;
 #endif
 namespace RepairBootstrap {
+QString detail::packageDirectory(const QString &gui) {
+    if (!QFileInfo(gui).isAbsolute()) return {};
+#ifdef Q_OS_WIN
+    return QFileInfo(gui).absolutePath() + "/repair";
+#else
+    // DEB installs the GUI in /usr/bin. Do not infer paths for other layouts.
+    if (QFileInfo(gui).absolutePath() != "/usr/bin") return {};
+    return QDir::cleanPath(QFileInfo(gui).absolutePath() + "/../libexec/bimeron/repair");
+#endif
+}
+
+bool detail::provision(const QString &target, const QByteArray &data,
+    const std::function<bool(const QString &)> &trustedDirectory,
+    const std::function<bool(const QString &)> &trustedFile, QString *error) {
+    const auto fail = [&](const QString &reason = QString()) {
+        if (error) *error = "Repair payload refused (unsafe path, differing bytes or I/O failure): " + target + " " + reason;
+        return false;
+    };
+    if (!QFileInfo(target).isAbsolute()) return fail();
+    const QString directory = QFileInfo(target).absolutePath();
+    QStringList missing;
+    QString ancestor = directory;
+    while (!QFileInfo::exists(ancestor)) {
+        if (QFileInfo(ancestor).isSymLink()) return fail();
+        missing.prepend(ancestor);
+        const QString next = QFileInfo(ancestor).dir().absolutePath();
+        if (next == ancestor) return fail();
+        ancestor = next;
+    }
+    if (!trustedDirectory(ancestor)) return fail();
+    for (const QString &part : missing)
+        if (!QDir().mkdir(part) || !trustedDirectory(part)) return fail();
+    if (!trustedDirectory(directory)) return fail();
+    const auto matches = [&](const QString &path) {
+        if (!trustedFile(path)) return false;
+        QFile file;
+#ifndef Q_OS_WIN
+        // Bind hashing to the checked regular inode, never follow a leaf link.
+        struct stat before{}, opened{};
+        const auto native = QFile::encodeName(path);
+        if (::lstat(native.constData(), &before) != 0) return false;
+        const int fd = ::open(native.constData(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK);
+        if (fd < 0) return false;
+        const bool safe = ::fstat(fd, &opened) == 0 && S_ISREG(opened.st_mode)
+            && before.st_dev == opened.st_dev && before.st_ino == opened.st_ino
+            && before.st_uid == opened.st_uid && before.st_mode == opened.st_mode;
+        if (!safe || !file.open(fd, QIODevice::ReadOnly, QFileDevice::AutoCloseHandle)) {
+            ::close(fd); return false;
+        }
+#else
+        file.setFileName(path);
+        if (!file.open(QIODevice::ReadOnly)) return false;
+#endif
+        QCryptographicHash hash(QCryptographicHash::Sha256);
+        return file.size() == data.size() && hash.addData(&file)
+            && hash.result() == QCryptographicHash::hash(data, QCryptographicHash::Sha256);
+    };
+    if (QFileInfo::exists(target) || QFileInfo(target).isSymLink())
+        return matches(target) || fail();
+    QString temporaryPath;
+    {
+        QTemporaryFile temporary(directory + "/.repair-XXXXXX");
+        if (!temporary.open() || temporary.write(data) != data.size() || !temporary.flush()) return fail();
+#ifndef Q_OS_WIN
+        if (::fchmod(temporary.handle(), 0755) != 0 || ::fsync(temporary.handle()) != 0) return fail();
+#endif
+        temporaryPath = temporary.fileName();
+        temporary.close();
+        if (!matches(temporaryPath) || !trustedDirectory(directory)) return fail("temporary verification failed: " + temporaryPath);
+        // QTemporaryFile::close retains its native handle on Windows. Destroy the
+        // object before native rename, otherwise it denies delete/rename sharing.
+        temporary.setAutoRemove(false);
+    }
+
+#ifdef Q_OS_WIN
+    const bool published = MoveFileExW(reinterpret_cast<LPCWSTR>(QDir::toNativeSeparators(temporaryPath).utf16()),
+        reinterpret_cast<LPCWSTR>(QDir::toNativeSeparators(target).utf16()), MOVEFILE_WRITE_THROUGH);
+    const DWORD publicationError = published ? ERROR_SUCCESS : GetLastError();
+#else
+    // Atomic rename without replacement, even if another bootstrap won the race.
+    const bool published = ::syscall(SYS_renameat2, AT_FDCWD, QFile::encodeName(temporaryPath).constData(),
+        AT_FDCWD, QFile::encodeName(target).constData(), 1 /* RENAME_NOREPLACE */) == 0;
+#endif
+    if (!published) QFile::remove(temporaryPath);
+#ifdef Q_OS_WIN
+    return matches(target) || fail(QString("publication error %1").arg(publicationError));
+#else
+    return matches(target) || fail("publication or target verification failed");
+#endif
+}
+
 bool available() { return QFile::exists(":/repair-bootstrap/broker"); }
 int run(int argc, char **argv) {
     QCoreApplication app(argc, argv);
@@ -51,43 +144,26 @@ int run(int argc, char **argv) {
     const QString directory = "/usr/libexec/bimeron/repair-bootstrap-" + digest;
     const QString broker = directory + "/bimeron-repair";
 #endif
-    // Validate each existing ancestor before creating its child. Never traverse a
-    // writable or redirected directory with elevated filesystem operations.
-    QStringList missing;
-    QString ancestor = directory;
-    while (!QFileInfo::exists(ancestor)) {
-        missing.prepend(ancestor);
-        const QString next = QFileInfo(ancestor).dir().absolutePath();
-        if (next == ancestor) return 1;
-        ancestor = next;
-    }
-    if (!TrustedCore::protectedDirectory(ancestor)) return 1;
-    for (const QString &part : missing)
-        if (!QDir().mkdir(part) || !TrustedCore::protectedDirectory(part)) return 1;
-    if (!TrustedCore::protectedDirectory(directory)) return 1;
-    auto provision = [&](const QString &target, const QByteArray &data) {
-        QFile file(target);
-        if (!file.exists()) {
-            QTemporaryFile temporary(directory + "/.repair-XXXXXX");
-            if (!temporary.open() || temporary.write(data) != data.size() || !temporary.flush()) return false;
-#ifndef Q_OS_WIN
-            if (::chmod(QFile::encodeName(temporary.fileName()).constData(), 0755) != 0) return false;
-#endif
-            temporary.close();
-            if (!TrustedCore::protectedExecutable(temporary.fileName()) || !temporary.rename(target)) return false;
-            temporary.setAutoRemove(false);
-        }
-        if (!TrustedCore::protectedExecutable(target) || !file.open(QIODevice::ReadOnly)
-            || file.size() != data.size()) return false;
-        QCryptographicHash hash(QCryptographicHash::Sha256);
-        return hash.addData(&file) && hash.result() == QCryptographicHash::hash(data, QCryptographicHash::Sha256);
+    const auto provision = [](const QString &target, const QByteArray &data) {
+        QString error;
+        if (detail::provision(target, data, TrustedCore::protectedDirectory,
+                              TrustedCore::protectedExecutable, &error)) return true;
+        qCritical().noquote() << error;
+        return false;
     };
-    if (!provision(broker, bytes)) return 1;
+    const QString packageDirectory = detail::packageDirectory(app.applicationFilePath());
+    if (packageDirectory.isEmpty()) return 1;
+    // Repair package-owned missing files during this same elevated session.
+    if (!provision(packageDirectory + "/" + QFileInfo(broker).fileName(), bytes)
+        || !provision(broker, bytes)) return 1;
 #ifdef Q_OS_WIN
-    QFile dll(":/repair-bootstrap/wintun.dll");
-    if (!dll.open(QIODevice::ReadOnly) || !provision(directory + "/wintun.dll", dll.readAll())) return 1;
-    QFile license(":/repair-bootstrap/WINTUN-LICENSE.txt");
-    if (!license.open(QIODevice::ReadOnly) || !provision(directory + "/WINTUN-LICENSE.txt", license.readAll())) return 1;
+    for (const QString &name : {QString("wintun.dll"), QString("WINTUN-LICENSE.txt")}) {
+        QFile resource(":/repair-bootstrap/" + name);
+        if (!resource.open(QIODevice::ReadOnly)) return 1;
+        const auto data = resource.readAll();
+        if (!provision(packageDirectory + "/" + name, data)
+            || !provision(directory + "/" + name, data)) return 1;
+    }
     QProcess child;
     child.setProgram(broker);
     child.setArguments(args.mid(1));

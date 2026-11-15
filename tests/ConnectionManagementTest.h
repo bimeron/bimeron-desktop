@@ -2202,7 +2202,42 @@ struct ConnectionManagementTest {
             window.development_->restoreService_ = false;
         }
     }
+    static void bomImport() {
+        QTemporaryDir directory;
+        require(directory.isValid(), "BOM import fixture");
+        MainWindow window;
+        window.core_.cancel();
+        window.core_.setEndpoint("bom-import-" + QUuid::createUuid().toString());
+        for (auto *timer : window.findChildren<QTimer *>()) timer->stop();
+        window.validationExecutable_ = QCoreApplication::applicationFilePath();
+        window.store_ = ProfileStore(directory.filePath("store"));
+        window.profiles_.clear();
+        const QByteArray config("[Profile]\nName = BOM fixture\n[AccessKey]\nSOCKS5 = socks5://localhost:1080\n[Interface]\nMode = proxy\n");
+        const QString source = directory.filePath("BOM fixture.conf");
+        int dialogs = 0;
+        QTimer dismiss;
+        QObject::connect(&dismiss, &QTimer::timeout, [&] {
+            if (auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget())) {
+                ++dialogs; dialog->reject();
+            }
+        });
+        dismiss.start(10);
+        QString error;
+        require(ProfileStore::writeConfig(source, QByteArray::fromHex("efbbbf") + config, &error), "write BOM import");
+        require(window.importProfile(source) && dialogs == 0, "GUI accepts BOM profile without correction");
+        require(window.profiles_.size() == 1, "BOM profile added once");
+        QFile stored(window.profiles_[0].path);
+        require(stored.open(QIODevice::ReadOnly) && stored.readAll() == config, "GUI stores without BOM");
+        QFile original(source);
+        require(original.open(QIODevice::ReadOnly) && original.readAll() == QByteArray::fromHex("efbbbf") + config,
+            "BOM source retained");
+        original.close();
+        require(ProfileStore::writeConfig(source, config + QByteArray::fromHex("c328"), &error), "write invalid UTF-8 import");
+        require(!window.importProfile(source) && dialogs == 1 && window.profiles_.size() == 1,
+            "GUI rejects invalid UTF-8 before validation/storage");
+    }
     static void run() {
+        bomImport();
         repairQuitOwnership();
         {
             MainWindow window;

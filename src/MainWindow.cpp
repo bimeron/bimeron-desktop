@@ -1778,16 +1778,17 @@ bool MainWindow::importProfile(const QString &source) {
     if (!correctionDirectory.isValid()) { QMessageBox::warning(this, tr("Import failed"), tr("Cannot create a protected import draft directory.")); return false; }
     QFile input(source);
     if (!input.open(QIODevice::ReadOnly)) { QMessageBox::warning(this, tr("Import failed"), input.errorString()); return false; }
-    const QByteArray imported = input.read(64 * 1024 + 1);
+    QByteArray imported = input.read(64 * 1024 + 1);
+    const bool hadBom = imported.startsWith(QByteArray::fromHex("efbbbf"));
     input.close();
     if (imported.size() > 64 * 1024) { QMessageBox::warning(this, tr("Import failed"), tr("The profile exceeds the 64 KiB limit.")); return false; }
-    if (QString::fromUtf8(imported).toUtf8() != imported) {
+    if (!ProfileStore::normalizeImport(imported)) {
         QMessageBox::warning(this, tr("Import failed"), tr("The profile must be valid UTF-8 and at most 64 KiB.")); return false;
     }
     QStringList skipped;
     const QString sharedDraft = GeoDataSelection::materialize(QString::fromUtf8(imported), source,
         validationExecutable_, GeoDataSelection::instance()->paths(), &error, correctionDirectory.path(), &skipped);
-    if (error.isEmpty() && sharedDraft.toUtf8() != imported) {
+    if (error.isEmpty() && (hadBom || sharedDraft.toUtf8() != imported)) {
         correctionPath = correctionDirectory.filePath("shared.conf");
         if (!correctionDirectory.isValid() || !ProfileStore::writeConfig(correctionPath, sharedDraft.toUtf8(), &error)) {
             QMessageBox::warning(this, tr("Import failed"), error); return false;
@@ -2854,8 +2855,9 @@ bool MainWindow::prepareSharedGeoData(const QString &path, QString *error, QStri
     if (!input.open(QIODevice::ReadOnly)) { *error = input.errorString(); return false; }
     const QByteArray original = input.read(64 * 1024 + 1); input.close();
     if (original.size() > 64 * 1024) { *error = tr("The profile exceeds the 64 KiB limit."); return false; }
-    if (QString::fromUtf8(original).toUtf8() != original) { *error = tr("The profile must be valid UTF-8 and at most 64 KiB."); return false; }
-    const QString prepared = GeoDataSelection::materialize(QString::fromUtf8(original), path,
+    QByteArray normalized = original;
+    if (!ProfileStore::normalizeImport(normalized)) { *error = tr("The profile must be valid UTF-8 and at most 64 KiB."); return false; }
+    const QString prepared = GeoDataSelection::materialize(QString::fromUtf8(normalized), path,
         validationExecutable_.isEmpty() ? (development_->local() ? development_->path() : coreExecutablePath()) : validationExecutable_,
         GeoDataSelection::instance()->paths(), error, {}, skipped);
     if (!error->isEmpty()) return false;

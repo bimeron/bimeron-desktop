@@ -270,7 +270,7 @@ static void preservationRegressions(const QString &directory) {
     require(ProfileStore::writeConfig(path, imported, &error));
     const QString copy = store.importConfig(path, &error);
     require(!copy.isEmpty());
-    QFile copied(copy); require(copied.open(QIODevice::ReadOnly)); require(copied.readAll() == imported);
+    QFile copied(copy); require(copied.open(QIODevice::ReadOnly)); require(copied.readAll() == imported.mid(3));
     for (const QString &field : {"File = key.txt", "IdentityFile = identity", "KnownHostsFile = hosts", "CAFile = ca.pem", "SSH = ssh://alice@example.invalid?identity=relative", "Key = ssh://alice@example.invalid?known_hosts=relative", "MASQUE = masque://example.invalid?ca=relative"}) {
         require(!ProfileStore::importReferencesSafe(("[AccessKey]\n" + field + "\n").toUtf8(), &error));
     }
@@ -1014,7 +1014,7 @@ static void nativeRegressions(const QString &directory) {
     const QString copied = store.importConfig(source, &error);
     require(!copied.isEmpty());
     QFile file(copied);
-    require(file.open(QIODevice::ReadOnly) && file.readAll() == bytes);
+    require(file.open(QIODevice::ReadOnly) && file.readAll() == bytes.mid(3));
     file.close();
     require(!ProfileStore::writeConfig(directory + "/missing/native.conf", bytes, &error));
     const QByteArray boundary = bytes + QByteArray(65536 - bytes.size(), '#');
@@ -1023,15 +1023,21 @@ static void nativeRegressions(const QString &directory) {
     const QString boundaryCopy = store.importConfig(source, &error);
     require(!boundaryCopy.isEmpty());
     QFile boundaryFile(boundaryCopy);
-    require(boundaryFile.open(QIODevice::ReadOnly) && boundaryFile.readAll() == boundary);
+    require(boundaryFile.open(QIODevice::ReadOnly) && boundaryFile.readAll() == boundary.mid(3));
     const QString blockedRoot = directory + "/blocked-native-imports";
     require(ProfileStore::writeConfig(blockedRoot, "occupied", &error));
     ProfileStore blockedStore(blockedRoot);
     require(blockedStore.importConfig(source, &error).isEmpty());
     const auto before = QDir(directory + "/native-imports").entryList(QDir::Files | QDir::Hidden);
-    require(ProfileStore::writeConfig(source, bytes + QByteArray(65536, '#'), &error));
+    require(ProfileStore::writeConfig(source, boundary + '#', &error));
     require(store.importConfig(source, &error).isEmpty());
     require(QDir(directory + "/native-imports").entryList(QDir::Files | QDir::Hidden) == before);
+    for (const QByteArray &invalid : {bytes + QByteArray::fromHex("c328"),
+            QByteArray::fromHex("efbbbf") + bytes}) {
+        require(ProfileStore::writeConfig(source, invalid, &error));
+        require(store.importConfig(source, &error).isEmpty());
+        require(QDir(directory + "/native-imports").entryList(QDir::Files | QDir::Hidden) == before);
+    }
     // The existing caller validates the selected copy and removes it on rejection.
     // Exercise that same contract with the exact opt-in offline Core CLI.
     const QString core = qEnvironmentVariable("BIMERON_IKEV2_CORE");

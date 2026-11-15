@@ -1265,3 +1265,23 @@ executable moved aside, the user ran Fix connection, Restore and UAC approval
 from the GUI launched from the Start menu. The service returned to Running with the pinned
 executable, and the user reported the "Ready to connect" dialog correct, with a
 visible, movable title bar. The temporary executable backup was removed.
+
+## Package broker restoration and UTF-8 import (accepted, 2026-11-15)
+
+During the existing elevated protected-GUI bootstrap, restore missing package
+broker bytes as well as the digest-named cache. Derive Windows repair/ from the
+GUI directory; derive Linux libexec/bimeron/repair from the GUI's bin/ prefix.
+Never use caller-supplied paths. Restore missing Windows Wintun DLL/license too.
+Present identical files remain untouched; differing, redirected or unsafe files
+and parents fail with a diagnostic, never overwrite. Use protected ancestry,
+verified temporary bytes and atomic no-replace publication; Linux uses
+O_NOFOLLOW and descriptor hashing. No additional elevation is allowed.
+Acceptance fixtures cover missing, identical, different and unsafe parents,
+including symlink leaves. Existing child authentication and cache execution stay.
+
+Profile import accepts exactly one leading UTF-8 BOM and stores without it.
+The 64 KiB bound applies before normalization and invalid UTF-8 still fails.
+File selection, file URLs and pasted paths converge on the same rule; there is
+no separate drag/drop file importer.
+Fixtures cover BOM, invalid UTF-8, duplicate BOM and the original size bound.
+No release pins, frozen candidate, package build or dist write is included.
