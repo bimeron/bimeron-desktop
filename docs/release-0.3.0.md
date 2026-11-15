@@ -279,3 +279,25 @@ and linux-compatibility.md. This does not clear the clean/upgrade, missing/corru
 component, bootstrap or remaining Windows gates. The diagnostic-retention source
 fix requires new Desktop packages if included; Core re-freeze is unnecessary for
 this Linux cause.
+
+## Final package set (2026-11-15)
+
+This set supersedes all previous package hashes. Source: release/0.3.0 at
+a0333e1, Core 0e08a5c8. Windows MSIs were built with scripts/package-all.ps1
+(the WSL Linux step is no longer the supported Linux path and failed as
+expected); both DEBs were built on the Ubuntu 22.04 VM with
+scripts/package-linux.sh from a git archive of the same commit and the pinned
+Core ZIPs. Windows x64 CTest passed 11/11; Ubuntu 22.04 amd64 CTest passed 10/10.
+Extracted payloads: Core and repair broker equal the executable pins for all
+four targets, Windows Wintun sits beside the broker, DEB brokers are mode 755
+with the correct ELF machine, Version 0.3.0, no test files. ARM64 runtime is
+not tested. The packages are not code-signed.
+
+| Package | Size | SHA-256 |
+|---|---|---|
+| `bimeron-desktop-0.3.0-windows-amd64.msi` | 49078272 | `6e9d18b64aa581a5dd56b961a077bb0679072bb22b8ae7d87d2577eaaa766140` |
+| `bimeron-desktop-0.3.0-windows-arm64.msi` | 37646336 | `2d1c26e897daa3b91817f1e59c9ccf6c8c2a6a26a7a8b603d0863c239f00a600` |
+| `bimeron-desktop-0.3.0-linux-amd64.deb` | 38378338 | `543030fb1f511f375c49dd846d6fc4909dc9a65dd277e0252c6c132a023d4489` |
+| `bimeron-desktop-0.3.0-linux-arm64.deb` | 35598666 | `2fe7adaa13616ea7562d891dd5ccabc197527473b94d696fc5b6f9a49499fe19` |
+
+Final VM acceptance on these exact packages is in progress and blocks publication.

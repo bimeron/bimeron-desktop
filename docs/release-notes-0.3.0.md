@@ -4,6 +4,7 @@ Bimeron Desktop 0.3.0 pre-release for Windows and Debian/Ubuntu, amd64 and ARM64
 
 - Unified profile import and creation, with explicit protocol settings and structured Core problems that navigate to the affected editor field.
 - One-click Core repair through a protected helper included in the package: no separate helper download, with a single elevation prompt per repair attempt.
+- Bounded reconnection: after a connection drop Bimeron retries up to three times, shows the attempt as `Reconnecting… (1/3)` and explains the last error, including its code, in a tooltip.
 - Shared GeoData routing with categorized group selection, bundled Loyalsoldier databases and automatic database updates.
 
 ## Changes
@@ -12,38 +13,44 @@ Bimeron Desktop 0.3.0 pre-release for Windows and Debian/Ubuntu, amd64 and ARM64
 - Service diagnostics show repair progress, details and an exportable report.
 - Simplified startup selection and database management in Settings.
 - Developer mode can convert access sources between links and explicit fields. About identifies non-release Core builds.
+- Linux packages now target Ubuntu 22.04 (Qt 6.2) and newer.
+- The application appears as "Bimeron" in operating system menus and app lists.
 
 ## Fixes
 
+- Service diagnostics no longer report a running service as not installed or as an invalid response.
+- Connecting no longer flashes a "Failed to prepare the connection" error before succeeding.
+- Repair keeps elevation failure details in diagnostics.
 - Preserve ShadowTLS drafts when editing profiles.
 - Bring Windows UAC consent to the foreground.
 - Avoid a profile editor crash on Qt 6.4.2 when changing visible form rows.
+- Restore the Settings background and form spacing on Qt 6.2.
 - Fill missing Russian translations and clarify database validation states.
 
 ## Bundled Core
 
-Bimeron Core `v0.4.0-beta.1`, commit `e1cada7d`.
+Bimeron Core `v0.4.0-beta.1`, commit `0e08a5c8`.
 
 ## Packages
 
-Choose the MSI for Windows or DEB for Debian/Ubuntu matching your architecture. SHA-256:
+Choose the MSI for Windows or the DEB for Debian/Ubuntu matching your architecture. SHA-256:
 
 | File | SHA-256 |
 |---|---|
-| `bimeron-desktop-0.3.0-windows-amd64.msi` | `21eacb49c9223b72fd52bed1ec53dfce23d0b27682a998205186ad14e2cad988` |
-| `bimeron-desktop-0.3.0-windows-arm64.msi` | `f09e3b13e816d706a82eeb61d7417c9579fce8a87514f0820f3249644f84a248` |
-| `bimeron-desktop-0.3.0-linux-amd64.deb` | `058228b8bfe190eb9f0289f15ffc4d0e16ec355d77a70bf5eff0cca845029bb2` |
-| `bimeron-desktop-0.3.0-linux-arm64.deb` | `375a8a36a8923952b80c6963e31f22a281e3dc191318df42c60a62f440881275` |
+| `bimeron-desktop-0.3.0-windows-amd64.msi` | `6e9d18b64aa581a5dd56b961a077bb0679072bb22b8ae7d87d2577eaaa766140` |
+| `bimeron-desktop-0.3.0-windows-arm64.msi` | `2d1c26e897daa3b91817f1e59c9ccf6c8c2a6a26a7a8b603d0863c239f00a600` |
+| `bimeron-desktop-0.3.0-linux-amd64.deb` | `543030fb1f511f375c49dd846d6fc4909dc9a65dd277e0252c6c132a023d4489` |
+| `bimeron-desktop-0.3.0-linux-arm64.deb` | `2fe7adaa13616ea7562d891dd5ccabc197527473b94d696fc5b6f9a49499fe19` |
+
+The packages are not code-signed. Windows may show an unknown-publisher warning; verify the SHA-256 above before installing.
 
 ## Upgrade notes
 
-- Upgrade from Desktop 0.2.0 by installing the matching 0.3.0 package over it.
-- Installing the Desktop package does not itself replace the independently installed Core service.
-- The bundled Core's signed update metadata accepts the GUI range `[0.3.0, 0.3.1)`. Desktop 0.2.0 is outside that range; install Desktop 0.3.0 first. Core updates must also pass signature and compatibility checks.
+- Upgrade from Desktop 0.2.0 by installing the matching 0.3.0 package over it. Profiles and settings are kept.
+- Installing the Desktop package does not replace the running Core service. Bimeron offers the Core update through its signed update check; Windows may ask to restart after the upgrade, but this is not required for Bimeron to work.
+- Core `v0.4.0-beta.1` update metadata accepts Desktop `[0.3.0, 0.3.1)`. Desktop 0.2.0 does not receive this Core; upgrade Desktop first.
 
 ## Known limitations
 
-- This is a pre-release. Live Windows x64 UAC and Linux amd64 polkit repair acceptance, including upgrade from 0.2.0, remains pending; publication is blocked until it passes.
-- ARM64 packages are built and compile/package-verified, but have not been live-tested.
-- Windows x64 and Linux amd64 local test suites passed (10/10 each); package payloads and architectures were inspected. These checks do not establish live installation, VPN or repair behavior.
-- The bundled Core candidate is frozen but not yet tagged or published; publication remains subject to release acceptance.
+- This is a pre-release.
+- ARM64 packages are built and package-verified but have not been tested on ARM64 hardware.
