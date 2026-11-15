@@ -64,6 +64,14 @@
                   Impersonate="yes"
                   Return="asyncNoWait" />
 
+    <CustomAction Id="SetInstallerCoreUpdate" Property="InstallerCoreUpdate"
+                  Value="&quot;[INSTALL_ROOT]bimeron-desktop.exe&quot; --installer-update-core" />
+    <CustomAction Id="InstallerCoreUpdate" BinaryKey="WixCA" DllEntry="WixQuietExec64"
+                  Execute="deferred" Impersonate="no" Return="ignore" />
+    <InstallExecuteSequence>
+      <Custom Action="SetInstallerCoreUpdate" After="InstallFiles">NOT REMOVE</Custom>
+      <Custom Action="InstallerCoreUpdate" After="SetInstallerCoreUpdate">NOT REMOVE</Custom>
+    </InstallExecuteSequence>
     <UI Id="BimeronUI">
       <TextStyle Id="WixUI_Font_Normal" FaceName="Tahoma" Size="8" />
       <TextStyle Id="WixUI_Font_Bigger" FaceName="Tahoma" Size="12" />
