@@ -51,7 +51,7 @@ The packages are not code-signed. Windows may show an unknown-publisher warning;
 ## Upgrade notes
 
 - Upgrade from Desktop 0.2.0 by installing the matching 0.3.0 package over it. Profiles and settings are kept.
-- If the installed Core service is older than the bundled Core, the installer updates it to the bundled version. A newer service is left unchanged. An active VPN connection is interrupted during this update; reconnect afterwards. Windows may ask to restart after the upgrade, but this is not required for Bimeron to work.
+- If the installed Core service is older than the bundled Core, the installer updates it to the bundled version. An equal-version service with different executable bytes is also updated (full revision is the fallback when its hash is unavailable). Identical builds and unknown identities are skipped; a newer service is left unchanged. An active VPN connection is interrupted during this update; reconnect afterwards. Windows may ask to restart after the upgrade, but this is not required for Bimeron to work.
 - Core `v0.4.0-beta.1` update metadata accepts Desktop `[0.3.0, 0.3.1)`. Desktop 0.2.0 does not receive this Core; upgrade Desktop first.
 
 ## Uninstalling
