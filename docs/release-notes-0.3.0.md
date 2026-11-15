@@ -24,6 +24,10 @@ Bimeron Desktop 0.3.0 pre-release for Windows and Debian/Ubuntu, amd64 and ARM64
 - A profile can be deleted after its connection failed or ended.
 - The service dialog keeps its title bar on screen on Windows 11.
 - Stopping after a failed reconnection completes cleanly, so service repair works afterwards.
+- Repair replaces a damaged Core service executable, works on the first attempt after the service crashed, and completes when another administrator approves the elevation prompt.
+- Repair restores a missing repair helper from the protected copy inside the application.
+- Connecting no longer fails with "Tunnel name is already in use" after an interrupted session left a stale Bimeron adapter behind.
+- Profiles saved with a UTF-8 byte order mark import correctly.
 - Preserve ShadowTLS drafts when editing profiles.
 - Bring Windows UAC consent to the foreground.
 - Avoid a profile editor crash on Qt 6.4.2 when changing visible form rows.
@@ -60,4 +64,8 @@ Removing the Desktop package keeps the Bimeron Core service installed and runnin
 ## Known limitations
 
 - This is a pre-release.
-- ARM64 packages are built and package-verified but have not been tested on ARM64 hardware.
+- The Windows ARM64 package was tested in a Windows 11 ARM64 virtual machine. The Linux arm64 package is built and package-verified but has not been tested on ARM64 hardware.
+
+## Licenses
+
+Bimeron Desktop is MIT-licensed. Windows packages include Qt 6.8.3 under the LGPL-3.0; see `QT-NOTICE.txt` in the installation directory.
