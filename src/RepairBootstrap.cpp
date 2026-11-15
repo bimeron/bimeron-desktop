@@ -35,8 +35,8 @@ QString detail::packageDirectory(const QString &gui) {
 bool detail::provision(const QString &target, const QByteArray &data,
     const std::function<bool(const QString &)> &trustedDirectory,
     const std::function<bool(const QString &)> &trustedFile, QString *error) {
-    const auto fail = [&] {
-        if (error) *error = "Repair payload refused (unsafe path, differing bytes or I/O failure): " + target;
+    const auto fail = [&](const QString &reason = QString()) {
+        if (error) *error = "Repair payload refused (unsafe path, differing bytes or I/O failure): " + target + " " + reason;
         return false;
     };
     if (!QFileInfo(target).isAbsolute()) return fail();
@@ -80,24 +80,36 @@ bool detail::provision(const QString &target, const QByteArray &data,
     };
     if (QFileInfo::exists(target) || QFileInfo(target).isSymLink())
         return matches(target) || fail();
-    QTemporaryFile temporary(directory + "/.repair-XXXXXX");
-    if (!temporary.open() || temporary.write(data) != data.size() || !temporary.flush()) return fail();
+    QString temporaryPath;
+    {
+        QTemporaryFile temporary(directory + "/.repair-XXXXXX");
+        if (!temporary.open() || temporary.write(data) != data.size() || !temporary.flush()) return fail();
 #ifndef Q_OS_WIN
-    if (::fchmod(temporary.handle(), 0755) != 0 || ::fsync(temporary.handle()) != 0) return fail();
+        if (::fchmod(temporary.handle(), 0755) != 0 || ::fsync(temporary.handle()) != 0) return fail();
 #endif
-    const QString temporaryPath = temporary.fileName();
-    temporary.close();
-    if (!matches(temporaryPath) || !trustedDirectory(directory)) return fail();
+        temporaryPath = temporary.fileName();
+        temporary.close();
+        if (!matches(temporaryPath) || !trustedDirectory(directory)) return fail("temporary verification failed: " + temporaryPath);
+        // QTemporaryFile::close retains its native handle on Windows. Destroy the
+        // object before native rename, otherwise it denies delete/rename sharing.
+        temporary.setAutoRemove(false);
+    }
+
 #ifdef Q_OS_WIN
     const bool published = MoveFileExW(reinterpret_cast<LPCWSTR>(QDir::toNativeSeparators(temporaryPath).utf16()),
         reinterpret_cast<LPCWSTR>(QDir::toNativeSeparators(target).utf16()), MOVEFILE_WRITE_THROUGH);
+    const DWORD publicationError = published ? ERROR_SUCCESS : GetLastError();
 #else
     // Atomic rename without replacement, even if another bootstrap won the race.
     const bool published = ::syscall(SYS_renameat2, AT_FDCWD, QFile::encodeName(temporaryPath).constData(),
         AT_FDCWD, QFile::encodeName(target).constData(), 1 /* RENAME_NOREPLACE */) == 0;
 #endif
-    if (published) temporary.setAutoRemove(false);
-    return matches(target) || fail();
+    if (!published) QFile::remove(temporaryPath);
+#ifdef Q_OS_WIN
+    return matches(target) || fail(QString("publication error %1").arg(publicationError));
+#else
+    return matches(target) || fail("publication or target verification failed");
+#endif
 }
 
 bool available() { return QFile::exists(":/repair-bootstrap/broker"); }

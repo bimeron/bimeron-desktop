@@ -35,7 +35,9 @@ Protect files before writing credentials: owner-only permissions on Unix and a
 protected current-user/SYSTEM DACL on Windows. A protection failure prevents the
 write. This is plaintext profile storage, not a credential vault.
 
-Import preserves bytes and refuses relocation of relative File, SSH identity/
+Import removes exactly one leading UTF-8 BOM from the stored copy, while retaining
+the original source. The 64 KiB bound includes the BOM; invalid UTF-8 is refused.
+Other bytes are preserved. Import refuses relocation of relative File, SSH identity/
 known_hosts, and CA references, including references inside supported URI/file
 sources. Ambiguous references are refused rather than rewritten. Private keys
 are never copied. Editing an existing profile keeps its directory as the base.

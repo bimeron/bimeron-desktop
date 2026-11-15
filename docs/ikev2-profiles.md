@@ -499,8 +499,9 @@ before lifting the Desktop implementation gate.
 Import protected UTF-8 native .conf files with Profile and IKEv2 sections and no
 AccessKey. Keep the 64 KiB bound and selected-Core validation. Reject mixed
 sources through Core validation; invalid imports leave no retained profile.
-Preserve bytes, BOM/line endings, relative-reference safety, atomic replacement
-and effective ACLs. No-op saves remain byte-identical.
+Import removes one leading UTF-8 BOM from the stored copy and preserves other
+bytes and line endings. Retain relative-reference safety, atomic replacement
+and effective ACLs. Editing no-op saves remain byte-identical.
 
 Use an explicit native backend discriminator in ProfileConnectionInfo, without
 reinterpreting packet connectable semantics. The native form contains
