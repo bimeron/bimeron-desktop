@@ -7,6 +7,7 @@
 #include "ProfileStore.h"
 #include "DevelopmentCore.h"
 #include "NativeIKEv2Actions.h"
+#include "ReconnectPolicy.h"
 
 #include <QElapsedTimer>
 #include <QJsonObject>
@@ -24,6 +25,7 @@ class QIcon;
 class QMenu;
 class QProcess;
 class QSystemTrayIcon;
+class QTimer;
 class QListWidget;
 class QPushButton;
 class QStackedWidget;
@@ -99,6 +101,9 @@ private:
     void reportUnavailableProfile(int row, const QString &reason);
     void offerGeoDataReconnect();
     void reconnectActiveProfile();
+    // Shows the reconnect policy view (#60): title, detail line, Retry now and countdown.
+    void renderReconnectView();
+    void retryReconnectNow();
     bool controlBlocked() const;
     bool cleanDisconnected() const;
     bool profileHeldBySession(const QString &profileId) const;
@@ -223,6 +228,13 @@ private:
     CoreUpdater updater_{this};
     QListWidget *profileList_ = nullptr;
     QLabel *connectionLabel_ = nullptr;
+    QLabel *reconnectDetailLabel_ = nullptr;
+    QPushButton *retryNowButton_ = nullptr;
+    QTimer *reconnectCountdown_ = nullptr;
+    ReconnectPolicy::State reconnect_;
+    ReconnectPolicy::Presentation reconnectView_;
+    ReconnectPolicy::Notifications reconnectNotifications_;
+    QString reconnectCause_;
     QLabel *nativeStatusLabel_ = nullptr;
     bool nativeOwnerBlocked_ = false;
     NativeIKEv2Actions nativeActions_;
@@ -300,6 +312,7 @@ private:
     QJsonObject validationIdentity_;
     QString validationExecutable_;
     bool stopRequested_ = false;
+    bool retryNowRequested_ = false;
     bool connectionAttempted_ = false;
     bool quitRequested_ = false;
     bool startServiceAfterInstall_ = false;

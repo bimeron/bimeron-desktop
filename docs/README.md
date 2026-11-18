@@ -28,6 +28,7 @@ Start with the [repository README](../README.md) for installation and an overvie
 
 - [Connection management](connection-management.md)
 - [Bounded reconnect recovery](reconnect-attempts.md)
+- [Reconnect policy presentation](reconnect-policy.md): retry cycles, countdown and held protection
 - [Connection repair and service actions](service-actions.md)
 - [Core error presentation](core-error-presentation.md)
 - [Signed Core service updates](core-updates.md)

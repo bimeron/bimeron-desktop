@@ -1,7 +1,9 @@
 # Bounded reconnect recovery
 
 Agreed specification for Desktop 0.3.0; issues [Desktop #48](https://github.com/bimeron/bimeron-desktop/issues/48)
-and [Core #136](https://github.com/bimeron/bimeron-core/issues/136).
+and [Core #136](https://github.com/bimeron/bimeron-core/issues/136). Desktop 0.3.1 presents the newer
+Core policy as described in [Reconnect policy presentation](reconnect-policy.md); this behaviour
+remains for a Core that does not report it.
 
 Core owns recovery and permits three retries after initial failure or a later
 interruption, excluding initial Open. Both ordinary and persistent transport

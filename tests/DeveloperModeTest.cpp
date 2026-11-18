@@ -58,6 +58,7 @@ static bool waitFor(const std::function<bool()> &condition, int timeout = 3000) 
 }
 
 #include "ConnectionManagementTest.h"
+#include "ReconnectPolicyTest.h"
 #include "NativeIKEv2TransportTest.h"
 #include "NativeIKEv2SessionTest.h"
 
@@ -568,6 +569,9 @@ int main(int argc, char **argv) {
     ConnectionManagementTest::sharedGeoDataPreparation();
     ConnectionManagementTest::settingsGeoDataChecking();
     ConnectionManagementTest::reconnectProgress();
+    ReconnectPolicyTest::run();
+    require(ReconnectPolicyTest::failures == 0, "reconnect policy model");
+    ConnectionManagementTest::reconnectPolicyView();
     ConnectionManagementTest::inactiveSessionProfileRemoval();
     DevelopmentCore backend(temporary.filePath("missing-helper"));
     bool completed = false;
