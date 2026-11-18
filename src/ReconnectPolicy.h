@@ -11,21 +11,23 @@
 // Presentation of Core's reconnect policy (bimeron-desktop #60).
 //
 // The UI is built against State, not against IPC field names: only fromIpc()
-// reads Core's status and capabilities. When the Core contract is final, wiring
-// changes Ipc and fromIpc() (and their fixtures) only.
+// reads Core's status and capabilities, as described in Core docs/CONTROL.MD,
+// "Reconnect recovery and kill switch hold" (bimeron-core #162).
 namespace ReconnectPolicy {
 
-// PROVISIONAL: the additive IPC 1 field names are not final yet. Only
-// ReconnectAttempt and ReconnectLimit are the published Desktop 0.3.0 fields.
+// Additive IPC 1 fields. ReconnectAttempt and ReconnectLimit date from Desktop
+// 0.3.0; Core without the newer fields and capabilities keeps that presentation.
 namespace Ipc {
 inline const QLatin1String attempt{"ReconnectAttempt"};
 inline const QLatin1String limit{"ReconnectLimit"};
-inline const QLatin1String cycle{"ReconnectCycle"};
-inline const QLatin1String phase{"ReconnectPhase"};
-inline const QLatin1String nextAttemptAt{"NextAttemptAt"};
-inline const QLatin1String protectionHeld{"ProtectionHeld"};
-inline const QLatin1String retryNowCapability{"retry_now"};
-inline const QLatin1String retryNowCommand{"retry_now"};
+inline const QLatin1String cycle{"ReconnectCycle"};       // only after loss of a session
+inline const QLatin1String phase{"ReconnectPhase"};       // "attempting" or "waiting"
+inline const QLatin1String nextAttemptAt{"NextAttemptAt"}; // RFC 3339 UTC
+inline const QLatin1String killSwitch{"KillSwitch"};      // "active" or "holding"
+inline const QLatin1String holding{"holding"};
+inline const QLatin1String reconnectNowCapability{"reconnect_now"};
+inline const QLatin1String killSwitchHoldCapability{"kill_switch_hold"};
+inline const QLatin1String reconnectNowCommand{"reconnect_now"}; // guarded like stop
 }
 
 enum class Kind {
@@ -72,7 +74,7 @@ inline int positiveInteger(const QJsonValue &value) {
 // The only function that knows IPC field names.
 inline State fromIpc(const QJsonObject &status, const QJsonObject &capabilities) {
     State state;
-    state.retryNowSupported = capabilities.value(Ipc::retryNowCapability).toBool();
+    state.retryNowSupported = capabilities.value(Ipc::reconnectNowCapability).toBool();
     const int attempt = positiveInteger(status.value(Ipc::attempt));
     const int limit = positiveInteger(status.value(Ipc::limit));
     if (attempt && limit && attempt <= limit) {
@@ -80,10 +82,15 @@ inline State fromIpc(const QJsonObject &status, const QJsonObject &capabilities)
         state.limit = limit;
     }
     const QJsonValue phase = status.value(Ipc::phase);
-    const QJsonValue held = status.value(Ipc::protectionHeld);
-    const bool policy = phase.isString() || held.isBool() || status.contains(Ipc::cycle);
+    const QJsonValue killSwitch = status.value(Ipc::killSwitch);
+    const bool policy = capabilities.value(Ipc::reconnectNowCapability).isBool()
+        || capabilities.value(Ipc::killSwitchHoldCapability).isBool()
+        || phase.isString() || killSwitch.isString() || status.contains(Ipc::cycle);
     if (!policy) return state;
-    state.protectionHeld = held.toBool();
+    // A failed run holds protection only while its session stays active.
+    state.protectionHeld = killSwitch.toString() == Ipc::holding
+        && (status.value(QLatin1String("State")).toString() != QLatin1String("failed")
+            || status.value(QLatin1String("Session")).toObject().value(QLatin1String("active")).toBool());
     state.cycle = positiveInteger(status.value(Ipc::cycle));
     state.kind = state.cycle ? Kind::Interrupted : Kind::Initial;
     if (state.kind == Kind::Interrupted && phase.toString() == QLatin1String("waiting")) {
@@ -111,6 +118,7 @@ inline Presentation present(const QString &coreState, const State &state, const 
             view.title = text("Couldn't connect. Check your internet connection and access key. "
                               "Internet access stays paused until you select Disconnect VPN.");
             view.problem = view.disconnectVpn = view.holdDisconnect = true;
+            view.retryNow = state.retryNowSupported;
         }
         return view;
     }

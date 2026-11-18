@@ -2391,7 +2391,11 @@ void MainWindow::poll() {
         retryNowRequested_ = false;
         // The pause may have ended while the request waited for the client.
         if (reconnectView_.retryNow) {
-            core_.request(ReconnectPolicy::Ipc::retryNowCommand);
+            // Guarded like stop: Core rejects it for another instance or session.
+            QJsonObject guard;
+            if (!instance_.isEmpty() && !sessionId_.isEmpty())
+                guard = {{"instance", instance_}, {"session", sessionId_}};
+            core_.request(ReconnectPolicy::Ipc::reconnectNowCommand, guard);
             return;
         }
     }
@@ -2545,7 +2549,12 @@ void MainWindow::handleReply(const QString &command, const QJsonObject &response
                 return;
             }
             if (command == "start" || command == "stop" || command == "shutdown") showCoreError(response);
-            else if (lastCoreError_ != error) { appendLog(safeCoreDiagnostic(error.toUtf8())); lastCoreError_ = error; }
+            else if (command == ReconnectPolicy::Ipc::reconnectNowCommand) {
+                // reconnect_not_pending: an attempt already started; the status refresh shows it.
+                const QString text = coreCodeText(errorCatalog(), error);
+                appendLog(text.isEmpty() ? tr("Core: %1").arg(safeCoreDiagnostic(error.toUtf8()))
+                                         : tr("Core: %1 (%2)").arg(text, error));
+            } else if (lastCoreError_ != error) { appendLog(safeCoreDiagnostic(error.toUtf8())); lastCoreError_ = error; }
             if (command != "status") statusNeeded_ = true;
             if (command == "shutdown") { quitRequested_ = false; if (tray_) tray_->show(); showWindow(); }
         }
@@ -2562,7 +2571,7 @@ void MainWindow::handleReply(const QString &command, const QJsonObject &response
     } else if (command == "start") {
         operation_.clear();
         statusNeeded_ = true;
-    } else if (command == ReconnectPolicy::Ipc::retryNowCommand) {
+    } else if (command == ReconnectPolicy::Ipc::reconnectNowCommand) {
         statusNeeded_ = true;
     } else if (command == "stop") {
         operation_.clear();

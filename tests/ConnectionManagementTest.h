@@ -122,12 +122,14 @@ struct ConnectionManagementTest {
             return QJsonObject{{"id", "s1"}, {"active", active}, {"profile_id", profile}, {"mode", "vpn"}};
         };
         const auto nextAttempt = [](qint64 ms) {
-            return QDateTime::fromMSecsSinceEpoch(QDateTime::currentMSecsSinceEpoch() + ms, QTimeZone::utc()).toString(Qt::ISODateWithMs);
+            return QDateTime::fromMSecsSinceEpoch(QDateTime::currentMSecsSinceEpoch() + ms, QTimeZone::utc()).toString(Qt::ISODate);
         };
-        QJsonObject status{{"State", "reconnecting"}, {"Session", session(true)}, {"ReconnectAttempt", 10},
-                           {"ReconnectLimit", 10}, {"ReconnectCycle", 1}, {"ReconnectPhase", "waiting"},
-                           {"NextAttemptAt", nextAttempt(58500)}, {"ProtectionHeld", true}};
-        QJsonObject capabilities{{"vpn", true}, {"proxy", true}, {"retry_now", true}};
+        // Core omits ReconnectAttempt/ReconnectLimit while waiting and sends NextAttemptAt in whole seconds.
+        QJsonObject status{{"State", "reconnecting"}, {"Session", session(true)}, {"ReconnectCycle", 1},
+                           {"ReconnectPhase", "waiting"}, {"NextAttemptAt", nextAttempt(59000)}, {"KillSwitch", "holding"}};
+        QJsonObject capabilities{{"vpn", true}, {"proxy", true}, {"reconnect_now", true}, {"kill_switch_hold", true}};
+        QString instance = "reconnect";
+        bool rejectReconnect = false;
         QStringList commands;
         QObject::connect(&server, &QLocalServer::newConnection, &server, [&] {
             auto *socket = server.nextPendingConnection();
@@ -138,15 +140,26 @@ struct ConnectionManagementTest {
                     const QString command = request.value("command").toString();
                     commands << command;
                     require(command != "start" && command != "shutdown" && command != "recover", "reconnect view never starts or recovers");
-                    if (command == "retry_now")
-                        status = {{"State", "reconnecting"}, {"Session", session(true)}, {"ReconnectAttempt", 1},
-                                  {"ReconnectLimit", 10}, {"ReconnectCycle", 2}, {"ReconnectPhase", "attempting"},
-                                  {"ProtectionHeld", true}};
-                    else if (command == "stop")
-                        status = {{"State", "disconnected"}, {"Session", session(false)}, {"ProtectionHeld", false}};
-                    const QJsonObject reply{{"version", 1}, {"id", request.value("id")}, {"instance", "reconnect"},
-                                            {"status", status}, {"core", QJsonObject{{"version", "0.4.0"}}},
-                                            {"capabilities", capabilities}};
+                    QJsonObject reply{{"version", 1}, {"id", request.value("id")}, {"instance", instance},
+                                      {"core", QJsonObject{{"version", "0.4.0"}}}, {"capabilities", capabilities}};
+                    if (command == "reconnect_now") {
+                        require(request.value("instance") == instance && request.value("session") == "s1",
+                                "reconnect_now is guarded like stop");
+                        if (rejectReconnect) {
+                            reply.insert("error", "reconnect_not_pending");
+                            rejectReconnect = false;
+                        } else if (status.value("ReconnectPhase") == "waiting") {
+                            status = {{"State", "reconnecting"}, {"Session", session(true)}, {"ReconnectAttempt", 1},
+                                      {"ReconnectLimit", 10}, {"ReconnectCycle", 2}, {"ReconnectPhase", "attempting"},
+                                      {"KillSwitch", "holding"}};
+                        } else {
+                            status = {{"State", "reconnecting"}, {"Session", session(true)}, {"ReconnectAttempt", 1},
+                                      {"ReconnectLimit", 3}, {"ReconnectPhase", "attempting"}, {"KillSwitch", "holding"}};
+                        }
+                    } else if (command == "stop") {
+                        status = {{"State", "disconnected"}, {"Session", session(false)}};
+                    }
+                    reply.insert("status", status);
                     socket->write(QJsonDocument(reply).toJson(QJsonDocument::Compact) + '\n');
                     socket->flush();
                 }
@@ -179,34 +192,53 @@ struct ConnectionManagementTest {
                 "countdown re-renders every tick");
 
         window.retryNowButton_->click();
-        require(waitFor([&] { return commands.contains("retry_now") && synchronized(); }), "Retry now sends the command");
+        require(waitFor([&] { return commands.count("reconnect_now") == 1 && synchronized(); }), "Retry now sends the command");
         require(window.connectionLabel_->text() == "Reconnecting… (1/10)", "next cycle attempt");
         require(window.connectionLabel_->styleSheet().contains("#d69200"), "attempts are yellow");
         require(window.retryNowButton_->isHidden() && !window.reconnectCountdown_->isActive(), "no Retry now while attempting");
         require(!window.reconnectDetailLabel_->isHidden(), "held line while attempting");
         require(window.reconnectNotifications_.recovering(), "cycle notification recorded");
 
-        status = {{"State", "failed"}, {"Session", session(false)}, {"ReconnectAttempt", 3}, {"ReconnectLimit", 3},
-                  {"ProtectionHeld", true}, {"LastError", "transport_check_failed"}};
+        const QJsonObject heldFailure{{"State", "failed"}, {"Session", session(true)}, {"ReconnectAttempt", 3},
+                                      {"ReconnectLimit", 3}, {"KillSwitch", "holding"}, {"LastError", "transport_check_failed"}};
+        const QString heldText = "Couldn't connect. Check your internet connection and access key. "
+                                 "Internet access stays paused until you select Disconnect VPN.";
+        status = heldFailure;
         refresh();
-        require(window.connectionLabel_->text() == "Couldn't connect. Check your internet connection and access key. "
-                                                   "Internet access stays paused until you select Disconnect VPN.", "held failure text");
+        require(window.connectionLabel_->text() == heldText, "held failure text");
         require(window.connectionLabel_->styleSheet().contains("#c62828") && window.reconnectDetailLabel_->isHidden(), "held failure view");
         require(window.connectButton_->text() == "Disconnect VPN" && window.connectButton_->isEnabled(), "held failure keeps Disconnect VPN");
+        require(!window.retryNowButton_->isHidden() && window.retryNowButton_->isEnabled(), "held failure can retry");
+
+        rejectReconnect = true;
+        window.retryNowButton_->click();
+        require(waitFor([&] { return commands.count("reconnect_now") == 2 && synchronized(); }), "rejected retry refreshes status");
+        require(window.log_->toPlainText().contains("reconnect_not_pending") && window.connectionLabel_->text() == heldText,
+                "reconnect_not_pending is logged without changing the view");
+
+        window.retryNowButton_->click();
+        require(waitFor([&] { return commands.count("reconnect_now") == 3 && synchronized(); }), "held retry sends the command");
+        require(window.connectionLabel_->text() == "Connecting… (1/3)" && !window.reconnectDetailLabel_->isHidden()
+                && window.connectButton_->text() == "Disconnect VPN", "held retry restarts the initial attempts");
+
+        status = heldFailure;
+        refresh();
         window.toggleConnection();
         require(waitFor([&] { return commands.contains("stop") && synchronized(); }), "Disconnect VPN stops the session");
         require(window.pendingStartPath_.isEmpty() && window.state_ == "disconnected", "held stop never switches profiles");
         require(window.connectButton_->text() == "Connect", "Connect after release");
 
-        status = {{"State", "failed"}, {"Session", session(false)}, {"ProtectionHeld", false}};
+        status = {{"State", "failed"}, {"Session", session(false)}, {"LastError", "transport_check_failed"}};
         refresh();
         require(window.connectionLabel_->text() == "Connection failed" && window.connectButton_->text() == "Connect",
                 "unheld failure offers Connect");
 
-        // Desktop 0.3.0 Core: the policy fields and the capability are absent.
+        // Desktop 0.3.0 Core (a restarted daemon): no policy fields or capabilities.
+        instance = "legacy";
         capabilities = {{"vpn", true}, {"proxy", true}};
         status = {{"State", "reconnecting"}, {"Session", session(true)}, {"ReconnectAttempt", 2}, {"ReconnectLimit", 3}};
         refresh();
+        require(waitFor([&] { return window.instance_ == "legacy" && synchronized(); }), "old Core hello");
         require(window.connectionLabel_->text() == "Reconnecting… (2/3)", "legacy progress unchanged");
         require(window.retryNowButton_->isHidden() && window.reconnectDetailLabel_->isHidden(), "legacy view has no policy controls");
         window.profileList_->setCurrentRow(0);

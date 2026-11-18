@@ -45,18 +45,24 @@ using namespace ReconnectPolicy;
 inline const qint64 now = QDateTime::fromString("2026-11-18T12:00:00Z", Qt::ISODate).toMSecsSinceEpoch();
 
 inline QString at(qint64 offsetMs) {
-    return QDateTime::fromMSecsSinceEpoch(now + offsetMs, QTimeZone::utc()).toString(Qt::ISODateWithMs);
+    return QDateTime::fromMSecsSinceEpoch(now + offsetMs, QTimeZone::utc()).toString(Qt::ISODate);
+}
+
+// KillSwitch is absent when the run owns no protection.
+inline QJsonObject withHold(QJsonObject status, bool held) {
+    if (held) status.insert("KillSwitch", "holding");
+    return status;
 }
 
 inline QJsonObject attempting(int cycle, int attempt, bool held = false) {
-    return {{"State", "reconnecting"}, {"ReconnectAttempt", attempt}, {"ReconnectLimit", 10},
-            {"ReconnectCycle", cycle}, {"ReconnectPhase", "attempting"}, {"ProtectionHeld", held}};
+    return withHold({{"State", "reconnecting"}, {"ReconnectAttempt", attempt}, {"ReconnectLimit", 10},
+                     {"ReconnectCycle", cycle}, {"ReconnectPhase", "attempting"}}, held);
 }
 
 inline QJsonObject waiting(int cycle, qint64 remainingMs, bool held = false) {
-    return {{"State", "reconnecting"}, {"ReconnectAttempt", 10}, {"ReconnectLimit", 10},
-            {"ReconnectCycle", cycle}, {"ReconnectPhase", "waiting"},
-            {"NextAttemptAt", at(remainingMs)}, {"ProtectionHeld", held}};
+    // Core omits ReconnectAttempt and ReconnectLimit while waiting.
+    return withHold({{"State", "reconnecting"}, {"ReconnectCycle", cycle}, {"ReconnectPhase", "waiting"},
+                     {"NextAttemptAt", at(remainingMs)}}, held);
 }
 
 inline Presentation view(const QJsonObject &status, const QJsonObject &capabilities = {},
@@ -72,11 +78,16 @@ inline void mapping() {
            "legacy view keeps the 0.3.0 label");
     expect(fromIpc({}, {}).kind == Kind::Legacy, "empty status is legacy");
 
-    State initial = fromIpc({{"State", "connecting"}, {"ReconnectAttempt", 1}, {"ReconnectLimit", 3},
-                             {"ReconnectPhase", "attempting"}, {"ProtectionHeld", false}}, {});
+    State initial = fromIpc({{"State", "reconnecting"}, {"ReconnectAttempt", 1}, {"ReconnectLimit", 3},
+                             {"ReconnectPhase", "attempting"}}, {});
     expect(initial.kind == Kind::Initial && initial.attempt == 1 && initial.limit == 3, "initial connect");
+    for (const char *capability : {"reconnect_now", "kill_switch_hold"}) {
+        State advertised = fromIpc({{"State", "reconnecting"}, {"ReconnectAttempt", 2}, {"ReconnectLimit", 3}},
+                                   {{capability, false}});
+        expect(advertised.kind == Kind::Initial, "a policy capability marks the new Core");
+    }
 
-    State dropped = fromIpc(attempting(2, 4, true), {{"retry_now", true}});
+    State dropped = fromIpc(attempting(2, 4, true), {{"reconnect_now", true}});
     expect(dropped.kind == Kind::Interrupted && dropped.cycle == 2 && dropped.attempt == 4
            && dropped.limit == 10 && dropped.phase == Phase::Attempting && dropped.protectionHeld
            && dropped.retryNowSupported, "interrupted attempt");
@@ -84,7 +95,7 @@ inline void mapping() {
     State paused = fromIpc(waiting(1, 59000), {});
     expect(paused.phase == Phase::Waiting && paused.nextAttemptAtMs == now + 59000, "waiting time");
     expect(!paused.retryNowSupported, "retry now needs the capability");
-    expect(!fromIpc(waiting(1, 1000), {{"retry_now", "yes"}}).retryNowSupported, "capability must be boolean");
+    expect(!fromIpc(waiting(1, 1000), {{"reconnect_now", "yes"}}).retryNowSupported, "capability must be boolean");
 
     QJsonObject badTime = waiting(1, 1000);
     badTime["NextAttemptAt"] = "soon";
@@ -126,7 +137,7 @@ inline void views(bool russian) {
     expect(!p.problem && p.disconnectVpn && !p.holdDisconnect && !p.countdown && p.detail.isEmpty(), "cycle attempt view");
     expect(!view(attempting(1, 7), {}, {}, true).disconnectVpn, "proxy keeps Disconnect");
 
-    p = view(waiting(1, 59000), {{"retry_now", true}});
+    p = view(waiting(1, 59000), {{"reconnect_now", true}});
     expectText(p.title, pick("Server unavailable · retrying in 0:59", "Сервер недоступен · повтор через 0:59"), "waiting title");
     expect(p.problem && p.countdown && p.retryNow && p.disconnectVpn && !p.holdDisconnect, "waiting view");
     expectText(view(waiting(1, 59000), {}, {}, false, now + 1000).title,
@@ -146,16 +157,24 @@ inline void views(bool russian) {
 
     p = view(attempting(1, 3, true));
     expectText(p.detail, pick("Internet access is paused until the VPN connects.", "Интернет приостановлен до подключения VPN."), "held attempt line");
-    p = view({{"State", "connecting"}, {"ReconnectAttempt", 1}, {"ReconnectLimit", 3}, {"ProtectionHeld", true}});
+    p = view({{"State", "connecting"}, {"KillSwitch", "holding"}});
     expect(!p.detail.isEmpty() && p.holdDisconnect && p.disconnectVpn, "held initial connect");
 
-    p = view({{"State", "failed"}, {"ReconnectAttempt", 3}, {"ReconnectLimit", 3}, {"ProtectionHeld", true}});
+    const QJsonObject heldFailure{{"State", "failed"}, {"ReconnectAttempt", 3}, {"ReconnectLimit", 3},
+                                  {"KillSwitch", "holding"}, {"Session", QJsonObject{{"active", true}}}};
+    p = view(heldFailure);
     expectText(p.title, pick("Couldn't connect. Check your internet connection and access key. Internet access stays paused until you select Disconnect VPN.",
                              "Не удалось подключиться. Проверьте подключение к интернету и ключ доступа. Интернет остаётся приостановленным, пока вы не нажмёте «Отключить VPN»."),
                "held failure title");
-    expect(p.problem && p.holdDisconnect && p.disconnectVpn && p.detail.isEmpty(), "held failure view");
-    expect(view({{"State", "failed"}, {"ProtectionHeld", false}}).title.isEmpty(), "plain failure keeps its label");
-    expect(!view({{"State", "failed"}, {"ProtectionHeld", false}}).holdDisconnect, "plain failure offers Connect");
+    expect(p.problem && p.holdDisconnect && p.disconnectVpn && p.detail.isEmpty() && !p.retryNow, "held failure view");
+    expect(view(heldFailure, {{"reconnect_now", true}}).retryNow, "held failure can retry");
+    QJsonObject released = heldFailure;
+    released["Session"] = QJsonObject{{"active", false}};
+    expect(!fromIpc(released, {}).protectionHeld && view(released).title.isEmpty(), "an ended run holds nothing");
+    const QJsonObject newCore{{"kill_switch_hold", true}, {"reconnect_now", true}};
+    expect(view({{"State", "failed"}}, newCore).title.isEmpty(), "plain failure keeps its label");
+    expect(!view({{"State", "failed"}}, newCore).holdDisconnect, "plain failure offers Connect");
+    expect(!fromIpc({{"State", "connected"}, {"KillSwitch", "active"}}, newCore).protectionHeld, "active protection is not held");
 
     for (const char *state : {"connected", "disconnected", "stopping"}) {
         QJsonObject status = waiting(1, 1000, true);
