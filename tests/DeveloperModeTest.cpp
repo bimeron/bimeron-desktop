@@ -19,6 +19,7 @@
 #include <QLineEdit>
 #include <QLocalServer>
 #include <QLocale>
+#include <QMap>
 #include <QMetaEnum>
 #include <QMouseEvent>
 #include <QPushButton>
@@ -289,6 +290,7 @@ int main(int argc, char **argv) {
             std::printf("FAILED reason=%s message=%s\n", QMetaEnum::fromType<CoreClient::Failure>().valueToKey(int(reason)), qPrintable(message));
             result = 2;
         });
+        std::printf("PROBE pid=%lld\n", QCoreApplication::applicationPid());
         client.request("hello");
         waitFor([&] { return result >= 0; }, 10000);
         std::fflush(stdout);
@@ -302,20 +304,28 @@ int main(int argc, char **argv) {
             std::printf("LISTEN FAILED %s\n", qPrintable(server.errorString()));
             return 1;
         }
-        qint64 bytes = 0;
+        // Bytes received per client process, so other local clients can be told apart.
+        QMap<qint64, qint64> bytes;
         int connections = 0;
         QObject::connect(&server, &QLocalServer::newConnection, &app, [&] {
             while (auto *socket = server.nextPendingConnection()) {
                 ++connections;
-                bytes += socket->readAll().size();
-                QObject::connect(socket, &QLocalSocket::readyRead, &app, [&bytes, socket] { bytes += socket->readAll().size(); });
+                qint64 client = 0;
+#ifdef Q_OS_WIN
+                ULONG pid = 0;
+                if (GetNamedPipeClientProcessId(reinterpret_cast<HANDLE>(socket->socketDescriptor()), &pid)) client = pid;
+#endif
+                bytes[client] += socket->readAll().size();
+                QObject::connect(socket, &QLocalSocket::readyRead, &app, [&bytes, socket, client] { bytes[client] += socket->readAll().size(); });
             }
         });
         std::printf("LISTENING %s\n", argv[2]);
         std::fflush(stdout);
         QTimer::singleShot(QByteArray(argv[3]).toInt() * 1000, &app, &QCoreApplication::quit);
         app.exec();
-        std::printf("SQUAT connections=%d bytes=%lld\n", connections, bytes);
+        std::printf("SQUAT connections=%d\n", connections);
+        for (auto it = bytes.cbegin(); it != bytes.cend(); ++it)
+            std::printf("SQUAT client=%lld bytes=%lld\n", it.key(), it.value());
         std::fflush(stdout);
         return 0;
     }
