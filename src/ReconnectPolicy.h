@@ -12,7 +12,7 @@
 //
 // The UI is built against State, not against IPC field names: only fromIpc()
 // reads Core's status and capabilities, as described in Core docs/CONTROL.MD,
-// "Reconnect recovery and kill switch hold" (bimeron-core #162).
+// "Reconnect recovery and kill switch hold" (bimeron-core #162, #163).
 namespace ReconnectPolicy {
 
 // Additive IPC 1 fields. ReconnectAttempt and ReconnectLimit date from Desktop
@@ -21,8 +21,9 @@ namespace Ipc {
 inline const QLatin1String attempt{"ReconnectAttempt"};
 inline const QLatin1String limit{"ReconnectLimit"};
 inline const QLatin1String cycle{"ReconnectCycle"};       // only after loss of a session
-inline const QLatin1String phase{"ReconnectPhase"};       // "attempting" or "waiting"
-inline const QLatin1String nextAttemptAt{"NextAttemptAt"}; // RFC 3339 UTC
+inline const QLatin1String phase{"ReconnectPhase"};       // "attempting" or "waiting"; may be absent
+inline const QLatin1String nextAttemptAt{"NextAttemptAt"}; // RFC 3339 UTC, whenever something is scheduled
+inline const QLatin1String lastErrorPermanent{"LastErrorPermanent"}; // retrying alone will not fix LastError
 inline const QLatin1String killSwitch{"KillSwitch"};      // "active" or "holding"
 inline const QLatin1String holding{"holding"};
 inline const QLatin1String reconnectNowCapability{"reconnect_now"};
@@ -44,10 +45,15 @@ struct State {
     int attempt = 0;             // 1..limit, or 0 when unknown
     int limit = 0;
     int cycle = 0;               // 1-based cycle after an interruption, otherwise 0
-    qint64 nextAttemptAtMs = 0;  // epoch milliseconds of the next attempt; 0 when unknown
+    qint64 nextAttemptAtMs = 0;  // epoch milliseconds of the next scheduled attempt or cycle; 0 when none
     bool protectionHeld = false; // the kill switch blocks traffic without a tunnel
+    bool lastErrorPermanent = false;
     bool retryNowSupported = false;
 };
+
+// UI choice (#60): show the LastError cause during every pause (false) or only
+// when Core marks it permanent (true).
+inline constexpr bool causeOnlyWhenPermanent = false;
 
 struct Presentation {
     QString title;               // empty: keep the generic label of the state
@@ -91,13 +97,13 @@ inline State fromIpc(const QJsonObject &status, const QJsonObject &capabilities)
     state.protectionHeld = killSwitch.toString() == Ipc::holding
         && (status.value(QLatin1String("State")).toString() != QLatin1String("failed")
             || status.value(QLatin1String("Session")).toObject().value(QLatin1String("active")).toBool());
+    state.lastErrorPermanent = status.value(Ipc::lastErrorPermanent).toBool();
     state.cycle = positiveInteger(status.value(Ipc::cycle));
     state.kind = state.cycle ? Kind::Interrupted : Kind::Initial;
-    if (state.kind == Kind::Interrupted && phase.toString() == QLatin1String("waiting")) {
-        state.phase = Phase::Waiting;
-        const QDateTime next = QDateTime::fromString(status.value(Ipc::nextAttemptAt).toString(), Qt::ISODateWithMs);
-        if (next.isValid()) state.nextAttemptAtMs = next.toMSecsSinceEpoch();
-    }
+    // An absent phase (the previous session is still closing) is an attempt without a schedule.
+    if (state.kind == Kind::Interrupted && phase.toString() == QLatin1String("waiting")) state.phase = Phase::Waiting;
+    const QDateTime next = QDateTime::fromString(status.value(Ipc::nextAttemptAt).toString(), Qt::ISODateWithMs);
+    if (next.isValid()) state.nextAttemptAtMs = next.toMSecsSinceEpoch();
     return state;
 }
 
@@ -131,7 +137,7 @@ inline Presentation present(const QString &coreState, const State &state, const 
             : text("Server unavailable");
         view.problem = true;
         view.retryNow = state.retryNowSupported;
-        if (!cause.isEmpty()) detail << cause;
+        if (!cause.isEmpty() && (!causeOnlyWhenPermanent || state.lastErrorPermanent)) detail << cause;
     } else if (state.attempt) {
         view.title = (state.kind == Kind::Initial ? text("Connecting… (%1/%2)") : text("Reconnecting… (%1/%2)"))
             .arg(state.attempt).arg(state.limit);

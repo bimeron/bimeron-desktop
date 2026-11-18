@@ -97,6 +97,22 @@ inline void mapping() {
     expect(!paused.retryNowSupported, "retry now needs the capability");
     expect(!fromIpc(waiting(1, 1000), {{"reconnect_now", "yes"}}).retryNowSupported, "capability must be boolean");
 
+    QJsonObject backoff = attempting(1, 3);
+    backoff["NextAttemptAt"] = at(4000);
+    State scheduled = fromIpc(backoff, {});
+    expect(scheduled.phase == Phase::Attempting && scheduled.nextAttemptAtMs == now + 4000, "backoff time");
+    expect(fromIpc(attempting(1, 3), {}).nextAttemptAtMs == 0, "running attempt has no schedule");
+    QJsonObject closing{{"State", "reconnecting"}, {"ReconnectCycle", 2}};
+    expect(fromIpc(closing, {}).kind == Kind::Interrupted && fromIpc(closing, {}).phase == Phase::Attempting
+           && view(closing).title.isEmpty() && !view(closing).problem, "absent phase is plain reconnecting");
+
+    QJsonObject permanent = waiting(1, 1000);
+    permanent["LastError"] = "access_key_unavailable";
+    permanent["LastErrorPermanent"] = true;
+    expect(fromIpc(permanent, {}).lastErrorPermanent && !fromIpc(waiting(1, 1000), {}).lastErrorPermanent,
+           "permanent error marker");
+    expect(view(waiting(1, 1000), {}, "Transient cause").detail == "Transient cause", "the cause is shown for every error");
+
     QJsonObject badTime = waiting(1, 1000);
     badTime["NextAttemptAt"] = "soon";
     expect(fromIpc(badTime, {}).nextAttemptAtMs == 0, "invalid time is unknown");
@@ -132,9 +148,10 @@ inline void views(bool russian) {
     expectText(p.title, pick("Connecting… (2/3)", "Подключение… (2/3)"), "initial title");
     expect(!p.problem && !p.disconnectVpn && !p.holdDisconnect && !p.retryNow && p.detail.isEmpty(), "initial view");
 
-    p = view(attempting(1, 7));
+    p = view(attempting(1, 7), {{"reconnect_now", true}});
     expectText(p.title, pick("Reconnecting… (7/10)", "Переподключение… (7/10)"), "cycle attempt title");
-    expect(!p.problem && p.disconnectVpn && !p.holdDisconnect && !p.countdown && p.detail.isEmpty(), "cycle attempt view");
+    expect(!p.problem && p.disconnectVpn && !p.holdDisconnect && !p.countdown && !p.retryNow && p.detail.isEmpty(),
+           "cycle attempt view: no Retry now while an attempt runs");
     expect(!view(attempting(1, 7), {}, {}, true).disconnectVpn, "proxy keeps Disconnect");
 
     p = view(waiting(1, 59000), {{"reconnect_now", true}});

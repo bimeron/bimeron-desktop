@@ -4,7 +4,8 @@ Specification for Desktop 0.3.1; issue [Desktop #60](https://github.com/bimeron/
 It extends [bounded reconnect recovery](reconnect-attempts.md), which stays the
 behaviour with a Core that does not report the new policy.
 
-The Core contract is [bimeron-core #162](https://github.com/bimeron/bimeron-core/issues/162):
+The Core contract is [bimeron-core #162](https://github.com/bimeron/bimeron-core/issues/162)
+(pull request [#163](https://github.com/bimeron/bimeron-core/pull/163)):
 Core `docs/CONTROL.MD`, "Reconnect recovery and kill switch hold", and
 `docs/GUI_INTEGRATION.MD`, "Guidance for Desktop 0.3.1".
 
@@ -87,11 +88,17 @@ that reads the policy fields:
 |---|---|
 | New policy reported | capability `reconnect_now` or `kill_switch_hold`, or status `ReconnectPhase`, `KillSwitch` or `ReconnectCycle` |
 | Interruption or initial connect | `ReconnectCycle` present (from 1) or absent |
-| Phase | `ReconnectPhase`: `attempting` or `waiting` (only in `reconnecting`) |
-| Attempt n of N | `ReconnectAttempt`/`ReconnectLimit`: 1–3 of 3 or 1–10 of 10; absent while waiting |
-| Next attempt time | `NextAttemptAt`, RFC 3339 UTC; the countdown is computed locally |
+| Phase | `ReconnectPhase`: `attempting` or `waiting` (only in `reconnecting`); briefly absent while the previous session closes, shown as plain `Reconnecting…` |
+| Attempt n of N | `ReconnectAttempt`/`ReconnectLimit`: 1–3 of 3 or 1–10 of 10, restarting at 1 in each cycle; absent while waiting |
+| Next attempt time | `NextAttemptAt`, RFC 3339 UTC, whenever a backoff or pause is scheduled; absent while an attempt runs. The countdown is `NextAttemptAt` minus local now |
+| Permanent error | `LastErrorPermanent`: retrying alone will not fix `LastError` |
 | Protection held | `KillSwitch` is `holding`; in `failed` also `Session.active` |
 | Retry now | capability `reconnect_now`; command `reconnect_now` |
+
+Retry now is hidden while an attempt runs, so `reconnect_not_pending` appears
+only after a race. The cause is shown for every error during the pause;
+`causeOnlyWhenPermanent` in `src/ReconnectPolicy.h` limits it to permanent
+errors if that is preferred.
 
 `KillSwitch: "active"` (protected and connected) needs no notice. Invalid
 numbers and times are ignored as in Desktop 0.3.0. Status is authoritative:
