@@ -5,7 +5,7 @@ It extends [bounded reconnect recovery](reconnect-attempts.md), which stays the
 behaviour with a Core that does not report the new policy.
 
 The Core contract is [bimeron-core #162](https://github.com/bimeron/bimeron-core/issues/162)
-(pull request [#163](https://github.com/bimeron/bimeron-core/pull/163)):
+(pull request [#163](https://github.com/bimeron/bimeron-core/pull/163), merged as 9521d8b4):
 Core `docs/CONTROL.MD`, "Reconnect recovery and kill switch hold", and
 `docs/GUI_INTEGRATION.MD`, "Guidance for Desktop 0.3.1".
 
@@ -95,6 +95,32 @@ shown; `Session` is absent or inactive.
 Desktop 0.3.0 sees `cleanup_failed_run_recover` and shows the same recovery
 path with its generic text.
 
+## What "Internet access is paused" means
+
+While Core holds protection (`KillSwitch: "holding"`), traffic that the routing
+policy does not send `direct` is blocked until the VPN connects or the user
+disconnects. DNS on ports 53 and 853 (TCP and UDP) outside the tunnel is
+blocked for every process except Core, including a resolver inside a `direct`
+range, so names do not resolve outside the tunnel either. See Core
+`docs/KILLSWITCH.MD`.
+
+## Known limitations
+
+Core behaviour that Desktop 0.3.1 presents but does not change; these also go
+into the 0.3.1 release notes:
+
+- Forwarded traffic (Internet Connection Sharing, WinNAT for WSL2 or Hyper-V
+  guests) is not covered by the Windows kill switch
+  ([bimeron-core #164](https://github.com/bimeron/bimeron-core/issues/164)).
+- mDNS (UDP 5353) stays permitted where a `direct` rule covers it. LLMNR
+  (UDP 5355) and NetBIOS name service (UDP 137) are tracked in
+  [bimeron-core #166](https://github.com/bimeron/bimeron-core/issues/166).
+- A Core service update restarts the service, so protection is not in place
+  while the service restarts.
+- When the outbound path is blocked rather than closed, Core takes about 80
+  seconds to detect the loss before the first retry cycle starts (observed on
+  the Windows test VM).
+
 ## Tray notifications
 
 When notifications are enabled:
@@ -159,6 +185,30 @@ extra line, no Retry now and the plain Disconnect button.
   Windows x64 and Linux and builds all four targets.
 - Before release: check the states visually with a Core build of the contract
   on the Windows test VM.
+
+## Visual check (2026-11-18)
+
+Desktop ef9e880 against Core 874c1cc2 (the reviewed contract) on the Windows 10
+test VM, in Russian, driven through UI Automation:
+
+- Initial failure: `Подключение… (1/3)` to `(3/3)`, then the plain failure with
+  Connect.
+- Lost session (outbound path blocked): `Переподключение… (2/10)` to `(10/10)`
+  with Disconnect VPN, then the red pause counting down from `0:58`, with the
+  catalog cause and Retry now. Retry now started cycle 2; removing the block
+  reconnected.
+- Kill switch profile: the paused line while attempting, the held-failure
+  text with Retry now and Disconnect VPN. Retry now restarted the three initial
+  retries with protection held; Disconnect VPN released every filter.
+- Residual protection after the service process was killed while held: the
+  leftover-protection text, the recovery button and a blocked Connect, without
+  held-protection controls.
+- The previous Core with this Desktop: `Переподключение… (2/3)` without the new
+  controls.
+
+The VM service, its executable hash and its WFP state were restored and
+rechecked afterwards. The tray recovery message and the Disconnect VPN tooltip
+are covered by tests only: UI Automation does not expose them.
 
 Benchmarks and profiling are not applicable: the change adds a one-second label
 refresh during the pause only.
