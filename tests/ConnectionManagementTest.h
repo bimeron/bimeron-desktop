@@ -130,6 +130,7 @@ struct ConnectionManagementTest {
         QJsonObject capabilities{{"vpn", true}, {"proxy", true}, {"reconnect_now", true}, {"kill_switch_hold", true}};
         QString instance = "reconnect";
         bool rejectReconnect = false;
+        bool rejectStart = false;
         QStringList commands;
         QObject::connect(&server, &QLocalServer::newConnection, &server, [&] {
             auto *socket = server.nextPendingConnection();
@@ -139,7 +140,8 @@ struct ConnectionManagementTest {
                     const auto request = QJsonDocument::fromJson(socket->readLine()).object();
                     const QString command = request.value("command").toString();
                     commands << command;
-                    require(command != "start" && command != "shutdown" && command != "recover", "reconnect view never starts or recovers");
+                    require((command != "start" || rejectStart) && command != "shutdown" && command != "recover",
+                            "reconnect view never starts or recovers");
                     QJsonObject reply{{"version", 1}, {"id", request.value("id")}, {"instance", instance},
                                       {"core", QJsonObject{{"version", "0.4.0"}}}, {"capabilities", capabilities}};
                     if (command == "reconnect_now") {
@@ -158,6 +160,8 @@ struct ConnectionManagementTest {
                         }
                     } else if (command == "stop") {
                         status = {{"State", "disconnected"}, {"Session", session(false)}};
+                    } else if (command == "start") {
+                        reply.insert("error", "session_already_running");
                     }
                     reply.insert("status", status);
                     socket->write(QJsonDocument(reply).toJson(QJsonDocument::Compact) + '\n');
@@ -254,6 +258,25 @@ struct ConnectionManagementTest {
         refresh();
         require(!window.cleanupBlocked_, "recovery routing ends with the code");
 
+        // A repeated start of the running profile is answered quietly: a log line and a status refresh.
+        status = {{"State", "connected"}, {"Session", session(true)}, {"KillSwitch", "active"}};
+        refresh();
+        rejectStart = true;
+        bool dialogShown = false;
+        QTimer dialogWatch;
+        dialogWatch.setInterval(20);
+        QObject::connect(&dialogWatch, &QTimer::timeout, &dialogWatch, [&] {
+            if (auto *modal = QApplication::activeModalWidget()) { dialogShown = true; modal->close(); }
+        });
+        dialogWatch.start();
+        window.operation_ = "start";
+        require(window.core_.request("start", {{"config", window.profiles_[0].path}}, 120000), "repeated start request");
+        require(waitFor([&] { return commands.count("start") == 1 && synchronized(); }), "repeated start reply");
+        dialogWatch.stop();
+        rejectStart = false;
+        require(!dialogShown && window.log_->toPlainText().contains("session_already_running")
+                && window.state_ == "connected" && window.operation_.isEmpty(), "session_already_running is quiet");
+
         // Desktop 0.3.0 Core (a restarted daemon): no policy fields or capabilities.
         instance = "legacy";
         capabilities = {{"vpn", true}, {"proxy", true}};
@@ -269,7 +292,7 @@ struct ConnectionManagementTest {
         refresh();
         require(window.reconnectDetailLabel_->isHidden() && !window.reconnectCountdown_->isActive()
                 && !window.reconnectNotifications_.recovering(), "connected clears the reconnect view");
-        require(!commands.contains("start"), "no start was sent");
+        require(commands.count("start") == 1, "only the repeated start fixture sent start");
 
         if (previousNotifications.isValid()) QSettings().setValue("app/notifications", previousNotifications);
         else QSettings().remove("app/notifications");

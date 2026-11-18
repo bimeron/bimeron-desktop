@@ -65,6 +65,11 @@ English is the source text; Russian is in `assets/translations/ru.json`.
   handover to another kill switch profile, but Desktop offers only Disconnect VPN
   and Retry now in that state. A `kill_switch_held` start error is shown through
   the catalog like other start errors.
+- `start` waits up to 2 minutes, as Core recommends: with the kill switch it
+  returns only after protection is installed, and a handover first waits for
+  the previous cleanup. A `session_already_running` reply (a repeated start of
+  the running profile) is only logged and the status is reread; the live
+  session stays up and no error dialog is shown.
 
 ## Leftover protection and network recovery
 

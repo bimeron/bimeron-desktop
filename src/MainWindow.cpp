@@ -2411,7 +2411,9 @@ void MainWindow::poll() {
             && (state_ == "disconnected" || state_ == "failed")
             && QFileInfo::exists(path) && info.backend == ProfileConnectionInfo::Backend::Packet && info.connectable) {
             if (!QSettings().value("logs/keepPrevious", true).toBool()) log_->clear();
-            core_.request("start", {{"config", path}});
+            // With the kill switch, start returns after protection is installed and a
+            // handover waits for the previous cleanup; Core recommends 2 minutes.
+            core_.request("start", {{"config", path}}, 120000);
         } else {
             operation_.clear();
             if (!reconnectResultProfileId_.isEmpty()) {
@@ -2548,7 +2550,11 @@ void MainWindow::handleReply(const QString &command, const QJsonObject &response
                 connectionFailure(command, CoreClient::Failure::InvalidResponse, tr("Incompatible response from core"));
                 return;
             }
-            if (command == "start" || command == "stop" || command == "shutdown") showCoreError(response);
+            if (command == "start" && error == "session_already_running") {
+                // A repeated start of the running profile: Core keeps that session; reread status.
+                const QString text = coreCodeText(errorCatalog(), error);
+                appendLog(tr("Core: %1 (%2)").arg(text.isEmpty() ? tr("A session is already running") : text, error));
+            } else if (command == "start" || command == "stop" || command == "shutdown") showCoreError(response);
             else if (command == ReconnectPolicy::Ipc::reconnectNowCommand) {
                 // reconnect_not_pending: an attempt already started; the status refresh shows it.
                 const QString text = coreCodeText(errorCatalog(), error);
