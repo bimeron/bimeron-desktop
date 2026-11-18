@@ -3806,7 +3806,10 @@ void MainWindow::advanceStartupPreparation(std::function<void()> start) {
         return;
     }
     if (!startupIpcChecked_) return;
-    if (availabilityFailure_ != CoreClient::Failure::Transport && availabilityFailure_ != CoreClient::Failure::Timeout) {
+    // A service pipe without a running SCM process is untrusted and never
+    // written, but startup still waits for the service like an absent pipe.
+    if (availabilityFailure_ != CoreClient::Failure::Transport && availabilityFailure_ != CoreClient::Failure::Timeout
+        && availabilityFailure_ != CoreClient::Failure::ServiceNotRunning) {
         finishStartupPreparation(false);
         return;
     }

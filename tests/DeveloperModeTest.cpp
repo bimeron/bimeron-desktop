@@ -296,6 +296,93 @@ int main(int argc, char **argv) {
         std::fflush(stdout);
         return result < 0 ? 3 : result;
     }
+#ifdef Q_OS_WIN
+    // Holds an extra instance of an existing pipe (the held-instance spoof) and
+    // reports the bytes each client process wrote to it.
+    if (argc == 4 && std::strcmp(argv[1], "--control-hold") == 0) {
+        const std::wstring name = (QStringLiteral("\\\\.\\pipe\\") + QString::fromLocal8Bit(argv[2])).toStdWString();
+        const ULONGLONG deadline = GetTickCount64() + ULONGLONG(QByteArray(argv[3]).toInt()) * 1000;
+        QMap<qint64, qint64> bytes;
+        int connections = 0;
+        // Each replacement instance is created before the previous one closes, so
+        // the pipe object (and its SYSTEM owner) survives the service stopping.
+        QString lastOwner;
+        const auto createInstance = [&]() -> HANDLE {
+            HANDLE instance = CreateNamedPipeW(name.c_str(), PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED,
+                PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS,
+                PIPE_UNLIMITED_INSTANCES, 16 * 1024, 16 * 1024, 0, nullptr);
+            if (instance == INVALID_HANDLE_VALUE) return instance;
+            const QString owner = ControlServerIdentity::observePipe(reinterpret_cast<quintptr>(instance),
+                ControlServerIdentity::Endpoint::Fixture).owner;
+            if (owner != lastOwner) {
+                std::printf("HOLDING %s owner=%s\n", argv[2], qPrintable(owner));
+                std::fflush(stdout);
+                lastOwner = owner;
+            }
+            return instance;
+        };
+        HANDLE pipe = createInstance();
+        if (pipe == INVALID_HANDLE_VALUE) {
+            std::printf("HOLD FAILED error=%lu\n", GetLastError());
+            return 1;
+        }
+        while (GetTickCount64() < deadline) {
+            HANDLE event = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+            OVERLAPPED operation{};
+            operation.hEvent = event;
+            bool connected = ConnectNamedPipe(pipe, &operation) || GetLastError() == ERROR_PIPE_CONNECTED;
+            if (!connected && GetLastError() == ERROR_IO_PENDING) {
+                const ULONGLONG now = GetTickCount64();
+                if (WaitForSingleObject(event, DWORD(deadline > now ? deadline - now : 0)) == WAIT_OBJECT_0) {
+                    DWORD ignored = 0;
+                    connected = GetOverlappedResult(pipe, &operation, &ignored, FALSE);
+                } else {
+                    CancelIoEx(pipe, &operation);
+                    DWORD ignored = 0;
+                    GetOverlappedResult(pipe, &operation, &ignored, TRUE);
+                }
+            }
+            if (connected) {
+                ++connections;
+                ULONG client = 0;
+                GetNamedPipeClientProcessId(pipe, &client);
+                bytes[client] += 0;
+                // Collect whatever the client writes within one second.
+                const ULONGLONG readDeadline = GetTickCount64() + 1000;
+                char buffer[4096];
+                while (GetTickCount64() < readDeadline) {
+                    ResetEvent(event);
+                    OVERLAPPED read{};
+                    read.hEvent = event;
+                    DWORD transferred = 0;
+                    if (!ReadFile(pipe, buffer, sizeof(buffer), &transferred, &read)) {
+                        if (GetLastError() != ERROR_IO_PENDING) break;
+                        if (WaitForSingleObject(event, DWORD(readDeadline - qMin(readDeadline, GetTickCount64()))) != WAIT_OBJECT_0) {
+                            CancelIoEx(pipe, &read);
+                            GetOverlappedResult(pipe, &read, &transferred, TRUE);
+                            break;
+                        }
+                        if (!GetOverlappedResult(pipe, &read, &transferred, FALSE)) break;
+                    }
+                    if (!transferred) break;
+                    bytes[client] += transferred;
+                }
+            }
+            CloseHandle(event);
+            HANDLE replacement = connected && GetTickCount64() < deadline ? createInstance() : INVALID_HANDLE_VALUE;
+            DisconnectNamedPipe(pipe);
+            CloseHandle(pipe);
+            pipe = replacement;
+            if (pipe == INVALID_HANDLE_VALUE) break;
+        }
+        if (pipe != INVALID_HANDLE_VALUE) CloseHandle(pipe);
+        std::printf("HOLD connections=%d\n", connections);
+        for (auto it = bytes.cbegin(); it != bytes.cend(); ++it)
+            std::printf("HOLD client=%lld bytes=%lld\n", it.key(), it.value());
+        std::fflush(stdout);
+        return 0;
+    }
+#endif
     if (argc == 4 && std::strcmp(argv[1], "--control-squat") == 0) {
         QCoreApplication app(argc, argv);
         QLocalServer server;

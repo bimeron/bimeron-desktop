@@ -40,6 +40,8 @@ inline Diagnosis diagnose(const Snapshot &s) {
     // control_server_untrusted, including a service built before identity checks.
     if (s.ipcFailure == CoreClient::Failure::Untrusted) return {Cause::IdentityRejected, Action::Restore, phase};
     if (s.ipcFailure == CoreClient::Failure::InvalidResponse) return {Cause::Untrusted, Action::Restore, phase};
+    // ServiceNotRunning (control_server_untrusted without a running SCM process)
+    // uses the observed service state below, like an absent service pipe.
     if (s.service == Service::Missing) return {Cause::Missing, Action::Restore, phase};
     if (s.service == Service::Stopped) return {Cause::Stopped, Action::Restore, phase};
     if (s.service == Service::Running) return {Cause::Unresponsive, Action::Restore, phase};

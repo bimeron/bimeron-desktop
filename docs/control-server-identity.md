@@ -43,10 +43,14 @@ Service pipe:
 1. The owner from `GetSecurityInfo(handle, SE_KERNEL_OBJECT,
    OWNER_SECURITY_INFORMATION)` is exactly `S-1-5-18`.
 2. `GetNamedPipeServerProcessId` succeeds.
-3. When `OpenSCManager(SC_MANAGER_CONNECT)`, `OpenService("BimeronCore",
-   SERVICE_QUERY_STATUS)` and `QueryServiceStatusEx` report a nonzero process ID,
-   the server process ID equals it. An unavailable SCM answer skips this step,
-   because step 1 already limits the server to SYSTEM.
+3. After the pipe is open, `OpenSCManager(SC_MANAGER_CONNECT)`,
+   `OpenService("BimeronCore", SERVICE_QUERY_STATUS)` and `QueryServiceStatusEx`
+   must succeed, report `SERVICE_RUNNING` and a nonzero process ID, and that ID
+   must equal the pipe server process ID. Any other answer is untrusted: a failed
+   or denied query, process ID 0, or a stopped, start-pending, stop-pending or
+   paused service. The owner alone is not enough: a medium-integrity process of
+   the same user can hold an extra instance of the SYSTEM-owned pipe and keep it
+   after the service stops, when SCM reports process ID 0.
 4. A nonzero expected process ID from the caller must also match.
 
 Desktop never opens the service process token: a standard user cannot open a
@@ -102,11 +106,20 @@ message.
 
 ## Presentation
 
-An identity failure is `CoreClient::Failure::Untrusted`; it replaces the former
-`PeerMismatch` value. The status line shows "The service needs to be updated or
-repaired", the log records the code and the observed mismatch, and the Bimeron
-service window offers Restore. Desktop does not start or install the service
-automatically for this failure.
+Both identity failures below report `control_server_untrusted`, write nothing
+and log the observed mismatch.
+
+- `CoreClient::Failure::Untrusted` replaces the former `PeerMismatch` value. The
+  status line shows "The service needs to be updated or repaired" and the Bimeron
+  service window offers Restore. Desktop does not start or install the service
+  automatically for this failure.
+- `CoreClient::Failure::ServiceNotRunning` is a service pipe for which SCM
+  reports no running `BimeronCore` process. Desktop presents it like an absent
+  service pipe: the existing service-state guidance ("Connection service is
+  stopped", "not installed", "changing state") and Restore, and startup keeps
+  waiting for the service. Core creates the pipe while the service is
+  start-pending and reports running immediately afterwards, so a valid service
+  can briefly fall into this case during start; the next attempt succeeds.
 
 A service built before Core #159 leaves the service pipe owned by
 `S-1-5-32-544` and is rejected. This is the expected route for an outdated
@@ -124,6 +137,9 @@ the control pipe.
   actual pipe owner (old service `S-1-5-32-544`, #159 service `S-1-5-18`),
   `READ_CONTROL` on the client handle, `QueryServiceStatusEx` access, rejection
   of a squatted pipe with nothing written, and the old-service route to repair.
+- The held-instance scenario: a standard user holds an extra instance of the
+  running service's pipe and the service is stopped; Desktop writes nothing and
+  reports `control_server_untrusted`.
 - Console daemon checks with an elevated administrator.
 - Linux VM checks of the socket directory, socket type and peer credentials.
 

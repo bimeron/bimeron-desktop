@@ -45,23 +45,53 @@ inline Endpoint classifyUnix(const QString &path) {
 struct PipeObservation {
     QString owner;
     quint32 serverProcess = 0;
-    quint32 serviceProcess = 0; // SCM; 0 when the service or its PID is unavailable.
+    // Service pipe only: QueryServiceStatusEx result. serviceState is
+    // dwCurrentState (SERVICE_RUNNING is 4); serviceProcess is dwProcessId.
+    bool serviceQueried = false;
+    quint32 serviceState = 0;
+    quint32 serviceProcess = 0;
     QString serverUser;         // Console daemon only.
     bool serverElevated = false;
 };
 
+inline constexpr quint32 serviceRunning = 4; // SERVICE_RUNNING
+
+// Every result except Trusted is control_server_untrusted. NotRunning means
+// SCM does not report a running service process for the pipe: an impostor
+// can hold a SYSTEM-owned pipe instance after the service stops, so the
+// SCM binding is mandatory. It is presented as a service that is not running.
+enum class ServiceTrust { Trusted, NotRunning, Untrusted };
+
+inline ServiceTrust serviceTrust(const PipeObservation &pipe, quint32 expectedProcess, QString *diagnostic = nullptr) {
+    const auto result = [diagnostic](ServiceTrust trust, const QString &reason) {
+        if (diagnostic) *diagnostic = reason;
+        return trust;
+    };
+    if (pipe.owner != serviceOwner)
+        return result(ServiceTrust::Untrusted, QStringLiteral("service pipe owner %1, expected %2")
+            .arg(pipe.owner.isEmpty() ? QStringLiteral("unreadable") : pipe.owner, serviceOwner));
+    if (!pipe.serverProcess) return result(ServiceTrust::Untrusted, QStringLiteral("service pipe server process unavailable"));
+    if (!pipe.serviceQueried)
+        return result(ServiceTrust::NotRunning, QStringLiteral("SCM status of %1 unavailable").arg(serviceName));
+    if (pipe.serviceState != serviceRunning)
+        return result(ServiceTrust::NotRunning, QStringLiteral("SCM reports %1 state %2, not running")
+            .arg(serviceName).arg(pipe.serviceState));
+    if (!pipe.serviceProcess)
+        return result(ServiceTrust::NotRunning, QStringLiteral("SCM reports no %1 process").arg(serviceName));
+    if (pipe.serverProcess != pipe.serviceProcess)
+        return result(ServiceTrust::Untrusted, QStringLiteral("service pipe server process %1, SCM reports %2")
+            .arg(pipe.serverProcess).arg(pipe.serviceProcess));
+    if (expectedProcess && pipe.serverProcess != expectedProcess)
+        return result(ServiceTrust::Untrusted, QStringLiteral("service pipe server process %1, expected %2")
+            .arg(pipe.serverProcess).arg(expectedProcess));
+    return result(ServiceTrust::Trusted, {});
+}
+
 // Empty when trusted; otherwise an English diagnostic for the log.
 inline QString serviceMismatch(const PipeObservation &pipe, quint32 expectedProcess) {
-    if (pipe.owner != serviceOwner)
-        return QStringLiteral("service pipe owner %1, expected %2")
-            .arg(pipe.owner.isEmpty() ? QStringLiteral("unreadable") : pipe.owner, serviceOwner);
-    if (!pipe.serverProcess) return QStringLiteral("service pipe server process unavailable");
-    if (pipe.serviceProcess && pipe.serverProcess != pipe.serviceProcess)
-        return QStringLiteral("service pipe server process %1, SCM reports %2")
-            .arg(pipe.serverProcess).arg(pipe.serviceProcess);
-    if (expectedProcess && pipe.serverProcess != expectedProcess)
-        return QStringLiteral("service pipe server process %1, expected %2").arg(pipe.serverProcess).arg(expectedProcess);
-    return {};
+    QString diagnostic;
+    serviceTrust(pipe, expectedProcess, &diagnostic);
+    return diagnostic;
 }
 
 inline QString consoleMismatch(const PipeObservation &pipe, const QString &clientUser, quint32 expectedProcess) {

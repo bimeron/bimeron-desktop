@@ -43,17 +43,21 @@ bool tokenIdentity(HANDLE process, QString *user, bool *elevated) {
     return ok && !user->isEmpty();
 }
 
-quint32 serviceProcessId() {
+// Queried after the pipe is open, so a service that stopped meanwhile is seen.
+void queryService(PipeObservation *result) {
     SC_HANDLE manager = OpenSCManagerW(nullptr, nullptr, SC_MANAGER_CONNECT);
-    if (!manager) return 0;
+    if (!manager) return;
     SC_HANDLE service = OpenServiceW(manager, reinterpret_cast<LPCWSTR>(serviceName.utf16()), SERVICE_QUERY_STATUS);
     SERVICE_STATUS_PROCESS status{};
     DWORD size = 0;
-    const bool queried = service && QueryServiceStatusEx(service, SC_STATUS_PROCESS_INFO,
+    result->serviceQueried = service && QueryServiceStatusEx(service, SC_STATUS_PROCESS_INFO,
         reinterpret_cast<LPBYTE>(&status), sizeof(status), &size);
+    if (result->serviceQueried) {
+        result->serviceState = status.dwCurrentState;
+        result->serviceProcess = status.dwProcessId;
+    }
     if (service) CloseServiceHandle(service);
     CloseServiceHandle(manager);
-    return queried ? status.dwProcessId : 0;
 }
 } // namespace
 
@@ -83,7 +87,7 @@ PipeObservation observePipe(quintptr pipe, Endpoint endpoint) {
     if (GetNamedPipeServerProcessId(handle, &server)) result.serverProcess = server;
     if (endpoint == Endpoint::Service) {
         // Never open the server token: a standard user cannot open LocalSystem's.
-        result.serviceProcess = serviceProcessId();
+        queryService(&result);
     } else if (endpoint == Endpoint::Console && result.owner == consoleOwner && result.serverProcess) {
         HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, result.serverProcess);
         if (process) {

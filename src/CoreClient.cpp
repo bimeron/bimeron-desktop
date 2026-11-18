@@ -141,12 +141,15 @@ void CoreClient::connectVerified(QLocalSocket *socket, const QByteArray &payload
         WaitNamedPipeW(path.c_str(), DWORD(deadline - now));
     }
     QString mismatch;
-    if (kind == Endpoint::Service || kind == Endpoint::Console) {
+    Failure failure = Failure::Untrusted;
+    if (kind == Endpoint::Service) {
         const PipeObservation observed = observePipe(reinterpret_cast<quintptr>(pipe), kind);
-        mismatch = kind == Endpoint::Service ? serviceMismatch(observed, quint32(expectedProcess_))
-                                             : consoleMismatch(observed, currentUserSid(), quint32(expectedProcess_));
-        if (!mismatch.isEmpty() && kind == Endpoint::Service && legacyServiceOwner(observed))
+        if (serviceTrust(observed, quint32(expectedProcess_), &mismatch) == ServiceTrust::NotRunning)
+            failure = Failure::ServiceNotRunning;
+        if (!mismatch.isEmpty() && legacyServiceOwner(observed))
             mismatch += QStringLiteral("; the service predates server identity checks and needs to be updated or repaired");
+    } else if (kind == Endpoint::Console) {
+        mismatch = consoleMismatch(observePipe(reinterpret_cast<quintptr>(pipe), kind), currentUserSid(), quint32(expectedProcess_));
     } else if (expectedProcess_) {
         ULONG server = 0;
         if (!GetNamedPipeServerProcessId(pipe, &server) || qint64(server) != expectedProcess_)
@@ -154,7 +157,7 @@ void CoreClient::connectVerified(QLocalSocket *socket, const QByteArray &payload
     }
     if (!mismatch.isEmpty()) {
         CloseHandle(pipe);
-        finishUntrusted(mismatch);
+        finishUntrusted(mismatch, failure);
         return;
     }
     // QLocalSocket takes ownership of the verified overlapped handle.
@@ -193,9 +196,9 @@ void CoreClient::connectVerified(QLocalSocket *socket, const QByteArray &payload
 #endif
 }
 
-void CoreClient::finishUntrusted(const QString &diagnostic) {
+void CoreClient::finishUntrusted(const QString &diagnostic, Failure reason) {
     finishError(tr("The Core control server could not be verified; nothing was sent (control_server_untrusted): %1")
-                    .arg(diagnostic), Failure::Untrusted);
+                    .arg(diagnostic), reason);
 }
 
 void CoreClient::finishError(const QString &message, Failure reason) {

@@ -9,9 +9,12 @@
 class CoreClient final : public QObject {
     Q_OBJECT
 public:
-    // Untrusted: the endpoint failed the server identity check; nothing was
-    // written (control_server_untrusted).
-    enum class Failure { Transport, AccessDenied, Timeout, Incompatible, InvalidResponse, Untrusted, TooLarge };
+    // Untrusted and ServiceNotRunning: the endpoint failed the server identity
+    // check and nothing was written (control_server_untrusted). ServiceNotRunning
+    // means SCM reports no running BimeronCore process for the service pipe; it
+    // is presented like a service that is not running yet.
+    enum class Failure { Transport, AccessDenied, Timeout, Incompatible, InvalidResponse, Untrusted, TooLarge,
+                         ServiceNotRunning };
     Q_ENUM(Failure)
     explicit CoreClient(QObject *parent = nullptr);
     bool busy() const { return socket_ != nullptr; }
@@ -33,7 +36,7 @@ private:
     QString endpoint() const;
     ControlServerIdentity::Endpoint policy() const;
     void finishError(const QString &message, Failure reason = Failure::Transport);
-    void finishUntrusted(const QString &diagnostic);
+    void finishUntrusted(const QString &diagnostic, Failure reason = Failure::Untrusted);
     void connectVerified(QLocalSocket *socket, const QByteArray &payload, int timeoutMs);
 
     QLocalSocket *socket_ = nullptr;
