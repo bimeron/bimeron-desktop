@@ -2120,13 +2120,16 @@ struct ConnectionManagementTest {
         window.core_.setEndpoint("recovery-action-" + QUuid::createUuid().toString());
         for (const auto observation : {MainWindow::ServiceObservation::Missing, MainWindow::ServiceObservation::Stopped}) {
             for (const auto failure : {CoreClient::Failure::AccessDenied, CoreClient::Failure::Incompatible,
-                                      CoreClient::Failure::PeerMismatch, CoreClient::Failure::InvalidResponse}) {
+                                      CoreClient::Failure::Untrusted, CoreClient::Failure::InvalidResponse}) {
                 window.availabilityVerificationDeadline_ = 0;
                 window.availabilityVerificationFailed_ = failure == CoreClient::Failure::Timeout;
                 window.serviceObservation_ = observation;
                 window.availabilityFailure_ = failure;
                 window.updateCoreAvailability();
                 require(window.recoveryAction_ == MainWindow::RecoveryAction::Restore, "error remedy never implies install/start");
+                if (failure == CoreClient::Failure::Untrusted)
+                    require(window.coreManagementTitle_->text() == "The service needs to be updated or repaired",
+                            "an unverified service routes to update or repair");
                 require(window.settingsRetry_->text() == "Restore", "failure retains Restore action");
                 window.core_.cancel();
                 require(mutations == 0, "Check again never launches a privileged service action");

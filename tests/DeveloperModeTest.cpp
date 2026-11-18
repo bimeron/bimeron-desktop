@@ -19,6 +19,7 @@
 #include <QLineEdit>
 #include <QLocalServer>
 #include <QLocale>
+#include <QMetaEnum>
 #include <QMouseEvent>
 #include <QPushButton>
 #include <QSettings>
@@ -226,7 +227,98 @@ static void testRouting() {
     require(errors == 1, "old timeout must not report an error after switching");
 }
 
+// A fixture endpoint under a production identity policy. This unprivileged
+// test process can never satisfy it, so no request byte may reach the endpoint.
+static void testServerIdentity() {
+#ifndef Q_OS_WIN
+    if (geteuid() == 0) { puts("SKIP server identity rejection: root satisfies the socket policy"); return; }
+    QTemporaryDir directory;
+    require(directory.isValid(), "squatted socket directory");
+#endif
+    using Policy = ControlServerIdentity::Endpoint;
+    for (const Policy policy : {Policy::Service, Policy::Console}) {
+#ifndef Q_OS_WIN
+        if (policy == Policy::Console) continue; // Linux has no console daemon pipe.
+        const QString name = directory.filePath("control.sock");
+#else
+        const QString name = "bimeron-squat-" + QUuid::createUuid().toString(QUuid::Id128);
+#endif
+        QLocalServer squatter;
+        require(squatter.listen(name), "squatted endpoint");
+        const auto received = std::make_shared<QByteArray>();
+        QObject::connect(&squatter, &QLocalServer::newConnection, &squatter, [&squatter, received] {
+            while (auto *socket = squatter.nextPendingConnection()) {
+                *received += socket->readAll();
+                QObject::connect(socket, &QLocalSocket::readyRead, &squatter, [socket, received] { *received += socket->readAll(); });
+            }
+        });
+        CoreClient client;
+        // The console policy also binds the launched process; this one never matches.
+        client.setEndpoint(name, policy == Policy::Console ? QCoreApplication::applicationPid() + 1000000 : 0);
+        client.setIdentityPolicyForTesting(policy);
+        int failures = 0, replies = 0;
+        CoreClient::Failure reason = CoreClient::Failure::Transport;
+        QString message;
+        QObject::connect(&client, &CoreClient::replied, &client, [&] { ++replies; });
+        QObject::connect(&client, &CoreClient::failed, &client, [&](const QString &, CoreClient::Failure value, const QString &text) {
+            ++failures; reason = value; message = text;
+        });
+        require(client.request("start", {{"profile", "SENTINEL"}}), "request accepted for verification");
+        require(waitFor([&] { return failures == 1; }), "squatted endpoint fails verification");
+        require(reason == CoreClient::Failure::Untrusted && replies == 0, "identity failure is reported as Untrusted");
+        require(message.contains("control_server_untrusted"), "identity failure carries the catalog code");
+        QElapsedTimer settle;
+        settle.start();
+        waitFor([&] { return settle.elapsed() > 200; });
+        require(received->isEmpty(), "squatted endpoint receives no request bytes");
+    }
+}
+
 int main(int argc, char **argv) {
+    // Manual VM acceptance helpers for docs/control-server-identity.md; CTest never runs them.
+    if (argc >= 2 && std::strcmp(argv[1], "--control-probe") == 0) {
+        QCoreApplication app(argc, argv);
+        CoreClient client;
+        client.setEndpoint(argc >= 3 ? QString::fromLocal8Bit(argv[2]) : QString(), argc >= 4 ? QByteArray(argv[3]).toLongLong() : 0);
+        int result = -1;
+        QObject::connect(&client, &CoreClient::replied, &app, [&](const QString &, const QJsonObject &response) {
+            std::printf("REPLIED core=%s\n", qPrintable(response.value("core").toObject().value("version").toString()));
+            result = 0;
+        });
+        QObject::connect(&client, &CoreClient::failed, &app, [&](const QString &, CoreClient::Failure reason, const QString &message) {
+            std::printf("FAILED reason=%s message=%s\n", QMetaEnum::fromType<CoreClient::Failure>().valueToKey(int(reason)), qPrintable(message));
+            result = 2;
+        });
+        client.request("hello");
+        waitFor([&] { return result >= 0; }, 10000);
+        std::fflush(stdout);
+        return result < 0 ? 3 : result;
+    }
+    if (argc == 4 && std::strcmp(argv[1], "--control-squat") == 0) {
+        QCoreApplication app(argc, argv);
+        QLocalServer server;
+        server.setSocketOptions(QLocalServer::WorldAccessOption);
+        if (!server.listen(QString::fromLocal8Bit(argv[2]))) {
+            std::printf("LISTEN FAILED %s\n", qPrintable(server.errorString()));
+            return 1;
+        }
+        qint64 bytes = 0;
+        int connections = 0;
+        QObject::connect(&server, &QLocalServer::newConnection, &app, [&] {
+            while (auto *socket = server.nextPendingConnection()) {
+                ++connections;
+                bytes += socket->readAll().size();
+                QObject::connect(socket, &QLocalSocket::readyRead, &app, [&bytes, socket] { bytes += socket->readAll().size(); });
+            }
+        });
+        std::printf("LISTENING %s\n", argv[2]);
+        std::fflush(stdout);
+        QTimer::singleShot(QByteArray(argv[3]).toInt() * 1000, &app, &QCoreApplication::quit);
+        app.exec();
+        std::printf("SQUAT connections=%d bytes=%lld\n", connections, bytes);
+        std::fflush(stdout);
+        return 0;
+    }
 
 #ifdef Q_OS_WIN
     if (argc >= 2 && std::strcmp(argv[1], "--bootstrap-pipe-child") == 0) {
@@ -556,6 +648,7 @@ int main(int argc, char **argv) {
         return 0;
     }
     testRouting();
+    testServerIdentity();
     NativeIKEv2TransportTest::run();
     NativeIKEv2SessionTest::run();
     ConnectionManagementTest::profileGeometry(app, temporary.filePath("profile-geometry.png"));

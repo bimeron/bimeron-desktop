@@ -6,7 +6,7 @@ namespace ConnectionRepair {
 enum class Service { Unknown, Missing, Stopped, Running, Transitional, Paused, Failed };
 enum class Phase { Diagnosing, AwaitingConsent, Executing, Verifying, Ready, Failed };
 enum class Cause { Checking, ComponentsMissing, ComponentsUntrusted, Cleanup, Interrupted, Local, Ready,
-    Conflict, Permission, Incompatible, Untrusted, Missing, Stopped, Unresponsive, Transition, StopFailed, Unknown };
+    Conflict, Permission, Incompatible, Untrusted, IdentityRejected, Missing, Stopped, Unresponsive, Transition, StopFailed, Unknown };
 enum class Action { None, Restore };
 struct Snapshot {
     qint64 observedAt = 0;
@@ -37,8 +37,9 @@ inline Diagnosis diagnose(const Snapshot &s) {
     if (s.conflict != DevelopmentCore::StartBlock::None) return {Cause::Conflict, Action::Restore, phase};
     if (s.ipcFailure == CoreClient::Failure::AccessDenied) return {Cause::Permission, Action::Restore, phase};
     if (s.ipcFailure == CoreClient::Failure::Incompatible) return {Cause::Incompatible, Action::Restore, phase};
-    if (s.ipcFailure == CoreClient::Failure::PeerMismatch || s.ipcFailure == CoreClient::Failure::InvalidResponse)
-        return {Cause::Untrusted, Action::Restore, phase};
+    // control_server_untrusted, including a service built before identity checks.
+    if (s.ipcFailure == CoreClient::Failure::Untrusted) return {Cause::IdentityRejected, Action::Restore, phase};
+    if (s.ipcFailure == CoreClient::Failure::InvalidResponse) return {Cause::Untrusted, Action::Restore, phase};
     if (s.service == Service::Missing) return {Cause::Missing, Action::Restore, phase};
     if (s.service == Service::Stopped) return {Cause::Stopped, Action::Restore, phase};
     if (s.service == Service::Running) return {Cause::Unresponsive, Action::Restore, phase};

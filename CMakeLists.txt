@@ -23,6 +23,7 @@ target_link_libraries(core-update PUBLIC Qt6::Network)
 set(BIMERON_DESKTOP_SOURCES
     src/MainWindow.cpp src/MainWindow.h
     src/CoreClient.cpp src/CoreClient.h
+    src/ControlServerIdentity.cpp src/ControlServerIdentity.h
     src/NativeIKEv2Transport.cpp src/NativeIKEv2Transport.h
     src/NativeIKEv2Session.cpp src/NativeIKEv2Session.h
     src/DevelopmentCore.cpp src/DevelopmentCore.h
@@ -115,6 +116,7 @@ if(BUILD_TESTING)
     target_link_libraries(developer-mode-test PRIVATE Qt6::Widgets Qt6::Network core-update)
     target_compile_definitions(developer-mode-test PRIVATE
         NATIVE_IKEV2_TRANSPORT_TESTING
+        BIMERON_CONTROL_FIXTURE_ENDPOINTS
         BIMERON_GUI_VERSION="${PROJECT_VERSION}"
         BIMERON_CORE_UPDATE_PUBLIC_KEY="")
     if(WIN32)
@@ -222,6 +224,14 @@ if(BUILD_TESTING)
     target_link_libraries(core-identity-test PRIVATE Qt6::Core)
     target_compile_definitions(core-identity-test PRIVATE ${BIMERON_PINNED_CORE_DEFINITIONS})
     add_test(NAME core-identity-test COMMAND core-identity-test)
+    add_executable(control-identity-test tests/ControlServerIdentityTest.cpp
+        src/ControlServerIdentity.cpp src/ControlServerIdentity.h)
+    target_include_directories(control-identity-test PRIVATE src)
+    target_link_libraries(control-identity-test PRIVATE Qt6::Core)
+    if(WIN32)
+        target_link_libraries(control-identity-test PRIVATE advapi32)
+    endif()
+    add_test(NAME control-identity-test COMMAND control-identity-test)
 endif()
 set(BIMERON_CORE_ROOT "${BIMERON_CORE_ROOT_DEFAULT}" CACHE PATH "Downloaded Bimeron Core payload")
 string(TOLOWER "${CMAKE_SYSTEM_NAME}" BIMERON_CORE_PLATFORM)

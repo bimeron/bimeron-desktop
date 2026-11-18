@@ -2192,6 +2192,7 @@ void MainWindow::connectionFailure(const QString &, CoreClient::Failure reason, 
     retryAt_ = pollClock_.elapsed() + delays[qMin(retryCount_++, 3)];
     const QString text = reason == CoreClient::Failure::AccessDenied ? tr("Access to Core was denied")
         : reason == CoreClient::Failure::Incompatible ? tr("The GUI and core protocol versions are incompatible")
+        : reason == CoreClient::Failure::Untrusted ? tr("The service needs to be updated or repaired")
         : tr("Core unavailable");
     connectionLabel_->setText(text);
     connectionLabel_->setStyleSheet(themedStyle("color: #c62828; font-weight: 500"));
@@ -3300,8 +3301,9 @@ void MainWindow::connectRepairSession() {
         bool authenticated = false;
 #ifdef Q_OS_WIN
         ULONG peer = 0;
-        if (serviceCommandProcess_ && GetNamedPipeServerProcessId(
-                reinterpret_cast<HANDLE>(socket->socketDescriptor()), &peer)) {
+        // The retained broker handle must show the process still running.
+        if (serviceCommandProcess_ && WaitForSingleObject(reinterpret_cast<HANDLE>(serviceCommandProcess_), 0) == WAIT_TIMEOUT
+            && GetNamedPipeServerProcessId(reinterpret_cast<HANDLE>(socket->socketDescriptor()), &peer)) {
             authenticated = peer == GetProcessId(reinterpret_cast<HANDLE>(serviceCommandProcess_));
             if (!authenticated) {
                 const quintptr child = RepairBootstrap::authenticatedChild(serviceCommandProcess_, peer);
@@ -3312,7 +3314,8 @@ void MainWindow::connectRepairSession() {
 #elif defined(Q_OS_LINUX)
         struct ucred peer{};
         socklen_t length = sizeof(peer);
-        authenticated = linuxServiceProcess_ && getsockopt(int(socket->socketDescriptor()), SOL_SOCKET, SO_PEERCRED,
+        authenticated = linuxServiceProcess_ && linuxServiceProcess_->state() == QProcess::Running
+            && getsockopt(int(socket->socketDescriptor()), SOL_SOCKET, SO_PEERCRED,
             &peer, &length) == 0 && peer.uid == 0 && peer.pid == linuxServiceProcess_->processId();
 #endif
         if (!authenticated) {
@@ -3339,7 +3342,18 @@ void MainWindow::connectRepairSession() {
 #ifdef Q_OS_WIN
     socket->connectToServer(QStringLiteral("Bimeron.Repair.") + repairNonce_);
 #else
-    socket->connectToServer(QStringLiteral("/run/bimeron-repair/") + repairNonce_ + QStringLiteral(".sock"));
+    const QString path = QStringLiteral("/run/bimeron-repair/") + repairNonce_ + QStringLiteral(".sock");
+    // A missing socket is retried; an unsafe directory or path is an identity failure.
+    if (ControlServerIdentity::pathState(ControlServerIdentity::observePath(QStringLiteral("/run/bimeron-repair"), path))
+            == ControlServerIdentity::PathState::Untrusted) {
+        repairSocket_ = nullptr;
+        socket->deleteLater();
+        repairFailure_ = tr("The repair broker identity could not be verified.");
+        repairHistory_.append(repairFailure_);
+        updateCoreAvailability();
+        return;
+    }
+    socket->connectToServer(path);
 #endif
 }
 
@@ -3978,6 +3992,9 @@ void MainWindow::updateCoreAvailability() {
     case Cause::Untrusted:
         title = tr("Service identity could not be verified");
         message = tr("Restore checks service identity before making changes."); break;
+    case Cause::IdentityRejected:
+        title = tr("The service needs to be updated or repaired");
+        message = tr("The service could not be verified, so nothing was sent to it. This happens when the installed service is older than the application. Restore updates or repairs the service and verifies it."); break;
     case Cause::Missing:
         title = tr("Connection service is not installed");
         message = tr("Install and start the service. Administrator permission will be requested; profiles remain disconnected."); break;
