@@ -38,6 +38,16 @@ includes `READ_CONTROL`) and identification-only SQOS
 impersonate the GUI user. Only a verified handle is passed to `QLocalSocket`.
 A busy pipe is retried within the request deadline, at most 5 seconds.
 
+The pipe owner applies to the whole pipe, and `GetNamedPipeServerProcessId`
+reports the process that created the pipe, also for a later instance that
+another process serves. Neither identifies the server of one instance, so the
+client checks below cannot detect an extra instance. Core prevents extra
+instances with protected pipe DACLs: clients get `0x0012019B`
+(`FILE_GENERIC_READ | FILE_GENERIC_WRITE` without `FILE_CREATE_PIPE_INSTANCE`,
+`WRITE_DAC` or `WRITE_OWNER`), and only the server principal can create
+instances. The client checks bind the endpoint to the right principal and
+service; the process ID cross-check is an extra layer.
+
 Service pipe:
 
 1. The owner from `GetSecurityInfo(handle, SE_KERNEL_OBJECT,
@@ -47,10 +57,11 @@ Service pipe:
    `OpenService("BimeronCore", SERVICE_QUERY_STATUS)` and `QueryServiceStatusEx`
    must succeed, report `SERVICE_RUNNING` and a nonzero process ID, and that ID
    must equal the pipe server process ID. Any other answer is untrusted: a failed
-   or denied query, process ID 0, or a stopped, start-pending, stop-pending or
-   paused service. The owner alone is not enough: a medium-integrity process of
-   the same user can hold an extra instance of the SYSTEM-owned pipe and keep it
-   after the service stops, when SCM reports process ID 0.
+   or denied query, a service that is not installed, process ID 0, or a stopped,
+   start-pending, stop-pending or paused service. A pipe can outlive its service:
+   an extra instance held by another process keeps the pipe and its SYSTEM owner
+   after the service stops. This was possible with services built before
+   Core #159, whose DACL let the owner user create instances.
 4. A nonzero expected process ID from the caller must also match.
 
 Desktop never opens the service process token: a standard user cannot open a
@@ -59,9 +70,12 @@ LocalSystem token.
 Console daemon pipe (developer mode only):
 
 1. The owner is exactly `S-1-5-32-544`.
-2. Desktop opens the server process with `PROCESS_QUERY_LIMITED_INFORMATION`
-   and its token with `TOKEN_QUERY`. The token user equals the GUI user SID and
-   `TokenElevation` is true.
+2. Desktop opens the server process once with
+   `PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE` and its token through that
+   handle with `TOKEN_QUERY`. The token user equals the GUI user SID and
+   `TokenElevation` is true, and the process is still running after the
+   inspection. Desktop keeps the handle until the connection is closed, so the
+   process ID cannot be reused in between.
 3. When Desktop launched the daemon, the server process ID equals the process ID
    of the retained launch handle.
 
@@ -106,13 +120,18 @@ message.
 
 ## Presentation
 
-Both identity failures below report `control_server_untrusted`, write nothing
-and log the observed mismatch.
+Both identity failures below report `control_server_untrusted` and write
+nothing. The log records `Core: <catalog text> (control_server_untrusted)`,
+followed by the observed mismatch. The catalog text comes from the bundled
+Core (`bimeron errors --json`): "Could not verify the background VPN service.
+Update Bimeron Core to match this version of the application, then try again."
+Without a catalog, Desktop uses the same English text and the catalog's Russian
+translation.
 
 - `CoreClient::Failure::Untrusted` replaces the former `PeerMismatch` value. The
-  status line shows "The service needs to be updated or repaired" and the Bimeron
-  service window offers Restore. Desktop does not start or install the service
-  automatically for this failure.
+  status line shows "The service needs to be updated or repaired", the Bimeron
+  service window shows the catalog text and offers Restore. Desktop does not
+  start or install the service automatically for this failure.
 - `CoreClient::Failure::ServiceNotRunning` is a service pipe for which SCM
   reports no running `BimeronCore` process. Desktop presents it like an absent
   service pipe: the existing service-state guidance ("Connection service is
@@ -137,9 +156,11 @@ the control pipe.
   actual pipe owner (old service `S-1-5-32-544`, #159 service `S-1-5-18`),
   `READ_CONTROL` on the client handle, `QueryServiceStatusEx` access, rejection
   of a squatted pipe with nothing written, and the old-service route to repair.
-- The held-instance scenario: a standard user holds an extra instance of the
-  running service's pipe and the service is stopped; Desktop writes nothing and
-  reports `control_server_untrusted`.
+- With a #159 service, a standard user who owns the service cannot create an
+  extra instance of its pipe (access denied).
+- A service pipe that outlives its stopped service is rejected with nothing
+  written: against an old service, the standard user holds the extra instance;
+  against a #159 service, only SYSTEM can.
 - Console daemon checks with an elevated administrator.
 - Linux VM checks of the socket directory, socket type and peer credentials.
 
@@ -198,3 +219,29 @@ Not covered: a full GUI-driven Restore of an old service. It needs a Desktop
 package whose repair broker carries a #159 Core, and that Core is not frozen
 yet. Windows ARM64 and Linux arm64 were not built or run; CI covers their
 compilation.
+
+### Revised contract (2026-11-18, Core #159 `aad59396`)
+
+The Core test binary was rebuilt from `aad59396` (tightened DACLs) with version
+`0.4.0-beta.2.identity159b`. The window started from Automatic/Running on the
+original service file and ended in exactly that state: original `ImagePath`,
+start type, running state, file hash and directory listing, and no Bimeron WFP
+filters. The probes use `developer-mode-test --control-probe`; extra instances
+use `--control-hold`, which reports the bytes each client process wrote.
+
+- Old service, administrator owner: `Untrusted`, owner `S-1-5-32-544`.
+- Old service, `bimstd` as owner: `bimstd` held an extra instance and the
+  service was stopped; the pipe stayed. The `bimstd` probe was `Untrusted`, and
+  the holder received 0 bytes from it.
+- The installed 0.4.0-beta.1 helper updated the old service to the #159 build
+  with `service update -source`; the administrator probe was trusted.
+- #159 service, `bimstd` as owner: trusted. `bimstd` could not create an extra
+  instance of the pipe (`CreateNamedPipe` error 5, access denied).
+- #159 service with an extra instance held by SYSTEM (the only principal the new
+  DACL allows), then stopped: the pipe stayed, owned by `S-1-5-18`. The `bimstd`
+  probe was `ServiceNotRunning` with `control_server_untrusted` ("SCM reports
+  BimeronCore state 1, not running"), and the holder received 0 bytes from it.
+
+The console daemon handle retention and the catalog guidance were added after
+this window. They are covered by `control-identity-test` and
+`developer-mode-test` in CI and still need a VM run.

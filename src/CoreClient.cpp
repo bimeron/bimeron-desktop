@@ -142,6 +142,7 @@ void CoreClient::connectVerified(QLocalSocket *socket, const QByteArray &payload
     }
     QString mismatch;
     Failure failure = Failure::Untrusted;
+    quintptr serverProcess = 0; // Console daemon: retained while the socket lives.
     if (kind == Endpoint::Service) {
         const PipeObservation observed = observePipe(reinterpret_cast<quintptr>(pipe), kind);
         if (serviceTrust(observed, quint32(expectedProcess_), &mismatch) == ServiceTrust::NotRunning)
@@ -149,17 +150,23 @@ void CoreClient::connectVerified(QLocalSocket *socket, const QByteArray &payload
         if (!mismatch.isEmpty() && legacyServiceOwner(observed))
             mismatch += QStringLiteral("; the service predates server identity checks and needs to be updated or repaired");
     } else if (kind == Endpoint::Console) {
-        mismatch = consoleMismatch(observePipe(reinterpret_cast<quintptr>(pipe), kind), currentUserSid(), quint32(expectedProcess_));
+        mismatch = consoleMismatch(observePipe(reinterpret_cast<quintptr>(pipe), kind, &serverProcess),
+                                   currentUserSid(), quint32(expectedProcess_));
     } else if (expectedProcess_) {
         ULONG server = 0;
         if (!GetNamedPipeServerProcessId(pipe, &server) || qint64(server) != expectedProcess_)
             mismatch = QStringLiteral("server process %1, expected %2").arg(server).arg(expectedProcess_);
     }
     if (!mismatch.isEmpty()) {
+        if (serverProcess) CloseHandle(reinterpret_cast<HANDLE>(serverProcess));
         CloseHandle(pipe);
         finishUntrusted(mismatch, failure);
         return;
     }
+    // The verified daemon process handle lives as long as this connection, so
+    // its process ID cannot be reused while requests are exchanged.
+    if (serverProcess)
+        connect(socket, &QObject::destroyed, [serverProcess] { CloseHandle(reinterpret_cast<HANDLE>(serverProcess)); });
     // QLocalSocket takes ownership of the verified overlapped handle.
     if (!socket->setSocketDescriptor(reinterpret_cast<qintptr>(pipe), QLocalSocket::ConnectedState, QIODevice::ReadWrite)) {
         finishError(tr("Core unavailable"));

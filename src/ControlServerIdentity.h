@@ -42,6 +42,13 @@ inline Endpoint classifyUnix(const QString &path) {
 
 // What a Windows client observed on its connected pipe handle. Empty strings
 // and zero IDs mean the observation failed.
+//
+// The owner applies to the whole pipe, and GetNamedPipeServerProcessId reports
+// the process that created the pipe, also for a later instance that another
+// process serves. Neither identifies the server of one instance. Extra
+// instances are prevented by Core's pipe DACLs, which grant clients 0x12019B
+// without FILE_CREATE_PIPE_INSTANCE, WRITE_DAC or WRITE_OWNER. The checks here
+// are the client-side layer of the Core "Server identity" contract.
 struct PipeObservation {
     QString owner;
     quint32 serverProcess = 0;
@@ -50,16 +57,22 @@ struct PipeObservation {
     bool serviceQueried = false;
     quint32 serviceState = 0;
     quint32 serviceProcess = 0;
-    QString serverUser;         // Console daemon only.
+    // Console daemon only. serverRunning: the retained process handle still
+    // showed the process running after the token inspection.
+    QString serverUser;
     bool serverElevated = false;
+    bool serverRunning = false;
 };
 
 inline constexpr quint32 serviceRunning = 4; // SERVICE_RUNNING
 
 // Every result except Trusted is control_server_untrusted. NotRunning means
-// SCM does not report a running service process for the pipe: an impostor
-// can hold a SYSTEM-owned pipe instance after the service stops, so the
-// SCM binding is mandatory. It is presented as a service that is not running.
+// SCM does not report a running service process (not installed, stopped,
+// pending, process ID 0 or a failed query) while the pipe exists. The pipe
+// can then outlive the service, for example an old service's pipe with an
+// instance held by another process. The PID cross-check while the service
+// runs is an extra layer; it cannot detect an extra instance. NotRunning is
+// presented as a service that is not running.
 enum class ServiceTrust { Trusted, NotRunning, Untrusted };
 
 inline ServiceTrust serviceTrust(const PipeObservation &pipe, quint32 expectedProcess, QString *diagnostic = nullptr) {
@@ -105,6 +118,7 @@ inline QString consoleMismatch(const PipeObservation &pipe, const QString &clien
         return QStringLiteral("daemon token user %1 differs from the current user")
             .arg(pipe.serverUser.isEmpty() ? QStringLiteral("unreadable") : pipe.serverUser);
     if (!pipe.serverElevated) return QStringLiteral("daemon token is not elevated");
+    if (!pipe.serverRunning) return QStringLiteral("daemon process exited during inspection");
     return {};
 }
 
@@ -149,7 +163,11 @@ inline QString peerMismatch(bool readable, quint32 uid, qint64 pid, qint64 expec
 #ifdef Q_OS_WIN
 QString currentUserSid();
 QString processUserSid(quintptr process);
-PipeObservation observePipe(quintptr pipe, Endpoint endpoint);
+// For the console daemon, the server process is opened once with
+// PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE. When retainedProcess is
+// given, that handle is returned for the caller to keep until the connection
+// closes, so the process ID cannot be reused meanwhile; otherwise it is closed.
+PipeObservation observePipe(quintptr pipe, Endpoint endpoint, quintptr *retainedProcess = nullptr);
 #else
 PathObservation observePath(const QString &directory, const QString &socket);
 bool peerCredentials(int descriptor, quint32 *uid, qint64 *pid);

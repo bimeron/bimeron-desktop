@@ -2174,6 +2174,14 @@ void MainWindow::invalidateConnection(bool preserveServiceProbe) {
     if (trayMenu_) rebuildTrayMenu();
 }
 
+// Guidance for control_server_untrusted: the bundled Core's catalog text, or the
+// same English text (translated like the catalog) when no catalog is available.
+static QString untrustedServerGuidance(const CoreErrorCatalog &catalog) {
+    const QString text = coreCodeText(catalog, QStringLiteral("control_server_untrusted"));
+    return !text.isEmpty() ? text : QCoreApplication::translate("MainWindow",
+        "Could not verify the background VPN service. Update Bimeron Core to match this version of the application, then try again.");
+}
+
 void MainWindow::connectionFailure(const QString &, CoreClient::Failure reason, const QString &message) {
     if (nativeOwnerBlocked_) return;
     ipcObservedAt_ = QDateTime::currentMSecsSinceEpoch();
@@ -2197,7 +2205,13 @@ void MainWindow::connectionFailure(const QString &, CoreClient::Failure reason, 
     connectionLabel_->setText(text);
     connectionLabel_->setStyleSheet(themedStyle("color: #c62828; font-weight: 500"));
     if (tray_) { tray_->setIcon(trayIcon(false)); tray_->setToolTip(tr("Bimeron — %1").arg(text)); }
-    if (lastCoreError_ != message) { appendLog(message); lastCoreError_ = message; }
+    if (lastCoreError_ != message) {
+        // Identity failures use the Core catalog guidance, like Status.LastError.
+        if (reason == CoreClient::Failure::Untrusted || reason == CoreClient::Failure::ServiceNotRunning)
+            appendLog(tr("Core: %1 (%2)").arg(untrustedServerGuidance(errorCatalog()), QStringLiteral("control_server_untrusted")));
+        appendLog(message);
+        lastCoreError_ = message;
+    }
     updateConnectionButton();
     if (trayMenu_) rebuildTrayMenu();
     if (quitRequested_) { quitRequested_ = false; if (tray_) tray_->show(); showWindow(); }
@@ -3997,7 +4011,7 @@ void MainWindow::updateCoreAvailability() {
         message = tr("Restore checks service identity before making changes."); break;
     case Cause::IdentityRejected:
         title = tr("The service needs to be updated or repaired");
-        message = tr("The service could not be verified, so nothing was sent to it. This happens when the installed service is older than the application. Restore updates or repairs the service and verifies it."); break;
+        message = untrustedServerGuidance(errorCatalog()); break;
     case Cause::Missing:
         title = tr("Connection service is not installed");
         message = tr("Install and start the service. Administrator permission will be requested; profiles remain disconnected."); break;

@@ -2773,7 +2773,7 @@
   "Service could not be stopped": "Не удалось остановить службу",
   "Service identity could not be verified": "Не удалось подтвердить подлинность службы",
   "The service needs to be updated or repaired": "Службу нужно обновить или восстановить",
-  "The service could not be verified, so nothing was sent to it. This happens when the installed service is older than the application. Restore updates or repairs the service and verifies it.": "Не удалось проверить подлинность службы, поэтому ей ничего не отправлено. Так бывает, если установленная служба старше приложения. Восстановление обновит или исправит службу и проверит её.",
+  "Could not verify the background VPN service. Update Bimeron Core to match this version of the application, then try again.": "Не удалось проверить фоновую службу VPN. Обновите Bimeron Core до версии этого приложения и повторите попытку.",
   "The Core control server could not be verified; nothing was sent (control_server_untrusted): %1": "Не удалось проверить сервер управления Core, запрос не отправлен (control_server_untrusted): %1",
   "Service is changing state": "Служба меняет состояние",
   "Service is running but not responding": "Служба работает, но не отвечает",

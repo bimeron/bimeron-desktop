@@ -73,8 +73,9 @@ QString processUserSid(quintptr process) {
     return tokenIdentity(reinterpret_cast<HANDLE>(process), &user, &elevated) ? user : QString();
 }
 
-PipeObservation observePipe(quintptr pipe, Endpoint endpoint) {
+PipeObservation observePipe(quintptr pipe, Endpoint endpoint, quintptr *retainedProcess) {
     PipeObservation result;
+    if (retainedProcess) *retainedProcess = 0;
     const HANDLE handle = reinterpret_cast<HANDLE>(pipe);
     PSID owner = nullptr;
     PSECURITY_DESCRIPTOR descriptor = nullptr;
@@ -89,10 +90,14 @@ PipeObservation observePipe(quintptr pipe, Endpoint endpoint) {
         // Never open the server token: a standard user cannot open LocalSystem's.
         queryService(&result);
     } else if (endpoint == Endpoint::Console && result.owner == consoleOwner && result.serverProcess) {
-        HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, result.serverProcess);
+        // One handle for the token and the liveness check, so both describe the
+        // same process; the caller may keep it for the connection lifetime.
+        HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE, FALSE, result.serverProcess);
         if (process) {
             tokenIdentity(process, &result.serverUser, &result.serverElevated);
-            CloseHandle(process);
+            result.serverRunning = WaitForSingleObject(process, 0) == WAIT_TIMEOUT;
+            if (retainedProcess) *retainedProcess = reinterpret_cast<quintptr>(process);
+            else CloseHandle(process);
         }
     }
     return result;

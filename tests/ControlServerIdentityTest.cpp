@@ -54,8 +54,9 @@ PipeObservation servicePipe(const QString &owner, quint32 server, quint32 scmPro
     return pipe;
 }
 
-PipeObservation daemonPipe(const QString &owner, quint32 server, const QString &tokenUser, bool elevated) {
+PipeObservation daemonPipe(const QString &owner, quint32 server, const QString &tokenUser, bool elevated, bool running = true) {
     PipeObservation pipe;
+    pipe.serverRunning = running;
     pipe.owner = owner;
     pipe.serverProcess = server;
     pipe.serverUser = tokenUser;
@@ -67,7 +68,8 @@ void service() {
     const PipeObservation trusted = servicePipe(serviceOwner, 812, 812);
     expect(serviceTrust(trusted, 0) == ServiceTrust::Trusted, "SYSTEM-owned pipe served by the running SCM process");
     expect(serviceMismatch(trusted, 0).isEmpty(), "trusted service has no diagnostic");
-    // An impostor can keep a SYSTEM-owned pipe instance after the service stops.
+    // The pipe can outlive the service (an old service's pipe with an instance
+    // held by another process); without a running SCM process it is untrusted.
     expect(serviceTrust(servicePipe(serviceOwner, 4242, 0, 1), 0) == ServiceTrust::NotRunning,
            "stopped service with a held pipe instance is untrusted");
     expect(serviceTrust(servicePipe(serviceOwner, 812, 812, 2), 0) == ServiceTrust::NotRunning, "start-pending service is untrusted");
@@ -103,6 +105,7 @@ void console() {
     expect(!consoleMismatch(daemonPipe(consoleOwner, 4000, {}, false), user, 0).isEmpty(), "unreadable token");
     expect(!consoleMismatch(trusted, {}, 0).isEmpty(), "unknown client user");
     expect(!consoleMismatch(daemonPipe(consoleOwner, 0, user, true), user, 0).isEmpty(), "unreadable server process");
+    expect(!consoleMismatch(daemonPipe(consoleOwner, 4000, user, true, false), user, 0).isEmpty(), "daemon exited during inspection");
 }
 
 void unixDecisions() {
@@ -148,10 +151,14 @@ void windowsObservation() {
     expect(!serviceMismatch(observed, 0).isEmpty(), "service policy rejects the fixture pipe");
     const QString self = currentUserSid();
     expect(self.startsWith("S-1-5-"), "current user SID");
-    const PipeObservation console = observePipe(reinterpret_cast<quintptr>(client), Endpoint::Console);
-    if (console.owner == consoleOwner) // Elevated administrators own new objects as Administrators.
-        expect(console.serverUser == self, "console token user of an Administrators-owned pipe");
-    else
+    quintptr retained = 0;
+    const PipeObservation console = observePipe(reinterpret_cast<quintptr>(client), Endpoint::Console, &retained);
+    if (console.owner == consoleOwner) { // Elevated administrators own new objects as Administrators.
+        expect(console.serverUser == self && console.serverRunning, "console token user of an Administrators-owned pipe");
+        expect(retained && GetProcessId(reinterpret_cast<HANDLE>(retained)) == GetCurrentProcessId(),
+               "the inspected server process handle is retained for the caller");
+        if (retained) CloseHandle(reinterpret_cast<HANDLE>(retained));
+    } else
         expect(!consoleMismatch(console, self, 0).isEmpty(), "console policy rejects a user-owned pipe");
     std::fprintf(stdout, "fixture pipe owner %s, user %s\n", qPrintable(observed.owner), qPrintable(self));
     CloseHandle(client);
