@@ -314,6 +314,9 @@ int main(int argc, char **argv) {
 #ifdef Q_OS_WIN
                 ULONG pid = 0;
                 if (GetNamedPipeClientProcessId(reinterpret_cast<HANDLE>(socket->socketDescriptor()), &pid)) client = pid;
+#else
+                quint32 uid = 0;
+                ControlServerIdentity::peerCredentials(int(socket->socketDescriptor()), &uid, &client);
 #endif
                 bytes[client] += socket->readAll().size();
                 QObject::connect(socket, &QLocalSocket::readyRead, &app, [&bytes, socket, client] { bytes[client] += socket->readAll().size(); });
