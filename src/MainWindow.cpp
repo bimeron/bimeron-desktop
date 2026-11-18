@@ -2535,7 +2535,7 @@ void MainWindow::handleReply(const QString &command, const QJsonObject &response
                 reportCoreUpdateResult(tr("Core was updated, but reconnection failed"));
             reconnectResultProfileId_.clear();
         }
-        if (command == "stop") {
+        if (command == "stop" || (command == "start" && error.endsWith("_run_recover"))) {
             cleanupBlocked_ = true;
             autoConnectAttempted_ = true;
             if (serviceRecoveryButton_) serviceRecoveryButton_->show();
@@ -2701,7 +2701,9 @@ void MainWindow::handleStatus(const QJsonObject &status) {
         startReadyPath_.clear();
         operation_.clear();
     }
-    if (status.value("LastError").toString().endsWith("cleanup_failed_run_recover") && !recoveryVerified_) {
+    // Any *_run_recover code and leftover protection route to emergency network recovery.
+    reconnect_ = ReconnectPolicy::fromIpc(status, capabilities_);
+    if (reconnect_.recoveryRequired && !recoveryVerified_) {
         cleanupBlocked_ = true;
         autoConnectAttempted_ = true;
         pendingStartPath_.clear();
@@ -2738,7 +2740,6 @@ void MainWindow::handleStatus(const QJsonObject &status) {
             connectionText = tr("Reconnecting… (%1/%2)").arg(static_cast<int>(attempt)).arg(static_cast<int>(limit));
     }
     // A Core without the reconnect policy fields keeps the Desktop 0.3.0 view above.
-    reconnect_ = ReconnectPolicy::fromIpc(status, capabilities_);
     reconnectCause_ = reconnect_.phase == ReconnectPolicy::Phase::Waiting
         ? coreCodeText(errorCatalog(), status.value("LastError").toString()) : QString();
     reconnectView_ = ReconnectPolicy::present(state_, reconnect_, reconnectCause_, activeProxyMode(),
@@ -4096,7 +4097,9 @@ void MainWindow::updateCoreAvailability() {
     const bool connectionAvailable = !repairSession_ && helloReady_ && !cleanupBlocked_
         && !development_->failed() && !development_->busy();
     if (!connectionAvailable && !nativeOwnerBlocked_) {
-        connectionLabel_->setText(startupPreparationPending_ || availabilityVerificationDeadline_
+        const bool residual = helloReady_ && cleanupBlocked_ && reconnect_.residualProtection;
+        connectionLabel_->setText(residual ? ReconnectPolicy::residualProtectionText()
+            : startupPreparationPending_ || availabilityVerificationDeadline_
             ? tr("Preparing connection…") : tr("Could not prepare connection"));
         connectionLabel_->setStyleSheet(themedStyle(startupPreparationPending_ || availabilityVerificationDeadline_
             ? "color: #66768a" : "color: #c62828"));

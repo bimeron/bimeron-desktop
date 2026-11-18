@@ -233,6 +233,27 @@ struct ConnectionManagementTest {
         require(window.connectionLabel_->text() == "Connection failed" && window.connectButton_->text() == "Connect",
                 "unheld failure offers Connect");
 
+        // Leftover protection after a crash or reboot, and other *_run_recover codes.
+        status = {{"State", "failed"}, {"LastError", "cleanup_failed_run_recover"}, {"LastErrorPermanent", true},
+                  {"KillSwitch", "residual"}};
+        refresh();
+        require(window.cleanupBlocked_, "residual protection routes to network recovery");
+        require(window.connectionLabel_->text() == "Internet is blocked by leftover VPN protection."
+                && window.connectionLabel_->styleSheet().contains("#c62828"), "residual text");
+        require(!window.availabilityDetails_->isHidden(), "residual offers the recovery path");
+        require(window.retryNowButton_->isHidden() && window.reconnectDetailLabel_->isHidden(), "residual is not holding");
+        require(!window.connectButton_->isEnabled() && window.connectButton_->text() == "Connect",
+                "residual blocks Connect and never offers Disconnect VPN");
+        window.cleanupBlocked_ = false;
+        status = {{"State", "failed"}, {"Session", session(false)}, {"LastError", "kill_switch_pending_run_recover"}};
+        refresh();
+        require(window.cleanupBlocked_ && window.connectionLabel_->text() == "Could not prepare connection",
+                "any run_recover code routes to network recovery");
+        window.cleanupBlocked_ = false;
+        status = {{"State", "disconnected"}, {"Session", session(false)}};
+        refresh();
+        require(!window.cleanupBlocked_, "recovery routing ends with the code");
+
         // Desktop 0.3.0 Core (a restarted daemon): no policy fields or capabilities.
         instance = "legacy";
         capabilities = {{"vpn", true}, {"proxy", true}};

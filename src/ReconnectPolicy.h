@@ -24,8 +24,10 @@ inline const QLatin1String cycle{"ReconnectCycle"};       // only after loss of 
 inline const QLatin1String phase{"ReconnectPhase"};       // "attempting" or "waiting"; may be absent
 inline const QLatin1String nextAttemptAt{"NextAttemptAt"}; // RFC 3339 UTC, whenever something is scheduled
 inline const QLatin1String lastErrorPermanent{"LastErrorPermanent"}; // retrying alone will not fix LastError
-inline const QLatin1String killSwitch{"KillSwitch"};      // "active" or "holding"
+inline const QLatin1String killSwitch{"KillSwitch"};      // "active", "holding" or "residual"
 inline const QLatin1String holding{"holding"};
+inline const QLatin1String residual{"residual"};          // no run, but protection is still installed
+inline const QLatin1String lastError{"LastError"};
 inline const QLatin1String reconnectNowCapability{"reconnect_now"};
 inline const QLatin1String killSwitchHoldCapability{"kill_switch_hold"};
 inline const QLatin1String reconnectNowCommand{"reconnect_now"}; // guarded like stop
@@ -47,6 +49,8 @@ struct State {
     int cycle = 0;               // 1-based cycle after an interruption, otherwise 0
     qint64 nextAttemptAtMs = 0;  // epoch milliseconds of the next scheduled attempt or cycle; 0 when none
     bool protectionHeld = false; // the kill switch blocks traffic without a tunnel
+    bool residualProtection = false; // leftover protection without a run; needs network recovery
+    bool recoveryRequired = false;   // LastError ends in _run_recover or protection is residual
     bool lastErrorPermanent = false;
     bool retryNowSupported = false;
 };
@@ -89,6 +93,9 @@ inline State fromIpc(const QJsonObject &status, const QJsonObject &capabilities)
     }
     const QJsonValue phase = status.value(Ipc::phase);
     const QJsonValue killSwitch = status.value(Ipc::killSwitch);
+    state.residualProtection = killSwitch.toString() == Ipc::residual;
+    state.recoveryRequired = state.residualProtection
+        || status.value(Ipc::lastError).toString().endsWith(QLatin1String("_run_recover"));
     const bool policy = capabilities.value(Ipc::reconnectNowCapability).isBool()
         || capabilities.value(Ipc::killSwitchHoldCapability).isBool()
         || phase.isString() || killSwitch.isString() || status.contains(Ipc::cycle);
@@ -107,6 +114,11 @@ inline State fromIpc(const QJsonObject &status, const QJsonObject &capabilities)
     return state;
 }
 
+// Status text for leftover protection (pending user approval; change it here only).
+inline QString residualProtectionText() {
+    return text("Internet is blocked by leftover VPN protection.");
+}
+
 // Remaining time as m:ss, rounded up so that 0:00 appears only when it is due.
 inline QString countdown(qint64 remainingMs) {
     const qint64 seconds = remainingMs <= 0 ? 0 : (remainingMs + 999) / 1000;
@@ -119,6 +131,12 @@ inline Presentation present(const QString &coreState, const State &state, const 
                             bool proxy, qint64 nowMs) {
     Presentation view;
     if (state.kind == Kind::Legacy) return view;
+    // Residual protection is not a held session: no Retry now and no "paused" line.
+    if (state.residualProtection) {
+        view.title = residualProtectionText();
+        view.problem = true;
+        return view;
+    }
     if (coreState == QLatin1String("failed")) {
         if (state.protectionHeld) {
             view.title = text("Couldn't connect. Check your internet connection and access key. "

@@ -113,6 +113,30 @@ inline void mapping() {
            "permanent error marker");
     expect(view(waiting(1, 1000), {}, "Transient cause").detail == "Transient cause", "the cause is shown for every error");
 
+    // Recovery routing: any *_run_recover code, and leftover protection.
+    for (const char *code : {"cleanup_failed_run_recover", "kill_switch_pending_run_recover", "kill_switch_arm_failed_run_recover"}) {
+        const State recover = fromIpc({{"State", "failed"}, {"LastError", code}}, {});
+        expect(recover.recoveryRequired && !recover.residualProtection && !recover.protectionHeld, "run_recover code routes to recovery");
+        expect(fromIpc({{"State", "failed"}, {"LastError", code}}, {}).kind == Kind::Legacy, "old Core keeps its recovery code");
+    }
+    for (const char *code : {"transport_check_failed", "access_key_unavailable", "run_recover_unknown", ""})
+        expect(!fromIpc({{"State", "failed"}, {"LastError", code}}, {}).recoveryRequired, "other codes do not route to recovery");
+    const QJsonObject residual{{"State", "failed"}, {"LastError", "cleanup_failed_run_recover"},
+                               {"LastErrorPermanent", true}, {"KillSwitch", "residual"}};
+    State leftover = fromIpc(residual, {{"reconnect_now", true}});
+    expect(leftover.residualProtection && leftover.recoveryRequired && leftover.lastErrorPermanent, "residual protection");
+    expect(!leftover.protectionHeld, "residual is not holding");
+    QJsonObject residualOther = residual;
+    residualOther["LastError"] = "access_key_unavailable";
+    expect(fromIpc(residualOther, {}).recoveryRequired, "the marker routes to recovery when another failure is shown");
+    QJsonObject residualSession = residual;
+    residualSession["Session"] = QJsonObject{{"active", false}};
+    expect(fromIpc(residualSession, {}).residualProtection, "residual with an inactive session");
+    const QJsonObject held{{"State", "failed"}, {"KillSwitch", "holding"}, {"Session", QJsonObject{{"active", true}}},
+                           {"LastError", "transport_check_failed"}};
+    expect(fromIpc(held, {}).protectionHeld && !fromIpc(held, {}).residualProtection && !fromIpc(held, {}).recoveryRequired,
+           "holding is not residual");
+
     QJsonObject badTime = waiting(1, 1000);
     badTime["NextAttemptAt"] = "soon";
     expect(fromIpc(badTime, {}).nextAttemptAtMs == 0, "invalid time is unknown");
@@ -193,6 +217,15 @@ inline void views(bool russian) {
     expect(!view({{"State", "failed"}}, newCore).holdDisconnect, "plain failure offers Connect");
     expect(!fromIpc({{"State", "connected"}, {"KillSwitch", "active"}}, newCore).protectionHeld, "active protection is not held");
 
+    const QJsonObject residual{{"State", "failed"}, {"LastError", "cleanup_failed_run_recover"},
+                               {"LastErrorPermanent", true}, {"KillSwitch", "residual"}};
+    p = view(residual, {{"reconnect_now", true}});
+    expectText(p.title, pick("Internet is blocked by leftover VPN protection.", "Интернет заблокирован оставшейся защитой VPN."),
+               "residual text");
+    expect(p.problem && !p.retryNow && p.detail.isEmpty() && !p.holdDisconnect && !p.disconnectVpn && !p.countdown,
+           "residual: no Retry now, no paused line, no held Disconnect VPN");
+    expectText(residualProtectionText(), p.title, "one residual text");
+
     for (const char *state : {"connected", "disconnected", "stopping"}) {
         QJsonObject status = waiting(1, 1000, true);
         status["State"] = state;
@@ -235,7 +268,8 @@ inline void translationsComplete(const QJsonObject &ru) {
              "Couldn't connect. Check your internet connection and access key. Internet access stays paused until you select Disconnect VPN.",
              "Retry now", "Disconnect VPN", "Internet will work without VPN protection.",
              "VPN connection lost. Reconnecting…", "VPN is still not connected. Retrying…", "VPN reconnected",
-             "Proxy connection lost. Reconnecting…", "Proxy is still not connected. Retrying…", "Proxy reconnected"}) {
+             "Proxy connection lost. Reconnecting…", "Proxy is still not connected. Retrying…", "Proxy reconnected",
+             "Internet is blocked by leftover VPN protection."}) {
         if (ru.value(QString::fromUtf8(source)).toString().isEmpty()) {
             std::fprintf(stderr, "FAIL: missing Russian translation: %s\n", source);
             ++failures;

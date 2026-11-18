@@ -38,6 +38,7 @@ English is the source text; Russian is in `assets/translations/ru.json`.
 | Interrupted, pause | `Server unavailable · retrying in 0:59` | red | cause, held line | Retry now (if advertised), Disconnect VPN |
 | Initial-connect failure, protection held | `Couldn't connect. Check your internet connection and access key. Internet access stays paused until you select Disconnect VPN.` | red | none | Retry now (if advertised), Disconnect VPN |
 | Failure without held protection | `Connection failed` | red | none | Connect |
+| Leftover protection, no run (`KillSwitch: "residual"`) | `Internet is blocked by leftover VPN protection.` | red | none | Fix connection (emergency network recovery); Connect blocked |
 
 - The countdown is the time until Core's next attempt, as `m:ss`, rounded up
   and refreshed every second. Without a valid time the pause reads
@@ -64,6 +65,30 @@ English is the source text; Russian is in `assets/translations/ru.json`.
   handover to another kill switch profile, but Desktop offers only Disconnect VPN
   and Retry now in that state. A `kill_switch_held` start error is shown through
   the catalog like other start errors.
+
+## Leftover protection and network recovery
+
+After a crash, a power loss or a reboot during a protected session, Core can
+run with no session while its protection is still installed. It reports
+`failed`, `KillSwitch: "residual"`, `LastErrorPermanent: true` and
+`LastError: "cleanup_failed_run_recover"`, unless another failure is already
+shown; `Session` is absent or inactive.
+
+- Desktop routes to emergency network recovery when `LastError` ends in
+  `_run_recover` (for example `cleanup_failed_run_recover`,
+  `kill_switch_pending_run_recover` or `kill_switch_arm_failed_run_recover`) or
+  when `KillSwitch` is `residual`. A `start` error ending in `_run_recover` does
+  the same. Connect is blocked and Fix connection opens the existing Emergency
+  network recovery action, as for a failed cleanup.
+- With `residual`, the status line reads
+  `Internet is blocked by leftover VPN protection.` The text is pending user
+  approval and lives only in `ReconnectPolicy::residualProtectionText()`.
+- `residual` is not `holding`: it never shows Retry now, the paused line or the
+  held Disconnect VPN button.
+- Other recovery codes keep the existing `Could not prepare connection` text.
+
+Desktop 0.3.0 sees `cleanup_failed_run_recover` and shows the same recovery
+path with its generic text.
 
 ## Tray notifications
 
@@ -93,6 +118,8 @@ that reads the policy fields:
 | Next attempt time | `NextAttemptAt`, RFC 3339 UTC, whenever a backoff or pause is scheduled; absent while an attempt runs. The countdown is `NextAttemptAt` minus local now |
 | Permanent error | `LastErrorPermanent`: retrying alone will not fix `LastError` |
 | Protection held | `KillSwitch` is `holding`; in `failed` also `Session.active` |
+| Leftover protection | `KillSwitch` is `residual` |
+| Network recovery required | `LastError` ends in `_run_recover`, or leftover protection |
 | Retry now | capability `reconnect_now`; command `reconnect_now` |
 
 Retry now is hidden while an attempt runs, so `reconnect_not_pending` appears
@@ -121,7 +148,8 @@ extra line, no Retry now and the plain Disconnect button.
     restarted initial attempts;
   - the held-failure button stopping without a profile switch and Connect after
     release;
-  - the unheld failure and the unchanged view after a restart into an old Core.
+  - the unheld failure and the unchanged view after a restart into an old Core;
+  - leftover protection and another `_run_recover` code routing to recovery.
 - `developer-mode-test` passes on Windows x64; CI runs the full suite on
   Windows x64 and Linux and builds all four targets.
 - Before release: check the states visually with a Core build of the contract
