@@ -126,3 +126,59 @@ the control pipe.
   of a squatted pipe with nothing written, and the old-service route to repair.
 - Console daemon checks with an elevated administrator.
 - Linux VM checks of the socket directory, socket type and peer credentials.
+
+## Verification (2026-11-18)
+
+Builds: Windows amd64 Release (MSVC, Qt 6.8.3) on the host, compile only;
+Linux amd64 Release (Ubuntu 22.04, Qt 6.2) on the Linux VM. Tests and probes
+ran only on the VMs. The Core #159 test binary was built from bimeron-core
+`d08b2afe` with version `0.4.0-beta.2.identity159`.
+
+Windows 10 STD VM. The installed Desktop 0.3.0 GUI and its Core `5fcadd71`
+service stayed in place; the service binary, `ImagePath` and state were
+restored afterwards (SHA-256 `14c88367...acb1e`).
+
+- `control-identity-test`, `core-identity-test`, `installer-core-test`,
+  `profile-vless-test` and `developer-mode-test --visual-check` (offscreen,
+  elevated administrator) passed. `developer-mode-test` reads `ru.json` from its
+  compile-time source path, so a copy was placed at that path on the VM.
+- Old service, elevated administrator (service owner): pipe owner
+  `S-1-5-32-544`, rejected as `Untrusted` with the "needs to be updated or
+  repaired" diagnostic.
+- Old service, standard user `bimstd` (interactive logon, Medium integrity,
+  temporarily set as the service owner): `READ_CONTROL` read the owner
+  `S-1-5-32-544`, `QueryServiceStatusEx` returned the PID, and the service was
+  rejected. A standard user that is not the service owner gets
+  `AccessDenied` from the pipe DACL, as before.
+- Update route: the installed 0.4.0-beta.1 helper ran
+  `service update -source <#159 build>` against the old service and succeeded.
+  The updated service replied to both the administrator owner and the
+  standard-user owner (pipe owner `S-1-5-18`, SCM PID matched).
+- Squatted service pipe (service stopped): a `bimstd` squatter and an
+  administrator squatter (owner `S-1-5-21-...-1001`) were each rejected by a
+  probe running as the other user. The squatters' per-client accounting showed
+  0 bytes from the probe, while the installed Desktop 0.3.0 GUI sent its
+  72–144 byte requests to them: this is the exposure the change removes.
+- Console daemon (elevated administrator): an existing elevated daemon of the
+  same user replied with and without its launched PID, and was rejected with a
+  wrong launched PID.
+
+Linux VM (Ubuntu 22.04, installed Desktop 0.3.0 and Core 0.4.0-beta.1 service):
+
+- CTest: 10 of 11 passed, including `control-identity-test`. In
+  `developer-mode-test`, the new squatted-socket check passed, but a later
+  fixture fails with "save isolated native selector fixture". The unchanged
+  base commit `3f9ad05` fails the same way on this VM, so this is a pre-existing
+  environment issue.
+- Real socket (`/run/bimeron` root `0711`, socket, root listener): replied.
+- `/run/bimeron` mode `0731`: rejected before connecting.
+- Service stopped, `test` squatter: a symlinked runtime directory and a
+  world-writable root directory were rejected before connecting. A root `0711`
+  directory with a socket from a UID 1000 listener was rejected after connecting
+  by `SO_PEERCRED`, with 0 bytes from the probe. The installed Desktop 0.3.0 GUI
+  sent 72 bytes to each squatter.
+
+Not covered: a full GUI-driven Restore of an old service. It needs a Desktop
+package whose repair broker carries a #159 Core, and that Core is not frozen
+yet. Windows ARM64 and Linux arm64 were not built or run; CI covers their
+compilation.
