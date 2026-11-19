@@ -1890,7 +1890,7 @@ void MainWindow::addProfile() {
     // A multi-line WireGuard configuration cannot enter the link field. This is
     // a presentation hint only; Core decides the format when it is imported.
     const auto clipboardConfig = [](const QString &text) {
-        return text.contains('\n') && (text.contains("[Interface]", Qt::CaseInsensitive) || text.contains("[Peer]", Qt::CaseInsensitive));
+        return text.contains('\n') && text.contains('[') && text.toUtf8().size() <= 64 * 1024;
     };
     auto updatePaste = [&] {
         const QString clipboardKey = QApplication::clipboard()->text().trimmed();

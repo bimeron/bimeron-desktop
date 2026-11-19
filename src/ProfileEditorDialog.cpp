@@ -1388,7 +1388,22 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
                 return;
             }
         }
-        if (index == wgRawIndex && !wgRawDirty_) syncWireGuardRaw();
+        if (index == wgRawIndex && !wgRawDirty_) {
+            this->wireGuardText(); // The constructor parameter shadows the member.
+            if (!wgBridgeError_.isEmpty()) {
+                // The raw tab would show the original text and silently drop the
+                // pending field edits once edited; keep the field draft instead.
+                const QSignalBlocker blocker(tabs_);
+                tabs_->setCurrentIndex(tabs_->indexOf(wgPage_));
+                previousTab_ = tabs_->indexOf(wgPage_);
+                QMessageBox box(QMessageBox::Information, tr("WG/AWG config"),
+                    tr("Correct the WireGuard fields first: Core could not apply them, so the WG/AWG config cannot show them yet."), QMessageBox::Ok, this);
+                box.setObjectName("wireGuardFieldsPending");
+                box.exec();
+                return;
+            }
+            syncWireGuardRaw();
+        }
     });
     refreshWireGuard();
     checkWireGuard();
@@ -3097,8 +3112,7 @@ void ProfileEditorDialog::loadWireGuard(const QString &text, const QJsonObject &
     wgCacheKey_.clear();
     // Without a usable inspection, or for an ambiguous document, only the
     // WG/AWG config tab edits the text.
-    wgRawOnly_ = (inspection.isEmpty() && !text.isEmpty()) || !inspection.value("fields_error").toString().isEmpty()
-        || (!inspection.isEmpty() && !inspection.value("fields").isObject());
+    wgRawOnly_ = (inspection.isEmpty() && !text.isEmpty()) || !inspection.value("fields_error").toString().isEmpty();
     wgForm_->setValues(inspection.value("fields").toObject());
     {
         const QSignalBlocker blocker(wgRaw_);
@@ -3122,7 +3136,7 @@ bool ProfileEditorDialog::applyWireGuardRaw() {
         QMessageBox::warning(this, tr("Error"), reply.error);
         return false;
     }
-    if (!reply.fieldsError().isEmpty() || !reply.object.value("fields").isObject()) {
+    if (!reply.fieldsError().isEmpty()) {
         QMessageBox box(QMessageBox::Information, tr("WG/AWG config"),
             tr("This WG/AWG configuration cannot be shown as fields. Continue editing the WG/AWG config tab."), QMessageBox::Ok, this);
         box.setObjectName("wireGuardRawOnly");

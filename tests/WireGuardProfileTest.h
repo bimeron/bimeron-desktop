@@ -498,6 +498,47 @@ static void wireGuardEditor(const QString &directory) {
         require(!message.isEmpty() && !pairValidated && editor.result() != QDialog::Accepted && !message.contains("SENTINEL"));
     }
     {
+        // A refused field draft is not replaced by the original text in the WG/AWG config tab.
+        ProfileEditorDialog editor(profile, caps, nullptr, accepted, "fake-core", path, false, key);
+        editor.findChild<QLineEdit *>("wireGuardPeer_Endpoint")->setText("other.example:51820");
+        editor.findChild<QLineEdit *>("wireGuardInterface_Address")->setText("10.0.0.2/32 # comment");
+        bool warned = false;
+        QTimer::singleShot(0, [&warned] {
+            auto *box = qobject_cast<QMessageBox *>(QApplication::activeModalWidget());
+            warned = box && box->objectName() == "wireGuardFieldsPending";
+            if (box) box->accept();
+        });
+        auto *tabWidget = tabs(editor);
+        tabWidget->setCurrentIndex(tabIndex(editor, "WG/AWG config"));
+        require(warned && tabWidget->currentIndex() == tabIndex(editor, "WireGuard"));
+        require(editor.findChild<QLineEdit *>("wireGuardPeer_Endpoint")->text() == "other.example:51820");
+    }
+    {
+        // Removing the last field: Core omits the empty fields map, which is still a valid reply.
+        WireGuardCore::setRunner([](const QString &, const QByteArray &input, QString *) {
+            const QJsonObject request = QJsonDocument::fromJson(input).object();
+            if (request.value("op") == "edit")
+                return QJsonObject{{"version", 1}, {"format", "wireguard"}, {"protocol", "wireguard"}, {"text", "[Interface]\n"},
+                    {"problems", QJsonArray{QJsonObject{{"code", "value_required"}, {"document", "wireguard"}, {"section", "Interface"}, {"field", "PrivateKey"}}}}};
+            return QJsonObject{{"version", 1}, {"format", "wireguard"}, {"protocol", "wireguard"},
+                {"fields", QJsonObject{{"Interface/PrivateKey", "KEY"}}}};
+        });
+        ProfileEditorDialog editor(profile, caps, nullptr, accepted, "fake-core", path, false, "[Interface]\nPrivateKey = KEY\n");
+        editor.findChild<QLineEdit *>("wireGuardInterface_PrivateKey")->setText({});
+        require(editor.wireGuardText() == "[Interface]\n");
+        // Incomplete capability and detection replies are transient, never verdicts.
+        WireGuardCore::setRunner([](const QString &, const QByteArray &input, QString *) {
+            const QString op = QJsonDocument::fromJson(input).object().value("op").toString();
+            return op == "capabilities" ? QJsonObject{{"version", 1}, {"capabilities", QJsonObject{}}}
+                                        : QJsonObject{{"version", 1}, {"format", ""}};
+        });
+        bool definitive = true;
+        require(!WireGuardCore::cliSupported("fake-core", &definitive) && !definitive);
+        const auto detected = WireGuardCore::detect("fake-core", "[Peer]\n");
+        require(!detected.answered() && !detected.definitive);
+        WireGuardCore::setRunner([&bridge](const QString &, const QByteArray &input, QString *) { return bridge.handle(input); });
+    }
+    {
         // A transient failure during live validation is retried on Save for the same draft.
         int failures = 1;
         WireGuardCore::setRunner([&bridge, &failures](const QString &, const QByteArray &input, QString *error) {

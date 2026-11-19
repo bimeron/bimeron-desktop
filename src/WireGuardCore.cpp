@@ -76,11 +76,16 @@ bool wellFormed(const QString &op, const QJsonObject &object) {
     const QJsonValue problems = object.value("problems");
     if (!problems.isUndefined() && !problems.isArray()) return false;
     if (!problems.toArray().isEmpty() && op != "edit") return true;
-    if (op == "capabilities") return object.value("capabilities").isObject();
-    if (op == "detect") return object.value("format").isString();
+    if (op == "capabilities") return object.value("capabilities").toObject().value("supported").isBool();
+    if (op == "detect") {
+        const QString format = object.value("format").toString();
+        return format == "bimeron" || format == "wireguard";
+    }
     if (op == "inspect" || op == "edit" || op == "import_uri") {
         if ((op == "edit" || op == "import_uri") && !object.value("text").isString()) return false;
-        return object.value("fields").isObject() || object.value("fields_error").isString();
+        // Core omits an empty fields map, for example after removing the last key.
+        return object.value("fields").isObject() || object.value("fields_error").isString()
+            || (object.value("format").toString() == "wireguard" && object.value("fields").isUndefined());
     }
     return false;
 }

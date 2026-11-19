@@ -41,8 +41,8 @@ Add profile accepts:
   new pair. A document that looks like both is refused with `document_format_ambiguous`.
 - `vpn://` (Amnezia), `wireguard://` and `wg://` links in the link field. The name field is
   optional for these links: an empty name uses the name from the link, otherwise `WireGuard`.
-- A WG/AWG configuration on the clipboard. When the clipboard holds multi-line text with an
-  `[Interface]` or `[Peer]` header, Paste becomes "Paste WireGuard configuration" and imports
+- A WG/AWG configuration on the clipboard. When the clipboard holds multi-line text up to
+  64 KiB with a section header in any spelling, Paste becomes "Paste WireGuard configuration" and imports
   it directly; Core `detect` decides the format, so a partial configuration reaches the
   correction editor as from a file. This check is a presentation hint only.
 - A Bimeron profile whose `[AccessKey] File` references a WG/AWG file, relative or absolute.
@@ -142,7 +142,9 @@ Fields, both raw tabs and Save use one draft per document. A field edit becomes 
 their bytes. Clearing a field removes its line. Leaving an edited WG/AWG config tab inspects
 the text and reloads the fields; a document Core cannot show as fields (`fields_error`:
 duplicate keys, several `[Peer]` sections, malformed lines) stays in that tab and the
-WireGuard tab is disabled. Raw edits of a CRLF document keep CRLF. Opening, cancelling or
+WireGuard tab is disabled. While Core refuses a field edit, the WG/AWG config tab does not
+open, so the pending field draft is never replaced by the original text. Raw edits of a CRLF
+document keep CRLF. Opening, cancelling or
 saving without changes rewrites neither file.
 
 Save first requires Core `detect` to classify the WG/AWG text as `wireguard`: Core also accepts
