@@ -5,6 +5,7 @@
 #include <QJsonArray>
 #include <QMap>
 #include <functional>
+#include <optional>
 
 #include "CoreProblems.h"
 
@@ -16,15 +17,25 @@ class QPlainTextEdit;
 class QSpinBox;
 class QTableWidget;
 class QTabWidget;
+class QTimer;
+class WireGuardForm;
 
 class ProfileEditorDialog final : public QDialog {
     Q_OBJECT
 public:
     explicit ProfileEditorDialog(const QString &text, const QJsonObject &capabilities, QWidget *parent = nullptr,
                                  std::function<bool(const QString &, CoreFailure *)> validateRaw = {},
-                                 const QString &coreExecutable = {}, const QString &profilePath = {}, bool create = false);
+                                 const QString &coreExecutable = {}, const QString &profilePath = {}, bool create = false,
+                                 const std::optional<QString> &wireGuardText = std::nullopt);
     ~ProfileEditorDialog() override;
     QString configText() const;
+    // WireGuard/AmneziaWG pairs: the Bimeron profile plus the WG/AWG document
+    // referenced by [AccessKey] File. wireGuardText returns the original text
+    // when nothing changed; Core edits the document field by field.
+    bool isWireGuard() const;
+    QString wireGuardText() const;
+    // Validates the Bimeron draft together with the WG/AWG draft.
+    void setPairValidator(std::function<bool(const QString &, const QString &, CoreFailure *)> validator) { validatePair_ = std::move(validator); }
     // Developer sessions may convert the access source between a link and
     // fields when Core reports access_conversion.
     void setDeveloperMode(bool enabled);
@@ -157,4 +168,34 @@ private:
     void focusProblem(const CoreProblem &problem);
     void markProblemField(QWidget *widget);
     void clearProblemMarks();
+
+    // WireGuard/AmneziaWG state. wgLoaded_ is the document the form shows;
+    // field edits become Core set_field operations against it.
+    bool validateDraft(const QString &text, CoreFailure *failure);
+    void loadWireGuard(const QString &text, const QJsonObject &inspection);
+    bool applyWireGuardRaw();
+    void syncWireGuardRaw();
+    void refreshWireGuard();
+    void checkWireGuard();
+    QJsonObject wireGuardInspection() const;
+    bool wireGuard_ = false;
+    bool wireGuardCreatable_ = false;
+    QString wgOriginal_, wgLoaded_;
+    QJsonObject wgInspection_;
+    bool wgRawDirty_ = false, wgRawOnly_ = false;
+    mutable QString wgBridgeError_, wgCacheKey_, wgCacheText_, wgCacheError_;
+    mutable bool wgCacheRefused_ = false, wgCacheRefusedState_ = false;
+    bool wgEdited_ = false;
+    mutable QJsonObject wgCacheInspection_;
+    mutable QList<CoreProblem> wgCacheProblems_;
+    WireGuardForm *wgForm_ = nullptr;
+    QWidget *wgPage_ = nullptr, *wgRawPage_ = nullptr, *allowedIpsGroup_ = nullptr;
+    QLabel *wgServiceNotice_ = nullptr;
+    QPlainTextEdit *wgRaw_ = nullptr;
+    QComboBox *allowedIpsMode_ = nullptr;
+    QLabel *allowedIpsHint_ = nullptr, *allowedIpsList_ = nullptr, *allowedIpsNote_ = nullptr;
+    QList<QWidget *> ruleControls_;
+    QTimer *wgCheck_ = nullptr;
+    int previousTab_ = 0;
+    std::function<bool(const QString &, const QString &, CoreFailure *)> validatePair_;
 };

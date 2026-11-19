@@ -2311,6 +2311,8 @@ static void protocolTabLayout() {
     require(fields->y() == 0 && about->y() < margins.top() + margins.bottom() + 2 * about->height());
 }
 
+#include "WireGuardProfileTest.h"
+
 int main(int argc, char **argv) {
     require(routingGroupContains({"us", "google"}, " US "));
     require(routingGroupRows({"google", "GOOGLE", "us"}, {" Google ", "US"})
@@ -2581,6 +2583,8 @@ int main(int argc, char **argv) {
     nativeRegressions(temporary.path());
     shadowSerialization();
     if (!qEnvironmentVariable("BIMERON_GEODATA_CORE").isEmpty()) shadowSerialization(qEnvironmentVariable("BIMERON_GEODATA_CORE"));
+    wireGuardStorage(temporary.path());
+    wireGuardEditor(temporary.path());
     preservationRegressions(temporary.path());
     sshProfiles(temporary.path());
     ProfileStore uriStore(temporary.path() + "/uri-import");

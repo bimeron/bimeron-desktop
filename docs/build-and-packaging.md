@@ -462,6 +462,10 @@ connection test executable also covers transient SSH challenge UI and private IP
 Protocol URI import tests use `BIMERON_PRESERVATION_CORE` targeting Core
 `v0.3.0-beta.1` revision `9f527efe0a4959786084675f1ff795edb8a0d910`.
 The current bundle pin is not evidence of support for these new protocols.
+WireGuard/AmneziaWG fixtures in `profile-vless-test` use a fake `bimeron wireguard`
+bridge; set `BIMERON_WIREGUARD_CORE` to a Core built from `feat/wireguard-awg` at
+`e885b4a8ddfa811efebe9558e7adb01692c8239c` to repeat them against the real bridge. This optional path does not change the
+bundled Core; see [WireGuard and AmneziaWG profiles](wireguard-profiles.md#verification).
 
 ## Foreground installer feasibility prototype (not enabled)
 

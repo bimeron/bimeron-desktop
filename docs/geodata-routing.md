@@ -267,3 +267,9 @@ absent source directory cover the relevant dirty-state and validation-location
 paths. Diff review and whitespace checks passed. No packaging, release, service
 changes or commits were performed. ARM64 builds/runtime were not repeated for
 this non-release fix; cross-platform runtime evidence is Windows/Linux amd64.
+
+## WireGuard and AmneziaWG profiles
+
+WG/AWG profiles add "AllowedIPs priority" (`[Routing] AllowedIPsMode`) to the Routing tab.
+With "AllowedIPs only" the rule table and default action are disabled and explained; the
+rules stay in the profile. See [WireGuard and AmneziaWG profiles](wireguard-profiles.md#routing).
