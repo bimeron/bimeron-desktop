@@ -1,6 +1,7 @@
 #include "RepairBootstrap.h"
 #include <QDesktopServices>
 #include "MainWindow.h"
+#include "CoreUpdatePrompt.h"
 #include "ElevationOwner.h"
 #include "WindowsTheme.h"
 #include "HiDpiCheckBox.h"
@@ -1096,12 +1097,10 @@ QWidget *MainWindow::settingsPage() {
         }
         const QString confirmedInstance = instance_;
         const QString confirmedSession = sessionId_;
-        const bool sessionActive = state_ == "connected" || state_ == "connecting" || state_ == "reconnecting";
-        const QString warning = sessionActive
-            ? (activeProxyMode() ? tr("Installing Core %1 will interrupt the active proxy. Bimeron will reconnect the same profile after a successful update. Update now?")
-                                 : tr("Installing Core %1 will interrupt the active VPN. Bimeron will reconnect the same profile after a successful update. Update now?")).arg(version)
-            : tr("Core %1 is downloaded and verified. Update the service now?").arg(version);
-        if (QMessageBox::question(this, tr("Core update ready"), warning,
+        // A held failed run counts as active: the update stops it and the profile starts again.
+        const auto prompt = CoreUpdatePrompt::prompt(version, state_, reconnect_, activeProxyMode());
+        const bool sessionActive = prompt.reconnect;
+        if (QMessageBox::question(this, tr("Core update ready"), prompt.text,
                                   QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes) {
             updater_.discardStaged();
             return;

@@ -61,6 +61,7 @@ static bool waitFor(const std::function<bool()> &condition, int timeout = 3000) 
 
 #include "ConnectionManagementTest.h"
 #include "ReconnectPolicyTest.h"
+#include "CoreUpdatePromptTest.h"
 #include "NativeIKEv2TransportTest.h"
 #include "NativeIKEv2SessionTest.h"
 
@@ -764,6 +765,8 @@ int main(int argc, char **argv) {
     ConnectionManagementTest::reconnectProgress();
     ReconnectPolicyTest::run();
     require(ReconnectPolicyTest::failures == 0, "reconnect policy model");
+    CoreUpdatePromptTest::run();
+    require(CoreUpdatePromptTest::failures == 0, "core update prompt");
     ConnectionManagementTest::reconnectPolicyView();
     ConnectionManagementTest::inactiveSessionProfileRemoval();
     DevelopmentCore backend(temporary.filePath("missing-helper"));

@@ -121,6 +121,23 @@ into the 0.3.1 release notes:
   seconds to detect the loss before the first retry cycle starts (observed on
   the Windows test VM).
 
+## Core update confirmation
+
+`src/CoreUpdatePrompt.h` builds the text of the "Core update ready" dialog:
+
+- A session counts as active while it connects, is connected or reconnects,
+  and in a failed run that holds protection (`failed`, `KillSwitch: "holding"`,
+  `Session.active`). The update stops it, and after a verified update Desktop
+  starts the same profile again, exactly as for a connected session.
+- When the session owns kill switch protection (`KillSwitch` is `active` or
+  `holding`), the interrupt text adds: "Leak protection will be removed during
+  the update, and internet traffic will bypass the VPN." («На время обновления
+  защита от утечек будет снята, и интернет пойдёт без VPN.») The service restart
+  releases that protection.
+- No warning without a kill switch, in proxy mode (Core reports no
+  `KillSwitch` there) or for `residual`. A residual block routes to network
+  recovery, and Desktop does not offer the update while recovery is pending.
+
 ## Tray notifications
 
 When notifications are enabled:

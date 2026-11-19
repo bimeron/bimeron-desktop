@@ -25,6 +25,7 @@ inline const QLatin1String phase{"ReconnectPhase"};       // "attempting" or "wa
 inline const QLatin1String nextAttemptAt{"NextAttemptAt"}; // RFC 3339 UTC, whenever something is scheduled
 inline const QLatin1String lastErrorPermanent{"LastErrorPermanent"}; // retrying alone will not fix LastError
 inline const QLatin1String killSwitch{"KillSwitch"};      // "active", "holding" or "residual"
+inline const QLatin1String active{"active"};
 inline const QLatin1String holding{"holding"};
 inline const QLatin1String residual{"residual"};          // no run, but protection is still installed
 inline const QLatin1String lastError{"LastError"};
@@ -49,6 +50,7 @@ struct State {
     int cycle = 0;               // 1-based cycle after an interruption, otherwise 0
     qint64 nextAttemptAtMs = 0;  // epoch milliseconds of the next scheduled attempt or cycle; 0 when none
     bool protectionHeld = false; // the kill switch blocks traffic without a tunnel
+    bool sessionProtected = false;   // the session owns kill switch protection (active or held)
     bool residualProtection = false; // leftover protection without a run; needs network recovery
     bool recoveryRequired = false;   // LastError ends in _run_recover or protection is residual
     bool lastErrorPermanent = false;
@@ -104,6 +106,7 @@ inline State fromIpc(const QJsonObject &status, const QJsonObject &capabilities)
     state.protectionHeld = killSwitch.toString() == Ipc::holding
         && (status.value(QLatin1String("State")).toString() != QLatin1String("failed")
             || status.value(QLatin1String("Session")).toObject().value(QLatin1String("active")).toBool());
+    state.sessionProtected = state.protectionHeld || killSwitch.toString() == Ipc::active;
     state.lastErrorPermanent = status.value(Ipc::lastErrorPermanent).toBool();
     state.cycle = positiveInteger(status.value(Ipc::cycle));
     state.kind = state.cycle ? Kind::Interrupted : Kind::Initial;
