@@ -196,7 +196,7 @@ remain outstanding and block publication. Previous VM results do not accept this
 
 ## New-candidate VM acceptance (2026-11-14, partial)
 
-Windows test VM: verified final MSI SHA-256
+Windows 10 test VM: verified final MSI SHA-256
 5e981ffecbbac323c9b13c101c907592b58dbd0f9f84256ec5ba173d64d88eb8
 before installation. Removed the prior local 0.3.0 package, installed the published
 0.2.0 MSI, then upgraded to this 0.3.0 package. All successful MSI operations

@@ -1,12 +1,13 @@
 """Offline preparation/verification only; never opens an installer session."""
 import ctypes as C
 from ctypes import wintypes as W
-import hashlib, importlib.util, json, shutil, subprocess
+import hashlib, importlib.util, json, shutil, subprocess, sys
 from pathlib import Path
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[3]
 OUT = ROOT / 'build/lab-costing-probe/Release'
-SOURCE = Path(ROOT / 'build/foreground-lab-component-final-x64/Release/lab-trace-Success.msi')
+# The exact frozen input MSI (see README): staged at this path, or passed as the first argument.
+SOURCE = Path(sys.argv[1]) if len(sys.argv) > 1 else ROOT / 'build/foreground-lab-component-final-x64/Release/lab-trace-Success.msi'
 PIN = '0c73788944a2d520628e7dd619df2eb507821021fd76cef4dd879851586d0dbf'
 spec = importlib.util.spec_from_file_location('checker', HERE.parent/'lab-trace-check.py')
 m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
@@ -47,8 +48,11 @@ def feature(p):
         if view.value:msi.MsiCloseHandle(view)
         msi.MsiCloseHandle(db)
 
+def require_pin(path):
+    # Explicit failure: the pin must hold even when Python runs with -O.
+    if not path.is_file() or sha(path)!=PIN: raise SystemExit(f'{path} is not the frozen input MSI (SHA-256 {PIN})')
 def main():
-    assert sha(SOURCE)==PIN
+    require_pin(SOURCE)
     base=logical(SOURCE); physical=streams(SOURCE)
     assert base['Component']==[]
     assert [r for r in base['_Columns'] if r[0]=='Component']==m.COMPONENT_SCHEMA
@@ -80,7 +84,7 @@ def main():
         assert (encoded('Component') in after)==bool(i&1)
         reports[name]={'sha256':sha(p),'tables':actual,'streams':{k.encode('unicode_escape').decode():{'size':len(v),'sha256':hashlib.sha256(v).hexdigest()} for k,v in after.items()}}
     assert len({r['sha256'] for r in reports.values()})==4
-    assert sha(SOURCE)==PIN and sha(OUT/'original.msi')==PIN
+    require_pin(SOURCE); require_pin(OUT/'original.msi')
     (OUT/'offline-report.json').write_text(json.dumps(reports,indent=2))
     pins='static const wchar_t* names[]={'+','.join('L"'+n+'.msi"' for n in NAMES)+'};\n'
     pins+='static const char* pins[]={'+','.join('"'+reports[n]['sha256']+'"' for n in NAMES)+'};\n'

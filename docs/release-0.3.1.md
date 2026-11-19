@@ -80,7 +80,7 @@ Package inspection:
 
 ## VM acceptance
 
-Windows test VM (Hyper-V, x64). Start state: Desktop 0.3.0 with its Core
+Windows 10 test VM (Hyper-V, x64). Start state: Desktop 0.3.0 with its Core
 `v0.4.0-beta.1` service (`14c88367…`), three profiles. A checkpoint
 `bimeron-rel031-pre-0.3.0-beta1` was taken first. UAC consent and credential
 prompts were driven through the Hyper-V virtual keyboard; a SYSTEM watcher

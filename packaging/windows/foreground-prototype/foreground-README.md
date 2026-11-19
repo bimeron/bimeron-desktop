@@ -146,7 +146,7 @@ No benchmark is applicable to this disconnected offline gate.
 Use installed VS 18 Build Tools and Python. From the repository root:
 
 ```powershell
-cmake -S packaging/windows/foreground-prototype -B build/foreground-prototype-amd64 -G "Visual Studio 18 2026" -A x64 "-DCMAKE_GENERATOR_INSTANCE=C:/Program Files (x86)/Microsoft Visual Studio/18/BuildTools" "-DWIX_TOOL_DIR=<repository>/.tools/wix"
+cmake -S packaging/windows/foreground-prototype -B build/foreground-prototype-amd64 -G "Visual Studio 18 2026" -A x64 "-DCMAKE_GENERATOR_INSTANCE=C:/Program Files (x86)/Microsoft Visual Studio/18/BuildTools" "-DWIX_TOOL_DIR=$PWD/.tools/wix"
 cmake --build build/foreground-prototype-amd64 --config Release
 ctest --test-dir build/foreground-prototype-amd64 -C Release --output-on-failure
 ```

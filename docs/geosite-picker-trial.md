@@ -137,7 +137,7 @@ Remaining limits are inherited sampled scope/ownership evidence, unproven instal
 source revisions and live installed-routing compatibility, plus ARM64 runtime.
 No packages, installed settings/services, Core mutations, commit, push or PR.
 The external baseline, per-ID ledger, task-relative diffs and validation live in
-<research-root>/geosite-eight-sections-2026-11-03;
+`<research-root>/geosite-eight-sections-2026-11-03`;
 final build/test/diagnostic logs and native captures live in ignored
 build/geosite-classification/eight-verified-* and eight-final-* files.
 
