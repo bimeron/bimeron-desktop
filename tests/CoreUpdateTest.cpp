@@ -127,7 +127,7 @@ int main(int argc, char **argv) {
     if (!configured.available()) {
         QString unavailable;
         QObject::connect(&configured, &CoreUpdater::statusChanged, &app, [&](const QString &message) { unavailable = message; });
-        configured.check("0.1.0", 1, false);
+        configured.check("0.1.0", 1, false, "instance");
         require(unavailable == "Signed updates are not available yet", "missing-key state is unclear");
     }
     QTemporaryDir writablePackage;

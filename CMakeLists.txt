@@ -142,6 +142,14 @@ if(BUILD_TESTING)
         BIMERON_CORE_UPDATE_PUBLIC_KEYS="${BIMERON_CORE_UPDATE_KEYS_DEFINE}"
         BIMERON_CORE_UPDATE_KEY_IDS="${BIMERON_CORE_UPDATE_KEY_IDS_DEFINE}")
     add_test(NAME core-update-test COMMAND core-update-test)
+    # Postponed update staging with an in-memory feed and an ephemeral runtime key.
+    add_executable(core-updater-staging-test tests/CoreUpdaterStagingTest.cpp src/CoreUpdater.cpp src/CoreUpdater.h)
+    target_include_directories(core-updater-staging-test PRIVATE src third_party/monocypher third_party/miniz)
+    target_link_libraries(core-updater-staging-test PRIVATE core-update)
+    target_compile_definitions(core-updater-staging-test PRIVATE
+        BIMERON_CORE_UPDATER_TESTING
+        BIMERON_CORE_UPDATE_PUBLIC_KEYS="")
+    add_test(NAME core-updater-staging-test COMMAND core-updater-staging-test)
     add_test(NAME core-update-keys-test
         COMMAND "${CMAKE_COMMAND}"
             "-DBIMERON_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}"

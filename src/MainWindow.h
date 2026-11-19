@@ -118,7 +118,12 @@ private:
     void requestShutdown();
     void saveDiagnostics();
     bool runServiceCommand(const QStringList &arguments, const QString &description, bool startup = false);
+    enum class CoreUpdateGate { Allowed, Busy, Unsupported };
+    CoreUpdateGate coreUpdateGate();
     bool coreUpdatePrerequisite();
+    void checkCoreUpdate();
+    void offerCoreUpdate();
+    QString withStagedCoreUpdate(const QString &message) const;
     void pollServiceCommand();
     void finishServiceCommand(int exitCode, const QString &details = {});
     void refreshServiceStatus();
@@ -319,6 +324,7 @@ private:
     bool coreUpdateCheckStarted_ = false;
     bool coreUpdateCommand_ = false;
     bool coreUpdateAwaitingResult_ = false;
+    bool coreUpdatePrompting_ = false;
     quintptr serviceCommandProcess_ = 0;
     QProcess *linuxServiceProcess_ = nullptr;
     QString serviceCommandDescription_;

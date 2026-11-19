@@ -2,6 +2,7 @@
 #include <QDesktopServices>
 #include "MainWindow.h"
 #include "CoreUpdatePrompt.h"
+#include "CoreUpdateStaging.h"
 #include "ElevationOwner.h"
 #include "WindowsTheme.h"
 #include "HiDpiCheckBox.h"
@@ -1073,8 +1074,9 @@ QWidget *MainWindow::settingsPage() {
     connect(serviceStartButton_, &QPushButton::clicked, this, &MainWindow::requestServiceStart);
     connect(serviceStopButton_, &QPushButton::clicked, this, [this] { runServiceCommand({"service", "stop"}, tr("Stopping service")); });
     connect(serviceUpdateButton_, &QPushButton::clicked, this, [this] {
-        if (!coreUpdatePrerequisite()) return;
-        updater_.check(runningCoreVersion_, 1, betaUpdatesCheck_->isChecked());
+        // A postponed update installs directly, without downloading it again.
+        if (updater_.hasStaged()) offerCoreUpdate();
+        else checkCoreUpdate();
     });
     connect(serviceUninstallButton_, &QPushButton::clicked, this, [this] {
         if (QMessageBox::warning(this, tr("Remove service"), tr("The service must be stopped before removal. Remove the installed service and its files?"),
@@ -1089,46 +1091,14 @@ QWidget *MainWindow::settingsPage() {
     coreUpdateLabel_->setWordWrap(true);
     managementLayout->addWidget(coreUpdateLabel_);
     connect(&updater_, &CoreUpdater::statusChanged, coreUpdateLabel_, &QLabel::setText);
-    connect(&updater_, &CoreUpdater::ready, this, [this](const QString &version, const QString &path, const QString &digest) {
-        if (!coreUpdatePrerequisite()) { updater_.discardStaged(); return; }
-        if (!helloReady_ || statusNeeded_ || !operation_.isEmpty() || state_ == "stopping" || cleanupBlocked_) {
-            updater_.discardStaged();
-            return;
-        }
-        const QString confirmedInstance = instance_;
-        const QString confirmedSession = sessionId_;
-        // A held failed run counts as active: the update stops it and the profile starts again.
-        const auto prompt = CoreUpdatePrompt::prompt(version, state_, reconnect_, activeProxyMode());
-        const bool sessionActive = prompt.reconnect;
-        if (QMessageBox::question(this, tr("Core update ready"), prompt.text,
-                                  QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes) {
-            updater_.discardStaged();
-            return;
-        }
-        if (!helloReady_ || statusNeeded_ || !operation_.isEmpty() || cleanupBlocked_
-            || instance_ != confirmedInstance || sessionId_ != confirmedSession) {
-            updater_.discardStaged();
-            return;
-        }
-        autoConnectAttempted_ = true;
-        reconnectProfileAfterUpdate_ = sessionActive ? activeProfileId_ : QString{};
-        expectedCoreVersionAfterUpdate_ = version;
-        updater_.setInstalling(true);
-        coreUpdateCommand_ = true;
-        const QStringList arguments = TrustedCore::updateArguments(path, version, digest);
-        if (arguments.isEmpty() || !runServiceCommand(arguments, tr("Updating service"))) {
-            coreUpdateCommand_ = false;
-            reconnectProfileAfterUpdate_.clear();
-            expectedCoreVersionAfterUpdate_.clear();
-            updater_.setInstalling(false);
-            updater_.discardStaged();
-            if (coreUpdateLabel_->text() != tr("Update the GUI package to enable safe core updates") &&
-                coreUpdateLabel_->text() != tr("Core updates require a protected system installation of the GUI package"))
-                coreUpdateLabel_->setText(tr("Core update canceled or could not start"));
-        }
+    connect(&updater_, &CoreUpdater::ready, this, &MainWindow::offerCoreUpdate);
+    connect(&updater_, &CoreUpdater::stagedChanged, this, [this] {
+        serviceUpdateButton_->setText(updater_.hasStaged() ? tr("Install Core %1").arg(updater_.stagedVersion())
+                                                           : tr("Check for core update"));
     });
     QSettings().remove("app/coreBetaUpdates");
     betaUpdatesCheck_ = new HiDpiCheckBox(tr("Include beta core updates"));
+    connect(betaUpdatesCheck_, &QCheckBox::toggled, this, [this](bool on) { updater_.applyBetaSetting(on); });
     managementLayout->addWidget(betaUpdatesCheck_);
     coreUpdateLabel_->hide();
     betaUpdatesCheck_->hide();
@@ -2510,15 +2480,18 @@ void MainWindow::handleReply(const QString &command, const QJsonObject &response
         runningCoreVersion_ = runtimeIdentity_.value("version").toString();
         const QString version = runningCoreVersion_;
         updateCoreIdentity();
+        // A staged update applies only to the service instance and Core version it was prepared for.
+        if (!runningCoreVersion_.isEmpty())
+            updater_.discardStagedUnless(runningCoreVersion_, instance_, betaUpdatesCheck_->isChecked());
         if (!coreUpdateCheckStarted_ && !version.isEmpty() && updater_.available()) {
             coreUpdateCheckStarted_ = true;
             QTimer::singleShot(3000, this, [this] {
-                if (coreUpdatePrerequisite()) updater_.check(runningCoreVersion_, 1, betaUpdatesCheck_->isChecked());
+                checkCoreUpdate();
             });
             auto *updateTimer = new QTimer(this);
             updateTimer->setInterval(24 * 60 * 60 * 1000);
             connect(updateTimer, &QTimer::timeout, this, [this] {
-                if (coreUpdatePrerequisite()) updater_.check(runningCoreVersion_, 1, betaUpdatesCheck_->isChecked());
+                checkCoreUpdate();
             });
             updateTimer->start();
         }
@@ -3342,23 +3315,119 @@ void MainWindow::saveDiagnostics() {
     QMessageBox::information(this, tr("Diagnostics"), tr("The report has been saved. It contains no keys, IP addresses, or profile paths."));
 }
 
-bool MainWindow::coreUpdatePrerequisite() {
-    if (nativeSession_ || nativeOwnerBlocked_ || development_->local() || development_->busy() || development_->failed()) return false;
+MainWindow::CoreUpdateGate MainWindow::coreUpdateGate() {
+    if (nativeSession_ || nativeOwnerBlocked_ || development_->local() || development_->busy() || development_->failed())
+        return CoreUpdateGate::Busy;
     if (!updater_.available()) {
         coreUpdateLabel_->setText(tr("Signed updates are not available yet"));
-        return false;
+        return CoreUpdateGate::Unsupported;
     }
     const QString bundled = coreExecutablePath();
     if (!TrustedCore::protectedExecutable(QCoreApplication::applicationFilePath()) ||
         !TrustedCore::protectedExecutable(bundled)) {
         coreUpdateLabel_->setText(tr("Core updates require a protected system installation of the GUI package"));
-        return false;
+        return CoreUpdateGate::Unsupported;
     }
     if (!TrustedCore::supportsSourceUpdate(bundled)) {
         coreUpdateLabel_->setText(tr("Update the GUI package to enable safe core updates"));
-        return false;
+        return CoreUpdateGate::Unsupported;
     }
-    return true;
+    return CoreUpdateGate::Allowed;
+}
+
+bool MainWindow::coreUpdatePrerequisite() { return coreUpdateGate() == CoreUpdateGate::Allowed; }
+
+void MainWindow::checkCoreUpdate() {
+    // The confirmation dialog runs a nested event loop; a check must not replace
+    // the staged file it describes.
+    if (coreUpdatePrompting_ || !coreUpdatePrerequisite()) return;
+    updater_.check(runningCoreVersion_, 1, betaUpdatesCheck_->isChecked(), instance_);
+}
+
+QString MainWindow::withStagedCoreUpdate(const QString &message) const {
+    if (!updater_.hasStaged()) return message;
+    return message + QLatin1Char('\n') + tr("Core %1 is ready to install").arg(updater_.stagedVersion());
+}
+
+// Offers the staged Core update. Answering No or any temporary block postpones it:
+// the verified file stays staged and About offers "Install Core <version>".
+// CoreUpdateStaging decides each step; the file is discarded only when it no
+// longer applies or fails its re-check.
+void MainWindow::offerCoreUpdate() {
+    using CoreUpdateStaging::Action;
+    if (!updater_.hasStaged() || updater_.busy() || coreUpdatePrompting_ || coreUpdateCommand_ || coreUpdateAwaitingResult_)
+        return;
+    const QString version = updater_.stagedVersion();
+    const auto connectionBusy = [this] {
+        return !helloReady_ || statusNeeded_ || !operation_.isEmpty() || state_ == "stopping" || cleanupBlocked_;
+    };
+    const auto applies = [this] {
+        return updater_.stagedApplies(runningCoreVersion_, instance_, betaUpdatesCheck_->isChecked());
+    };
+    const auto discard = [this] {
+        if (!updater_.discardStagedUnless(runningCoreVersion_, instance_, betaUpdatesCheck_->isChecked()))
+            updater_.discardStaged();
+    };
+    // Prerequisites can fail only temporarily here (a staged file implies they held
+    // for its check, and the -source probe can time out); keep the file either way.
+    const CoreUpdateGate gate = coreUpdateGate();
+    switch (CoreUpdateStaging::beforePrompt(gate == CoreUpdateGate::Allowed, connectionBusy(), applies())) {
+    case Action::Discard:
+        discard();
+        return;
+    case Action::Postpone:
+        coreUpdateLabel_->setText(gate == CoreUpdateGate::Unsupported ? withStagedCoreUpdate(coreUpdateLabel_->text())
+            : tr("Core %1 is ready to install, but it cannot be installed right now. Try again later").arg(version));
+        return;
+    case Action::Proceed:
+        break;
+    }
+    const QString confirmedInstance = instance_;
+    const QString confirmedSession = sessionId_;
+    // A held failed run counts as active: the update stops it and the profile starts again.
+    const auto prompt = CoreUpdatePrompt::prompt(version, state_, reconnect_, activeProxyMode());
+    const bool sessionActive = prompt.reconnect;
+    coreUpdatePrompting_ = true;
+    const bool confirmed = QMessageBox::question(this, tr("Core update ready"), prompt.text,
+                                                 QMessageBox::Yes | QMessageBox::No, QMessageBox::No) == QMessageBox::Yes;
+    coreUpdatePrompting_ = false;
+    // The staged file may have been discarded while the dialog was open; the updater reported why.
+    if (!updater_.hasStaged() || updater_.stagedVersion() != version) return;
+    const bool busy = connectionBusy();
+    switch (CoreUpdateStaging::afterPrompt(confirmed, busy, !busy && applies(),
+                                           instance_ == confirmedInstance && sessionId_ == confirmedSession)) {
+    case Action::Discard:
+        discard();
+        return;
+    case Action::Postpone:
+        coreUpdateLabel_->setText(confirmed
+            ? tr("The connection changed during confirmation. Core %1 is still ready to install").arg(version)
+            : tr("Core %1 is ready to install").arg(version));
+        return;
+    case Action::Proceed:
+        break;
+    }
+    QString path, digest;
+    if (!updater_.verifyStaged(&path, &digest)) return;
+    autoConnectAttempted_ = true;
+    reconnectProfileAfterUpdate_ = sessionActive ? activeProfileId_ : QString{};
+    expectedCoreVersionAfterUpdate_ = version;
+    updater_.setInstalling(true);
+    coreUpdateCommand_ = true;
+    // runServiceCommand repeats the prerequisite and busy checks before elevating.
+    const QStringList arguments = TrustedCore::updateArguments(path, version, digest);
+    if (arguments.isEmpty() || !runServiceCommand(arguments, tr("Updating service"))) {
+        coreUpdateCommand_ = false;
+        reconnectProfileAfterUpdate_.clear();
+        expectedCoreVersionAfterUpdate_.clear();
+        updater_.setInstalling(false);
+        if (CoreUpdateStaging::afterStartFailure(!arguments.isEmpty()) == Action::Discard) updater_.discardStaged();
+        const QString label = coreUpdateLabel_->text();
+        coreUpdateLabel_->setText(withStagedCoreUpdate(
+            label == tr("Update the GUI package to enable safe core updates") ||
+            label == tr("Core updates require a protected system installation of the GUI package")
+                ? label : tr("Core update canceled or could not start")));
+    }
 }
 
 void MainWindow::startRepairSession() {
@@ -3798,7 +3867,16 @@ void MainWindow::finishServiceCommand(int exitCode, const QString &details) {
     recoveryCommand_ = false;
     const bool finishedCoreUpdate = coreUpdateCommand_;
     coreUpdateCommand_ = false;
-    if (finishedCoreUpdate) { updater_.setInstalling(false); updater_.discardStaged(); }
+    if (finishedCoreUpdate) {
+        updater_.setInstalling(false);
+#ifdef Q_OS_LINUX
+        constexpr bool linuxHelper = true;
+#else
+        constexpr bool linuxHelper = false;
+#endif
+        if (CoreUpdateStaging::afterHelper(exitCode, linuxHelper) == CoreUpdateStaging::Action::Discard)
+            updater_.discardStaged();
+    }
     if (finishedCoreUpdate && exitCode != 0) {
         reconnectProfileAfterUpdate_.clear();
         expectedCoreVersionAfterUpdate_.clear();
@@ -3813,7 +3891,7 @@ void MainWindow::finishServiceCommand(int exitCode, const QString &details) {
         serviceStatusLabel_->setText(tr("Service: action canceled"));
         serviceStatusLabel_->setStyleSheet(themedStyle("color: #b54708"));
         appendLog(serviceCommandDescription_ + tr(": action canceled"));
-        if (finishedCoreUpdate) coreUpdateLabel_->setText(tr("Core update canceled"));
+        if (finishedCoreUpdate) coreUpdateLabel_->setText(withStagedCoreUpdate(tr("Core update canceled")));
         refreshServiceStatus();
         return;
     }

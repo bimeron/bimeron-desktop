@@ -93,11 +93,13 @@ int main(int argc, char **argv) {
         CoreUpdater updater;
         bool ready = false;
         QString status;
-        QObject::connect(&updater, &CoreUpdater::ready, &app, [&](QString version, QString path, QString digest) {
-            ready = version == "0.2.0-beta.1" && QFileInfo(path).exists() && digest.size() == 64;
+        QObject::connect(&updater, &CoreUpdater::ready, &app, [&](QString version) {
+            QString path, digest;
+            ready = version == "0.2.0-beta.1" && updater.verifyStaged(&path, &digest) &&
+                    QFileInfo(path).exists() && digest.size() == 64;
         });
         QObject::connect(&updater, &CoreUpdater::statusChanged, &app, [&](QString value) { status = value; });
-        updater.check("0.1.0-beta.4", 1, true);
+        updater.check("0.1.0-beta.4", 1, true, "instance");
         return qMakePair(ready, status);
     };
 
