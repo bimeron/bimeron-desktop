@@ -28,13 +28,17 @@ QJsonObject runProcess(const QString &executable, const QByteArray &input, QStri
     }
     process.write(input);
     process.closeWriteChannel();
-    QByteArray output;
+    QByteArray output, diagnostics;
     QElapsedTimer elapsed;
     elapsed.start();
+    // Diagnostics are never shown or logged; a bounded prefix only recognizes an older CLI.
+    const auto readDiagnostics = [&process, &diagnostics] {
+        diagnostics += process.readAllStandardError().left(qMax<qsizetype>(0, 4096 - diagnostics.size()));
+    };
     while (process.state() != QProcess::NotRunning && elapsed.elapsed() < 10000) {
         process.waitForReadyRead(50);
         output += process.readAllStandardOutput();
-        process.readAllStandardError(); // Diagnostics are never shown or logged.
+        readDiagnostics();
         if (output.size() > outputLimit) break;
     }
     if (process.state() != QProcess::NotRunning) {
@@ -44,12 +48,16 @@ QJsonObject runProcess(const QString &executable, const QByteArray &input, QStri
         return {};
     }
     output += process.readAllStandardOutput();
-    // An older CLI exits normally with "unknown command"; a crash is not a verdict.
-    *definitive = process.exitStatus() == QProcess::NormalExit;
+    readDiagnostics();
     QJsonParseError parse;
     const auto json = QJsonDocument::fromJson(output, &parse);
-    if (output.size() > outputLimit || process.exitStatus() != QProcess::NormalExit || process.exitCode() != 0
-        || parse.error != QJsonParseError::NoError || !json.isObject()) {
+    const bool valid = output.size() <= outputLimit && process.exitStatus() == QProcess::NormalExit
+        && process.exitCode() == 0 && parse.error == QJsonParseError::NoError && json.isObject();
+    // Only a valid reply or an older CLI's normal "unknown command" refusal is a
+    // verdict. A crash or malformed output is transient and retried later.
+    *definitive = valid || (process.exitStatus() == QProcess::NormalExit && process.exitCode() != 0
+        && (output + diagnostics).toLower().contains("unknown command"));
+    if (!valid) {
         *error = QObject::tr("Core WireGuard bridge returned an invalid response. The draft has been retained.");
         return {};
     }

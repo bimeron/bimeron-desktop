@@ -3016,6 +3016,13 @@ bool ProfileEditorDialog::validateDraft(const QString &text, CoreFailure *failur
             if (wgCacheRefused_) failure->problems = wgCacheProblems_;
             return false;
         }
+        const auto detected = WireGuardCore::detect(coreExecutable_, wireGuard);
+        if (!detected.answered()) { failure->text = detected.error; return false; }
+        if (detected.format() != "wireguard") {
+            failure->text = tr("The WG/AWG config is not a WireGuard or AmneziaWG configuration.");
+            failure->problems = detected.problems;
+            return false;
+        }
         if (validatePair_) return validatePair_(text, wireGuard, failure);
     }
     return !validateRaw_ || validateRaw_(text, failure);
@@ -3062,6 +3069,8 @@ QString ProfileEditorDialog::wireGuardText() const {
         wgCacheInspection_ = wgInspection_;
         if (!reply.answered()) {
             wgCacheError_ = reply.error;
+            // A transient bridge failure is retried on the next request for this draft.
+            if (!reply.definitive) wgCacheKey_.clear();
         } else if (reply.object.contains("error") || !reply.object.value("text").isString()) {
             // A refused operation returns error, the failing edit problem and the original text.
             wgCacheError_ = tr("Core refused a WireGuard field edit. The draft has been retained.");

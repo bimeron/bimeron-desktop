@@ -1330,6 +1330,14 @@ bool MainWindow::validatePair(const QString &profileText, const QString &wireGua
     CoreFailure local;
     if (!failure) failure = &local;
     QString *error = &failure->text;
+    // Core accepts URI-backed File profiles too; a pair must hold a WireGuard file.
+    const auto detected = WireGuardCore::detect(validationExecutable_, wireGuardText);
+    if (!detected.answered()) { *error = detected.error; return false; }
+    if (detected.format() != "wireguard") {
+        *error = tr("The WG/AWG config is not a WireGuard or AmneziaWG configuration.");
+        failure->problems = detected.problems;
+        return false;
+    }
     QStringList skipped;
     const QString prepared = GeoDataSelection::materialize(profileText, profilePath, validationExecutable_,
         GeoDataSelection::instance()->paths(), error, draftDirectory, &skipped);

@@ -52,8 +52,10 @@ Add profile accepts:
 Referenced files are read only when they are local regular files: Desktop never opens a
 network path (UNC, extended-length or mapped network drive on Windows, or a path through a
 symbolic link or junction, which could lead to a share) or a FIFO; Core then
-reports `file_path_not_local` or `file_not_regular`. A failed Core probe (start failure,
-timeout, crash) is transient and never cached as "not WireGuard": opening or importing such a
+reports `file_path_not_local` or `file_not_regular`. Only a valid bridge reply, or an older
+CLI's normal `unknown command` refusal, is a definitive answer. A failed Core probe (start
+failure, timeout, crash, malformed output) is transient and never cached as "not WireGuard",
+and a transient failure during live field validation is retried on the next check or Save: opening or importing such a
 profile is refused with a retry message instead of falling back to the ordinary editor. A
 managed pair opens only when Core positively identifies its key file; with an unreadable key
 file or a CLI without the bridge it does not open. Links longer than 64 KiB are refused.
@@ -142,7 +144,9 @@ duplicate keys, several `[Peer]` sections, malformed lines) stays in that tab an
 WireGuard tab is disabled. Raw edits of a CRLF document keep CRLF. Opening, cancelling or
 saving without changes rewrites neither file.
 
-Save validates the pair as Core reads it: protected drafts of both files are written beside
+Save first requires Core `detect` to classify the WG/AWG text as `wireguard`: Core also accepts
+URI-backed `File` profiles, so another text would otherwise replace the managed key file.
+It then validates the pair as Core reads it: protected drafts of both files are written beside
 the profile (or in the import draft directory), the draft profile references the draft key
 file, and `validate --json` checks both. Problems in the WG/AWG text name the WireGuard
 field (expanding the AmneziaWG section when needed) or a line of the WG/AWG config tab.

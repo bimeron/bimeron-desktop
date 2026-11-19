@@ -480,12 +480,74 @@ static void wireGuardEditor(const QString &directory) {
 #endif
     }
     {
+        // A non-WireGuard text in the WG/AWG config tab is refused before the pair is validated or saved.
+        ProfileEditorDialog editor(profile, caps, nullptr, accepted, "fake-core", path, false, key);
+        bool pairValidated = false;
+        editor.setPairValidator([&pairValidated](const QString &, const QString &, CoreFailure *) { pairValidated = true; return true; });
+        auto *tabWidget = tabs(editor);
+        tabWidget->setCurrentIndex(tabIndex(editor, "WG/AWG config"));
+        editor.findChild<QPlainTextEdit *>("wireGuardRawConfig")->setPlainText("trojan://SENTINEL@example.com:443");
+        QString message;
+        QTimer::singleShot(0, [&message] {
+            auto *dialog = QApplication::activeModalWidget();
+            if (auto *box = qobject_cast<QMessageBox *>(dialog)) message = box->text();
+            else if (dialog && dialog->objectName() == "coreProblemDialog") message = "shown: " + dialog->findChild<QLabel *>("coreProblemText")->text();
+            if (dialog) static_cast<QDialog *>(dialog)->reject();
+        });
+        editor.findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Save)->click();
+        require(!message.isEmpty() && !pairValidated && editor.result() != QDialog::Accepted && !message.contains("SENTINEL"));
+    }
+    {
+        // A transient failure during live validation is retried on Save for the same draft.
+        int failures = 1;
+        WireGuardCore::setRunner([&bridge, &failures](const QString &, const QByteArray &input, QString *error) {
+            if (QJsonDocument::fromJson(input).object().value("op") == "edit" && failures > 0) {
+                --failures;
+                *error = "timed out";
+                return QJsonObject();
+            }
+            return bridge.handle(input);
+        });
+        ProfileEditorDialog editor(profile, caps, nullptr, accepted, "fake-core", path, false, key);
+        bool pairValidated = false;
+        editor.setPairValidator([&pairValidated](const QString &, const QString &draftKey, CoreFailure *) {
+            pairValidated = draftKey.contains("PersistentKeepalive = 25");
+            return true;
+        });
+        editor.findChild<QLineEdit *>("wireGuardPeer_PersistentKeepalive")->setText("25");
+        require(editor.wireGuardText() == key && failures == 0);
+        editor.findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Save)->click();
+        require(pairValidated && editor.result() == QDialog::Accepted);
+        WireGuardCore::setRunner([&bridge](const QString &, const QByteArray &input, QString *) { return bridge.handle(input); });
+    }
+    {
         // A failing runner is a transient reply, never a cached verdict.
         WireGuardCore::setRunner([](const QString &, const QByteArray &, QString *error) { *error = "unavailable"; return QJsonObject(); });
         const auto reply = WireGuardCore::detect("fake-core", "[Peer]\n");
         require(!reply.answered() && !reply.definitive);
     }
     WireGuardCore::setRunner({});
+    {
+        // Process level: malformed output from a CLI is not cached; the next probe retries.
+        const QString scriptDirectory = QDir(directory).filePath("flaky-core");
+        require(QDir().mkpath(scriptDirectory));
+#ifdef Q_OS_WIN
+        const QString script = QDir(scriptDirectory).filePath("flaky-core.cmd");
+        const QByteArray body = "@echo off\r\nif exist \"%~dp0recovered.flag\" (\r\n  echo {\"version\":1,\"capabilities\":{\"supported\":true}}\r\n) else (\r\n"
+            "  type nul > \"%~dp0recovered.flag\"\r\n  echo not json\r\n)\r\n";
+#else
+        const QString script = QDir(scriptDirectory).filePath("flaky-core");
+        const QByteArray body = "#!/bin/sh\ncat > /dev/null\nif [ -e \"$(dirname \"$0\")/recovered.flag\" ]; then\n"
+            "  echo '{\"version\":1,\"capabilities\":{\"supported\":true}}'\nelse\n  : > \"$(dirname \"$0\")/recovered.flag\"\n  echo 'not json'\nfi\n";
+#endif
+        QFile file(script);
+        require(file.open(QIODevice::WriteOnly) && file.write(body) == body.size());
+        file.close();
+        require(file.setPermissions(file.permissions() | QFileDevice::ExeOwner));
+        bool definitive = true;
+        require(!WireGuardCore::cliSupported(script, &definitive) && !definitive);
+        require(WireGuardCore::cliSupported(script, &definitive) && definitive);
+    }
     require(!ProfileStore::localRegularFile(directory) && !ProfileStore::localRegularFile("relative.conf"));
 #ifdef Q_OS_WIN
     require(!ProfileStore::localRegularFile("\\\\server.invalid\\share\\tunnel.conf") && !ProfileStore::localRegularFile("\\\\?\\C:\\tunnel.conf"));
