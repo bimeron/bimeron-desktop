@@ -541,9 +541,12 @@ static void accessConversion() {
         "Naive = naive+quic://alice:SENTINEL@example.com:443",
         "MASQUE = masque://example.com:443"};
     const QString rule = "\n[Rule]\nCIDR = 10.0.0.0/8\nAction = direct\n";
-    for (const QString &source : sources) {
+    // Omitted DNS stays omitted and an explicit list stays explicit through
+    // conversion to fields and back to a link.
+    const QString explicitDns = "\n[Interface]\nDNS = 1.1.1.1, 1.0.0.1\n";
+    for (const QString &source : sources) for (const QString &dnsSettings : {QString(), explicitDns}) {
         const QString field = source.section(" = ", 0, 0);
-        const QString profile = "[Profile]\nVersion = 1\nName = Convert\n\n[AccessKey]\n" + source + "\n" + rule;
+        const QString profile = "[Profile]\nVersion = 1\nName = Convert\n\n[AccessKey]\n" + source + "\n" + dnsSettings + rule;
         ProfileEditorDialog editor(profile, caps, nullptr, accepted, core);
         editor.setDeveloperMode(true);
         require(shown(editor));
@@ -557,13 +560,15 @@ static void accessConversion() {
         // The form shows explicit settings; the other content is unchanged.
         require(sourceBox->currentData().toString().startsWith("Explicit") && tabs->isTabEnabled(0));
         require(fields.contains("Type = ") && !fields.contains(field + " = ") && fields.contains(rule) && fields.contains("Name = Convert"));
+        require(fields.contains(dnsSettings) && fields.contains("DNS =") == !dnsSettings.isEmpty());
         require(editor.findChild<QLineEdit *>("server")->text() == "example.com");
         require(editor.findChild<QPlainTextEdit *>("rawConfig")->toPlainText() == fields);
         require(!toFields->isEnabled() && toLink->isEnabled());
         toLink->click();
         const QString linked = editor.configText();
         require(sourceBox->currentData().toString() == field && tabs->isTabEnabled(0));
-        require(linked.contains(field + " = ") && !linked.contains("Type = ") && linked.contains(rule));
+        require(linked.contains(field + " = ") && !linked.contains("Type = ") && linked.contains(rule) && linked.contains(dnsSettings)
+            && linked.contains("DNS =") == !dnsSettings.isEmpty());
         // Nothing is stored: cancelling a changed draft asks to discard it.
         bool asked = false;
         if (linked != profile) {
@@ -592,6 +597,82 @@ static void accessConversion() {
     require(reported && editor.configText() == invalid);
 }
 
+static QString readProfile(const QString &path) {
+    QFile file(path);
+    require(file.open(QIODevice::ReadOnly));
+    return QString::fromUtf8(file.readAll());
+}
+
+static void defaultDnsRoundTrip(const QString &directory) {
+    // The shown default follows default_dns, then the rule for a reached older
+    // Core, then the bundled Core default when no Core has been reached.
+    const QJsonObject caps{{"vpn", true}, {"proxy", true}};
+    QJsonObject advertising = caps;
+    advertising.insert("default_dns", QJsonArray{"192.0.2.53", "198.51.100.53"});
+    const QString advertised = "192.0.2.53, 198.51.100.53";
+    require(ProfileStore::defaultDns(advertising) == advertised);
+    require(ProfileStore::defaultDns(caps) == "1.1.1.1");
+    require(ProfileStore::defaultDns({}) == "1.1.1.1, 1.0.0.1");
+    require(ProfileStore::defaultDns({{"default_dns", QJsonArray{"2001:db8::53"}}}) == "2001:db8::53");
+    for (const QJsonValue &malformed : {QJsonValue(QJsonArray{}), QJsonValue("1.1.1.1"), QJsonValue(QJsonArray{"1.1.1.1", 53}),
+            QJsonValue(QJsonArray{"dns.example"}), QJsonValue(QJsonArray{"1.1.1.1", "1.0.0.1", "192.0.2.1", "192.0.2.2", "192.0.2.3"})}) {
+        QJsonObject reported = caps;
+        reported.insert("default_dns", malformed);
+        require(ProfileStore::defaultDns(reported) == "1.1.1.1");
+    }
+    const auto dnsField = [](ProfileEditorDialog &editor) { return editor.findChild<QLineEdit *>("dns"); };
+    const auto editInterface = [](ProfileEditorDialog &editor) {
+        editor.findChild<QLineEdit *>("interfaceName")->setText("Edited");
+        return editor.configText();
+    };
+    // A new draft leaves DNS empty, shows the Core default and omits the option.
+    ProfileEditorDialog draft({}, advertising, nullptr, {}, {}, {}, true);
+    require(dnsField(draft)->text().isEmpty() && dnsField(draft)->placeholderText() == advertised);
+    require(dnsField(draft)->toolTip().contains(advertised));
+    require(!draft.configText().contains("DNS ="));
+    dnsField(draft)->setText("1.1.1.1, 1.0.0.1");
+    require(draft.configText().contains("\nDNS = 1.1.1.1, 1.0.0.1\n"));
+    // A profile imported from a link omits DNS; it stays omitted through
+    // editor load, an unrelated edit, save, reload and reopen.
+    ProfileStore store(directory + "/default-dns");
+    QString error;
+    const QString path = store.createConfig("Default DNS", "trojan://SENTINEL@example.com:443", &error);
+    require(!path.isEmpty() && error.isEmpty());
+    const QString created = readProfile(path);
+    require(created.contains("\n[Interface]\nMode = vpn\n") && !created.contains("DNS ="));
+    ProfileEditorDialog opened(created, advertising);
+    require(opened.findChild<QTabWidget *>()->isTabEnabled(0));
+    require(dnsField(opened)->text().isEmpty() && dnsField(opened)->placeholderText() == advertised);
+    require(opened.configText() == created);
+    const QString edited = editInterface(opened);
+    require(edited.contains("\nName = Edited\n") && !edited.contains("DNS ="));
+    require(ProfileStore::writeConfig(path, edited.toUtf8(), &error));
+    require(readProfile(path) == edited);
+    ProfileEditorDialog reopened(edited, caps);
+    require(dnsField(reopened)->text().isEmpty() && dnsField(reopened)->placeholderText() == "1.1.1.1");
+    require(reopened.configText() == edited);
+    // A typed value is written as typed, even when it equals the default, and
+    // survives save and reopen; clearing the field omits the option again.
+    dnsField(reopened)->setText("1.1.1.1, 1.0.0.1");
+    const QString typed = reopened.configText();
+    require(typed.contains("\nDNS = 1.1.1.1, 1.0.0.1\n") && typed.count("DNS =") == 1);
+    require(ProfileStore::writeConfig(path, typed.toUtf8(), &error));
+    ProfileEditorDialog explicitEditor(readProfile(path), caps);
+    require(dnsField(explicitEditor)->text() == "1.1.1.1, 1.0.0.1" && explicitEditor.configText() == typed);
+    dnsField(explicitEditor)->clear();
+    const QString cleared = explicitEditor.configText();
+    require(!cleared.contains("DNS =") && cleared.contains("\nName = Edited\n"));
+    // Explicit DNS, including the former single default, is never rewritten.
+    const QString omitted = "[Profile]\nVersion = 1\nName = Omitted\n\n[AccessKey]\nTrojan = trojan://SENTINEL@example.com:443\n\n[Interface]\nMode = vpn\n";
+    for (const QString &explicitDns : {QString("1.1.1.1"), QString("192.0.2.53, 1.1.1.1"), QString("1.0.0.1,1.1.1.1")}) {
+        const QString profile = QString(omitted).replace("Mode = vpn\n", "Mode = vpn\nDNS = " + explicitDns + "\n");
+        ProfileEditorDialog editor(profile, advertising);
+        require(editor.findChild<QTabWidget *>()->isTabEnabled(0));
+        require(dnsField(editor)->text() == explicitDns && editor.configText() == profile);
+        const QString output = editInterface(editor);
+        require(output.contains("\nDNS = " + explicitDns + "\n") && output.count("DNS =") == 1);
+    }
+}
 static void parameterForms(const QString &directory) {
     const QJsonObject caps{{"vpn", true}, {"proxy", true}};
     const QString head = "[Profile]\nVersion = 1\nName = Parameters\n[AccessKey]\n";
@@ -2576,6 +2657,7 @@ int main(int argc, char **argv) {
     }
     routingHostRegressions(temporary.path());
     parameterForms(temporary.path());
+    defaultDnsRoundTrip(temporary.path());
     formRowVisibility();
     protocolTabLayout();
     nativeRegressions(temporary.path());

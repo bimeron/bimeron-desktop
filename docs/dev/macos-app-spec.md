@@ -171,8 +171,10 @@ Requirements:
   A write error should not make it appear that the profile was successfully added.
 
 The initial parameters of the new profile correspond to Qt: `Version=1`, `Mode=vpn`,
-`Name=Bimeron` for interface, `MTU=1420`, `DNS=1.1.1.1`, `IPv6=disable`,
+`Name=Bimeron` for interface, `MTU=1420`, `IPv6=disable`,
 `KillSwitch=false`, `Routing.Default=proxy`. The profile name is specified by the user.
+`DNS` is omitted so Core applies its own default; the editor shows that default
+as the placeholder of an empty DNS field (see the profile editing contract).
 Important: the default value of `IPv6` for the core parser is `enable`; The GUI explicitly records
 `disable` when created, rather than changing the semantics of the missing parameter when imported.
 

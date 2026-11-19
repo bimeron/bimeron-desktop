@@ -10,6 +10,13 @@ change to Core syntax, validation, protocol support or its document API.
   or saving without changes must preserve the original bytes.
 - Apply explicit user edits to represented fields. Do not materialize omitted
   defaults merely because a control displays a default value.
+- `[Interface] DNS` follows the Core default. New profiles omit it, and an empty
+  DNS field keeps it omitted; the field's placeholder shows the default Core
+  applies. That value is the `default_dns` capability when Core reports it,
+  `1.1.1.1` when a reached Core does not (older Cores), and `1.1.1.1, 1.0.0.1`,
+  the bundled Core default, when no Core has been reached. Any typed value is
+  written as typed, even when it equals the default; clearing the field removes
+  the option. Explicit values in existing profiles are never rewritten.
 - Preserve untouched values, comments, unknown content, ordering and line endings.
   Refuse visual editing of ambiguous or unsupported content rather than dropping it.
 - Compare decoded values when determining changes, not their quote spelling.

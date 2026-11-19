@@ -248,6 +248,18 @@ QString ProfileStore::uriSourceField(const QString &uri) {
     return sources.value(scheme);
 }
 
+QString ProfileStore::defaultDns(const QJsonObject &capabilities) {
+    const QJsonArray advertised = capabilities.value("default_dns").toArray();
+    QStringList servers;
+    for (const QJsonValue &server : advertised) {
+        const QString address = server.toString().trimmed();
+        if (address.isEmpty() || address.contains(QRegularExpression("[^0-9A-Fa-f.:]"))) { servers.clear(); break; }
+        servers << address;
+    }
+    if (!servers.isEmpty() && servers.size() <= 4) return servers.join(", ");
+    return capabilities.isEmpty() ? QStringLiteral("1.1.1.1, 1.0.0.1") : QStringLiteral("1.1.1.1");
+}
+
 QString ProfileStore::createConfig(const QString &name, const QString &key, QString *error, const QString &identityFile, const QString &knownHostsFile) const {
     const QString trimmed = key.trimmed();
     const QString field = uriSourceField(trimmed);
@@ -263,7 +275,7 @@ QString ProfileStore::createConfig(const QString &name, const QString &key, QStr
         if (!knownHostsFile.isEmpty()) access += "\nKnownHostsFile = " + knownHostsFile;
     }
     const QString interfaceSettings = field == "SSH" ? "Mode = proxy\nListen = 127.0.0.1:1080"
-        : "Mode = vpn\nName = Bimeron\nMTU = 1420\nDNS = 1.1.1.1\nIPv6 = disable\nKillSwitch = false";
+        : "Mode = vpn\nName = Bimeron\nMTU = 1420\nIPv6 = disable\nKillSwitch = false";
     const QByteArray data = QString("[Profile]\nVersion = 1\nName = %1\n\n[AccessKey]\n%2\n\n[Interface]\n%3\n\n[Routing]\nDefault = proxy\n")
         .arg(safeName, access, interfaceSettings).toUtf8();
     if (data.size() > 64 * 1024) {

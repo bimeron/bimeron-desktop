@@ -656,7 +656,11 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
     mtu_ = new QSpinBox;
     mtu_->setRange(1280, 1500);
     dns_ = new QLineEdit;
-    dns_->setPlaceholderText("1.1.1.1, 8.8.8.8");
+    dns_->setObjectName("dns");
+    // An empty field omits DNS so Core applies its own default, shown here.
+    const QString defaultDns = ProfileStore::defaultDns(capabilities);
+    dns_->setPlaceholderText(defaultDns);
+    dns_->setToolTip(tr("Leave empty to use the Core default: %1").arg(defaultDns));
     ipv6_ = new HiDpiComboBox;
     ipv6_->addItem(tr("Enabled"), "enable");
     ipv6_->addItem(tr("Disabled"), "disable");
@@ -995,7 +999,6 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
         mode_->setCurrentIndex(mode_->findData("vpn"));
         interfaceName_->setText("Bimeron");
         mtu_->setValue(1420);
-        dns_->setText("1.1.1.1");
         ipv6_->setCurrentIndex(ipv6_->findData("enable"));
         listen_->setText("127.0.0.1:1080");
         defaultRoute_->setCurrentIndex(defaultRoute_->findData("proxy"));
@@ -1537,7 +1540,7 @@ void ProfileEditorDialog::loadText(const QString &text) {
     interfaceName_->setText(fieldValue("Interface", "Name").isEmpty() ? "Bimeron" : fieldValue("Interface", "Name"));
     const int mtu = fieldValue("Interface", "MTU").toInt();
     mtu_->setValue(mtu ? mtu : 1420);
-    dns_->setText(fieldValue("Interface", "DNS").isEmpty() ? "1.1.1.1" : fieldValue("Interface", "DNS"));
+    dns_->setText(fieldValue("Interface", "DNS"));
     ipv6_->setCurrentIndex(qMax(0, ipv6_->findData(fieldValue("Interface", "IPv6"))));
     killSwitch_->setChecked(fieldValue("Interface", "KillSwitch").compare("true", Qt::CaseInsensitive) == 0);
     defaultRoute_->setCurrentIndex(qMax(0, defaultRoute_->findData(fieldValue("Routing", "Default"))));
@@ -1988,11 +1991,12 @@ void ProfileEditorDialog::assessRepresentation() {
         if (!generated.contains(it.key()) || generated.value(it.key()) != it.value()) valid = false;
     }
     // Omitted settings may only acquire the documented Core default, never the
-    // first available GUI/capability choice. Unknown defaults require Raw.
+    // first available GUI/capability choice. Unknown defaults require Raw. An
+    // empty DNS field stays omitted, so DNS needs no entry here.
     const QMap<QString, QString> defaults{
         {"Profile/Version", "1"}, {"Profile/Name", ""}, {"AccessKey/Prefix", ""},
         {"Interface/Mode", "vpn"}, {"Interface/Name", "Bimeron"}, {"Interface/MTU", "1420"},
-        {"Interface/DNS", "1.1.1.1"}, {"Interface/IPv6", "enable"},
+        {"Interface/IPv6", "enable"},
         {"Interface/KillSwitch", "false"}, {"Interface/Listen", "127.0.0.1:1080"},
         {"Routing/Default", "proxy"}
     };
