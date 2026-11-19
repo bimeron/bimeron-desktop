@@ -202,7 +202,7 @@ inline QString coreFieldLabel(const CoreProblem &problem) {
         {"AccessKey.Username", QT_TRANSLATE_NOOP("CoreProblems", "Username")},
         {"AccessKey.ID", QT_TRANSLATE_NOOP("CoreProblems", "User ID (UUID)")},
         {"AccessKey.ServerName", QT_TRANSLATE_NOOP("CoreProblems", "Server name (SNI)")},
-        {"AccessKey.File", QT_TRANSLATE_NOOP("CoreProblems", "WireGuard configuration file")},
+        {"AccessKey.File", QT_TRANSLATE_NOOP("CoreProblems", "Key file")},
         {"WireGuard.Interface.PrivateKey", QT_TRANSLATE_NOOP("CoreProblems", "Private key")},
         {"WireGuard.Interface.Address", QT_TRANSLATE_NOOP("CoreProblems", "Addresses")},
         {"WireGuard.Interface.DNS", QT_TRANSLATE_NOOP("CoreProblems", "DNS")},

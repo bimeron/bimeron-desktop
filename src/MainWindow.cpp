@@ -1295,7 +1295,13 @@ void MainWindow::finishWireGuardProbe(const QString &identity, const QString &la
     // A transient bridge failure is not remembered as "not WireGuard"; retry later.
     if (definitive) wireGuardLabels_.insert(identity, label);
     else wireGuardRetryAt_.insert(identity, QDateTime::currentMSecsSinceEpoch() + 30000);
-    if (profileList_) updateProfileAppearance();
+    // Batch completions: one list refresh for any number of finished probes.
+    if (!profileList_ || wireGuardRefreshQueued_) return;
+    wireGuardRefreshQueued_ = true;
+    QTimer::singleShot(200, this, [this] {
+        wireGuardRefreshQueued_ = false;
+        updateProfileAppearance();
+    });
 }
 
 QString MainWindow::wireGuardLabel(int row) const {

@@ -67,6 +67,55 @@ bool absoluteReference(const QString &value, bool ssh = false) {
         || (ssh && (value == "~" || value.startsWith("~/") || value.startsWith("~\\")))));
 }
 
+// Go strconv.Unquote for a double-quoted literal, which Core applies to quoted
+// option values. Bytes from \x and octal escapes must form valid UTF-8 here.
+bool goUnquote(const QString &quoted, QString *out) {
+    const QByteArray in = quoted.toUtf8();
+    if (in.size() < 2 || in.front() != '"' || in.back() != '"') return false;
+    QByteArray bytes;
+    const auto hex = [](char c) { return c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10 : c >= 'A' && c <= 'F' ? c - 'A' + 10 : -1; };
+    const auto rune = [&bytes](uint code) {
+        if (code > 0x10FFFF || (code >= 0xD800 && code <= 0xDFFF)) return false;
+        bytes += QString::fromUcs4(reinterpret_cast<const char32_t *>(&code), 1).toUtf8();
+        return true;
+    };
+    for (qsizetype i = 1; i < in.size() - 1; ++i) {
+        const char c = in.at(i);
+        if (c == '"' || c == '\n') return false;
+        if (c != '\\') { bytes += c; continue; }
+        if (++i >= in.size() - 1) return false;
+        const char e = in.at(i);
+        static const QByteArray simple("abfnrtv\\\""), mapped("\a\b\f\n\r\t\v\\\"");
+        if (simple.contains(e)) { bytes += mapped.at(simple.indexOf(e)); continue; }
+        int digits = e == 'x' ? 2 : e == 'u' ? 4 : e == 'U' ? 8 : 0;
+        if (digits) {
+            uint value = 0;
+            for (int d = 0; d < digits; ++d) {
+                if (++i >= in.size() - 1 || hex(in.at(i)) < 0) return false;
+                value = value * 16 + uint(hex(in.at(i)));
+            }
+            if (e == 'x') bytes += char(value);
+            else if (!rune(value)) return false;
+            continue;
+        }
+        if (e >= '0' && e <= '7') {
+            uint value = uint(e - '0');
+            for (int d = 0; d < 2; ++d) {
+                if (++i >= in.size() - 1 || in.at(i) < '0' || in.at(i) > '7') return false;
+                value = value * 8 + uint(in.at(i) - '0');
+            }
+            if (value > 255) return false;
+            bytes += char(value);
+            continue;
+        }
+        return false;
+    }
+    const QString decoded = QString::fromUtf8(bytes);
+    if (decoded.toUtf8() != bytes) return false;
+    *out = decoded;
+    return true;
+}
+
 bool safeUriReferences(const QString &value) {
     if (value.startsWith('"')) return false; // Core quoting is not URI percent encoding.
     const QUrl uri(value);
@@ -177,8 +226,11 @@ QString ProfileStore::keyFileReference(const QString &profileText) {
         if (trimmed.startsWith('[') && trimmed.endsWith(']')) { section = sectionName(trimmed); continue; }
         const qsizetype equal = trimmed.indexOf('=');
         if (section != "AccessKey" || equal < 0 || trimmed.left(equal).trimmed() != "File") continue;
+        // Core decodes quoted values with Go escapes; an invalid literal stays as written
+        // (Core then rejects the profile).
+        const QString raw = trimmed.mid(equal + 1).trimmed();
         QString value;
-        reference = ProfileTextEdit::decode(trimmed.mid(equal + 1), &value) ? value : trimmed.mid(equal + 1).trimmed();
+        reference = raw.startsWith('"') && goUnquote(raw, &value) ? value : raw;
     }
     return reference;
 }

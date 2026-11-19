@@ -222,6 +222,17 @@ static void wireGuardStorage(const QString &directory) {
     require(QDir(root).entryList(QDir::Files) == before);
     require(ProfileStore::readKeyFile(path, next, &readBack) && readBack == edited);
 
+    // Core decodes quoted values with Go escapes; the reference is read the same way,
+    // so an escaped managed name is still recognized and its key file is found.
+    const QString escaped = QString(next).replace(0, 1, "\\x" + QString::number(next.at(0).unicode(), 16));
+    const QString quotedProfile = QString::fromUtf8(renamed).replace("File = " + next, "File = \"" + escaped + "\"");
+    require(ProfileStore::keyFileReference(quotedProfile) == next && ProfileStore::managedKeyFile(path, ProfileStore::keyFileReference(quotedProfile)));
+    require(ProfileStore::readKeyFile(path, ProfileStore::keyFileReference(quotedProfile), &readBack) && readBack == edited);
+    require(ProfileStore::keyFileReference("[AccessKey]\nFile = \"\\164\\u0075n\\U0000006eel.conf\"\n") == "tunnel.conf");
+    require(ProfileStore::keyFileReference("[AccessKey]\nFile = \"a\\tb\\\\c\"\n") == "a\tb\\c");
+    require(ProfileStore::keyFileReference("[AccessKey]\nFile = \"bad\\q\"\n") == "\"bad\\q\"");
+    require(ProfileStore::keyFileReference("[AccessKey]\nFile = \"\\xff\"\n") == "\"\\xff\"");
+
     // Removal deletes the pair; an external key file is never deleted.
     require(ProfileStore::removeProfileFiles(path, &error));
     require(!QFileInfo::exists(path) && !QFileInfo::exists(ProfileStore::keyFilePath(path, next)));
