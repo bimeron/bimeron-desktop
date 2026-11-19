@@ -18,7 +18,8 @@ Runner &customRunner() {
     return runner;
 }
 
-QJsonObject runProcess(const QString &executable, const QByteArray &input, QString *error) {
+QJsonObject runProcess(const QString &executable, const QByteArray &input, QString *error, bool *definitive) {
+    *definitive = false;
     QProcess process;
     process.start(executable, {QStringLiteral("wireguard")});
     if (!process.waitForStarted(2000)) {
@@ -43,6 +44,8 @@ QJsonObject runProcess(const QString &executable, const QByteArray &input, QStri
         return {};
     }
     output += process.readAllStandardOutput();
+    // An older CLI exits normally with "unknown command"; a crash is not a verdict.
+    *definitive = process.exitStatus() == QProcess::NormalExit;
     QJsonParseError parse;
     const auto json = QJsonDocument::fromJson(output, &parse);
     if (output.size() > outputLimit || process.exitStatus() != QProcess::NormalExit || process.exitCode() != 0
@@ -73,8 +76,10 @@ Reply request(const QString &executable, const QJsonObject &request) {
         reply.error = QObject::tr("Core WireGuard bridge is unavailable. Use the WG/AWG config tab.");
         return reply;
     }
+    bool definitive = true;
     const QJsonObject object = customRunner() ? customRunner()(executable, input, &reply.error)
-                                              : runProcess(executable, input, &reply.error);
+                                              : runProcess(executable, input, &reply.error, &definitive);
+    reply.definitive = definitive && (customRunner() ? reply.error.isEmpty() : true);
     if (!reply.error.isEmpty()) return reply;
     if (object.value("version").toInt() != 1) {
         reply.error = QObject::tr("Core WireGuard bridge returned an invalid response. The draft has been retained.");
@@ -111,7 +116,8 @@ QJsonObject setField(const QString &section, const QString &key, const QString &
     return {{"op", "set_field"}, {"section", section}, {"key", key}, {"value", value}};
 }
 
-bool cliSupported(const QString &executable) {
+bool cliSupported(const QString &executable, bool *definitive) {
+    if (definitive) *definitive = true;
     if (executable.isEmpty() && !customRunner()) return false;
     const QString key = identity(executable);
     static QMutex mutex;
@@ -121,9 +127,10 @@ bool cliSupported(const QString &executable) {
         if (cache.contains(key)) return cache.value(key);
     }
     const Reply reply = request(executable, {{"version", 1}, {"op", "capabilities"}});
+    if (definitive) *definitive = reply.definitive;
     const bool supported = reply.answered() && reply.problems.isEmpty()
         && reply.object.value("capabilities").toObject().value("supported").toBool();
-    if (!customRunner()) {
+    if (!customRunner() && reply.definitive) {
         QMutexLocker lock(&mutex);
         cache.insert(key, supported);
     }

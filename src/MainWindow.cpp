@@ -1265,11 +1265,17 @@ QString MainWindow::profileDetail(int row, const ProfileConnectionInfo &info) co
 }
 
 // Reads the key file of a profile when Core identifies it as WireGuard/AmneziaWG.
-bool MainWindow::readWireGuard(const QString &profilePath, const QString &profileText, QByteArray *data) const {
+bool MainWindow::readWireGuard(const QString &profilePath, const QString &profileText, QByteArray *data, bool *definitive) const {
+    if (definitive) *definitive = true;
     const QString reference = ProfileStore::keyFileReference(profileText);
-    if (reference.isEmpty() || !WireGuardCore::cliSupported(validationExecutable_)
-        || !ProfileStore::readKeyFile(profilePath, reference, data)) return false;
+    if (reference.isEmpty() || !ProfileStore::readKeyFile(profilePath, reference, data)) return false;
+    bool probed = true;
+    if (!WireGuardCore::cliSupported(validationExecutable_, &probed)) {
+        if (definitive) *definitive = probed;
+        return false;
+    }
     const auto detected = WireGuardCore::detect(validationExecutable_, ProfileStore::keyFileText(*data));
+    if (definitive) *definitive = detected.definitive;
     return detected.answered() && detected.format() == "wireguard";
 }
 
@@ -1280,17 +1286,22 @@ QString MainWindow::wireGuardLabel(int row) const {
     const QString text = QString::fromUtf8(profile.read(64 * 1024 + 1));
     const QString reference = ProfileStore::keyFileReference(text);
     if (reference.isEmpty()) return {};
-    const QFileInfo key(ProfileStore::keyFilePath(profiles_[row].path, reference));
+    const QString keyPath = ProfileStore::keyFilePath(profiles_[row].path, reference);
+    if (!ProfileStore::localRegularFile(keyPath)) return {};
+    const QFileInfo key(keyPath), core(validationExecutable_);
     const QString identity = key.absoluteFilePath() + '\n' + QString::number(key.size()) + '\n'
-        + QString::number(key.lastModified().toMSecsSinceEpoch()) + '\n' + validationExecutable_;
+        + QString::number(key.lastModified().toMSecsSinceEpoch()) + '\n' + core.absoluteFilePath() + '\n'
+        + QString::number(core.size()) + '\n' + QString::number(core.lastModified().toMSecsSinceEpoch());
     if (wireGuardLabels_.contains(identity)) return wireGuardLabels_.value(identity);
     QByteArray data;
     QString label;
-    if (readWireGuard(profiles_[row].path, text, &data)) {
+    bool definitive = true;
+    if (readWireGuard(profiles_[row].path, text, &data, &definitive)) {
         const auto inspected = WireGuardCore::inspect(validationExecutable_, ProfileStore::keyFileText(data));
         label = inspected.answered() ? WireGuardCore::protocolLabel(inspected.object) : QStringLiteral("WireGuard");
     }
-    wireGuardLabels_.insert(identity, label);
+    // A transient bridge failure is not remembered as "not WireGuard".
+    if (definitive) wireGuardLabels_.insert(identity, label);
     return label;
 }
 
@@ -1332,8 +1343,10 @@ bool MainWindow::validatePair(const QString &profileText, const QString &wireGua
     bool valid = ProfileStore::writeConfig(keyPath, wireGuardText.toUtf8(), error)
         && ProfileStore::writeConfig(draftPath, draft, error);
     if (valid) valid = validateConfig(draftPath, failure);
-    const bool removed = (!QFileInfo::exists(draftPath) || QFile::remove(draftPath))
-        && (!QFileInfo::exists(keyPath) || QFile::remove(keyPath));
+    // Remove both drafts independently: the key draft holds the private key.
+    const bool profileRemoved = !QFileInfo::exists(draftPath) || QFile::remove(draftPath);
+    const bool keyRemoved = !QFileInfo::exists(keyPath) || QFile::remove(keyPath);
+    const bool removed = profileRemoved && keyRemoved;
     if (!removed) {
         failure->problems.clear();
         *error = tr("Cannot remove the protected validation draft; the original profile was retained.");
@@ -1576,12 +1589,31 @@ void MainWindow::editProfile(int row) {
         return valid;
     };
     QByteArray wireGuardData;
-    const bool wireGuard = readWireGuard(profiles_[row].path, QString::fromUtf8(originalData), &wireGuardData);
+    bool detected = true;
+    const QString originalReference = ProfileStore::keyFileReference(QString::fromUtf8(originalData));
+    const bool wireGuard = readWireGuard(profiles_[row].path, QString::fromUtf8(originalData), &wireGuardData, &detected);
+    // A managed pair whose key file cannot be read, or a file Core could not
+    // classify, never opens as an ordinary profile: that would drop the guard
+    // for its managed File reference.
+    if (!wireGuard && (!detected || (ProfileStore::managedKeyFile(profiles_[row].path, originalReference)
+                                     && !ProfileStore::readKeyFile(profiles_[row].path, originalReference, &wireGuardData)))) {
+        QMessageBox::warning(this, tr("Profile could not be opened"), !detected
+            ? tr("Core could not identify the configuration file of this profile. Check that Core is available and try again.")
+            : tr("The WireGuard configuration file of this profile is unavailable."));
+        return;
+    }
     const QString profileDirectory = QFileInfo(profiles_[row].path).absolutePath();
     ProfileEditorDialog dialog(QString::fromUtf8(originalData), capabilities_, this, validateDraft, validationExecutable_, profiles_[row].path,
         false, wireGuard ? std::optional<QString>(ProfileStore::keyFileText(wireGuardData)) : std::nullopt);
+    const QString wireGuardReference = ProfileStore::keyFileReference(QString::fromUtf8(originalData));
     if (wireGuard)
-        dialog.setPairValidator([this, row, profileDirectory](const QString &text, const QString &key, CoreFailure *failure) {
+        dialog.setPairValidator([this, row, profileDirectory, wireGuardReference](const QString &text, const QString &key, CoreFailure *failure) {
+            // Desktop owns the key file reference of a pair; validation substitutes a
+            // draft file, so a redirected reference would otherwise be saved unchecked.
+            if (ProfileStore::keyFileReference(text) != wireGuardReference) {
+                failure->text = tr("The WireGuard configuration file of this profile is managed by Bimeron. Keep File = %1 and edit the WG/AWG config tab instead.").arg(wireGuardReference);
+                return false;
+            }
             return validatePair(text, key, profileDirectory, profiles_[row].path, {}, failure);
         });
     dialog.setDeveloperMode(developerMode_);
@@ -1596,6 +1628,10 @@ void MainWindow::editProfile(int row) {
         const bool keyChanged = wireGuard && keyData != wireGuardData;
         if (data == originalData && !keyChanged) break;
         CoreFailure failure;
+        if (wireGuard && ProfileStore::keyFileReference(prepared) != wireGuardReference) {
+            QMessageBox::warning(&dialog, tr("Error"), tr("The WireGuard configuration file of this profile is managed by Bimeron. Keep File = %1 and edit the WG/AWG config tab instead.").arg(wireGuardReference));
+            continue;
+        }
         if (wireGuard ? !validatePair(prepared, ProfileStore::keyFileText(keyData), profileDirectory, profiles_[row].path, {}, &failure)
                       : !validateDraft(prepared, &failure)) {
             QMessageBox::warning(&dialog, tr("Error"), failure.text.isEmpty() ? describeProblems(failure.problems) : failure.text, QMessageBox::Ok);
@@ -1836,7 +1872,7 @@ void MainWindow::addProfile() {
     // A multi-line WireGuard configuration cannot enter the link field. This is
     // a presentation hint only; Core decides the format when it is imported.
     const auto clipboardConfig = [](const QString &text) {
-        return text.contains("[Interface]", Qt::CaseInsensitive) && text.contains("[Peer]", Qt::CaseInsensitive);
+        return text.contains('\n') && (text.contains("[Interface]", Qt::CaseInsensitive) || text.contains("[Peer]", Qt::CaseInsensitive));
     };
     auto updatePaste = [&] {
         const QString clipboardKey = QApplication::clipboard()->text().trimmed();
@@ -2019,9 +2055,16 @@ bool MainWindow::importProfile(const QString &source) {
             if (problem.code == "document_format_ambiguous") {
                 QMessageBox::warning(this, tr("Import failed"), describeProblems(detected.problems)); return false;
             }
+        if (!detected.answered()) { QMessageBox::warning(this, tr("Import failed"), detected.error); return false; }
         // A Bimeron profile transferred with its WireGuard file imports as a pair.
         QByteArray key;
-        if (detected.answered() && detected.format() == "bimeron" && readWireGuard(source, QString::fromUtf8(imported), &key)) {
+        bool keyDetected = true;
+        const bool pair = detected.format() == "bimeron" && readWireGuard(source, QString::fromUtf8(imported), &key, &keyDetected);
+        if (!keyDetected) {
+            QMessageBox::warning(this, tr("Import failed"), tr("Core could not identify the configuration file referenced by this profile. Check that Core is available and try again."));
+            return false;
+        }
+        if (pair) {
             QByteArray profile = imported;
             if (!ProfileStore::normalizeImport(profile)) {
                 QMessageBox::warning(this, tr("Import failed"), tr("The profile must be valid UTF-8 and at most 64 KiB.")); return false;
@@ -2521,16 +2564,16 @@ bool MainWindow::startProfile(int row) {
         return false;
     }
     activeFileProtocol_.clear();
-    const QString wireGuard = wireGuardLabel(row);
-    if (!wireGuard.isEmpty() && !WireGuardCore::serviceSupported(capabilities_)) {
+    QByteArray wireGuardData;
+    if (readWireGuard(profiles_[row].path, profileText, &wireGuardData) && !WireGuardCore::serviceSupported(capabilities_)) {
         QMessageBox::warning(this, tr("Feature not supported"), tr("The running Core does not support WireGuard and AmneziaWG. Start or update Core."));
         return false;
     }
+    const QString wireGuard = wireGuardLabel(row);
     if (!wireGuard.isEmpty()) activeFileProtocol_ = wireGuard;
     else if (!info.keyFile.isEmpty()) {
-        QFile keyFile(QFileInfo(profiles_[row].path).dir().filePath(info.keyFile));
-        if (QFileInfo(info.keyFile).isAbsolute()) keyFile.setFileName(info.keyFile);
-        if (keyFile.open(QIODevice::ReadOnly)) {
+        QFile keyFile(ProfileStore::keyFilePath(profiles_[row].path, info.keyFile));
+        if (ProfileStore::localRegularFile(keyFile.fileName()) && keyFile.open(QIODevice::ReadOnly)) {
             QString key = QString::fromUtf8(keyFile.read(64 * 1024)).trimmed();
             if (key.startsWith(QChar::ByteOrderMark)) key.remove(0, 1);
             activeFileProtocol_ = ProfileStore::connectionInfo("[AccessKey]\nKey = " + key).protocol;

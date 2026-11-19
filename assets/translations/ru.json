@@ -3012,7 +3012,6 @@
   "A WireGuard or AmneziaWG configuration can also be pasted from the clipboard.": "Конфигурацию WireGuard или AmneziaWG также можно вставить из буфера обмена.",
   "Additional content padding": "Дополнительное выравнивание содержимого",
   "Addresses": "Адреса",
-  "AllowedIPs covers IPv4 only: IPv6 traffic outside the tunnel is blocked.": "AllowedIPs покрывает только IPv4: трафик IPv6 вне туннеля блокируется.",
   "AllowedIPs covers all addresses, so the first three options behave the same.": "AllowedIPs покрывает все адреса, поэтому первые три варианта работают одинаково.",
   "AllowedIPs only": "Только AllowedIPs",
   "AllowedIPs priority": "Приоритет AllowedIPs",
@@ -3099,5 +3098,10 @@
   "WireGuard and AmneziaWG are unavailable: the running Core does not support them. Start or update Core to create these profiles.": "WireGuard и AmneziaWG недоступны: запущенное ядро их не поддерживает. Запустите или обновите ядро, чтобы создавать такие профили.",
   "WireGuard configuration file": "Файл конфигурации WireGuard",
   "host:port": "хост:порт",
-  "…and %1 more.": "…и ещё %1."
+  "…and %1 more.": "…и ещё %1.",
+  "AllowedIPs covers IPv4 only: IPv6 traffic that would go directly only because it is outside AllowedIPs is blocked.": "AllowedIPs покрывает только IPv4: трафик IPv6, который пошёл бы напрямую только из-за того, что он вне AllowedIPs, блокируется.",
+  "The WireGuard configuration file of this profile is managed by Bimeron. Keep File = %1 and edit the WG/AWG config tab instead.": "Файлом конфигурации WireGuard этого профиля управляет Bimeron. Оставьте File = %1 и редактируйте вкладку «Конфиг WG/AWG».",
+  "Keep File = wireguard.conf in the Bimeron config. Bimeron replaces it with the stored WG/AWG file when saving.": "Оставьте File = wireguard.conf в конфиге Bimeron. При сохранении Bimeron заменит его на сохранённый файл WG/AWG.",
+  "Core could not identify the configuration file of this profile. Check that Core is available and try again.": "Ядру не удалось определить файл конфигурации этого профиля. Проверьте, что ядро доступно, и повторите попытку.",
+  "Core could not identify the configuration file referenced by this profile. Check that Core is available and try again.": "Ядру не удалось определить файл конфигурации, на который ссылается этот профиль. Проверьте, что ядро доступно, и повторите попытку."
 }

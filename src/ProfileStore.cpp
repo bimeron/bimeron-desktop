@@ -144,8 +144,8 @@ bool ProfileStore::importReferencesSafe(const QByteArray &data, QString *error) 
         if (key == "IdentityFile" || key == "KnownHostsFile") safe = absoluteReference(value, true);
         else if (key == "CAFile") safe = absoluteReference(value);
         else if (key == "File") {
-            safe = absoluteReference(value);
-            if (safe) {
+            safe = absoluteReference(value) && (value.isEmpty() || localRegularFile(value));
+            if (safe && !value.isEmpty()) {
                 QFile file(value);
                 safe = file.open(QIODevice::ReadOnly);
                 if (safe) {
@@ -196,9 +196,22 @@ QString ProfileStore::keyFileText(const QByteArray &data) {
     return data.startsWith(bom) ? QString(QChar::ByteOrderMark) + QString::fromUtf8(data.mid(3)) : QString::fromUtf8(data);
 }
 
+bool ProfileStore::localRegularFile(const QString &path) {
+    if (path.isEmpty() || !QDir::isAbsolutePath(path)) return false;
+#ifdef Q_OS_WIN
+    const QString native = QDir::toNativeSeparators(path);
+    // UNC, device and extended-length paths, and mapped network drives.
+    if (native.startsWith(QStringLiteral("\\\\")) || native.size() < 3 || native.at(1) != ':') return false;
+    const std::wstring root = native.left(3).toStdWString();
+    if (GetDriveTypeW(root.c_str()) == DRIVE_REMOTE) return false;
+#endif
+    return QFileInfo(path).isFile();
+}
+
 bool ProfileStore::readKeyFile(const QString &profilePath, const QString &reference, QByteArray *data, QString *error) {
-    QFile file(keyFilePath(profilePath, reference));
-    if (reference.isEmpty() || !file.open(QIODevice::ReadOnly)) {
+    const QString path = keyFilePath(profilePath, reference);
+    QFile file(path);
+    if (reference.isEmpty() || !localRegularFile(path) || !file.open(QIODevice::ReadOnly)) {
         if (error) *error = QObject::tr("The WireGuard configuration file of this profile is unavailable.");
         return false;
     }
@@ -540,6 +553,8 @@ bool ProfileStore::sshFilesReadable(const QString &configText, const QString &pr
     QString source = values.value("SSH", values.value("Key"));
     const QDir base = QFileInfo(profilePath).absoluteDir();
     if (values.contains("File")) {
+        // Core reports a non-local or irregular file itself; the GUI never opens it.
+        if (!localRegularFile(base.filePath(values.value("File")))) return true;
         QFile file(base.filePath(values.value("File")));
         if (!file.open(QIODevice::ReadOnly)) return false;
         source = QString::fromUtf8(file.read(64 * 1024 + 1)).trimmed();

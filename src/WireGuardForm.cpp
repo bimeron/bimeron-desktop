@@ -75,6 +75,8 @@ QString tr(const char *text) { return QCoreApplication::translate("WireGuardForm
 QLineEdit *makeEdit(const QString &id) {
     auto *edit = new QLineEdit;
     edit->setObjectName("wireGuard" + QString(id).replace('/', '_'));
+    // The default 32767-character limit would truncate long lists on load.
+    edit->setMaxLength(64 * 1024);
     if (WireGuardForm::secretField(id)) edit->setEchoMode(QLineEdit::Password);
     return edit;
 }
@@ -181,16 +183,32 @@ WireGuardForm::WireGuardForm(QWidget *parent) : QWidget(parent) {
     status_->hide();
     layout->addWidget(status_);
     layout->addStretch();
-    for (auto *edit : std::as_const(edits_))
-        connect(edit, &QLineEdit::textChanged, this, [this] { refreshAmneziaSummary(); emit edited(); });
+    for (auto it = edits_.cbegin(); it != edits_.cend(); ++it)
+        connect(it.value(), &QLineEdit::textChanged, this, [this, id = it.key()] {
+            changed_.insert(id);
+            refreshAmneziaSummary();
+            emit edited();
+        });
     refreshAmneziaSummary();
 }
 
 void WireGuardForm::setValues(const QJsonObject &fields) {
+    changed_.clear();
     for (auto it = edits_.cbegin(); it != edits_.cend(); ++it) {
         const QSignalBlocker blocker(it.value());
         it.value()->setText(fields.value(it.key()).toString());
     }
+    refreshAmneziaSummary();
+}
+
+void WireGuardForm::presetValue(const QString &id, const QString &value) {
+    QLineEdit *field = edits_.value(id);
+    if (!field) return;
+    {
+        const QSignalBlocker blocker(field);
+        field->setText(value);
+    }
+    changed_.insert(id);
     refreshAmneziaSummary();
 }
 

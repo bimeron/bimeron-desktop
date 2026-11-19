@@ -17,6 +17,8 @@ struct Reply {
     QJsonObject object;          // Version-1 response; empty when the bridge failed.
     QString error;               // Safe bridge failure text; empty when Core answered.
     QList<CoreProblem> problems; // Core problems (validation or operation failures).
+    // True when the executable ran to completion; a start failure or timeout is transient.
+    bool definitive = false;
 
     bool answered() const { return error.isEmpty(); }
     bool clean() const { return error.isEmpty() && problems.isEmpty(); }
@@ -28,6 +30,7 @@ struct Reply {
 };
 
 // Executes one bridge request. The default runner starts `<executable> wireguard`.
+// A runner error is treated as transient.
 using Runner = std::function<QJsonObject(const QString &executable, const QByteArray &request, QString *error)>;
 void setRunner(Runner runner); // Tests inject a fake bridge; an empty runner restores the default.
 
@@ -38,9 +41,11 @@ Reply edit(const QString &executable, const QString &text, const QJsonArray &ope
 Reply importUri(const QString &executable, const QString &uri);
 QJsonObject setField(const QString &section, const QString &key, const QString &value);
 
-// True when the selected CLI answers the capabilities request. Cached per
-// executable identity, so replacing the file at the same path is noticed.
-bool cliSupported(const QString &executable);
+// True when the selected CLI answers the capabilities request. Definitive
+// answers are cached per executable identity (path, size, modification time),
+// so replacing the file at the same path is noticed; transient failures are not.
+// definitive is false when the probe failed transiently (start failure, timeout, crash).
+bool cliSupported(const QString &executable, bool *definitive = nullptr);
 // True when the running service advertises WireGuard support in hello.
 bool serviceSupported(const QJsonObject &capabilities);
 // "WireGuard" or "AmneziaWG <version>" from an inspect response.

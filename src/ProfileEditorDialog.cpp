@@ -1085,7 +1085,7 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
     } else if (creating_) {
         loadWireGuard({}, {});
         // A new draft offers the usual full-tunnel peer networks.
-        if (auto *allowed = wgForm_->edit("Peer/AllowedIPs")) { const QSignalBlocker blocker(allowed); allowed->setText("0.0.0.0/0, ::/0"); }
+        wgForm_->presetValue("Peer/AllowedIPs", "0.0.0.0/0, ::/0");
     }
     if (freshDraft_) {
         keySource_->setCurrentIndex(keySource_->findData("Explicit"));
@@ -1554,7 +1554,7 @@ void ProfileEditorDialog::loadText(const QString &text) {
         if (value.isEmpty()) { source = field; value = fieldValue("AccessKey", field); }
     if (value.isEmpty()) { source = "Key"; value = fieldValue("AccessKey", "Key"); }
     if (value.isEmpty()) { source = "File"; value = fieldValue("AccessKey", "File"); }
-    if (source == "File" && wireGuard_) source = "WireGuard";
+    if (source == "File" && (wireGuard_ || (creating_ && keySource_->currentData().toString() == "WireGuard"))) source = "WireGuard";
     // A conversion can introduce a link source this dialog did not start with.
     if (!value.isEmpty()) ensureSourceItem(source);
     if (value.isEmpty() && !fieldValue("AccessKey", "Server").isEmpty()) {
@@ -2227,7 +2227,8 @@ void ProfileEditorDialog::reject() {
         if (index >= 0 && index < previousIndex) reordered = true;
         if (index >= 0) previousIndex = index;
     }
-    const bool wireGuardChanged = isWireGuard() && (creating_ ? wgEdited_ : wireGuardText() != wgOriginal_);
+    const bool wireGuardChanged = isWireGuard() && (creating_ ? wgEdited_
+        : (wireGuardText() != wgOriginal_ || !wgBridgeError_.isEmpty()));
     if (reordered || wireGuardChanged || buildText() != visualBaseline_ || (freshDraft_ ? rawDirty_ : configText() != originalText_)) {
         QMessageBox prompt(QMessageBox::Question, tr("Discard changes"), tr("Discard unsaved changes?"), QMessageBox::NoButton, this);
         auto *discard = prompt.addButton(tr("Discard changes"), QMessageBox::DestructiveRole);
@@ -2999,6 +3000,15 @@ bool ProfileEditorDialog::isWireGuard() const {
 }
 
 bool ProfileEditorDialog::validateDraft(const QString &text, CoreFailure *failure) {
+    if (wireGuard_ && ProfileStore::keyFileReference(text) != ProfileStore::keyFileReference(originalText_)) {
+        failure->text = tr("The WireGuard configuration file of this profile is managed by Bimeron. Keep File = %1 and edit the WG/AWG config tab instead.")
+            .arg(ProfileStore::keyFileReference(originalText_));
+        return false;
+    }
+    if (creating_ && isWireGuard() && ProfileStore::keyFileReference(text) != QStringLiteral("wireguard.conf")) {
+        failure->text = tr("Keep File = wireguard.conf in the Bimeron config. Bimeron replaces it with the stored WG/AWG file when saving.");
+        return false;
+    }
     if (isWireGuard()) {
         const QString wireGuard = wireGuardText();
         if (!wgBridgeError_.isEmpty()) {
@@ -3030,10 +3040,12 @@ QString ProfileEditorDialog::wireGuardText() const {
     QJsonArray operations;
     const QJsonObject fields = wgInspection_.value("fields").toObject();
     const auto values = wgForm_->values();
-    for (auto it = values.cbegin(); it != values.cend(); ++it) {
-        if (it.value() == fields.value(it.key()).toString()) continue;
-        const qsizetype slash = it.key().indexOf('/');
-        operations.append(WireGuardCore::setField(it.key().left(slash), it.key().mid(slash + 1), it.value()));
+    QStringList changed = wgForm_->changedFields();
+    changed.sort();
+    for (const QString &id : std::as_const(changed)) {
+        if (values.value(id) == fields.value(id).toString()) continue;
+        const qsizetype slash = id.indexOf('/');
+        operations.append(WireGuardCore::setField(id.left(slash), id.mid(slash + 1), values.value(id)));
     }
     if (operations.isEmpty()) {
         wgCacheKey_.clear();
@@ -3139,8 +3151,8 @@ void ProfileEditorDialog::refreshWireGuard() {
         notes << tr("Bimeron routing rules and the default action are inactive in this mode. They stay in the profile.");
     else if (coverage == "full")
         notes << tr("AllowedIPs covers all addresses, so the first three options behave the same.");
-    if (coverage == "ipv4_only" && mode != "ignore")
-        notes << tr("AllowedIPs covers IPv4 only: IPv6 traffic outside the tunnel is blocked.");
+    if (coverage == "ipv4_only" && (mode == "direct" || mode == "only"))
+        notes << tr("AllowedIPs covers IPv4 only: IPv6 traffic that would go directly only because it is outside AllowedIPs is blocked.");
     allowedIpsNote_->setText(notes.join('\n'));
     allowedIpsNote_->setVisible(!notes.isEmpty());
 }

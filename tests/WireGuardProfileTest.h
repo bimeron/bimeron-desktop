@@ -356,7 +356,120 @@ static void wireGuardEditor(const QString &directory) {
         ProfileEditorDialog oldCli({}, caps, nullptr, accepted, "fake-core", {}, true);
         require(oldCli.findChild<QComboBox *>("keySource")->findData("WireGuard") < 0);
     }
+    {
+        // The managed File reference cannot be redirected through the Bimeron config tab.
+        ProfileEditorDialog editor(profile, caps, nullptr, accepted, "fake-core", path, false, key);
+        auto *tabWidget = tabs(editor);
+        tabWidget->setCurrentIndex(tabWidget->count() - 1);
+        auto *raw = editor.findChild<QPlainTextEdit *>("rawConfig");
+        raw->setPlainText(QString(profile).replace("tunnel.0badc0de.wg.conf", "missing.wg.conf"));
+        QString message;
+        QTimer::singleShot(0, [&message] {
+            if (auto *box = qobject_cast<QMessageBox *>(QApplication::activeModalWidget())) { message = box->text(); box->accept(); }
+        });
+        editor.findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Save)->click();
+        require(message.contains("managed by Bimeron") && editor.result() != QDialog::Accepted);
+    }
+    {
+        // An untouched value longer than QLineEdit's default limit survives an unrelated edit.
+        QStringList networks;
+        for (int i = 0; i < 2500; ++i) networks << QString("10.%1.%2.0/24").arg(i / 256).arg(i % 256);
+        const QString longAllowed = networks.join(", ");
+        require(longAllowed.size() > 32767);
+        const QString longKey = "[Interface]\nPrivateKey = " + privateKey + "\nAddress = 10.0.0.2/32\n\n[Peer]\nPublicKey = PUBLIC\nAllowedIPs = " + longAllowed + "\n";
+        ProfileEditorDialog editor(profile, caps, nullptr, accepted, "fake-core", path, false, longKey);
+        require(editor.findChild<QLineEdit *>("wireGuardPeer_AllowedIPs")->text() == longAllowed);
+        editor.findChild<QLineEdit *>("wireGuardInterface_MTU")->setText("1380");
+        const QString edited = editor.wireGuardText();
+        require(edited.contains("AllowedIPs = " + longAllowed + "\n") && edited.contains("MTU = 1380"));
+    }
+    {
+        // A refused field edit still asks before discarding.
+        ProfileEditorDialog editor(profile, caps, nullptr, accepted, "fake-core", path, false, key);
+        editor.findChild<QLineEdit *>("wireGuardInterface_Address")->setText("10.0.0.2/32 # comment");
+        require(editor.wireGuardText() == key);
+        bool asked = false;
+        QTimer::singleShot(0, [&asked] {
+            auto *box = qobject_cast<QMessageBox *>(QApplication::activeModalWidget());
+            asked = box != nullptr;
+            if (box) for (auto *button : box->buttons()) if (box->buttonRole(button) == QMessageBox::DestructiveRole) button->click();
+        });
+        editor.findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Cancel)->click();
+        require(asked);
+    }
+    {
+        // The IPv4-only note applies where Core applies it: direct and only, not block or ignore.
+        ProfileEditorDialog editor(profile, caps, nullptr, accepted, "fake-core", path, false, key);
+        auto *mode = editor.findChild<QComboBox *>("allowedIpsMode");
+        auto *note = editor.findChild<QLabel *>("allowedIpsNote");
+        require(note->text().contains("only because it is outside AllowedIPs"));
+        mode->setCurrentIndex(mode->findData("block"));
+        require(!note->text().contains("IPv4"));
+        mode->setCurrentIndex(mode->findData("ignore"));
+        require(!note->text().contains("IPv4"));
+        mode->setCurrentIndex(mode->findData("only"));
+        require(note->text().contains("IPv4") && note->text().contains("inactive"));
+    }
+    {
+        // A WireGuard creation draft stays WireGuard after a Bimeron config edit.
+        bridge.capabilities = {{"supported", true}};
+        ProfileEditorDialog draft({}, caps, nullptr, accepted, "fake-core", {}, true);
+        auto *sources = draft.findChild<QComboBox *>("keySource");
+        sources->setCurrentIndex(sources->findData("WireGuard"));
+        draft.findChild<QLineEdit *>("wireGuardInterface_PrivateKey")->setText(privateKey);
+        bool pairValidated = false;
+        draft.setPairValidator([&pairValidated](const QString &, const QString &key, CoreFailure *) {
+            pairValidated = key.contains("PrivateKey");
+            return true;
+        });
+        auto *tabWidget = tabs(draft);
+        tabWidget->setCurrentIndex(tabWidget->count() - 1);
+        auto *raw = draft.findChild<QPlainTextEdit *>("rawConfig");
+        raw->setPlainText(raw->toPlainText().replace("Name = ", "Name = Renamed"));
+        tabWidget->setCurrentIndex(0);
+        require(tabWidget->currentIndex() == 0 && pairValidated);
+        require(draft.isWireGuard() && sources->currentData() == "WireGuard" && tabWidget->isTabVisible(tabIndex(draft, "WireGuard")));
+        require(draft.wireGuardText().contains("PrivateKey = " + privateKey) && draft.configText().contains("Name = Renamed"));
+    }
+    {
+        // A creation draft cannot redirect or drop the placeholder reference.
+        ProfileEditorDialog draft({}, caps, nullptr, accepted, "fake-core", {}, true);
+        auto *sources = draft.findChild<QComboBox *>("keySource");
+        sources->setCurrentIndex(sources->findData("WireGuard"));
+        draft.findChild<QLineEdit *>("wireGuardInterface_PrivateKey")->setText(privateKey);
+        bool validated = false;
+        draft.setPairValidator([&validated](const QString &, const QString &, CoreFailure *) { validated = true; return true; });
+        auto *tabWidget = tabs(draft);
+        tabWidget->setCurrentIndex(tabWidget->count() - 1);
+        auto *raw = draft.findChild<QPlainTextEdit *>("rawConfig");
+        raw->setPlainText(raw->toPlainText().replace("File = wireguard.conf", "File = other.conf"));
+        QString message;
+        QTimer::singleShot(0, [&message] {
+            if (auto *box = qobject_cast<QMessageBox *>(QApplication::activeModalWidget())) { message = box->text(); box->accept(); }
+        });
+        draft.findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Save)->click();
+        require(message.contains("wireguard.conf") && !validated && draft.result() != QDialog::Accepted);
+    }
+    {
+        // Referenced files are read only when local and regular; Core reports the rest.
+        const QString folder = QDir(directory).filePath("wireguard-folder.conf");
+        require(QDir().mkpath(folder) && !ProfileStore::localRegularFile(folder));
+        QByteArray unused;
+        require(!ProfileStore::readKeyFile(QDir(directory).filePath("p.conf"), "wireguard-folder.conf", &unused));
+        require(ProfileStore::sshFilesReadable("[AccessKey]\nFile = wireguard-folder.conf\n", QDir(directory).filePath("p.conf")));
+        require(!ProfileStore::importReferencesSafe(("[AccessKey]\nFile = " + folder + "\n").toUtf8()));
+    }
+    {
+        // A failing runner is a transient reply, never a cached verdict.
+        WireGuardCore::setRunner([](const QString &, const QByteArray &, QString *error) { *error = "unavailable"; return QJsonObject(); });
+        const auto reply = WireGuardCore::detect("fake-core", "[Peer]\n");
+        require(!reply.answered() && !reply.definitive);
+    }
     WireGuardCore::setRunner({});
+    require(!ProfileStore::localRegularFile(directory) && !ProfileStore::localRegularFile("relative.conf"));
+#ifdef Q_OS_WIN
+    require(!ProfileStore::localRegularFile("\\\\server.invalid\\share\\tunnel.conf") && !ProfileStore::localRegularFile("\\\\?\\C:\\tunnel.conf"));
+#endif
 
     // Bridge helpers.
     require(WireGuardCore::protocolLabel(QJsonObject{{"protocol", "wireguard"}}) == "WireGuard");
@@ -374,6 +487,15 @@ static void wireGuardEditor(const QString &directory) {
     const QString core = qEnvironmentVariable("BIMERON_WIREGUARD_CORE");
     if (core.isEmpty()) return;
     require(WireGuardCore::cliSupported(core));
+    {
+        // Record which Core build the round trips ran against (docs/wireguard-profiles.md).
+        QProcess version;
+        version.start(core, {"version"});
+        require(version.waitForStarted(5000) && version.waitForFinished(10000));
+        const QString identity = QString::fromUtf8(version.readAllStandardOutput()).simplified().left(200);
+        // Development builds may omit the revision; build Core from the documented commit.
+        std::fprintf(stdout, "WireGuard round trips use Core: %s\n", qPrintable(identity));
+    }
     const auto detected = WireGuardCore::detect(core, key);
     require(detected.answered() && detected.format() == "wireguard");
     const auto inspected = WireGuardCore::inspect(core, key);

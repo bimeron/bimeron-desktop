@@ -58,6 +58,9 @@ public:
     // UTF-8 text with a leading BOM kept as U+FEFF, so toUtf8() restores the exact bytes.
     // QString::fromUtf8 drops the BOM, which would rewrite key files on save.
     static QString keyFileText(const QByteArray &data);
+    // Core reads only local regular files. Checked before any metadata query or
+    // open, so a network share or a FIFO is never touched by the GUI.
+    static bool localRegularFile(const QString &path);
     static bool readKeyFile(const QString &profilePath, const QString &reference, QByteArray *data, QString *error = nullptr);
 
 private:

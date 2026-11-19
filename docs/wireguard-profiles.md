@@ -41,12 +41,20 @@ Add profile accepts:
   new pair. A document that looks like both is refused with `document_format_ambiguous`.
 - `vpn://` (Amnezia), `wireguard://` and `wg://` links in the link field. The name field is
   optional for these links: an empty name uses the name from the link, otherwise `WireGuard`.
-- A WG/AWG configuration on the clipboard. When the clipboard holds text with `[Interface]`
-  and `[Peer]`, Paste becomes "Paste WireGuard configuration" and imports it directly; Core
-  still decides the format. This check is a presentation hint only.
+- A WG/AWG configuration on the clipboard. When the clipboard holds multi-line text with an
+  `[Interface]` or `[Peer]` header, Paste becomes "Paste WireGuard configuration" and imports
+  it directly; Core `detect` decides the format, so a partial configuration reaches the
+  correction editor as from a file. This check is a presentation hint only.
 - A Bimeron profile whose `[AccessKey] File` references a WG/AWG file, relative or absolute.
   Both files are copied into the profile store, which supports moving a pair to another
   computer. Other references keep the existing relocation rules.
+
+Referenced files are read only when they are local regular files: Desktop never opens a
+network path (UNC, extended-length or mapped network drive on Windows) or a FIFO; Core then
+reports `file_path_not_local` or `file_not_regular`. A failed Core probe (start failure,
+timeout, crash) is transient and never cached as "not WireGuard": opening or importing such a
+profile is refused with a retry message instead of falling back to the ordinary editor, and a
+managed pair whose key file is unreadable does not open.
 
 The supported-format help lists the new schemes and both `.conf` formats. Core problem
 codes are rendered from the Core error catalog (`errors --json`) in the interface language.
@@ -107,7 +115,9 @@ configuration for other clients.
 A WG/AWG profile shows:
 
 - **General**: the source is "WireGuard / AmneziaWG configuration" and cannot be switched;
-  the key file path is not shown. When the running service lacks WG/AWG support, a notice
+  the key file path is not shown. Desktop owns the `File` reference: Save refuses a Bimeron
+  config whose `File` differs from the stored reference (a new draft keeps the placeholder
+  `wireguard.conf`, replaced when the pair is stored). When the running service lacks WG/AWG support, a notice
   explains that the profile can be edited but connects only after Core is started or updated.
 - **WireGuard**: private key and preshared key (masked, with Show), addresses, DNS, tunnel
   MTU, server public key, endpoint, AllowedIPs and keepalive. A collapsed "AmneziaWG"
@@ -158,9 +168,10 @@ already present:
 Block rules win in the first three options and direct rules apply inside AllowedIPs (Core
 behavior). Beside the selector the tab shows the option's hint and the AllowedIPs list
 (read only, from the WireGuard tab). Notes use Core's `allowed_ips.coverage`, never a
-Desktop calculation: with full coverage the first three options behave the same; with IPv4
-only coverage IPv6 outside the tunnel is blocked. With `only` the rules area is disabled
-and the note explains why.
+Desktop calculation: with full coverage the first three options behave the same. With IPv4
+only coverage and the `direct` or `only` option, the note explains that IPv6 traffic that would
+go directly only because it is outside AllowedIPs is blocked; an explicit direct rule still
+applies. With `only` the rules area is disabled and the note explains why.
 
 ## Profile list and connection
 
