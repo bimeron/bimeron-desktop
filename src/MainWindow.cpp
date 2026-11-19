@@ -2589,7 +2589,13 @@ bool MainWindow::startProfile(int row) {
     }
     activeFileProtocol_.clear();
     QByteArray wireGuardData;
-    if (readWireGuard(profiles_[row].path, profileText, &wireGuardData) && !WireGuardCore::serviceSupported(capabilities_)) {
+    bool probed = true;
+    const bool wireGuardFile = readWireGuard(profiles_[row].path, profileText, &wireGuardData, &probed);
+    if (!wireGuardFile && !probed) {
+        QMessageBox::warning(this, tr("Profile unavailable"), tr("Core could not identify the configuration file of this profile. Check that Core is available and try again."));
+        return false;
+    }
+    if ((wireGuardFile || ProfileStore::managedKeyFile(profiles_[row].path, info.keyFile)) && !WireGuardCore::serviceSupported(capabilities_)) {
         QMessageBox::warning(this, tr("Feature not supported"), tr("The running Core does not support WireGuard and AmneziaWG. Start or update Core."));
         return false;
     }

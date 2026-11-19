@@ -1937,7 +1937,7 @@ QString ProfileEditorDialog::buildText() const {
     }
     else if (selected == "WireGuard")
         // A new pair has no key file yet; storing it replaces this placeholder name.
-        accessKey = "File = " + (key_->text().isEmpty() ? QStringLiteral("wireguard.conf") : key_->text());
+        accessKey = "File = " + (creating_ || key_->text().isEmpty() ? QStringLiteral("wireguard.conf") : key_->text());
     else
         accessKey = keySource_->currentData().toString() + " = " + key_->text();
     const QString source = keySource_->currentData().toString();

@@ -69,6 +69,21 @@ QString identity(const QString &path) {
     return info.absoluteFilePath() + '\n' + QString::number(info.size()) + '\n'
         + QString::number(info.lastModified().toMSecsSinceEpoch());
 }
+// A reply is usable only with the version-1 envelope and the result its
+// operation promises, or with problems. Anything else is a transient fault.
+bool wellFormed(const QString &op, const QJsonObject &object) {
+    if (object.value("version").toInt() != 1) return false;
+    const QJsonValue problems = object.value("problems");
+    if (!problems.isUndefined() && !problems.isArray()) return false;
+    if (!problems.toArray().isEmpty() && op != "edit") return true;
+    if (op == "capabilities") return object.value("capabilities").isObject();
+    if (op == "detect") return object.value("format").isString();
+    if (op == "inspect" || op == "edit" || op == "import_uri") {
+        if ((op == "edit" || op == "import_uri") && !object.value("text").isString()) return false;
+        return object.value("fields").isObject() || object.value("fields_error").isString();
+    }
+    return false;
+}
 } // namespace
 
 void setRunner(Runner runner) { customRunner() = std::move(runner); }
@@ -89,8 +104,9 @@ Reply request(const QString &executable, const QJsonObject &request) {
                                               : runProcess(executable, input, &reply.error, &definitive);
     reply.definitive = definitive && (customRunner() ? reply.error.isEmpty() : true);
     if (!reply.error.isEmpty()) return reply;
-    if (object.value("version").toInt() != 1) {
+    if (!wellFormed(request.value("op").toString(), object)) {
         reply.error = QObject::tr("Core WireGuard bridge returned an invalid response. The draft has been retained.");
+        reply.definitive = false;
         return reply;
     }
     reply.object = object;

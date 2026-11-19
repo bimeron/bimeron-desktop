@@ -528,17 +528,22 @@ static void wireGuardEditor(const QString &directory) {
     }
     WireGuardCore::setRunner({});
     {
-        // Process level: malformed output from a CLI is not cached; the next probe retries.
+        // Process level: malformed output, then a syntactically valid but incomplete
+        // reply, are not cached; the next probe retries and succeeds.
         const QString scriptDirectory = QDir(directory).filePath("flaky-core");
         require(QDir().mkpath(scriptDirectory));
 #ifdef Q_OS_WIN
         const QString script = QDir(scriptDirectory).filePath("flaky-core.cmd");
-        const QByteArray body = "@echo off\r\nif exist \"%~dp0recovered.flag\" (\r\n  echo {\"version\":1,\"capabilities\":{\"supported\":true}}\r\n) else (\r\n"
-            "  type nul > \"%~dp0recovered.flag\"\r\n  echo not json\r\n)\r\n";
+        const QByteArray body = "@echo off\r\n"
+            "if exist \"%~dp0second.flag\" (\r\n  echo {\"version\":1,\"capabilities\":{\"supported\":true}}\r\n  exit /b 0\r\n)\r\n"
+            "if exist \"%~dp0first.flag\" (\r\n  type nul > \"%~dp0second.flag\"\r\n  echo {}\r\n  exit /b 0\r\n)\r\n"
+            "type nul > \"%~dp0first.flag\"\r\necho not json\r\n";
 #else
         const QString script = QDir(scriptDirectory).filePath("flaky-core");
-        const QByteArray body = "#!/bin/sh\ncat > /dev/null\nif [ -e \"$(dirname \"$0\")/recovered.flag\" ]; then\n"
-            "  echo '{\"version\":1,\"capabilities\":{\"supported\":true}}'\nelse\n  : > \"$(dirname \"$0\")/recovered.flag\"\n  echo 'not json'\nfi\n";
+        const QByteArray body = "#!/bin/sh\ncat > /dev/null\nd=\"$(dirname \"$0\")\"\n"
+            "if [ -e \"$d/second.flag\" ]; then echo '{\"version\":1,\"capabilities\":{\"supported\":true}}'; exit 0; fi\n"
+            "if [ -e \"$d/first.flag\" ]; then : > \"$d/second.flag\"; echo '{}'; exit 0; fi\n"
+            ": > \"$d/first.flag\"\necho 'not json'\n";
 #endif
         QFile file(script);
         require(file.open(QIODevice::WriteOnly) && file.write(body) == body.size());
@@ -546,7 +551,13 @@ static void wireGuardEditor(const QString &directory) {
         require(file.setPermissions(file.permissions() | QFileDevice::ExeOwner));
         bool definitive = true;
         require(!WireGuardCore::cliSupported(script, &definitive) && !definitive);
+        require(!WireGuardCore::cliSupported(script, &definitive) && !definitive);
         require(WireGuardCore::cliSupported(script, &definitive) && definitive);
+        // An incomplete edit reply is transient too.
+        WireGuardCore::setRunner([](const QString &, const QByteArray &, QString *) { return QJsonObject{{"version", 1}}; });
+        const auto incomplete = WireGuardCore::edit("fake-core", "[Peer]\n", QJsonArray{WireGuardCore::setField("Peer", "Endpoint", "vpn.example:51820")});
+        require(!incomplete.answered() && !incomplete.definitive);
+        WireGuardCore::setRunner({});
     }
     require(!ProfileStore::localRegularFile(directory) && !ProfileStore::localRegularFile("relative.conf"));
 #ifdef Q_OS_WIN

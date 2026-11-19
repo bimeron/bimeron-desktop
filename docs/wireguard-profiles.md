@@ -54,9 +54,10 @@ network path (UNC, extended-length or mapped network drive on Windows, or a path
 symbolic link or junction, which could lead to a share) or a FIFO; Core then
 reports `file_path_not_local` or `file_not_regular`. Only a valid bridge reply, or an older
 CLI's normal `unknown command` refusal, is a definitive answer. A failed Core probe (start
-failure, timeout, crash, malformed output) is transient and never cached as "not WireGuard",
+failure, timeout, crash, malformed output, or a reply without the envelope and result its
+operation promises) is transient and never cached as "not WireGuard",
 and a transient failure during live field validation is retried on the next check or Save: opening or importing such a
-profile is refused with a retry message instead of falling back to the ordinary editor. A
+profile, or starting it, is refused with a retry message instead of falling back to the ordinary path. A
 managed pair opens only when Core positively identifies its key file; with an unreadable key
 file or a CLI without the bridge it does not open. Links longer than 64 KiB are refused.
 
