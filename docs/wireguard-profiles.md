@@ -136,7 +136,9 @@ A WG/AWG profile shows:
   `ContentPaddingAddition`, `RekeyAfterTime`, `RekeyTimeout`, `RejectAfterTime`,
   `KeepaliveTimeout`, `MaxHandshakeAttempts`, `RandomTrailers` and `DisableCookies`. Its
   header shows how many parameters are set. Every field is plain text, so an absent key stays
-  absent. A status line below the fields shows Core's validation of the current draft a
+  absent; the 3.1 booleans `RandomTrailers` and `DisableCookies` are Not set / On / Off choices
+  (Not set removes the key, On and Off write `1` and `0`; any spelling Core accepts loads, and a
+  value Core rejects shows Not set with the problem on the field). A status line below the fields shows Core's validation of the current draft a
   moment after each change.
 - **WG/AWG config**: the WG/AWG text, editable.
 - **Bimeron config**: the Bimeron profile (the former Raw config tab; other profiles keep

@@ -2742,7 +2742,7 @@ bool shownInEditor(QTabWidget *tabs, QWidget *widget) {
 QWidget *ProfileEditorDialog::problemWidget(const CoreProblem &problem) const {
     if (problem.document == "wireguard") {
         // Collapsed AmneziaWG rows still count: focusProblem expands them.
-        QWidget *widget = wgForm_ ? wgForm_->edit(problem.section + '/' + problem.field) : nullptr;
+        QWidget *widget = wgForm_ ? wgForm_->widget(problem.section + '/' + problem.field) : nullptr;
         const int tab = tabOf(tabs_, widget);
         return widget && tab >= 0 && tabs_->isTabVisible(tab) && tabs_->isTabEnabled(tab) && widget->isEnabled() ? widget : nullptr;
     }
@@ -3221,6 +3221,15 @@ void ProfileEditorDialog::checkWireGuard() {
         if (lines.size() == 4) { lines << tr("…and %1 more.").arg(problems.size() - 4); break; }
         lines << describeCoreProblem(problem, catalog, problemLabel(problemWidget(problem)));
     }
+    // Mark the fields Core names, so a rejected value is visible where it is edited.
+    for (QWidget *widget : wgForm_->findChildren<QWidget *>()) {
+        if (!widget->property("coreProblem").toBool()) continue;
+        widget->setProperty("coreProblem", false);
+        widget->style()->unpolish(widget);
+        widget->style()->polish(widget);
+    }
+    for (const auto &problem : problems)
+        if (QWidget *widget = problemWidget(problem)) markProblemField(widget);
     if (wgInspection_.isEmpty() && wgCacheKey_.isEmpty()) wgForm_->setStatus({}, false);
     else wgForm_->setStatus(lines.isEmpty() ? tr("Core accepts this WireGuard configuration.") : lines.join('\n'), !lines.isEmpty());
     refreshWireGuard();

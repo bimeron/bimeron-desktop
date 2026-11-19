@@ -1,4 +1,5 @@
 #include "WireGuardForm.h"
+#include "HiDpiComboBox.h"
 
 #include <QCoreApplication>
 #include <QFormLayout>
@@ -64,13 +65,30 @@ const QList<AmneziaText> &amneziaTexts() {
         {"3.0", "RejectAfterTime", QT_TRANSLATE_NOOP("WireGuardForm", "Reject after, seconds")},
         {"3.0", "KeepaliveTimeout", QT_TRANSLATE_NOOP("WireGuardForm", "Keepalive timeout, seconds")},
         {"3.0", "MaxHandshakeAttempts", QT_TRANSLATE_NOOP("WireGuardForm", "Maximum handshake attempts")},
-        {"3.1", "RandomTrailers", QT_TRANSLATE_NOOP("WireGuardForm", "Random packet trailers: true, false, on, off, 1 or 0")},
-        {"3.1", "DisableCookies", QT_TRANSLATE_NOOP("WireGuardForm", "Disable cookie replies: true, false, on, off, 1 or 0")},
+        {"3.1", "RandomTrailers", QT_TRANSLATE_NOOP("WireGuardForm", "Random packet trailers")},
+        {"3.1", "DisableCookies", QT_TRANSLATE_NOOP("WireGuardForm", "Disable cookie replies")},
     };
     return texts;
 }
 
 QString tr(const char *text) { return QCoreApplication::translate("WireGuardForm", text); }
+// Short words such as "On" have other translations elsewhere; the disambiguation
+// selects the AmneziaWG option wording.
+QString choiceText(const char *text) { return QCoreApplication::translate("WireGuardForm", text, "AmneziaWG option"); }
+
+// Not set removes the key; On and Off use the amneziawg-tools spelling 1 and 0.
+QComboBox *makeChoice(const QString &id, const QString &hint) {
+    auto *choice = new HiDpiComboBox;
+    choice->setObjectName("wireGuard" + QString(id).replace('/', '_'));
+    choice->setToolTip(hint);
+    choice->addItem(choiceText("Not set"), QString());
+    choice->setItemData(0, choiceText("The key is not written; the default applies."), Qt::ToolTipRole);
+    choice->addItem(choiceText("On"), QStringLiteral("1"));
+    choice->setItemData(1, choiceText("Written as 1."), Qt::ToolTipRole);
+    choice->addItem(choiceText("Off"), QStringLiteral("0"));
+    choice->setItemData(2, choiceText("Written as 0."), Qt::ToolTipRole);
+    return choice;
+}
 
 QLineEdit *makeEdit(const QString &id) {
     auto *edit = new QLineEdit;
@@ -119,6 +137,15 @@ const QStringList &WireGuardForm::amneziaFields() {
     return fields;
 }
 
+bool WireGuardForm::choiceField(const QString &id) {
+    return id == "Interface/RandomTrailers" || id == "Interface/DisableCookies";
+}
+
+QWidget *WireGuardForm::widget(const QString &id) const {
+    if (QWidget *field = edits_.value(id)) return field;
+    return choices_.value(id);
+}
+
 bool WireGuardForm::secretField(const QString &id) {
     return id == "Interface/PrivateKey" || id == "Peer/PresharedKey" || id == "Interface/HeaderProtectionKey";
 }
@@ -163,6 +190,15 @@ WireGuardForm::WireGuardForm(QWidget *parent) : QWidget(parent) {
             amnezia->addRow(heading);
         }
         const QString id = QStringLiteral("Interface/") + text.key;
+        if (choiceField(id)) {
+            auto *choice = makeChoice(id, tr(text.hint));
+            choices_.insert(id, choice);
+            auto *label = new QLabel(text.key);
+            label->setToolTip(tr(text.hint));
+            label->setBuddy(choice);
+            amnezia->addRow(label, choice);
+            continue;
+        }
         auto *edit = makeEdit(id);
         edit->setToolTip(tr(text.hint));
         edit->setPlaceholderText(tr(text.hint));
@@ -189,6 +225,12 @@ WireGuardForm::WireGuardForm(QWidget *parent) : QWidget(parent) {
             refreshAmneziaSummary();
             emit edited();
         });
+    for (auto it = choices_.cbegin(); it != choices_.cend(); ++it)
+        connect(it.value(), &QComboBox::currentIndexChanged, this, [this, id = it.key()] {
+            changed_.insert(id);
+            refreshAmneziaSummary();
+            emit edited();
+        });
     refreshAmneziaSummary();
 }
 
@@ -197,6 +239,14 @@ void WireGuardForm::setValues(const QJsonObject &fields) {
     for (auto it = edits_.cbegin(); it != edits_.cend(); ++it) {
         const QSignalBlocker blocker(it.value());
         it.value()->setText(fields.value(it.key()).toString());
+    }
+    // Any spelling Core accepts maps to On or Off; a value Core rejects shows Not set
+    // (its problem marks the field, and the raw tab keeps the original text).
+    for (auto it = choices_.cbegin(); it != choices_.cend(); ++it) {
+        const QString value = fields.value(it.key()).toString().trimmed().toLower();
+        const QSignalBlocker blocker(it.value());
+        it.value()->setCurrentIndex(QStringList{"true", "on", "1"}.contains(value) ? 1
+            : QStringList{"false", "off", "0"}.contains(value) ? 2 : 0);
     }
     refreshAmneziaSummary();
 }
@@ -215,6 +265,7 @@ void WireGuardForm::presetValue(const QString &id, const QString &value) {
 QMap<QString, QString> WireGuardForm::values() const {
     QMap<QString, QString> result;
     for (auto it = edits_.cbegin(); it != edits_.cend(); ++it) result.insert(it.key(), it.value()->text());
+    for (auto it = choices_.cbegin(); it != choices_.cend(); ++it) result.insert(it.key(), it.value()->currentData().toString());
     return result;
 }
 
@@ -236,6 +287,7 @@ bool WireGuardForm::amneziaExpanded() const { return amneziaBody_->isVisibleTo(t
 
 void WireGuardForm::refreshAmneziaSummary() {
     int set = 0;
-    for (const QString &id : amneziaFields()) set += edits_.value(id)->text().isEmpty() ? 0 : 1;
+    for (const QString &id : amneziaFields())
+        set += choices_.contains(id) ? (choices_.value(id)->currentIndex() > 0 ? 1 : 0) : (edits_.value(id)->text().isEmpty() ? 0 : 1);
     amneziaToggle_->setText(set ? tr("AmneziaWG (%1 set)").arg(set) : tr("AmneziaWG"));
 }

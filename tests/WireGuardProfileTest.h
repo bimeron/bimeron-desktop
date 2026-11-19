@@ -406,6 +406,26 @@ static void wireGuardEditor(const QString &directory) {
         require(message.contains("managed by Bimeron") && editor.result() != QDialog::Accepted);
     }
     {
+        // AmneziaWG 3.1 booleans are Not set / On / Off choices: any accepted spelling loads,
+        // untouched values keep their bytes, On/Off write 1/0 and Not set removes the key.
+        const QString awg = "[Interface]\nPrivateKey = " + privateKey + "\nRandomTrailers = on\nDisableCookies = false\n\n[Peer]\nPublicKey = PUBLIC\n";
+        ProfileEditorDialog editor(profile, caps, nullptr, accepted, "fake-core", path, false, awg);
+        auto *trailers = editor.findChild<QComboBox *>("wireGuardInterface_RandomTrailers");
+        auto *cookies = editor.findChild<QComboBox *>("wireGuardInterface_DisableCookies");
+        require(trailers && cookies && trailers->count() == 3);
+        require(trailers->currentIndex() == 1 && cookies->currentIndex() == 2 && editor.wireGuardText() == awg);
+        trailers->setCurrentIndex(0);
+        cookies->setCurrentIndex(1);
+        const QString edited = editor.wireGuardText();
+        require(!edited.contains("RandomTrailers") && edited.contains("DisableCookies = 1\n"));
+        cookies->setCurrentIndex(2);
+        require(editor.wireGuardText().contains("DisableCookies = 0\n"));
+        // A value Core would reject shows Not set and is kept until the user chooses.
+        const QString odd = "[Interface]\nPrivateKey = " + privateKey + "\nRandomTrailers = maybe\n\n[Peer]\nPublicKey = PUBLIC\n";
+        ProfileEditorDialog oddEditor(profile, caps, nullptr, accepted, "fake-core", path, false, odd);
+        require(oddEditor.findChild<QComboBox *>("wireGuardInterface_RandomTrailers")->currentIndex() == 0 && oddEditor.wireGuardText() == odd);
+    }
+    {
         // An untouched value longer than QLineEdit's default limit survives an unrelated edit.
         QStringList networks;
         for (int i = 0; i < 2500; ++i) networks << QString("10.%1.%2.0/24").arg(i / 256).arg(i % 256);

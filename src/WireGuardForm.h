@@ -6,6 +6,7 @@
 #include <QStringList>
 #include <QWidget>
 
+class QComboBox;
 class QFormLayout;
 class QLabel;
 class QLineEdit;
@@ -24,6 +25,8 @@ public:
     static const QStringList &mainFields();
     static const QStringList &amneziaFields();
     static bool secretField(const QString &id);
+    // AmneziaWG 3.1 booleans use a Not set / On / Off choice instead of free text.
+    static bool choiceField(const QString &id);
 
     void setValues(const QJsonObject &fields);
     QMap<QString, QString> values() const;
@@ -32,6 +35,8 @@ public:
     // Fields changed since the last setValues(); only these become Core edits.
     QStringList changedFields() const { return changed_.values(); }
     QLineEdit *edit(const QString &id) const { return edits_.value(id); }
+    // The control of a field: a line edit, or a choice for AmneziaWG booleans.
+    QWidget *widget(const QString &id) const;
     void setStatus(const QString &text, bool problem);
     void setAmneziaExpanded(bool expanded);
     bool amneziaExpanded() const;
@@ -42,6 +47,7 @@ signals:
 private:
     void refreshAmneziaSummary();
     QMap<QString, QLineEdit *> edits_;
+    QMap<QString, QComboBox *> choices_;
     QSet<QString> changed_;
     QToolButton *amneziaToggle_ = nullptr;
     QWidget *amneziaBody_ = nullptr;
