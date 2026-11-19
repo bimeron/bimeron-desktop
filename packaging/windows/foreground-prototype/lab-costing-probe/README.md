@@ -183,7 +183,7 @@ installation or enrollment approval.
 
 ### Observed one-shot result (2026-10-30)
 
-The authorized Windows 10 STD VM ran the pinned `both.msi` through native x64
+The authorized Windows test VM ran the pinned `both.msi` through native x64
 `msiexec /i /qn /norestart` from an elevated, noninteractive PowerShell Direct
 session. Exit code was 0. Server CostInitialize, InstallInitialize and
 InstallFinalize succeeded. Observed callbacks were Preflight, DeferredBegin,

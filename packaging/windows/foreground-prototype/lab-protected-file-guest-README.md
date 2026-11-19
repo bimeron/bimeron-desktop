@@ -61,7 +61,7 @@ DLLs, unknown APIs, and delay imports without running the harness.
 
 After explicit user approval of the final x64 bundle, the parent provisioned only
 native Program Files\BimeronProtectedFileLab and its LABProtectedFiles child in
-the checkpointed Windows 10 STD VM. New-directory ACLs were protected and limited
+the checkpointed Windows test VM. New-directory ACLs were protected and limited
 to SYSTEM/Administrators with Administrator ownership. System root and Program
 Files ACLs were not changed. The parent verified the frozen EXE hash before and
 after copying, confirmed pending.bin absent, and ran the exact guest command once.

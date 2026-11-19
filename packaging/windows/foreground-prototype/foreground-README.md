@@ -146,7 +146,7 @@ No benchmark is applicable to this disconnected offline gate.
 Use installed VS 18 Build Tools and Python. From the repository root:
 
 ```powershell
-cmake -S packaging/windows/foreground-prototype -B build/foreground-prototype-amd64 -G "Visual Studio 18 2026" -A x64 "-DCMAKE_GENERATOR_INSTANCE=C:/Program Files (x86)/Microsoft Visual Studio/18/BuildTools" "-DWIX_TOOL_DIR=C:/Users/PC/Documents/dev/bimeron/bimeron-desktop/.tools/wix"
+cmake -S packaging/windows/foreground-prototype -B build/foreground-prototype-amd64 -G "Visual Studio 18 2026" -A x64 "-DCMAKE_GENERATOR_INSTANCE=C:/Program Files (x86)/Microsoft Visual Studio/18/BuildTools" "-DWIX_TOOL_DIR=<repository>/.tools/wix"
 cmake --build build/foreground-prototype-amd64 --config Release
 ctest --test-dir build/foreground-prototype-amd64 -C Release --output-on-failure
 ```
@@ -502,7 +502,7 @@ Source commit `a761106bd03f3710fbd2b092943cc493727289d1` produced these fresh ar
 ### Fresh supported-authoring VM observations (2026-10-30)
 
 The frozen x64 artifacts from source `a761106` were run separately in the
-checkpointed Windows 10 STD VM through native x64 msiexec `/qn /norestart`, from
+checkpointed Windows test VM through native x64 msiexec `/qn /norestart`, from
 an elevated noninteractive PowerShell Direct session (session 0). Hashes were
 checked before execution. Each case had a fresh private verbose log.
 
@@ -797,7 +797,7 @@ Host protected positive and all MSI callback execution remain untested by design
 ### First protected ACK VM observation (2026-10-30)
 
 The parent ran the frozen x64 Success MSI from source `270a674` once in the
-checkpointed Windows 10 STD VM, after the user authorized further VM checks.
+checkpointed Windows test VM, after the user authorized further VM checks.
 The pinned MSI and protected run.manifest hashes matched before launch. The
 installer returned 1603 at AckPreflight (callback 0); no pending.bin was created.
 The existing standalone protected-file Pending record remained byte-identical.
@@ -965,7 +965,7 @@ are preserved. The artifact index carries exact source commit and hashes.
 ### Native x64 protected ACK Success observation (2026-10-30)
 
 The parent ran the independently reviewed Success bytes from source `a6d93adc`
-exactly once in the authorized disposable Windows 10 STD VM, through the existing
+exactly once in the authorized disposable Windows test VM, through the existing
 Session 0 administrative PowerShell Direct context. MSI SHA-256 was
 `e4e08ee585dc4e269330382744c3fa22a8148c2103c44283d5197679eb0b5cf0`;
 Binary SHA-256 `f30cc4bdbf381b8c2621a8211d38752548ccaed3cf6324872d0793b95a62a109`;
@@ -1970,7 +1970,7 @@ bounded DOS-alias runner delta. PS 5.1 and PS 7 each repeated 159 worker/format,
 34 policy and 21 alias assertions; archive/inventory checks matched committed
 sources and frozen artifact pins. This does not establish native execution.
 
-The parent accessed the disposable Windows 10 STD VM and confirmed no active MSI
+The parent accessed the disposable Windows test VM and confirmed no active MSI
 process, no Pending/checkpoint and matching prepared MSI/manifest hashes. The
 existing client root was moved intact to
 `BimeronCheckpointClientLab-prelaunch-c260f52f`; the before/after comparison matched, but later review found nested inventory

@@ -6,7 +6,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[3]
 OUT = ROOT / 'build/lab-costing-probe/Release'
-SOURCE = Path('C:/Users/PC/.t3/worktrees/bimeron-desktop/t3-dd53e01c/build/foreground-lab-component-final-x64/Release/lab-trace-Success.msi')
+SOURCE = Path(ROOT / 'build/foreground-lab-component-final-x64/Release/lab-trace-Success.msi')
 PIN = '0c73788944a2d520628e7dd619df2eb507821021fd76cef4dd879851586d0dbf'
 spec = importlib.util.spec_from_file_location('checker', HERE.parent/'lab-trace-check.py')
 m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)

@@ -75,7 +75,7 @@ Release builds and native Windows x64 / WSL Linux amd64 CTest; ARM64 compile-onl
 No package, dependency, settings, Core, service, commit, push or PR changes.
 
 External baseline snapshots and every 6-organizations decision are retained in
-`C:/Users/PC/Documents/Bimeron-GeoIP-Analysis/geosite-eight-sections-2026-11-03`.
+`<research-root>/geosite-eight-sections-2026-11-03`.
 Selection uses existing curated labels and cached evidence; no new web research.
 Sohu is retained in General lists: its mixed media/website-tool evidence does not
 affirm the corporate portfolio criterion. Dropbox likewise remains general because
@@ -137,7 +137,7 @@ Remaining limits are inherited sampled scope/ownership evidence, unproven instal
 source revisions and live installed-routing compatibility, plus ARM64 runtime.
 No packages, installed settings/services, Core mutations, commit, push or PR.
 The external baseline, per-ID ledger, task-relative diffs and validation live in
-C:/Users/PC/Documents/Bimeron-GeoIP-Analysis/geosite-eight-sections-2026-11-03;
+<research-root>/geosite-eight-sections-2026-11-03;
 final build/test/diagnostic logs and native captures live in ignored
 build/geosite-classification/eight-verified-* and eight-final-* files.
 
@@ -145,7 +145,7 @@ build/geosite-classification/eight-verified-* and eight-final-* files.
 
 The separately authorized implementation transfers **1380 eligible records** from
 `geosite-reanalysis-v2/efficient-v3/unknown-final-028/catalogue.json` under the
-external research root `C:/Users/PC/Documents/Bimeron-GeoIP-Analysis`.
+external research root `<research-root>`.
 Its file-byte SHA-256 is
 `1d010fc26ef5e3b8cc817711e5c0f60e4984cda2e49e263746558185ccd8563c`.
 The draft's 1382 known MAIN figures are not the import count: 18 records lost
@@ -169,7 +169,7 @@ selection serialization and routing rules remain unchanged.
 The integration ledger, before-file snapshots, exact new/changed/retained/unknown
 partition, per-field statuses, source pointers, exclusions, input hashes and
 validation are outside the repository in
-`C:/Users/PC/Documents/Bimeron-GeoIP-Analysis/geosite-desktop-transfer-review-2026-11-03`.
+`<research-root>/geosite-desktop-transfer-review-2026-11-03`.
 The known MAIN values of category-social-media-ir, Entrust and iTunes are retained
 when later mixed-null suggestions conflict. The referenced Quera purpose excerpt
 now resolves the earlier forums objection: category-forums-ir becomes a Work
@@ -320,7 +320,7 @@ further classification remain outside this trial.
 ## Catalog provenance and trial limits
 
 The external research root is
-`C:/Users/PC/Documents/Bimeron-GeoIP-Analysis/geosite-classification`.
+`<research-root>/geosite-classification`.
 The frozen `themes/catalog-with-topics.json` SHA-256 is
 `a7abc235907166c4df82879c8f3f8feff5301dbbfd475d915aaf07073be6ba59`.
 It contains 1561 IDs, 977 accepted and 584 unresolved; 788 initially have topics
@@ -332,7 +332,7 @@ Core; product metadata neither supplies IDs nor proves installed domain semantic
 
 The 180 flagged records were reviewed against cached source evidence and their
 scope rationale. The separate external review is
-`C:/Users/PC/Documents/Bimeron-GeoIP-Analysis/geosite-desktop-integration-review/corrections-and-flag-review.json`.
+`<research-root>/geosite-desktop-integration-review/corrections-and-flag-review.json`.
 It records evidence hashes, retained uncertainty and 24 concrete product metadata
 corrections. The frozen catalog and evidence cache were not modified. Pirate Bay
 and RARBG move to Technology and access / Torrents and P2P; Beisen moves to
@@ -561,7 +561,7 @@ entry names have Russian translations. Existing translation keys were retained;
 only the explicitly requested AI topic translation changed.
 
 Read-only SSH/SCP import and the audit ledger are external at
-`C:/Users/PC/Documents/Bimeron-GeoIP-Analysis/geosite-mac-results-import-2026-11-03/`.
+`<research-root>/geosite-mac-results-import-2026-11-03/`.
 `import-ledger.json` records each import/exclusion, source limitations, 209 source
 file hashes, 37 cited receipt files inspected, and the exact original-input
 comparison. The original JSON bytes and 179 unique ordered IDs match. No downloaded
@@ -726,7 +726,7 @@ section 6 / Companies and organizations with complete bilingual MiMo/XiaoAI
 scope names. Existing AI labels/search and selection/routing logic are unchanged.
 
 The new external snapshot is
-`C:/Users/PC/Documents/Bimeron-GeoIP-Analysis/geosite-mac-results-import-2026-11-03-v2`.
+`<research-root>/geosite-mac-results-import-2026-11-03-v2`.
 All 228 source files match the Mac's exact-byte SHA-256 manifest. Old/new
 decisions hashes are `eb4ee85c053a3547eaa7788c709fa4b216eebf0269033f5429e5d3285ec618b7`
 and `a54b3bb2a7f8b2750e0f812360cb5227ca59679a79d20dcb8e992f981e48c158`.
@@ -801,7 +801,7 @@ coverage is 1561/1561, zero known catalog exclusions, 46 unchanged topics and
 serialization or picker implementation changed.
 
 The new external ledger and pre-task snapshots are in
-`C:/Users/PC/Documents/Bimeron-GeoIP-Analysis/geosite-final-two-editorial-2026-11-03`.
+`<research-root>/geosite-final-two-editorial-2026-11-03`.
 `decisions.json` records user approval, cached contents and exact-byte SHA-256:
 Neuralink `e4612cd1671eb47ac46e1dcd6c713b0d39a56d23792857bfb4810d601421ff1b`;
 RedTube `d624e78c4d13a5820b8d921b235c0deb5816a7725eb553e8db55c94d86470bdf`.
