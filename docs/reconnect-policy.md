@@ -33,10 +33,10 @@ English is the source text; Russian is in `assets/translations/ru.json`.
 
 | Core report | Status line | Colour | Extra line | Controls |
 |---|---|---|---|---|
-| Initial connect, attempt n of 3 | `Connecting… (n/3)` | yellow | held line | Disconnect (Disconnect VPN while held) |
-| Interrupted, attempt n of 10 | `Reconnecting… (n/10)` | yellow | held line | Disconnect VPN |
-| Interrupted, pause | `Server unavailable · retrying in 0:59` | red | cause, held line | Retry now (if advertised), Disconnect VPN |
-| Initial-connect failure, protection held | `Couldn't connect. Check your internet connection and access key. Internet access stays paused until you select Disconnect VPN.` | red | none | Retry now (if advertised), Disconnect VPN |
+| Initial connect, attempt n of 3 | `Connecting… (n/3)` | yellow | held line | Disconnect |
+| Interrupted, attempt n of 10 | `Reconnecting… (n/10)` | yellow | held line | Disconnect |
+| Interrupted, pause | `Server unavailable · retrying in 0:59` | red | cause, held line | Retry now (if advertised), Disconnect |
+| Initial-connect failure, protection held | `Couldn't connect. Check your internet connection and access key. Internet access stays paused until you select Disconnect.` | red | none | Retry now (if advertised), Disconnect |
 | Failure without held protection | `Connection failed` | red | none | Connect |
 | Leftover protection, no run (`KillSwitch: "residual"`) | `Internet is blocked by leftover VPN protection.` | red | none | Fix connection (emergency network recovery); Connect blocked |
 
@@ -48,10 +48,14 @@ English is the source text; Russian is in `assets/translations/ru.json`.
 - The cause is the localized catalog text of `LastError`. It is shown during the
   pause, so an error a retry cannot fix stays visible. The status tooltip keeps
   the catalog code and text as in Desktop 0.3.0.
-- Disconnect VPN is the main connection button. Its tooltip reads
-  `Internet will work without VPN protection.` A proxy-mode session keeps the
-  plain Disconnect label unless protection is held.
-- While protection is held, the main button stays Disconnect VPN even when
+- The main connection button reads Disconnect in every state where it
+  disconnects: connected, connecting, reconnecting, the pause and a held
+  failure. While reconnecting, in the pause and whenever protection is held,
+  its tooltip reads `Internet will work without VPN protection.` A proxy-mode
+  session has no tooltip unless protection is held. When the button offers a
+  profile switch it has no tooltip, and a selected native IKEv2 profile shows
+  its unavailability reason instead.
+- While protection is held, the main button stays Disconnect even when
   another profile is selected, and pressing it only stops the session. Switching
   profiles would otherwise release and re-arm protection.
 - Retry now is next to the status line. It appears during the pause and in a
@@ -62,7 +66,7 @@ English is the source text; Russian is in `assets/translations/ru.json`.
   attempt has already started) is written to the log through the catalog and the
   status refresh shows the current state.
 - Desktop never sends `start` while protection is held. Core would accept a
-  handover to another kill switch profile, but Desktop offers only Disconnect VPN
+  handover to another kill switch profile, but Desktop offers only Disconnect
   and Retry now in that state. A `kill_switch_held` start error is shown through
   the catalog like other start errors.
 - `start` waits up to 2 minutes, as Core recommends: with the kill switch it
@@ -89,7 +93,7 @@ shown; `Session` is absent or inactive.
   `Internet is blocked by leftover VPN protection.` The text is pending user
   approval and lives only in `ReconnectPolicy::residualProtectionText()`.
 - `residual` is not `holding`: it never shows Retry now, the paused line or the
-  held Disconnect VPN button.
+  held Disconnect button.
 - Other recovery codes keep the existing `Could not prepare connection` text.
 
 Desktop 0.3.0 sees `cleanup_failed_run_recover` and shows the same recovery
@@ -181,7 +185,7 @@ Desktop does not depend on the new progress events.
 
 A Core without these fields and capabilities keeps the Desktop 0.3.0
 presentation: `Reconnecting… (n/3)` from `ReconnectAttempt`/`ReconnectLimit`, no
-extra line, no Retry now and the plain Disconnect button.
+extra line, no Retry now and no tooltip on the Disconnect button.
 
 ## Acceptance criteria
 
@@ -204,6 +208,9 @@ extra line, no Retry now and the plain Disconnect button.
   on the Windows test VM.
 
 ## Visual check (2026-11-18)
+
+This record predates #76: the button it names Disconnect VPN now reads
+Disconnect (`Отключить`); its tooltip is unchanged.
 
 Desktop ef9e880 against Core 874c1cc2 (the reviewed contract) on the Windows 10
 test VM, in Russian, driven through UI Automation:

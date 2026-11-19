@@ -67,7 +67,7 @@ struct Presentation {
     bool problem = false;        // red instead of the colour of the state
     bool countdown = false;      // the title changes every second
     bool retryNow = false;       // show "Retry now"
-    bool disconnectVpn = false;  // the main button reads "Disconnect VPN"
+    bool warnDisconnect = false; // the main button tooltip warns that protection ends
     bool holdDisconnect = false; // the main button stays a disconnect button
 };
 
@@ -143,8 +143,8 @@ inline Presentation present(const QString &coreState, const State &state, const 
     if (coreState == QLatin1String("failed")) {
         if (state.protectionHeld) {
             view.title = text("Couldn't connect. Check your internet connection and access key. "
-                              "Internet access stays paused until you select Disconnect VPN.");
-            view.problem = view.disconnectVpn = view.holdDisconnect = true;
+                              "Internet access stays paused until you select Disconnect.");
+            view.problem = view.warnDisconnect = view.holdDisconnect = true;
             view.retryNow = state.retryNowSupported;
         }
         return view;
@@ -163,10 +163,10 @@ inline Presentation present(const QString &coreState, const State &state, const 
         view.title = (state.kind == Kind::Initial ? text("Connecting… (%1/%2)") : text("Reconnecting… (%1/%2)"))
             .arg(state.attempt).arg(state.limit);
     }
-    view.disconnectVpn = state.kind == Kind::Interrupted && !proxy;
+    view.warnDisconnect = state.kind == Kind::Interrupted && !proxy;
     if (state.protectionHeld) {
         detail << text("Internet access is paused until the VPN connects.");
-        view.disconnectVpn = view.holdDisconnect = true;
+        view.warnDisconnect = view.holdDisconnect = true;
     }
     view.detail = detail.join(QLatin1Char('\n'));
     return view;

@@ -185,10 +185,10 @@ struct ConnectionManagementTest {
                 && window.reconnectDetailLabel_->text() == "Internet access is paused until the VPN connects.", "held line while waiting");
         require(!window.retryNowButton_->isHidden() && window.retryNowButton_->isEnabled(), "Retry now with capability");
         require(window.reconnectCountdown_->isActive(), "countdown ticks while waiting");
-        require(window.connectButton_->text() == "Disconnect VPN" && window.connectButton_->isEnabled()
-                && window.connectButton_->toolTip() == "Internet will work without VPN protection.", "Disconnect VPN while waiting");
+        require(window.connectButton_->text() == "Disconnect" && window.connectButton_->isEnabled()
+                && window.connectButton_->toolTip() == "Internet will work without VPN protection.", "Disconnect with a warning while waiting");
         window.profileList_->setCurrentRow(1);
-        require(window.connectButton_->text() == "Disconnect VPN", "held protection never offers a profile switch");
+        require(window.connectButton_->text() == "Disconnect", "held protection never offers a profile switch");
 
         window.reconnect_.nextAttemptAtMs -= 10000;
         window.renderReconnectView();
@@ -206,12 +206,13 @@ struct ConnectionManagementTest {
         const QJsonObject heldFailure{{"State", "failed"}, {"Session", session(true)}, {"ReconnectAttempt", 3},
                                       {"ReconnectLimit", 3}, {"KillSwitch", "holding"}, {"LastError", "transport_check_failed"}};
         const QString heldText = "Couldn't connect. Check your internet connection and access key. "
-                                 "Internet access stays paused until you select Disconnect VPN.";
+                                 "Internet access stays paused until you select Disconnect.";
         status = heldFailure;
         refresh();
         require(window.connectionLabel_->text() == heldText, "held failure text");
         require(window.connectionLabel_->styleSheet().contains("#c62828") && window.reconnectDetailLabel_->isHidden(), "held failure view");
-        require(window.connectButton_->text() == "Disconnect VPN" && window.connectButton_->isEnabled(), "held failure keeps Disconnect VPN");
+        require(window.connectButton_->text() == "Disconnect" && window.connectButton_->isEnabled()
+                && window.connectButton_->toolTip() == "Internet will work without VPN protection.", "held failure keeps Disconnect with the warning");
         require(!window.retryNowButton_->isHidden() && window.retryNowButton_->isEnabled(), "held failure can retry");
 
         rejectReconnect = true;
@@ -223,14 +224,22 @@ struct ConnectionManagementTest {
         window.retryNowButton_->click();
         require(waitFor([&] { return commands.count("reconnect_now") == 3 && synchronized(); }), "held retry sends the command");
         require(window.connectionLabel_->text() == "Connecting… (1/3)" && !window.reconnectDetailLabel_->isHidden()
-                && window.connectButton_->text() == "Disconnect VPN", "held retry restarts the initial attempts");
+                && window.connectButton_->text() == "Disconnect" && window.connectButton_->toolTip() == "Internet will work without VPN protection.",
+                "held retry restarts the initial attempts");
 
         status = heldFailure;
         refresh();
         window.toggleConnection();
-        require(waitFor([&] { return commands.contains("stop") && synchronized(); }), "Disconnect VPN stops the session");
+        require(waitFor([&] { return commands.contains("stop") && synchronized(); }), "Disconnect stops the held session");
         require(window.pendingStartPath_.isEmpty() && window.state_ == "disconnected", "held stop never switches profiles");
         require(window.connectButton_->text() == "Connect", "Connect after release");
+
+        window.profileList_->setCurrentRow(0);
+        status = {{"State", "connected"}, {"Session", session(true)}, {"KillSwitch", "active"}};
+        refresh();
+        require(window.connectButton_->text() == "Disconnect" && window.connectButton_->toolTip().isEmpty(),
+                "connected: Disconnect without the warning");
+        window.profileList_->setCurrentRow(1);
 
         status = {{"State", "failed"}, {"Session", session(false)}, {"LastError", "transport_check_failed"}};
         refresh();
@@ -247,7 +256,7 @@ struct ConnectionManagementTest {
         require(!window.availabilityDetails_->isHidden(), "residual offers the recovery path");
         require(window.retryNowButton_->isHidden() && window.reconnectDetailLabel_->isHidden(), "residual is not holding");
         require(!window.connectButton_->isEnabled() && window.connectButton_->text() == "Connect",
-                "residual blocks Connect and never offers Disconnect VPN");
+                "residual blocks Connect and never offers Disconnect");
         window.cleanupBlocked_ = false;
         status = {{"State", "failed"}, {"Session", session(false)}, {"LastError", "kill_switch_pending_run_recover"}};
         refresh();

@@ -2846,12 +2846,11 @@ void MainWindow::updateConnectionButton() {
     }
     const bool switchProfile = !held && active && selected && profiles_[row].id != activeProfileId_
         && packetProfile(row) && !cleanupBlocked_;
-    const bool disconnectVpn = reconnectView_.disconnectVpn && active && !switchProfile;
+    const bool warnDisconnect = reconnectView_.warnDisconnect && active && !switchProfile;
     connectButton_->setToolTip(nativeSelected ? nativeUnavailableReason()
-        : disconnectVpn ? tr("Internet will work without VPN protection.") : QString{});
+        : warnDisconnect ? tr("Internet will work without VPN protection.") : QString{});
     connectButton_->setText(!operation_.isEmpty() ? tr("Please wait…")
         : state_ == "stopping" ? tr("Disconnecting…")
-        : disconnectVpn ? tr("Disconnect VPN")
         : active && !switchProfile ? tr("Disconnect") : tr("Connect"));
     const QString mode = active && !switchProfile ? "disconnect" : "connect";
     if (connectButton_->property("mode").toString() != mode) {

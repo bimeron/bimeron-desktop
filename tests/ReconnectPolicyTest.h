@@ -170,17 +170,17 @@ inline void views(bool russian) {
     Presentation p = view({{"State", "connecting"}, {"ReconnectAttempt", 2}, {"ReconnectLimit", 3},
                            {"ReconnectPhase", "attempting"}});
     expectText(p.title, pick("Connecting… (2/3)", "Подключение… (2/3)"), "initial title");
-    expect(!p.problem && !p.disconnectVpn && !p.holdDisconnect && !p.retryNow && p.detail.isEmpty(), "initial view");
+    expect(!p.problem && !p.warnDisconnect && !p.holdDisconnect && !p.retryNow && p.detail.isEmpty(), "initial view");
 
     p = view(attempting(1, 7), {{"reconnect_now", true}});
     expectText(p.title, pick("Reconnecting… (7/10)", "Переподключение… (7/10)"), "cycle attempt title");
-    expect(!p.problem && p.disconnectVpn && !p.holdDisconnect && !p.countdown && !p.retryNow && p.detail.isEmpty(),
+    expect(!p.problem && p.warnDisconnect && !p.holdDisconnect && !p.countdown && !p.retryNow && p.detail.isEmpty(),
            "cycle attempt view: no Retry now while an attempt runs");
-    expect(!view(attempting(1, 7), {}, {}, true).disconnectVpn, "proxy keeps Disconnect");
+    expect(!view(attempting(1, 7), {}, {}, true).warnDisconnect, "proxy disconnect has no warning");
 
     p = view(waiting(1, 59000), {{"reconnect_now", true}});
     expectText(p.title, pick("Server unavailable · retrying in 0:59", "Сервер недоступен · повтор через 0:59"), "waiting title");
-    expect(p.problem && p.countdown && p.retryNow && p.disconnectVpn && !p.holdDisconnect, "waiting view");
+    expect(p.problem && p.countdown && p.retryNow && p.warnDisconnect && !p.holdDisconnect, "waiting view");
     expectText(view(waiting(1, 59000), {}, {}, false, now + 1000).title,
                pick("Server unavailable · retrying in 0:58", "Сервер недоступен · повтор через 0:58"), "countdown ticks");
     expect(!view(waiting(1, 59000)).retryNow, "no capability, no Retry now");
@@ -188,7 +188,7 @@ inline void views(bool russian) {
     p = view(waiting(1, 59000, true), {}, pick("The access key was rejected.", "Ключ доступа отклонён."));
     expectText(p.detail, pick("The access key was rejected.\nInternet access is paused until the VPN connects.",
                               "Ключ доступа отклонён.\nИнтернет приостановлен до подключения VPN."), "cause and held line");
-    expect(p.holdDisconnect && p.disconnectVpn, "held waiting keeps Disconnect VPN");
+    expect(p.holdDisconnect && p.warnDisconnect, "held waiting keeps the warning");
 
     QJsonObject unknownTime = waiting(2, 1000);
     unknownTime.remove("NextAttemptAt");
@@ -199,15 +199,15 @@ inline void views(bool russian) {
     p = view(attempting(1, 3, true));
     expectText(p.detail, pick("Internet access is paused until the VPN connects.", "Интернет приостановлен до подключения VPN."), "held attempt line");
     p = view({{"State", "connecting"}, {"KillSwitch", "holding"}});
-    expect(!p.detail.isEmpty() && p.holdDisconnect && p.disconnectVpn, "held initial connect");
+    expect(!p.detail.isEmpty() && p.holdDisconnect && p.warnDisconnect, "held initial connect");
 
     const QJsonObject heldFailure{{"State", "failed"}, {"ReconnectAttempt", 3}, {"ReconnectLimit", 3},
                                   {"KillSwitch", "holding"}, {"Session", QJsonObject{{"active", true}}}};
     p = view(heldFailure);
-    expectText(p.title, pick("Couldn't connect. Check your internet connection and access key. Internet access stays paused until you select Disconnect VPN.",
-                             "Не удалось подключиться. Проверьте подключение к интернету и ключ доступа. Интернет остаётся приостановленным, пока вы не нажмёте «Отключить VPN»."),
+    expectText(p.title, pick("Couldn't connect. Check your internet connection and access key. Internet access stays paused until you select Disconnect.",
+                             "Не удалось подключиться. Проверьте подключение к интернету и ключ доступа. Интернет остаётся приостановленным, пока вы не нажмёте «Отключить»."),
                "held failure title");
-    expect(p.problem && p.holdDisconnect && p.disconnectVpn && p.detail.isEmpty() && !p.retryNow, "held failure view");
+    expect(p.problem && p.holdDisconnect && p.warnDisconnect && p.detail.isEmpty() && !p.retryNow, "held failure view");
     expect(view(heldFailure, {{"reconnect_now", true}}).retryNow, "held failure can retry");
     QJsonObject released = heldFailure;
     released["Session"] = QJsonObject{{"active", false}};
@@ -222,8 +222,8 @@ inline void views(bool russian) {
     p = view(residual, {{"reconnect_now", true}});
     expectText(p.title, pick("Internet is blocked by leftover VPN protection.", "Интернет заблокирован оставшейся защитой VPN."),
                "residual text");
-    expect(p.problem && !p.retryNow && p.detail.isEmpty() && !p.holdDisconnect && !p.disconnectVpn && !p.countdown,
-           "residual: no Retry now, no paused line, no held Disconnect VPN");
+    expect(p.problem && !p.retryNow && p.detail.isEmpty() && !p.holdDisconnect && !p.warnDisconnect && !p.countdown,
+           "residual: no Retry now, no paused line, no held Disconnect");
     expectText(residualProtectionText(), p.title, "one residual text");
 
     for (const char *state : {"connected", "disconnected", "stopping"}) {
@@ -265,8 +265,8 @@ inline void translationsComplete(const QJsonObject &ru) {
     for (const char *source : {
              "Connecting… (%1/%2)", "Reconnecting… (%1/%2)", "Server unavailable · retrying in %1",
              "Server unavailable", "Internet access is paused until the VPN connects.",
-             "Couldn't connect. Check your internet connection and access key. Internet access stays paused until you select Disconnect VPN.",
-             "Retry now", "Disconnect VPN", "Internet will work without VPN protection.",
+             "Couldn't connect. Check your internet connection and access key. Internet access stays paused until you select Disconnect.",
+             "Retry now", "Disconnect", "Internet will work without VPN protection.",
              "VPN connection lost. Reconnecting…", "VPN is still not connected. Retrying…", "VPN reconnected",
              "Proxy connection lost. Reconnecting…", "Proxy is still not connected. Retrying…", "Proxy reconnected",
              "Internet is blocked by leftover VPN protection."}) {
