@@ -3,17 +3,17 @@
 These documents describe how Bimeron Desktop behaves and how it is built. Most of them are
 specifications written while each feature was developed: Core versions, stage numbers and test
 results inside them describe the state at that time. The Core bundled with the current release
-is listed in its [release notes](release-notes-0.3.0.md).
+is listed in its [release notes](release-notes-0.3.1.md).
 
 Start with the [repository README](../README.md) for installation and an overview.
 
 ## Releases and platforms
 
-- [Desktop 0.3.0 release notes](release-notes-0.3.0.md)
+- [Desktop 0.3.1 release notes](release-notes-0.3.1.md), [0.3.0](release-notes-0.3.0.md)
 - [Linux package compatibility](linux-compatibility.md): the Ubuntu 22.04 baseline
 - [Building and packaging](build-and-packaging.md): requirements, MSI and DEB contents, release
   checks
-- Release acceptance records: [0.3.0](release-0.3.0.md), [0.2.0](release-0.2.0.md)
+- Release acceptance records: [0.3.1](release-0.3.1.md), [0.3.0](release-0.3.0.md), [0.2.0](release-0.2.0.md)
 
 ## Profiles
 
