@@ -647,6 +647,11 @@ static void wireGuardEditor(const QString &directory) {
     require(!ProfileStore::localRegularFile("\\\\server.invalid\\share\\tunnel.conf") && !ProfileStore::localRegularFile("\\\\?\\C:\\tunnel.conf"));
 #endif
 
+    // WireGuard connection codes survive diagnostic export; unknown text is still redacted.
+    for (const char *code : {"wireguard_handshake_timeout", "wireguard_socket_failed", "wireguard_platform_limit", "invalid_wireguard_transport"})
+        require(safeCoreCode(code) == code);
+    require(safeCoreCode("wireguard_SENTINEL") == "redacted_error");
+
     // Bridge helpers.
     require(WireGuardCore::protocolLabel(QJsonObject{{"protocol", "wireguard"}}) == "WireGuard");
     require(WireGuardCore::protocolLabel(QJsonObject{{"protocol", "amneziawg"}, {"awg_version", "2.0"}}) == "AmneziaWG 2.0");

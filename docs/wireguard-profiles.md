@@ -189,6 +189,13 @@ inspection, cached in memory per key file identity and selected CLI. Start refus
 profile with a notice when the running service lacks WG/AWG support. Start validation is
 unchanged: Core reads the referenced file.
 
+Connection failures use Core codes with en/ru texts from `errors --json` and Core's
+`LastErrorPermanent` flag, so no Desktop mapping is needed: `wireguard_handshake_timeout` and
+`wireguard_socket_failed` are retried; `wireguard_platform_limit` (AWG paddings, junk sizes or
+MTU too large for the platform engine, notably about 2 KB per datagram on Windows) and
+`invalid_wireguard_transport` are not. These codes are kept in exported diagnostics. Start
+progress events (`wireguard_handshake`, then `transport_check` in VPN mode) appear in the log.
+
 ## Verification
 
 `profile-vless-test` covers the pair storage (exact bytes, revisions, failed replacement,
@@ -200,7 +207,7 @@ service and CLI capability gating, creation and the bridge helpers. With
 edit, link import and an editor round trip against the real Core.
 
 Development and tests use Core `feat/wireguard-awg` at
-`e885b4a8ddfa811efebe9558e7adb01692c8239c` (bridge only; connections fail until the Core runtime adapter lands). The final
+`22ca001d582c50fd279c50e07c3d01d92e006de3` (bridge and runtime adapter; live server checks pending). The final
 pin follows the Core `master` commit after the Core pull request merges.
 
 Live connection checks run only on the test VMs. Ordinary Desktop CI does not download Core.
