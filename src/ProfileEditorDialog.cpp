@@ -2161,7 +2161,24 @@ void ProfileEditorDialog::assessRepresentation() {
 bool ProfileEditorDialog::applyRaw() {
     const QString text = configText();
     CoreFailure failure;
-    if ((!validateRaw_ && !validatePair_) || !validateDraft(text, &failure)) {
+    bool valid = (validateRaw_ || validatePair_);
+    if (valid && isWireGuard()) {
+        // The Bimeron draft is checked against the last WG/AWG text Core accepted
+        // while the field draft is refused, and problems that belong to the WG/AWG
+        // document are corrected on its own tabs; neither blocks leaving this tab.
+        wireGuardText();
+        // A new draft has no accepted WG/AWG text yet; Save validates the pair later.
+        valid = wgBridgeError_.isEmpty() ? validateDraft(text, &failure)
+            : wgLoaded_.isEmpty() || validateDraft(text, &failure, &wgLoaded_);
+        if (!valid && !failure.problems.isEmpty()) {
+            bool wireGuardOnly = true;
+            for (const auto &problem : std::as_const(failure.problems)) wireGuardOnly = wireGuardOnly && problem.document == "wireguard";
+            if (wireGuardOnly) { valid = true; failure.clear(); }
+        }
+    } else if (valid) {
+        valid = validateDraft(text, &failure);
+    }
+    if (!valid) {
         if (failure.isEmpty()) failure.text = tr("The selected Core CLI must validate this configuration before visual editing.");
         showProblems(failure);
         return false;
@@ -3014,7 +3031,7 @@ bool ProfileEditorDialog::isWireGuard() const {
     return wireGuard_ || (creating_ && keySource_ && keySource_->currentData().toString() == "WireGuard");
 }
 
-bool ProfileEditorDialog::validateDraft(const QString &text, CoreFailure *failure) {
+bool ProfileEditorDialog::validateDraft(const QString &text, CoreFailure *failure, const QString *wireGuardOverride) {
     if (wireGuard_ && ProfileStore::keyFileReference(text) != ProfileStore::keyFileReference(originalText_)) {
         failure->text = tr("The WireGuard configuration file of this profile is managed by Bimeron. Keep File = %1 and edit the WG/AWG config tab instead.")
             .arg(ProfileStore::keyFileReference(originalText_));
@@ -3025,8 +3042,8 @@ bool ProfileEditorDialog::validateDraft(const QString &text, CoreFailure *failur
         return false;
     }
     if (isWireGuard()) {
-        const QString wireGuard = wireGuardText();
-        if (!wgBridgeError_.isEmpty()) {
+        const QString wireGuard = wireGuardOverride ? *wireGuardOverride : wireGuardText();
+        if (!wireGuardOverride && !wgBridgeError_.isEmpty()) {
             failure->text = wgBridgeError_;
             if (wgCacheRefused_) failure->problems = wgCacheProblems_;
             return false;
@@ -3134,6 +3151,18 @@ bool ProfileEditorDialog::applyWireGuardRaw() {
     const auto reply = WireGuardCore::inspect(coreExecutable_, text);
     if (!reply.answered()) {
         QMessageBox::warning(this, tr("Error"), reply.error);
+        return false;
+    }
+    if (reply.format() != "wireguard") {
+        // A problems-only reply (for example file_too_large) has no inspection to show.
+        QStringList lines;
+        const CoreErrorCatalog catalog = CoreErrorCatalog::forExecutable(coreExecutable_);
+        for (const auto &problem : reply.problems) lines << describeCoreProblem(problem, catalog, coreFieldLabel(problem));
+        QMessageBox box(QMessageBox::Warning, tr("WG/AWG config"), lines.isEmpty()
+            ? tr("Core could not read this WG/AWG configuration. Continue editing the WG/AWG config tab.") : lines.join('\n'), QMessageBox::Ok, this);
+        box.setObjectName("wireGuardRawRejected");
+        box.setTextFormat(Qt::PlainText);
+        box.exec();
         return false;
     }
     if (!reply.fieldsError().isEmpty()) {

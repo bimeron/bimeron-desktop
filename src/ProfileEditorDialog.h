@@ -171,7 +171,8 @@ private:
 
     // WireGuard/AmneziaWG state. wgLoaded_ is the document the form shows;
     // field edits become Core set_field operations against it.
-    bool validateDraft(const QString &text, CoreFailure *failure);
+    // wireGuardOverride validates the profile against that WG/AWG text instead of the field draft.
+    bool validateDraft(const QString &text, CoreFailure *failure, const QString *wireGuardOverride = nullptr);
     void loadWireGuard(const QString &text, const QJsonObject &inspection);
     bool applyWireGuardRaw();
     void syncWireGuardRaw();

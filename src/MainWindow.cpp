@@ -1894,7 +1894,7 @@ void MainWindow::addProfile() {
     };
     auto updatePaste = [&] {
         const QString clipboardKey = QApplication::clipboard()->text().trimmed();
-        const bool config = clipboardConfig(clipboardKey);
+        const bool config = clipboardConfig(QApplication::clipboard()->text());
         paste->setEnabled(config || isKey(clipboardKey) || !filePath(clipboardKey).isEmpty());
         paste->setVisible(paste->isEnabled());
         if (config) paste->setText(tr("Paste WireGuard configuration"));
@@ -1909,7 +1909,7 @@ void MainWindow::addProfile() {
     connect(QApplication::clipboard(), &QClipboard::dataChanged, &dialog, updatePaste);
     connect(paste, &QPushButton::clicked, &dialog, [&] {
         const QString clipboard = QApplication::clipboard()->text();
-        if (clipboardConfig(clipboard.trimmed())) {
+        if (clipboardConfig(clipboard)) {
             if (importWireGuardText(clipboard, &dialog)) dialog.done(2);
             return;
         }

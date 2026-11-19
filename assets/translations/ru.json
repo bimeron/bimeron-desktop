@@ -3106,5 +3106,7 @@
   "Core could not identify the configuration file referenced by this profile. Check that Core is available and try again.": "Ядру не удалось определить файл конфигурации, на который ссылается этот профиль. Проверьте, что ядро доступно, и повторите попытку.",
   "The selected Core cannot open WireGuard and AmneziaWG profiles. Start or update Core.": "Выбранное ядро не умеет открывать профили WireGuard и AmneziaWG. Запустите или обновите ядро.",
   "The link exceeds the 64 KiB limit.": "Ссылка превышает лимит 64 КиБ.",
-  "The WG/AWG config is not a WireGuard or AmneziaWG configuration.": "Конфиг WG/AWG не является конфигурацией WireGuard или AmneziaWG."
+  "The WG/AWG config is not a WireGuard or AmneziaWG configuration.": "Конфиг WG/AWG не является конфигурацией WireGuard или AmneziaWG.",
+  "Correct the WireGuard fields first: Core could not apply them, so the WG/AWG config cannot show them yet.": "Сначала исправьте поля WireGuard: ядро не смогло их применить, поэтому конфиг WG/AWG пока не может их показать.",
+  "Core could not read this WG/AWG configuration. Continue editing the WG/AWG config tab.": "Ядро не смогло прочитать эту конфигурацию WG/AWG. Продолжите редактирование на вкладке «Конфиг WG/AWG»."
 }

@@ -514,6 +514,48 @@ static void wireGuardEditor(const QString &directory) {
         require(editor.findChild<QLineEdit *>("wireGuardPeer_Endpoint")->text() == "other.example:51820");
     }
     {
+        // A refused WG field never traps a Bimeron config edit: the user returns to the
+        // WireGuard tab, corrects the field and saves both edits.
+        ProfileEditorDialog editor(profile, caps, nullptr, accepted, "fake-core", path, false, key);
+        QString savedProfile, savedKey;
+        editor.setPairValidator([&](const QString &text, const QString &wg, CoreFailure *) { savedProfile = text; savedKey = wg; return true; });
+        auto *address = editor.findChild<QLineEdit *>("wireGuardInterface_Address");
+        address->setText("10.0.0.2/32 # comment");
+        auto *tabWidget = tabs(editor);
+        tabWidget->setCurrentIndex(tabWidget->count() - 1);
+        auto *raw = editor.findChild<QPlainTextEdit *>("rawConfig");
+        raw->setPlainText(raw->toPlainText().replace("Name = Tunnel", "Name = Renamed"));
+        const int form = tabIndex(editor, "WireGuard");
+        tabWidget->setCurrentIndex(form);
+        require(tabWidget->currentIndex() == form);
+        address->setText("10.0.0.3/32");
+        editor.findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Save)->click();
+        require(editor.result() == QDialog::Accepted && savedProfile.contains("Name = Renamed") && savedKey.contains("Address = 10.0.0.3/32"));
+    }
+    {
+        // A problems-only inspection (for example an oversized text) keeps the WG/AWG config tab.
+        ProfileEditorDialog editor(profile, caps, nullptr, accepted, "fake-core", path, false, key);
+        WireGuardCore::setRunner([&bridge](const QString &, const QByteArray &input, QString *) {
+            if (QJsonDocument::fromJson(input).object().value("op") == "inspect")
+                return QJsonObject{{"version", 1}, {"problems", QJsonArray{QJsonObject{{"code", "file_too_large"}, {"document", "wireguard"}, {"message", "too large"}}}}};
+            return bridge.handle(input);
+        });
+        auto *tabWidget = tabs(editor);
+        const int raw = tabIndex(editor, "WG/AWG config");
+        tabWidget->setCurrentIndex(raw);
+        editor.findChild<QPlainTextEdit *>("wireGuardRawConfig")->setPlainText("[Interface]\nPrivateKey = huge\n");
+        bool rejected = false;
+        QTimer::singleShot(0, [&rejected] {
+            auto *box = qobject_cast<QMessageBox *>(QApplication::activeModalWidget());
+            rejected = box && box->objectName() == "wireGuardRawRejected";
+            if (box) box->accept();
+        });
+        tabWidget->setCurrentIndex(tabIndex(editor, "WireGuard"));
+        require(rejected && tabWidget->currentIndex() == raw);
+        require(editor.findChild<QLineEdit *>("wireGuardPeer_Endpoint")->text() == "vpn.example:51820");
+        WireGuardCore::setRunner([&bridge](const QString &, const QByteArray &input, QString *) { return bridge.handle(input); });
+    }
+    {
         // Removing the last field: Core omits the empty fields map, which is still a valid reply.
         WireGuardCore::setRunner([](const QString &, const QByteArray &input, QString *) {
             const QJsonObject request = QJsonDocument::fromJson(input).object();
