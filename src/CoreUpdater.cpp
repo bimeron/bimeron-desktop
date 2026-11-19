@@ -15,10 +15,8 @@
 #include <algorithm>
 
 CoreUpdater::CoreUpdater(QObject *parent) : QObject(parent) {
-    const QByteArray encoded(BIMERON_CORE_UPDATE_PUBLIC_KEY);
-    publicKey_ = QByteArray::fromBase64(encoded);
-    if (publicKey_.size() != 32 || publicKey_.toBase64() != encoded)
-        publicKey_.clear();
+    // CMake validates the list at configure time; an invalid list still disables updates.
+    CoreUpdate::parseTrustedKeys(QByteArray(BIMERON_CORE_UPDATE_PUBLIC_KEYS), &publicKeys_);
 }
 
 CoreUpdater::~CoreUpdater() {
@@ -26,7 +24,7 @@ CoreUpdater::~CoreUpdater() {
     if (installing_ && staged_) staged_->setAutoRemove(false);
 }
 
-bool CoreUpdater::available() const { return publicKey_.size() == 32; }
+bool CoreUpdater::available() const { return !publicKeys_.isEmpty(); }
 
 QString CoreUpdater::platform() const {
 #ifdef Q_OS_WIN
@@ -165,7 +163,7 @@ void CoreUpdater::inspectNext() {
             if (!error.isEmpty()) { inspectNext(); return; }
             CoreUpdateRelease selected;
             QString reason;
-            if (!CoreUpdate::verifyManifest(manifest, signature, publicKey_, release.tag,
+            if (!CoreUpdate::verifyManifest(manifest, signature, publicKeys_, release.tag,
                                             QCoreApplication::applicationVersion(), ipcVersion_, 1,
                                             platform(), architecture(), betaAllowed_, &selected, &reason)) {
                 inspectNext();

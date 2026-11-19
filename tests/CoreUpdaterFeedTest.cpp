@@ -52,7 +52,7 @@ int main(int argc, char **argv) {
     std::memcpy(seed, seedBytes.constData(), sizeof seed);
     crypto_ed25519_key_pair(secret, publicBytes, seed);
     const QByteArray publicKey(reinterpret_cast<const char *>(publicBytes), 32);
-    require(publicKey.toBase64() == QByteArray(BIMERON_CORE_UPDATE_PUBLIC_KEY), "test key mismatch");
+    require(publicKey.toBase64() == QByteArray(BIMERON_CORE_UPDATE_PUBLIC_KEYS), "test key mismatch");
     const QString keyId = QString::fromLatin1(QCryptographicHash::hash(publicKey, QCryptographicHash::Sha256).left(8).toHex());
     QJsonObject manifest = QJsonDocument::fromJson(read(QString::fromLocal8Bit(argv[1]))).object();
     require(manifest.value("tag").toString() == "v0.2.0-beta.1" && !manifest.isEmpty(), "wrong candidate manifest");
@@ -79,7 +79,7 @@ int main(int argc, char **argv) {
         if (badSignature) signature[0] = signature[0] == 'A' ? 'B' : 'A';
         CoreUpdateRelease selected;
         QString error;
-        const bool valid = CoreUpdate::verifyManifest(bytes, signature, publicKey, "v0.2.0-beta.1", "0.2.0",
+        const bool valid = CoreUpdate::verifyManifest(bytes, signature, {publicKey}, "v0.2.0-beta.1", "0.2.0",
                                                       1, 1, "windows", "amd64", true, &selected, &error);
         if (!reviewed) require(!valid && error == "Unreviewed or incomplete update compatibility", "unreviewed gate was not reached");
         else if (badSignature) require(!valid && error == "Update signature verification failed", "signature gate was not reached");

@@ -38,7 +38,7 @@ private:
     QString architecture() const;
 
     QNetworkAccessManager network_;
-    QByteArray publicKey_;
+    QList<QByteArray> publicKeys_;
     QList<Release> releases_;
     std::unique_ptr<QTemporaryDir> staged_;
     QString installedVersion_;

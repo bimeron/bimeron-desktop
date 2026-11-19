@@ -16,7 +16,10 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QProcess>
+#include <QRandomGenerator>
 #include <QTemporaryDir>
+#include <algorithm>
+#include <cstring>
 #ifdef Q_OS_WIN
 #include <qt_windows.h>
 #include <shellapi.h>
@@ -109,8 +112,18 @@ int main(int argc, char **argv) {
 #endif
     }
     CoreUpdater configured;
-    const QByteArray configuredKey = QByteArray::fromBase64(BIMERON_CORE_UPDATE_PUBLIC_KEY);
-    require(configured.available() == (configuredKey.size() == 32), "configured signing key availability is wrong");
+    QList<QByteArray> configuredKeys;
+    require(CoreUpdate::parseTrustedKeys(BIMERON_CORE_UPDATE_PUBLIC_KEYS, &configuredKeys),
+            "configured signing keys are malformed");
+    {
+        // CMake derived these IDs at configure time; both derivations must agree with Core's.
+        const QByteArray configuredIds(BIMERON_CORE_UPDATE_KEY_IDS);
+        const QList<QByteArray> expectedIds = configuredIds.isEmpty() ? QList<QByteArray>() : configuredIds.split(',');
+        require(expectedIds.size() == configuredKeys.size(), "configured key ID count differs from key count");
+        for (qsizetype i = 0; i < configuredKeys.size(); ++i)
+            require(CoreUpdate::keyId(configuredKeys[i]) == expectedIds[i], "CMake key ID differs from the verifier's key ID");
+    }
+    require(configured.available() == !configuredKeys.isEmpty(), "configured signing key availability is wrong");
     if (!configured.available()) {
         QString unavailable;
         QObject::connect(&configured, &CoreUpdater::statusChanged, &app, [&](const QString &message) { unavailable = message; });
@@ -179,12 +192,30 @@ int main(int argc, char **argv) {
     require(crypto_ed25519_check(reinterpret_cast<const uint8_t *>(rfcSignature.constData()),
                                  reinterpret_cast<const uint8_t *>(rfcPublic.constData()), nullptr, 0) == 0,
             "RFC 8032 Ed25519 signature rejected");
-    uint8_t seed[32]{};
-    uint8_t secret[64]{};
-    uint8_t publicBytes[32]{};
-    crypto_ed25519_key_pair(secret, publicBytes, seed);
-    const QByteArray publicKey(reinterpret_cast<char *>(publicBytes), 32);
-    const QString keyId = QString::fromLatin1(QCryptographicHash::hash(publicKey, QCryptographicHash::Sha256).left(8).toHex());
+    // Key IDs follow Core's derivation (release/applemanifest KeyID and scripts/release-manifest.go).
+    require(CoreUpdate::keyId(QByteArray::fromBase64("bk6SfABmDG88uhUupYT+ia6dtSrpHbnGaBCfYvihJF0=")) == "7370a2d8cf890e5e",
+            "production key ID differs");
+    require(CoreUpdate::keyId(QByteArray::fromBase64("O2onvM62pC1io6jQKm8Nc2UyFXcd4kOmOsBIoYtZ2ik=")) == "139e3940e64b5491",
+            "key ID differs from Core's test vector");
+    require(CoreUpdate::keyId(QByteArray(32, '\0')) == "66687aadf862bd77", "zero key ID differs");
+    // Ephemeral signing keys: random seeds exist only in this process and are wiped by Monocypher.
+    struct TestKey {
+        uint8_t secret[64]{};
+        QByteArray publicKey;
+    };
+    const auto ephemeralKey = [] {
+        TestKey key;
+        quint32 seed[8];
+        QRandomGenerator::system()->fillRange(seed);
+        uint8_t publicBytes[32]{};
+        crypto_ed25519_key_pair(key.secret, publicBytes, reinterpret_cast<uint8_t *>(seed));
+        key.publicKey = QByteArray(reinterpret_cast<char *>(publicBytes), 32);
+        return key;
+    };
+    const TestKey current = ephemeralKey();
+    const uint8_t *secret = current.secret;
+    const QByteArray publicKey = current.publicKey;
+    const QString keyId = QString::fromLatin1(CoreUpdate::keyId(publicKey));
     QJsonArray archives;
     for (const QString &os : {QStringLiteral("windows"), QStringLiteral("linux")})
         for (const QString &arch : {QStringLiteral("amd64"), QStringLiteral("arm64")})
@@ -194,23 +225,24 @@ int main(int argc, char **argv) {
                          {"key_id", keyId}, {"compatibility", QJsonObject{{"schema", 1}, {"ipc_min", 1}, {"ipc_max", 1},
                          {"gui_min", "0.1.0"}, {"gui_max_exclusive", "0.1.2"}, {"gui_reviewed", true}, {"profile_format", 1}}},
                          {"archives", archives}};
-    auto sign = [&](const QJsonObject &object) {
+    auto signWith = [](const QJsonObject &object, const uint8_t *secretKey) {
         const QByteArray bytes = QJsonDocument(object).toJson(QJsonDocument::Indented);
         uint8_t signature[64];
-        crypto_ed25519_sign(signature, secret, reinterpret_cast<const uint8_t *>(bytes.constData()), size_t(bytes.size()));
+        crypto_ed25519_sign(signature, secretKey, reinterpret_cast<const uint8_t *>(bytes.constData()), size_t(bytes.size()));
         return std::pair(bytes, QByteArray(reinterpret_cast<char *>(signature), 64).toBase64() + '\n');
     };
+    auto sign = [&](const QJsonObject &object) { return signWith(object, secret); };
     auto [bytes, signature] = sign(manifest);
-    auto verify = [&](const QByteArray &body, const QByteArray &sig, const QByteArray &key = QByteArray()) {
+    auto verify = [&](const QByteArray &body, const QByteArray &sig, const QList<QByteArray> &keys = {}) {
         CoreUpdateRelease selected;
         QString error;
-        return CoreUpdate::verifyManifest(body, sig, key.isEmpty() ? publicKey : key, "v1.2.0", "0.1.1", 1, 1,
-                                          "windows", "amd64", false, &selected, &error);
+        return CoreUpdate::verifyManifest(body, sig, keys.isEmpty() ? QList<QByteArray>{publicKey} : keys, "v1.2.0",
+                                          "0.1.1", 1, 1, "windows", "amd64", false, &selected, &error);
     };
     require(verify(bytes, signature), "valid signed manifest rejected");
     CoreUpdateRelease nextGuiSelected;
     QString nextGuiError;
-    require(!CoreUpdate::verifyManifest(bytes, signature, publicKey, "v1.2.0", "0.1.2", 1, 1,
+    require(!CoreUpdate::verifyManifest(bytes, signature, {publicKey}, "v1.2.0", "0.1.2", 1, 1,
                                         "windows", "amd64", false, &nextGuiSelected, &nextGuiError),
             "GUI 0.1.2 accepted the existing exclusive compatibility bound");
     auto nextGuiManifest = manifest;
@@ -218,17 +250,118 @@ int main(int argc, char **argv) {
     nextGuiCompatibility.insert("gui_max_exclusive", "0.1.3");
     nextGuiManifest.insert("compatibility", nextGuiCompatibility);
     auto [nextGuiBytes, nextGuiSignature] = sign(nextGuiManifest);
-    require(CoreUpdate::verifyManifest(nextGuiBytes, nextGuiSignature, publicKey, "v1.2.0", "0.1.2", 1, 1,
+    require(CoreUpdate::verifyManifest(nextGuiBytes, nextGuiSignature, {publicKey}, "v1.2.0", "0.1.2", 1, 1,
                                        "windows", "amd64", false, &nextGuiSelected, &nextGuiError),
             "GUI 0.1.2 rejected reviewed signed future compatibility bounds");
     CoreUpdateRelease previousGuiSelected;
     QString previousGuiError;
-    require(CoreUpdate::verifyManifest(bytes, signature, publicKey, "v1.2.0", "0.1.0", 1, 1,
+    require(CoreUpdate::verifyManifest(bytes, signature, {publicKey}, "v1.2.0", "0.1.0", 1, 1,
                                        "windows", "amd64", false, &previousGuiSelected, &previousGuiError),
             "previous GUI version lost compatibility");
     QByteArray tampered = bytes; tampered[tampered.indexOf("1.2.0")] = '9';
     require(!verify(tampered, signature), "tampered manifest accepted");
-    require(!verify(bytes, signature, QByteArray(32, '\1')), "unknown key accepted");
+    require(!verify(bytes, signature, {QByteArray(32, '\1')}), "unknown key accepted");
+    {
+        // Key rotation: the current key and two successors are pinned. The manifest key_id
+        // selects one pinned key and only that key verifies.
+        const TestKey successor = ephemeralKey();
+        const TestKey secondSuccessor = ephemeralKey();
+        const TestKey unpinned = ephemeralKey();
+        const QList<const TestKey *> signers{&current, &successor, &secondSuccessor};
+        const QList<QByteArray> rotation{publicKey, successor.publicKey, secondSuccessor.publicKey};
+        const auto naming = [&](const QByteArray &key) {
+            QJsonObject object = manifest;
+            object.insert("key_id", QString::fromLatin1(CoreUpdate::keyId(key)));
+            return object;
+        };
+        QString rotationError;
+        const auto check = [&](const std::pair<QByteArray, QByteArray> &candidate, const QList<QByteArray> &keys) {
+            CoreUpdateRelease selected;
+            rotationError.clear();
+            return CoreUpdate::verifyManifest(candidate.first, candidate.second, keys, "v1.2.0", "0.1.1", 1, 1,
+                                              "windows", "amd64", false, &selected, &rotationError) &&
+                   selected.assetName == "bimeron-v1.2.0-windows-amd64.zip";
+        };
+        const auto byCurrent = signWith(naming(publicKey), current.secret);
+        const auto bySuccessor = signWith(naming(successor.publicKey), successor.secret);
+        const auto bySecondSuccessor = signWith(naming(secondSuccessor.publicKey), secondSuccessor.secret);
+        require(check(byCurrent, rotation), "current key rejected while successors are pinned");
+        require(check(bySuccessor, rotation), "second pinned key rejected");
+        require(check(bySecondSuccessor, rotation), "third pinned key rejected");
+        const QList<QList<QByteArray>> orders{
+            {rotation[1], rotation[2], rotation[0]}, {rotation[2], rotation[0], rotation[1]},
+            {rotation[2], rotation[1], rotation[0]}, {rotation[1], rotation[0], rotation[2]}};
+        for (const auto &order : orders)
+            require(check(byCurrent, order) && check(bySuccessor, order) && check(bySecondSuccessor, order),
+                    "pinned key order changed selection");
+        require(!check(bySuccessor, {publicKey}) && rotationError == "Unknown update signing key",
+                "successor accepted before it was pinned");
+        require(!check(bySecondSuccessor, {publicKey, successor.publicKey}) && rotationError == "Unknown update signing key",
+                "unpinned second successor accepted");
+        require(check(bySuccessor, {successor.publicKey, secondSuccessor.publicKey}) &&
+                !check(byCurrent, {successor.publicKey, secondSuccessor.publicKey}) &&
+                rotationError == "Unknown update signing key", "retired current key still accepted");
+        require(!check(signWith(naming(unpinned.publicKey), unpinned.secret), rotation) &&
+                rotationError == "Unknown update signing key", "unknown key ID accepted");
+        QJsonObject withoutKeyId = manifest;
+        withoutKeyId.remove("key_id");
+        require(!check(signWith(withoutKeyId, current.secret), rotation) && rotationError == "Unknown update signing key",
+                "manifest without key_id accepted");
+        // key_id names one pinned key, but the signature is valid only under another pinned key.
+        const auto signedOnlyBy = [](const std::pair<QByteArray, QByteArray> &candidate, const QByteArray &key) {
+            const QByteArray raw = QByteArray::fromBase64(candidate.second.chopped(1));
+            return crypto_ed25519_check(reinterpret_cast<const uint8_t *>(raw.constData()),
+                                        reinterpret_cast<const uint8_t *>(key.constData()),
+                                        reinterpret_cast<const uint8_t *>(candidate.first.constData()),
+                                        size_t(candidate.first.size())) == 0;
+        };
+        for (const TestKey *named : signers) {
+            for (const TestKey *signer : signers) {
+                if (named == signer) continue;
+                const auto crossed = signWith(naming(named->publicKey), signer->secret);
+                require(signedOnlyBy(crossed, signer->publicKey), "cross-signed fixture is invalid");
+                require(!check(crossed, rotation) && rotationError == "Update signature verification failed",
+                        "signature under another pinned key accepted");
+            }
+        }
+        // An invalid trust list fails closed before any manifest field is read.
+        require(!check(bySuccessor, {}) && rotationError == "Invalid update signature or signing key", "empty trust list accepted");
+        require(!check(bySuccessor, {publicKey, successor.publicKey.left(31)}) &&
+                rotationError == "Invalid update signature or signing key", "malformed pinned key accepted");
+        require(!check(bySuccessor, {publicKey, successor.publicKey, successor.publicKey}) &&
+                rotationError == "Ambiguous update signing key", "duplicate pinned key accepted");
+        // Malformed signatures are still rejected before key selection.
+        require(!check({bySuccessor.first, ' ' + bySuccessor.second}, rotation) &&
+                rotationError == "Invalid update signature encoding", "non-canonical signature encoding accepted");
+        require(!check({bySuccessor.first, QByteArray::fromBase64(bySuccessor.second).left(63).toBase64() + '\n'}, rotation) &&
+                rotationError == "Invalid update signature encoding", "short signature accepted");
+        require(!check({bySuccessor.first, bySuccessor.second.chopped(1)}, rotation) &&
+                rotationError == "Invalid update signature or signing key", "signature without LF accepted");
+
+        // Build-time list format: comma-separated canonical base64, no duplicates.
+        const QByteArray a = publicKey.toBase64(), b = successor.publicKey.toBase64(), c = secondSuccessor.publicKey.toBase64();
+        QList<QByteArray> parsed;
+        require(CoreUpdate::parseTrustedKeys(a + ',' + b + ',' + c, &parsed) && parsed == rotation,
+                "three-key list was not parsed");
+        require(CoreUpdate::parseTrustedKeys(b, &parsed) && parsed == QList<QByteArray>{successor.publicKey},
+                "single-key list was not parsed");
+        require(CoreUpdate::parseTrustedKeys(QByteArray(), &parsed) && parsed.isEmpty(), "empty list must disable updates");
+        static const char alphabet[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        QByteArray nonCanonical = a;  // nonzero padding bits decode to the same bytes
+        nonCanonical[42] = alphabet[(std::strchr(alphabet, a[42]) - alphabet) ^ 1];
+        QByteArray urlSafe = a;
+        urlSafe[0] = '-';
+        const QList<QByteArray> malformedLists{
+            QByteArray(a + ',' + a), QByteArray(a + ',' + b + ',' + a), QByteArray(a + ',' + b + ',' + b),
+            QByteArray(a + ',' + b + ',' + c + ','), QByteArray(a + ',' + b + ",," + c),
+            QByteArray(a + ','), QByteArray(',' + a), QByteArray(a + ",," + b),
+            QByteArray(' ' + a), a.chopped(1), publicKey.left(31).toBase64(), QByteArray(publicKey + 'x').toBase64(),
+            nonCanonical, urlSafe, QByteArray(a + ';' + b)};
+        for (const QByteArray &list : malformedLists) {
+            parsed = rotation;
+            require(!CoreUpdate::parseTrustedKeys(list, &parsed) && parsed.isEmpty(), "malformed trusted key list accepted");
+        }
+    }
     auto invalid = manifest;
     auto compatibility = invalid.value("compatibility").toObject();
     compatibility.insert("gui_reviewed", false);
@@ -310,16 +443,16 @@ int main(int argc, char **argv) {
         require(manifestFile.open(QIODevice::ReadOnly) && signatureFile.open(QIODevice::ReadOnly), "cannot open core-generated manifest fixture");
         const QByteArray pub = QByteArray::fromBase64(QByteArray(argv[4]));
         CoreUpdateRelease selected;
-        require(pub == configuredKey, "manifest fixture key differs from pinned GUI key");
+        require(configuredKeys.contains(pub), "manifest fixture key differs from pinned GUI key");
         const QByteArray manifest = manifestFile.readAll(), signature = signatureFile.readAll();
-        require(CoreUpdate::verifyManifest(manifest, signature, configuredKey, "v0.1.0-beta.3",
+        require(CoreUpdate::verifyManifest(manifest, signature, configuredKeys, "v0.1.0-beta.3",
                                            "0.1.1", 1, 1, "windows", "amd64", true, &selected, &error),
                 "core-generated manifest is incompatible with GUI verifier");
         require(selected.version == "0.1.0-beta.3" && selected.assetName == "bimeron-v0.1.0-beta.3-windows-amd64.zip",
                 "reviewed manifest selected the wrong core archive");
         QByteArray tampered = manifest;
         tampered[tampered.indexOf("0.1.0-beta.3")] = '9';
-        require(!CoreUpdate::verifyManifest(tampered, signature, configuredKey, "v0.1.0-beta.3",
+        require(!CoreUpdate::verifyManifest(tampered, signature, configuredKeys, "v0.1.0-beta.3",
                                             "0.1.1", 1, 1, "windows", "amd64", true, &selected, &error) &&
                 error == "Update signature verification failed", "tampered reviewed manifest was accepted");
     }
@@ -328,18 +461,19 @@ int main(int argc, char **argv) {
         QFile signatureFile(QString::fromLocal8Bit(argv[3]));
         require(manifestFile.open(QIODevice::ReadOnly) && signatureFile.open(QIODevice::ReadOnly), "cannot open candidate manifest");
         const QByteArray candidate = manifestFile.readAll(), candidateSignature = signatureFile.readAll();
-        require(QCryptographicHash::hash(configuredKey, QCryptographicHash::Sha256).left(8).toHex() == "7370a2d8cf890e5e",
-                "candidate key ID does not match the configured key");
+        require(std::any_of(configuredKeys.cbegin(), configuredKeys.cend(),
+                            [](const QByteArray &key) { return CoreUpdate::keyId(key) == "7370a2d8cf890e5e"; }),
+                "candidate key ID does not match a configured key");
         CoreUpdateRelease selected;
-        require(!CoreUpdate::verifyManifest(candidate, candidateSignature, configuredKey, "v0.1.0-beta.3",
+        require(!CoreUpdate::verifyManifest(candidate, candidateSignature, configuredKeys, "v0.1.0-beta.3",
                                             "0.1.1", 1, 1, "windows", "amd64", true, &selected, &error) &&
                 error == "Unreviewed or incomplete update compatibility", "candidate signature or review gate failed");
         QByteArray tampered = candidate;
         tampered[tampered.indexOf("0.1.0-beta.3")] = '9';
-        require(!CoreUpdate::verifyManifest(tampered, candidateSignature, configuredKey, "v0.1.0-beta.3",
+        require(!CoreUpdate::verifyManifest(tampered, candidateSignature, configuredKeys, "v0.1.0-beta.3",
                                             "0.1.1", 1, 1, "windows", "amd64", true, &selected, &error) &&
                 error == "Update signature verification failed", "tampered candidate was not rejected by signature");
-        require(!CoreUpdate::verifyManifest(candidate, candidateSignature, QByteArray(32, '\1'), "v0.1.0-beta.3",
+        require(!CoreUpdate::verifyManifest(candidate, candidateSignature, {QByteArray(32, '\1')}, "v0.1.0-beta.3",
                                             "0.1.1", 1, 1, "windows", "amd64", true, &selected, &error) &&
                 error == "Unknown update signing key", "unknown candidate key was accepted");
     }
@@ -350,7 +484,7 @@ int main(int argc, char **argv) {
         require(manifestFile.open(QIODevice::ReadOnly) && signatureFile.open(QIODevice::ReadOnly) &&
                 archiveFile.open(QIODevice::ReadOnly), "cannot open prepared release files");
         CoreUpdateRelease selected;
-        require(CoreUpdate::verifyManifest(manifestFile.readAll(), signatureFile.readAll(), configuredKey,
+        require(CoreUpdate::verifyManifest(manifestFile.readAll(), signatureFile.readAll(), configuredKeys,
                                            QString::fromLocal8Bit(argv[5]), QString::fromLocal8Bit(argv[6]), 1, 1,
                                            QString::fromLocal8Bit(argv[7]), QString::fromLocal8Bit(argv[8]), true,
                                            &selected, &error), "prepared release rejected by GUI verifier");

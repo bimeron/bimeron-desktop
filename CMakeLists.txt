@@ -8,7 +8,11 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
 
 find_package(Qt6 6.2 REQUIRED COMPONENTS Widgets Network)
-set(BIMERON_CORE_UPDATE_PUBLIC_KEY "bk6SfABmDG88uhUupYT+ia6dtSrpHbnGaBCfYvihJF0=" CACHE STRING "Base64 Ed25519 public key for signed core updates")
+include(cmake/core-update-keys.cmake)
+bimeron_resolve_core_update_keys(BIMERON_CORE_UPDATE_PINNED_KEYS)
+# Base64 never contains ',', so the C++ side receives one comma-separated string.
+list(JOIN BIMERON_CORE_UPDATE_TRUSTED_KEYS "," BIMERON_CORE_UPDATE_KEYS_DEFINE)
+list(JOIN BIMERON_CORE_UPDATE_TRUSTED_KEY_IDS "," BIMERON_CORE_UPDATE_KEY_IDS_DEFINE)
 add_library(core-update STATIC
     src/CoreUpdate.cpp src/CoreUpdate.h
     third_party/monocypher/monocypher.c
@@ -89,7 +93,7 @@ if(WIN32)
 endif()
 target_compile_definitions(bimeron-desktop PRIVATE
     BIMERON_GUI_VERSION="${PROJECT_VERSION}"
-    BIMERON_CORE_UPDATE_PUBLIC_KEY="${BIMERON_CORE_UPDATE_PUBLIC_KEY}")
+    BIMERON_CORE_UPDATE_PUBLIC_KEYS="${BIMERON_CORE_UPDATE_KEYS_DEFINE}")
 option(BIMERON_LOCAL_UPDATE_TESTING "Use an isolated local Core release feed (test builds only)" OFF)
 if(BIMERON_LOCAL_UPDATE_TESTING)
     target_compile_definitions(bimeron-desktop PRIVATE BIMERON_LOCAL_UPDATE_TESTING)
@@ -118,7 +122,7 @@ if(BUILD_TESTING)
         NATIVE_IKEV2_TRANSPORT_TESTING
         BIMERON_CONTROL_FIXTURE_ENDPOINTS
         BIMERON_GUI_VERSION="${PROJECT_VERSION}"
-        BIMERON_CORE_UPDATE_PUBLIC_KEY="")
+        BIMERON_CORE_UPDATE_PUBLIC_KEYS="")
     if(WIN32)
         target_link_libraries(developer-mode-test PRIVATE advapi32 shell32 ole32)
     endif()
@@ -134,19 +138,31 @@ if(BUILD_TESTING)
     if(WIN32)
         target_link_libraries(core-update-test PRIVATE advapi32 shell32)
     endif()
-    target_compile_definitions(core-update-test PRIVATE BIMERON_CORE_UPDATE_PUBLIC_KEY="${BIMERON_CORE_UPDATE_PUBLIC_KEY}")
+    target_compile_definitions(core-update-test PRIVATE
+        BIMERON_CORE_UPDATE_PUBLIC_KEYS="${BIMERON_CORE_UPDATE_KEYS_DEFINE}"
+        BIMERON_CORE_UPDATE_KEY_IDS="${BIMERON_CORE_UPDATE_KEY_IDS_DEFINE}")
     add_test(NAME core-update-test COMMAND core-update-test)
+    add_test(NAME core-update-keys-test
+        COMMAND "${CMAKE_COMMAND}"
+            "-DBIMERON_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}"
+            "-DFIXTURE_ROOT=${CMAKE_CURRENT_BINARY_DIR}/core-update-keys-test"
+            "-DFIXTURE_GENERATOR=${CMAKE_GENERATOR}"
+            "-DFIXTURE_PLATFORM=${CMAKE_GENERATOR_PLATFORM}"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/CoreUpdateKeysTest.cmake")
+    # Up to a dozen fixture configurations; Visual Studio generators need longer than the CI default.
+    set_tests_properties(core-update-keys-test PROPERTIES TIMEOUT 600)
     if(BIMERON_LOCAL_UPDATE_TESTING)
         set(BIMERON_LOCAL_UPDATE_TEST_PUBLIC_KEY "" CACHE STRING "Ephemeral local-feed test public key")
         if(BIMERON_LOCAL_UPDATE_TEST_PUBLIC_KEY STREQUAL "")
             message(FATAL_ERROR "Set an ephemeral BIMERON_LOCAL_UPDATE_TEST_PUBLIC_KEY for local-feed fixture tests")
         endif()
+        bimeron_core_update_parse_keys(local_test_keys local_test_key_ids BIMERON_LOCAL_UPDATE_TEST_PUBLIC_KEY)
         add_executable(core-updater-feed-test tests/CoreUpdaterFeedTest.cpp src/CoreUpdater.cpp src/CoreUpdater.h)
         target_include_directories(core-updater-feed-test PRIVATE src third_party/monocypher)
         target_link_libraries(core-updater-feed-test PRIVATE core-update)
         target_compile_definitions(core-updater-feed-test PRIVATE
             BIMERON_LOCAL_UPDATE_TESTING
-            BIMERON_CORE_UPDATE_PUBLIC_KEY="${BIMERON_LOCAL_UPDATE_TEST_PUBLIC_KEY}")
+            BIMERON_CORE_UPDATE_PUBLIC_KEYS="${local_test_keys}")
     endif()
     add_executable(geodata-download-test tests/GeoDataDownloadTest.cpp src/GeoDataDownload.cpp src/GeoDataDownload.h)
     target_include_directories(geodata-download-test PRIVATE src)
@@ -369,8 +385,11 @@ if(BIMERON_REPAIR_BROKER)
     endif()
 endif()
 if(BIMERON_REQUIRE_CORE)
-    if(BIMERON_CORE_UPDATE_PUBLIC_KEY STREQUAL "")
-        message(FATAL_ERROR "Package build requires the pinned core update public key; clear the empty BIMERON_CORE_UPDATE_PUBLIC_KEY cache override")
+    if(BIMERON_CORE_UPDATE_TRUSTED_KEYS STREQUAL "")
+        message(FATAL_ERROR "Package build requires the pinned Core update public keys; remove the empty override with -U BIMERON_CORE_UPDATE_PUBLIC_KEYS")
+    endif()
+    if(NOT BIMERON_CORE_UPDATE_KEYS_PINNED AND NOT BIMERON_LOCAL_UPDATE_TESTING)
+        message(FATAL_ERROR "Package build requires exactly the pinned Core update public keys; remove the BIMERON_CORE_UPDATE_PUBLIC_KEYS override with -U BIMERON_CORE_UPDATE_PUBLIC_KEYS")
     endif()
     if(BIMERON_CORE_ROOT STREQUAL BIMERON_CORE_ROOT_DEFAULT AND NOT BIMERON_CORE_RELEASE_SUPPORTS_SOURCE_UPDATE)
         message(FATAL_ERROR "Pinned core ${BIMERON_CORE_VERSION} lacks the trusted -source updater; pin an official release with final SHA-256 values before packaging")

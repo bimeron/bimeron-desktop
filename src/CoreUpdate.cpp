@@ -10,6 +10,8 @@
 #include <QRegularExpression>
 #include <QSet>
 
+#include <algorithm>
+
 namespace {
 bool fail(QString *error, const QString &message) {
     if (error) *error = message;
@@ -55,12 +57,36 @@ bool CoreUpdate::newerVersion(const QString &candidate, const QString &installed
     return valid && result > 0;
 }
 
+QByteArray CoreUpdate::keyId(const QByteArray &publicKey) {
+    return QCryptographicHash::hash(publicKey, QCryptographicHash::Sha256).left(8).toHex();
+}
+
+bool CoreUpdate::parseTrustedKeys(const QByteArray &encoded, QList<QByteArray> *keys) {
+    QList<QByteArray> parsed;
+    QSet<QByteArray> ids;
+    if (!encoded.isEmpty()) {
+        for (const QByteArray &entry : encoded.split(',')) {
+            const QByteArray key = QByteArray::fromBase64(entry);
+            if (key.size() != 32 || key.toBase64() != entry || parsed.contains(key) || ids.contains(keyId(key))) {
+                if (keys) keys->clear();
+                return false;
+            }
+            parsed.append(key);
+            ids.insert(keyId(key));
+        }
+    }
+    if (keys) *keys = parsed;
+    return true;
+}
+
 bool CoreUpdate::verifyManifest(const QByteArray &bytes, const QByteArray &signature,
-                                const QByteArray &publicKey, const QString &releaseTag,
+                                const QList<QByteArray> &trustedKeys, const QString &releaseTag,
                                 const QString &guiVersion, int ipcVersion, int profileFormat,
                                 const QString &os, const QString &arch, bool betaAllowed,
                                 CoreUpdateRelease *result, QString *error) {
-    if (publicKey.size() != 32 || bytes.isEmpty() || bytes.size() > 64 * 1024 || !bytes.endsWith('\n') ||
+    const bool keysValid = !trustedKeys.isEmpty() &&
+        std::all_of(trustedKeys.cbegin(), trustedKeys.cend(), [](const QByteArray &key) { return key.size() == 32; });
+    if (!keysValid || bytes.isEmpty() || bytes.size() > 64 * 1024 || !bytes.endsWith('\n') ||
         !signature.endsWith('\n') || signature.count('\n') != 1)
         return fail(error, QStringLiteral("Invalid update signature or signing key"));
     const QByteArray encoded = signature.left(signature.size() - 1);
@@ -73,11 +99,18 @@ bool CoreUpdate::verifyManifest(const QByteArray &bytes, const QByteArray &signa
     if (parseError.error != QJsonParseError::NoError || !document.isObject())
         return fail(error, QStringLiteral("Invalid update manifest JSON"));
     const auto object = document.object();
-    const QByteArray keyId = QCryptographicHash::hash(publicKey, QCryptographicHash::Sha256).left(8).toHex();
-    if (object.value("key_id").toString().toLatin1() != keyId)
+    const QByteArray manifestKeyId = object.value("key_id").toString().toLatin1();
+    const QByteArray *publicKey = nullptr;
+    for (const QByteArray &key : trustedKeys) {
+        if (keyId(key) != manifestKeyId) continue;
+        // Distinct keys never share an ID in a valid trust list; never guess between them.
+        if (publicKey) return fail(error, QStringLiteral("Ambiguous update signing key"));
+        publicKey = &key;
+    }
+    if (!publicKey)
         return fail(error, QStringLiteral("Unknown update signing key"));
     if (crypto_ed25519_check(reinterpret_cast<const uint8_t *>(decoded.constData()),
-                             reinterpret_cast<const uint8_t *>(publicKey.constData()),
+                             reinterpret_cast<const uint8_t *>(publicKey->constData()),
                              reinterpret_cast<const uint8_t *>(bytes.constData()), size_t(bytes.size())) != 0)
         return fail(error, QStringLiteral("Update signature verification failed"));
 

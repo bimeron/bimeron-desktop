@@ -18,9 +18,9 @@ verifies hello plus authoritative status before restoring a profile once.
 
 The updater implements IPC protocol `1` and profile format `1`. Published core `v0.2.0-beta.1` has reviewed GUI bounds `[0.2.0, 0.2.1)`, so Desktop `0.2.0` can consider it when beta updates are enabled. Older published core `v0.1.0-beta.3` has bounds `[0.1.0, 0.1.2)` and remains ineligible for GUI `0.1.5`. Core `v0.4.0-beta.1`, bundled with Desktop `0.3.0`, has reviewed GUI bounds `[0.3.0, 0.3.1)`; Desktop `0.2.0` intentionally does not consider it and receives it by upgrading Desktop.
 
-The GUI checks the public `bimeron/bimeron-core` GitHub Releases at startup and periodically, and can check on demand from Settings. Checks and downloads are quiet. Stable is the default channel; beta releases are considered only when the user enables beta updates. A missing signing key, no signed compatible release, network failure, or a malformed release never triggers an unsigned fallback. A build configured with an empty key says "Signed updates are not available yet" and does not run the legacy bundled-core `service update` command.
+The GUI checks the public `bimeron/bimeron-core` GitHub Releases at startup and periodically, and can check on demand from Settings. Checks and downloads are quiet. Stable is the default channel; beta releases are considered only when the user enables beta updates. A missing signing key, no signed compatible release, network failure, or a malformed release never triggers an unsigned fallback. A build configured with an empty key list says "Signed updates are not available yet" and does not run the legacy bundled-core `service update` command.
 
-For each candidate release, fetch `update-manifest.json` and `update-manifest.json.sig`. Select a trusted Ed25519 public key by the manifest's `key_id` only as an untrusted lookup hint; verify the signature over the exact manifest bytes, including the final LF, before using any other manifest field. The signature is standard base64 of 64 bytes plus one LF. Reject unknown keys, unknown schema, malformed fields, duplicate or missing targets, unsafe asset names, `gui_reviewed: false`, absent GUI bounds, mismatched release tag/channel, and unsupported GUI, IPC, profile format, OS, or architecture. Select the newest compatible core version strictly newer than the running core. An unknown or development running version does not update automatically.
+For each candidate release, fetch `update-manifest.json` and `update-manifest.json.sig`. Select the trusted Ed25519 public key whose key ID equals the manifest's `key_id`, using `key_id` only as an untrusted lookup hint, and verify the signature under that key only; a signature that verifies only under another trusted key is rejected. Verify the signature over the exact manifest bytes, including the final LF, before using any other manifest field. The signature is standard base64 of 64 bytes plus one LF. Reject unknown keys, unknown schema, malformed fields, duplicate or missing targets, unsafe asset names, `gui_reviewed: false`, absent GUI bounds, mismatched release tag/channel, and unsupported GUI, IPC, profile format, OS, or architecture. Select the newest compatible core version strictly newer than the running core. An unknown or development running version does not update automatically.
 
 Download the selected ZIP from that release with size limits. Verify exact byte length and SHA-256. Read only the exact `<os>-<arch>/bimeron[.exe]` member, reject duplicate members and unsafe archive structure, and write the executable into a private temporary directory. Hash its bytes. Never extract other archive members or run an unverified binary.
 
@@ -34,10 +34,49 @@ Acceptance criteria: a successful update with an active profile reconnects that 
 
 The Settings result distinguishes helper completion from verified success. After the helper exits successfully, show that Core and VPN state are being checked. Report the installed version only after IPC `hello` matches the requested version. If a profile was active, report success after that same profile reaches `connected`, or report a separate reconnection failure. A mismatched version or failed IPC check must not be presented as a successful update. Keep the final result visible in Settings and record it in the log.
 
+### Trusted signing keys
+
+Desktop trusts a list of Ed25519 public keys, pinned in `cmake/core-update-keys.cmake` as `<key_id>:<standard-base64 32-byte public key>` entries. The pinned keys are listed under [Desktop 0.3.1 trust set and signing policy](#desktop-031-trust-set-and-signing-policy). A key ID is derived from the public key exactly as Core derives it in `scripts/release-manifest.go` and `release/applemanifest`: the lowercase hex encoding of the first 8 bytes of SHA-256 over the raw 32 key bytes. CMake derives the ID of every pinned key at configure time and fails when the recorded ID differs; the verifier derives it again at runtime. A recorded key ID is only a cross-check, never trusted on its own. Malformed entries, duplicate keys and duplicate key IDs fail configuration. [Building and packaging](build-and-packaging.md#signed-service-updates) describes the list override and its CMake cache behaviour.
+
+At runtime the GUI parses the compiled list again and fails closed: a malformed or duplicate entry disables signed updates. `verifyManifest` rejects, in the existing order: an empty or malformed trust list and malformed signature framing or encoding; invalid manifest JSON; a `key_id` that selects no trusted key (or, defensively, more than one); a signature that does not verify under the selected key, even when it verifies under another trusted key. Only then are the remaining manifest fields checked.
+
+### Signing key rotation
+
+Core signs each manifest with exactly one key and records that key's ID in `key_id`. The list has no fixed size: a rotation can introduce several successor keys at once. The Desktop 0.3.1 rotation introduces two successor keys held on separate hardware keys, so that release trusts three keys: the current key and both successors. To rotate:
+
+1. Core prepares the successor keys. Only their public keys (standard base64 of 32 bytes) and key IDs reach Desktop; private key material never enters this repository and is never accepted.
+2. Desktop appends one `<key_id>:<public key>` entry per successor after the current key in `cmake/core-update-keys.cmake`. Configuration verifies every supplied key ID against its key; a mismatch fails the build. The Desktop release then trusts all pinned keys and still accepts manifests signed with the current key.
+3. Core keeps signing with the current key until that Desktop release is published. Only afterwards does Core sign with a successor only. Any pinned successor can then sign, so either hardware key can produce releases that this Desktop accepts. Older Desktop releases reject successor-signed manifests as an unknown key and receive them by upgrading Desktop.
+4. A later Desktop release removes the old key. From then on manifests signed with the old key are rejected; the remaining successors stay trusted.
+
+A compromised key needs a Desktop release that removes it; Desktop releases that still pin it keep trusting it.
+
+#### Desktop 0.3.1 trust set and signing policy
+
+Desktop 0.3.1 pins these three keys, in this order. This is the final trust set for that release.
+
+| Key | Key ID | Public key | Origin and role |
+|---|---|---|---|
+| Software key | `7370a2d8cf890e5e` | `bk6SfABmDG88uhUupYT+ia6dtSrpHbnGaBCfYvihJF0=` | Published with Core `v0.1.0-beta.3`. Signed every Core release up to and including `v0.4.0-beta.2`, including the frozen `v0.4.0-beta.2` candidate. Signs nothing new. |
+| YubiKey A | `e6fb20d55656904a` | `lRcnhdj4yU4TrinOa4U177FG7wrwUPv/v9zxA/WiJMI=` | Ed25519 generated on-card, YubiKey serial 22337246, OpenPGP signature slot. Primary signer from Core `v0.4.0-beta.3` on. |
+| YubiKey B | `095d295f5fe9a4e2` | `6K8uY/1qIogN2j3ZdpEr4PuTqXzH7EseTd6kzHxpIr4=` | Ed25519 generated on-card, YubiKey serial 19344964, OpenPGP signature slot. Backup signer, used only when YubiKey A is unavailable. |
+
+Both YubiKey key IDs were recomputed from their public keys before pinning, and configuration recomputes all three on every build. The Core release process verified both cards. Card signatures are PureEdDSA over the full manifest bytes, without prehashing, and verify with Go `crypto/ed25519`. Each card's test manifest verifies under its own key and is rejected under the other key and under `7370a2d8cf890e5e`. The signature file format is unchanged.
+
+Signing policy:
+
+- YubiKey A signs Core releases from `v0.4.0-beta.3` on.
+- YubiKey B signs only when YubiKey A is unavailable.
+- The software key `7370a2d8cf890e5e` signs nothing new. A later Desktop release removes it after the supported update window; until then Desktop 0.3.1 still accepts releases up to `v0.4.0-beta.2` that it signed.
+- Desktop 0.3.1 trusts all three keys. Releases signed by YubiKey A or B are rejected by Desktop releases before 0.3.1, which receive them by upgrading Desktop.
+
+Acceptance criteria for rotation: with the current key and two successors pinned, a manifest signed by any of the three under its own `key_id` verifies; an unknown `key_id`, a successor that is not pinned, a manifest without `key_id`, and a manifest whose signature verifies only under another pinned key (every pair of the three) are rejected; key order does not matter; after the current key is removed, its manifests are rejected while the successors still verify; duplicate or malformed keys fail at configure time and fail closed at runtime; an existing build directory that cached the former single-key default follows the pinned list, including two keys added at once and a later removal. Tests use ephemeral keys generated at test runtime, never repository-stored private keys. Successor keys are pinned only from public keys and key IDs supplied by the Core release process, after recomputing each key ID.
+
 ## Acceptance criteria
 
 - Tests with a test key verify exact-byte signatures and reject tampering, unknown keys, invalid compatibility, duplicate targets, unsafe names, and wrong archive length/hash. The test key is never embedded in the production application.
-- Both Windows architectures and both Linux architectures compile. A build explicitly configured with an empty key reports unavailability and cannot install a release.
+- Tests with three ephemeral pinned keys cover the current key, each of two successors, an unknown key ID, a key ID/key mismatch, duplicate and malformed keys, and a stale single-key build cache.
+- Both Windows architectures and both Linux architectures compile. A build explicitly configured with an empty key list reports unavailability and cannot install a release.
 - With a trusted production key, a protected bundled helper, and a suitable signed release, the GUI downloads quietly, prompts only after verification, elevates the bundled helper with the required `-source`, `-version`, and `-sha256` flags, and refreshes service state after completion.
 - Existing unsigned releases cannot be installed. The bundled core is never used as an update candidate.
 - No update path writes the desktop package payload; only a previously active profile is reconnected after verified success.
