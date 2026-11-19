@@ -371,6 +371,23 @@ static void wireGuardEditor(const QString &directory) {
         require(message.contains("managed by Bimeron") && editor.result() != QDialog::Accepted);
     }
     {
+        // The reference keeps every character Core reads: an invisible U+FEFF inside the
+        // managed name is a different file and is refused, while a document BOM is not part of it.
+        require(ProfileStore::keyFileReference(QString(QChar(0xfeff)) + "[AccessKey]\nFile = a.wg.conf\n") == "a.wg.conf");
+        require(ProfileStore::keyFileReference("[AccessKey]\nFile = a" + QString(QChar(0xfeff)) + ".wg.conf\n") != "a.wg.conf");
+        ProfileEditorDialog editor(profile, caps, nullptr, accepted, "fake-core", path, false, key);
+        auto *tabWidget = tabs(editor);
+        tabWidget->setCurrentIndex(tabWidget->count() - 1);
+        auto *raw = editor.findChild<QPlainTextEdit *>("rawConfig");
+        raw->setPlainText(QString(profile).replace("tunnel.0badc0de.wg.conf", "tunnel.0badc0de" + QString(QChar(0xfeff)) + ".wg.conf"));
+        QString message;
+        QTimer::singleShot(0, [&message] {
+            if (auto *box = qobject_cast<QMessageBox *>(QApplication::activeModalWidget())) { message = box->text(); box->accept(); }
+        });
+        editor.findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Save)->click();
+        require(message.contains("managed by Bimeron") && editor.result() != QDialog::Accepted);
+    }
+    {
         // An untouched value longer than QLineEdit's default limit survives an unrelated edit.
         QStringList networks;
         for (int i = 0; i < 2500; ++i) networks << QString("10.%1.%2.0/24").arg(i / 256).arg(i % 256);

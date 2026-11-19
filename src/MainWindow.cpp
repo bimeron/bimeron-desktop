@@ -28,6 +28,8 @@
 #include <QStandardItemModel>
 #include <QCoreApplication>
 #include <QDateTime>
+#include <QPointer>
+#include <QThreadPool>
 #include <QCloseEvent>
 #include <QDialog>
 #include <QDialogButtonBox>
@@ -1266,17 +1268,34 @@ QString MainWindow::profileDetail(int row, const ProfileConnectionInfo &info) co
 
 // Reads the key file of a profile when Core identifies it as WireGuard/AmneziaWG.
 bool MainWindow::readWireGuard(const QString &profilePath, const QString &profileText, QByteArray *data, bool *definitive) const {
-    if (definitive) *definitive = true;
+    bool probed = true;
+    const bool result = probeWireGuard(validationExecutable_, profilePath, profileText, data, &probed);
+    if (definitive) *definitive = probed;
+    return result;
+}
+
+// Thread-safe: touches no MainWindow state.
+bool MainWindow::probeWireGuard(const QString &executable, const QString &profilePath, const QString &profileText,
+                                QByteArray *data, bool *definitive) {
+    *definitive = true;
     const QString reference = ProfileStore::keyFileReference(profileText);
     if (reference.isEmpty() || !ProfileStore::readKeyFile(profilePath, reference, data)) return false;
     bool probed = true;
-    if (!WireGuardCore::cliSupported(validationExecutable_, &probed)) {
-        if (definitive) *definitive = probed;
+    if (!WireGuardCore::cliSupported(executable, &probed)) {
+        *definitive = probed;
         return false;
     }
-    const auto detected = WireGuardCore::detect(validationExecutable_, ProfileStore::keyFileText(*data));
-    if (definitive) *definitive = detected.definitive;
+    const auto detected = WireGuardCore::detect(executable, ProfileStore::keyFileText(*data));
+    *definitive = detected.definitive;
     return detected.answered() && detected.format() == "wireguard";
+}
+
+void MainWindow::finishWireGuardProbe(const QString &identity, const QString &label, bool definitive) {
+    wireGuardProbes_.remove(identity);
+    // A transient bridge failure is not remembered as "not WireGuard"; retry later.
+    if (definitive) wireGuardLabels_.insert(identity, label);
+    else wireGuardRetryAt_.insert(identity, QDateTime::currentMSecsSinceEpoch() + 30000);
+    if (profileList_) updateProfileAppearance();
 }
 
 QString MainWindow::wireGuardLabel(int row) const {
@@ -1293,17 +1312,25 @@ QString MainWindow::wireGuardLabel(int row) const {
         + QString::number(key.lastModified().toMSecsSinceEpoch()) + '\n' + core.absoluteFilePath() + '\n'
         + QString::number(core.size()) + '\n' + QString::number(core.lastModified().toMSecsSinceEpoch());
     if (wireGuardLabels_.contains(identity)) return wireGuardLabels_.value(identity);
-    QByteArray data;
-    QString label;
-    bool definitive = true;
-    if (readWireGuard(profiles_[row].path, text, &data, &definitive)) {
-        const auto inspected = WireGuardCore::inspect(validationExecutable_, ProfileStore::keyFileText(data));
-        label = inspected.answered() ? WireGuardCore::protocolLabel(inspected.object) : QStringLiteral("WireGuard");
-        definitive = definitive && inspected.answered();
-    }
-    // A transient bridge failure is not remembered as "not WireGuard".
-    if (definitive) wireGuardLabels_.insert(identity, label);
-    return label;
+    // Probing runs Core processes, which may stall; never block list rendering on it.
+    if (wireGuardProbes_.contains(identity) || wireGuardRetryAt_.value(identity) > QDateTime::currentMSecsSinceEpoch()) return {};
+    wireGuardProbes_.insert(identity);
+    QPointer<MainWindow> self(const_cast<MainWindow *>(this));
+    const QString executable = validationExecutable_, profilePath = profiles_[row].path;
+    QThreadPool::globalInstance()->start([self, identity, executable, profilePath, text] {
+        QByteArray data;
+        QString label;
+        bool definitive = true;
+        if (probeWireGuard(executable, profilePath, text, &data, &definitive)) {
+            const auto inspected = WireGuardCore::inspect(executable, ProfileStore::keyFileText(data));
+            label = inspected.answered() ? WireGuardCore::protocolLabel(inspected.object) : QStringLiteral("WireGuard");
+            definitive = definitive && inspected.answered();
+        }
+        QMetaObject::invokeMethod(QCoreApplication::instance(), [self, identity, label, definitive] {
+            if (self) self->finishWireGuardProbe(identity, label, definitive);
+        }, Qt::QueuedConnection);
+    });
+    return {};
 }
 
 QString MainWindow::describeProblems(const QList<CoreProblem> &problems) const {
@@ -1892,9 +1919,15 @@ void MainWindow::addProfile() {
     const auto clipboardConfig = [](const QString &text) {
         return text.contains('\n') && text.contains('[') && text.toUtf8().size() <= 64 * 1024;
     };
+    // One classification for the label and the click: a recognized link or path
+    // (after trimming) wins; otherwise multi-line text goes to Core detection.
+    const auto clipboardIsConfig = [&](const QString &original) {
+        const QString trimmed = original.trimmed();
+        return !isKey(trimmed) && filePath(trimmed).isEmpty() && clipboardConfig(original);
+    };
     auto updatePaste = [&] {
         const QString clipboardKey = QApplication::clipboard()->text().trimmed();
-        const bool config = clipboardConfig(QApplication::clipboard()->text());
+        const bool config = clipboardIsConfig(QApplication::clipboard()->text());
         paste->setEnabled(config || isKey(clipboardKey) || !filePath(clipboardKey).isEmpty());
         paste->setVisible(paste->isEnabled());
         if (config) paste->setText(tr("Paste WireGuard configuration"));
@@ -1909,7 +1942,7 @@ void MainWindow::addProfile() {
     connect(QApplication::clipboard(), &QClipboard::dataChanged, &dialog, updatePaste);
     connect(paste, &QPushButton::clicked, &dialog, [&] {
         const QString clipboard = QApplication::clipboard()->text();
-        if (clipboardConfig(clipboard)) {
+        if (clipboardIsConfig(clipboard)) {
             if (importWireGuardText(clipboard, &dialog)) dialog.done(2);
             return;
         }

@@ -185,7 +185,8 @@ applies. With `only` the rules area is disabled and the note explains why.
 ## Profile list and connection
 
 The list shows "WireGuard → System VPN" or "AmneziaWG 2.0 → System VPN" from Core
-inspection, cached in memory per key file identity and selected CLI. Start refuses a WG/AWG
+inspection, cached in memory per key file identity and selected CLI. Probes run off the GUI thread,
+so a stalled Core never freezes the list; a transient failure is retried after 30 seconds. Start refuses a WG/AWG
 profile with a notice when the running service lacks WG/AWG support. Start validation is
 unchanged: Core reads the referenced file.
 

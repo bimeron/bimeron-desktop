@@ -166,7 +166,21 @@ bool ProfileStore::importReferencesSafe(const QByteArray &data, QString *error) 
 }
 
 QString ProfileStore::keyFileReference(const QString &profileText) {
-    return connectionInfo(profileText).keyFile;
+    // Unlike connectionInfo(), which drops U+FEFF anywhere for labels, keep every
+    // character except a document BOM: Core reads the reference exactly.
+    QString text = profileText;
+    if (text.startsWith(QChar(0xfeff))) text.remove(0, 1);
+    QString section, reference;
+    for (const QString &line : text.split('\n')) {
+        const QString trimmed = line.trimmed();
+        if (trimmed.startsWith('#') || trimmed.startsWith(';')) continue;
+        if (trimmed.startsWith('[') && trimmed.endsWith(']')) { section = sectionName(trimmed); continue; }
+        const qsizetype equal = trimmed.indexOf('=');
+        if (section != "AccessKey" || equal < 0 || trimmed.left(equal).trimmed() != "File") continue;
+        QString value;
+        reference = ProfileTextEdit::decode(trimmed.mid(equal + 1), &value) ? value : trimmed.mid(equal + 1).trimmed();
+    }
+    return reference;
 }
 
 QString ProfileStore::keyFilePath(const QString &profilePath, const QString &reference) {

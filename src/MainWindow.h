@@ -283,6 +283,12 @@ private:
     QString activeFileProtocol_;
     // Protocol labels of WireGuard key files, keyed by file identity.
     mutable QHash<QString, QString> wireGuardLabels_;
+    // Label probes run off the GUI thread; transient failures wait before a retry.
+    mutable QSet<QString> wireGuardProbes_;
+    mutable QHash<QString, qint64> wireGuardRetryAt_;
+    void finishWireGuardProbe(const QString &identity, const QString &label, bool definitive);
+    static bool probeWireGuard(const QString &executable, const QString &profilePath, const QString &profileText,
+                               QByteArray *data, bool *definitive);
     QString activeProfileId_;
     bool lastProxyMode_ = false;
     QString reconnectProfileAfterUpdate_;
