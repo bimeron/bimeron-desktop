@@ -1,7 +1,8 @@
 # WireGuard and AmneziaWG profiles
 
 Tracking: [Desktop #74](https://github.com/bimeron/bimeron-desktop/issues/74). Core work:
-[bimeron-core#202](https://github.com/bimeron/bimeron-core/issues/202).
+[bimeron-core#202](https://github.com/bimeron/bimeron-core/issues/202); Core design: ADR 0043
+(`docs/adr/0043-wireguard-amneziawg-client.md` in bimeron-core).
 
 Desktop imports, stores and edits WireGuard (WG) and AmneziaWG (AWG 1.0, 1.5, 2.0, 3.0 and
 3.1) profiles on Windows and Linux. Core implements the protocol and is the only parser and
@@ -16,7 +17,7 @@ JSON response on stdout, no arguments, files, network or DNS. Desktop uses these
 
 | Operation | Desktop use |
 | --- | --- |
-| `capabilities` | Whether the selected CLI has the bridge. An older CLI answers `unknown command` with a nonzero exit; WG/AWG import and editing are then unavailable. The result is cached per executable path, size and modification time. |
+| `capabilities` | Whether the selected CLI has the bridge: `supported` and `document_api` 1 or later (mobile packet backends report `document_api` 0, which offers no editing). An older CLI answers `unknown command` with a nonzero exit; WG/AWG import and editing are then unavailable. The result is cached per executable path, size and modification time. |
 | `detect` | Decides whether an imported `.conf`, a clipboard text or a referenced `File` is a Bimeron profile or a WG/AWG configuration. |
 | `inspect` | Decoded fields, protocol and AWG version, AllowedIPs coverage and validation problems for the editor and the profile list label. |
 | `edit` | Applies `set_field` operations to the WG/AWG text; an empty value removes the key. A refused operation returns `error`, its problem and the original text. |
@@ -212,7 +213,7 @@ service and CLI capability gating, creation and the bridge helpers. With
 edit, link import and an editor round trip against the real Core.
 
 Development and tests use Core `feat/wireguard-awg` at
-`22ca001d582c50fd279c50e07c3d01d92e006de3` (bridge and runtime adapter; live server checks pending). The final
+`f902ecd375fea45ca5887a00eb6080250560cd33` (bridge and runtime adapter; live server checks pending). The final
 pin follows the Core `master` commit after the Core pull request merges.
 
 Live connection checks run only on the test VMs. Ordinary Desktop CI does not download Core.

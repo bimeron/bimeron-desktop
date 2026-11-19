@@ -64,8 +64,8 @@ const QList<AmneziaText> &amneziaTexts() {
         {"3.0", "RejectAfterTime", QT_TRANSLATE_NOOP("WireGuardForm", "Reject after, seconds")},
         {"3.0", "KeepaliveTimeout", QT_TRANSLATE_NOOP("WireGuardForm", "Keepalive timeout, seconds")},
         {"3.0", "MaxHandshakeAttempts", QT_TRANSLATE_NOOP("WireGuardForm", "Maximum handshake attempts")},
-        {"3.1", "RandomTrailers", QT_TRANSLATE_NOOP("WireGuardForm", "Random packet trailers")},
-        {"3.1", "DisableCookies", QT_TRANSLATE_NOOP("WireGuardForm", "Disable cookie replies: true or false")},
+        {"3.1", "RandomTrailers", QT_TRANSLATE_NOOP("WireGuardForm", "Random packet trailers: true, false, on, off, 1 or 0")},
+        {"3.1", "DisableCookies", QT_TRANSLATE_NOOP("WireGuardForm", "Disable cookie replies: true, false, on, off, 1 or 0")},
     };
     return texts;
 }

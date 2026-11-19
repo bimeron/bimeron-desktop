@@ -157,8 +157,10 @@ bool cliSupported(const QString &executable, bool *definitive) {
     }
     const Reply reply = request(executable, {{"version", 1}, {"op", "capabilities"}});
     if (definitive) *definitive = reply.definitive;
+    // document_api 0 (mobile packet backends) connects but offers no editing bridge.
+    const QJsonObject capabilities = reply.object.value("capabilities").toObject();
     const bool supported = reply.answered() && reply.problems.isEmpty()
-        && reply.object.value("capabilities").toObject().value("supported").toBool();
+        && capabilities.value("supported").toBool() && capabilities.value("document_api").toInt() >= 1;
     if (!customRunner() && reply.definitive) {
         QMutexLocker lock(&mutex);
         cache.insert(key, supported);

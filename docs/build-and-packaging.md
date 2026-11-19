@@ -464,7 +464,7 @@ Protocol URI import tests use `BIMERON_PRESERVATION_CORE` targeting Core
 The current bundle pin is not evidence of support for these new protocols.
 WireGuard/AmneziaWG fixtures in `profile-vless-test` use a fake `bimeron wireguard`
 bridge; set `BIMERON_WIREGUARD_CORE` to a Core built from `feat/wireguard-awg` at
-`22ca001d582c50fd279c50e07c3d01d92e006de3` to repeat them against the real bridge. This optional path does not change the
+`f902ecd375fea45ca5887a00eb6080250560cd33` to repeat them against the real bridge. This optional path does not change the
 bundled Core; see [WireGuard and AmneziaWG profiles](wireguard-profiles.md#verification).
 
 ## Foreground installer feasibility prototype (not enabled)

@@ -118,7 +118,7 @@ QString setField(const QString &text, const QString &section, const QString &key
 
 struct Bridge {
     QStringList operations;
-    QJsonObject capabilities{{"supported", true}};
+    QJsonObject capabilities{{"supported", true}, {"document_api", 1}};
     QJsonObject handle(const QByteArray &input) {
         const QJsonObject request = QJsonDocument::fromJson(input).object();
         const QString op = request.value("op").toString();
@@ -369,6 +369,10 @@ static void wireGuardEditor(const QString &directory) {
         bridge.capabilities = {{"supported", false}};
         ProfileEditorDialog oldCli({}, caps, nullptr, accepted, "fake-core", {}, true);
         require(oldCli.findChild<QComboBox *>("keySource")->findData("WireGuard") < 0);
+        // A capability without the editing bridge (document_api 0) is not enough to create profiles.
+        bridge.capabilities = {{"supported", true}, {"document_api", 0}};
+        ProfileEditorDialog noBridge({}, caps, nullptr, accepted, "fake-core", {}, true);
+        require(noBridge.findChild<QComboBox *>("keySource")->findData("WireGuard") < 0);
     }
     {
         // The managed File reference cannot be redirected through the Bimeron config tab.
@@ -443,7 +447,7 @@ static void wireGuardEditor(const QString &directory) {
     }
     {
         // A WireGuard creation draft stays WireGuard after a Bimeron config edit.
-        bridge.capabilities = {{"supported", true}};
+        bridge.capabilities = {{"supported", true}, {"document_api", 1}};
         ProfileEditorDialog draft({}, caps, nullptr, accepted, "fake-core", {}, true);
         auto *sources = draft.findChild<QComboBox *>("keySource");
         sources->setCurrentIndex(sources->findData("WireGuard"));
@@ -661,13 +665,13 @@ static void wireGuardEditor(const QString &directory) {
 #ifdef Q_OS_WIN
         const QString script = QDir(scriptDirectory).filePath("flaky-core.cmd");
         const QByteArray body = "@echo off\r\n"
-            "if exist \"%~dp0second.flag\" (\r\n  echo {\"version\":1,\"capabilities\":{\"supported\":true}}\r\n  exit /b 0\r\n)\r\n"
+            "if exist \"%~dp0second.flag\" (\r\n  echo {\"version\":1,\"capabilities\":{\"supported\":true,\"document_api\":1}}\r\n  exit /b 0\r\n)\r\n"
             "if exist \"%~dp0first.flag\" (\r\n  type nul > \"%~dp0second.flag\"\r\n  echo {}\r\n  exit /b 0\r\n)\r\n"
             "type nul > \"%~dp0first.flag\"\r\necho not json\r\n";
 #else
         const QString script = QDir(scriptDirectory).filePath("flaky-core");
         const QByteArray body = "#!/bin/sh\ncat > /dev/null\nd=\"$(dirname \"$0\")\"\n"
-            "if [ -e \"$d/second.flag\" ]; then echo '{\"version\":1,\"capabilities\":{\"supported\":true}}'; exit 0; fi\n"
+            "if [ -e \"$d/second.flag\" ]; then echo '{\"version\":1,\"capabilities\":{\"supported\":true,\"document_api\":1}}'; exit 0; fi\n"
             "if [ -e \"$d/first.flag\" ]; then : > \"$d/second.flag\"; echo '{}'; exit 0; fi\n"
             ": > \"$d/first.flag\"\necho 'not json'\n";
 #endif
