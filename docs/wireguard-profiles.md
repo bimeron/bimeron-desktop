@@ -50,11 +50,13 @@ Add profile accepts:
   computer. Other references keep the existing relocation rules.
 
 Referenced files are read only when they are local regular files: Desktop never opens a
-network path (UNC, extended-length or mapped network drive on Windows) or a FIFO; Core then
+network path (UNC, extended-length or mapped network drive on Windows, or a path through a
+symbolic link or junction, which could lead to a share) or a FIFO; Core then
 reports `file_path_not_local` or `file_not_regular`. A failed Core probe (start failure,
 timeout, crash) is transient and never cached as "not WireGuard": opening or importing such a
-profile is refused with a retry message instead of falling back to the ordinary editor, and a
-managed pair whose key file is unreadable does not open.
+profile is refused with a retry message instead of falling back to the ordinary editor. A
+managed pair opens only when Core positively identifies its key file; with an unreadable key
+file or a CLI without the bridge it does not open. Links longer than 64 KiB are refused.
 
 The supported-format help lists the new schemes and both `.conf` formats. Core problem
 codes are rendered from the Core error catalog (`errors --json`) in the interface language.

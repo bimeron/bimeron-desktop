@@ -3103,5 +3103,7 @@
   "The WireGuard configuration file of this profile is managed by Bimeron. Keep File = %1 and edit the WG/AWG config tab instead.": "Файлом конфигурации WireGuard этого профиля управляет Bimeron. Оставьте File = %1 и редактируйте вкладку «Конфиг WG/AWG».",
   "Keep File = wireguard.conf in the Bimeron config. Bimeron replaces it with the stored WG/AWG file when saving.": "Оставьте File = wireguard.conf в конфиге Bimeron. При сохранении Bimeron заменит его на сохранённый файл WG/AWG.",
   "Core could not identify the configuration file of this profile. Check that Core is available and try again.": "Ядру не удалось определить файл конфигурации этого профиля. Проверьте, что ядро доступно, и повторите попытку.",
-  "Core could not identify the configuration file referenced by this profile. Check that Core is available and try again.": "Ядру не удалось определить файл конфигурации, на который ссылается этот профиль. Проверьте, что ядро доступно, и повторите попытку."
+  "Core could not identify the configuration file referenced by this profile. Check that Core is available and try again.": "Ядру не удалось определить файл конфигурации, на который ссылается этот профиль. Проверьте, что ядро доступно, и повторите попытку.",
+  "The selected Core cannot open WireGuard and AmneziaWG profiles. Start or update Core.": "Выбранное ядро не умеет открывать профили WireGuard и AmneziaWG. Запустите или обновите ядро.",
+  "The link exceeds the 64 KiB limit.": "Ссылка превышает лимит 64 КиБ."
 }

@@ -458,6 +458,26 @@ static void wireGuardEditor(const QString &directory) {
         require(!ProfileStore::readKeyFile(QDir(directory).filePath("p.conf"), "wireguard-folder.conf", &unused));
         require(ProfileStore::sshFilesReadable("[AccessKey]\nFile = wireguard-folder.conf\n", QDir(directory).filePath("p.conf")));
         require(!ProfileStore::importReferencesSafe(("[AccessKey]\nFile = " + folder + "\n").toUtf8()));
+#ifdef Q_OS_WIN
+        // A junction can redirect a local-looking path to a network share: any
+        // reparse point along the path is refused without following it.
+        const QString target = QDir(directory).filePath("junction-target");
+        const QString junction = QDir(directory).filePath("junction-link");
+        require(QDir().mkpath(target));
+        QFile inside(QDir(target).filePath("tunnel.conf"));
+        require(inside.open(QIODevice::WriteOnly) && inside.write("[Peer]\n") == 7);
+        inside.close();
+        QProcess link;
+        link.start("cmd.exe", {"/c", "mklink", "/J", QDir::toNativeSeparators(junction), QDir::toNativeSeparators(target)});
+        if (link.waitForFinished(10000) && link.exitCode() == 0) {
+            require(ProfileStore::localRegularFile(QDir(target).filePath("tunnel.conf")));
+            require(!ProfileStore::localRegularFile(QDir(junction).filePath("tunnel.conf")));
+            // rmdir removes the junction itself, never the target contents.
+            QDir().rmdir(junction);
+        } else {
+            std::fprintf(stdout, "Junction fixture skipped: mklink /J is unavailable.\n");
+        }
+#endif
     }
     {
         // A failing runner is a transient reply, never a cached verdict.

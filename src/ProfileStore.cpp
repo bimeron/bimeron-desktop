@@ -204,6 +204,14 @@ bool ProfileStore::localRegularFile(const QString &path) {
     if (native.startsWith(QStringLiteral("\\\\")) || native.size() < 3 || native.at(1) != ':') return false;
     const std::wstring root = native.left(3).toStdWString();
     if (GetDriveTypeW(root.c_str()) == DRIVE_REMOTE) return false;
+    // A symbolic link or junction can redirect a local-looking path to a share.
+    // GetFileAttributesW reports the link itself and does not follow it.
+    QString prefix = native.left(2);
+    for (const QString &part : native.mid(3).split(QLatin1Char('\\'), Qt::SkipEmptyParts)) {
+        prefix += QLatin1Char('\\') + part;
+        const DWORD attributes = GetFileAttributesW(reinterpret_cast<const wchar_t *>(prefix.utf16()));
+        if (attributes == INVALID_FILE_ATTRIBUTES || (attributes & FILE_ATTRIBUTE_REPARSE_POINT)) return false;
+    }
 #endif
     return QFileInfo(path).isFile();
 }

@@ -1299,6 +1299,7 @@ QString MainWindow::wireGuardLabel(int row) const {
     if (readWireGuard(profiles_[row].path, text, &data, &definitive)) {
         const auto inspected = WireGuardCore::inspect(validationExecutable_, ProfileStore::keyFileText(data));
         label = inspected.answered() ? WireGuardCore::protocolLabel(inspected.object) : QStringLiteral("WireGuard");
+        definitive = definitive && inspected.answered();
     }
     // A transient bridge failure is not remembered as "not WireGuard".
     if (definitive) wireGuardLabels_.insert(identity, label);
@@ -1408,6 +1409,10 @@ bool MainWindow::importWireGuard(const QString &profileText, const QString &wire
 bool MainWindow::importWireGuardLink(const QString &uri, const QString &name, QWidget *parent) {
     if (!WireGuardCore::cliSupported(validationExecutable_)) {
         QMessageBox::warning(parent, tr("Import failed"), tr("The selected Core cannot import WireGuard and AmneziaWG links. Start or update Core."));
+        return false;
+    }
+    if (uri.trimmed().toUtf8().size() > 64 * 1024) {
+        QMessageBox::warning(parent, tr("Import failed"), tr("The link exceeds the 64 KiB limit."));
         return false;
     }
     const auto reply = WireGuardCore::importUri(validationExecutable_, uri.trimmed());
@@ -1592,14 +1597,17 @@ void MainWindow::editProfile(int row) {
     bool detected = true;
     const QString originalReference = ProfileStore::keyFileReference(QString::fromUtf8(originalData));
     const bool wireGuard = readWireGuard(profiles_[row].path, QString::fromUtf8(originalData), &wireGuardData, &detected);
-    // A managed pair whose key file cannot be read, or a file Core could not
-    // classify, never opens as an ordinary profile: that would drop the guard
+    // A managed pair that Core cannot positively identify, or a file Core could
+    // not classify, never opens as an ordinary profile: that would drop the guard
     // for its managed File reference.
-    if (!wireGuard && (!detected || (ProfileStore::managedKeyFile(profiles_[row].path, originalReference)
-                                     && !ProfileStore::readKeyFile(profiles_[row].path, originalReference, &wireGuardData)))) {
+    const bool managed = ProfileStore::managedKeyFile(profiles_[row].path, originalReference);
+    if (!wireGuard && (!detected || managed)) {
+        QByteArray unused;
         QMessageBox::warning(this, tr("Profile could not be opened"), !detected
             ? tr("Core could not identify the configuration file of this profile. Check that Core is available and try again.")
-            : tr("The WireGuard configuration file of this profile is unavailable."));
+            : !ProfileStore::readKeyFile(profiles_[row].path, originalReference, &unused)
+            ? tr("The WireGuard configuration file of this profile is unavailable.")
+            : tr("The selected Core cannot open WireGuard and AmneziaWG profiles. Start or update Core."));
         return;
     }
     const QString profileDirectory = QFileInfo(profiles_[row].path).absolutePath();
@@ -1688,6 +1696,8 @@ void MainWindow::addProfile() {
     hintRow->addWidget(uriHelp);
     auto *key = new QLineEdit;
     key->setObjectName("profileUri");
+    // Links may be up to 64 KiB; the default 32767-character limit would cut them.
+    key->setMaxLength(64 * 1024 + 1);
     key->setPlaceholderText(tr("Connection link or file path"));
     key->setMinimumHeight(30);
     auto *paste = new QPushButton;
@@ -2042,7 +2052,13 @@ bool MainWindow::importProfile(const QString &source) {
     const bool hadBom = imported.startsWith(QByteArray::fromHex("efbbbf"));
     input.close();
     if (imported.size() > 64 * 1024) { QMessageBox::warning(this, tr("Import failed"), tr("The profile exceeds the 64 KiB limit.")); return false; }
-    if (WireGuardCore::cliSupported(validationExecutable_)) {
+    bool probed = true;
+    const bool bridge = WireGuardCore::cliSupported(validationExecutable_, &probed);
+    if (!bridge && !probed) {
+        QMessageBox::warning(this, tr("Import failed"), tr("Core could not identify the configuration file referenced by this profile. Check that Core is available and try again."));
+        return false;
+    }
+    if (bridge) {
         const auto detected = WireGuardCore::detect(validationExecutable_, ProfileStore::keyFileText(imported));
         if (detected.answered() && detected.format() == "wireguard") {
             // The WireGuard file is stored byte for byte, including a BOM.
