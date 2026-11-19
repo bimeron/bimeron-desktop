@@ -3117,12 +3117,6 @@ QString ProfileEditorDialog::wireGuardText() const {
     return wgCacheText_;
 }
 
-QJsonObject ProfileEditorDialog::wireGuardInspection() const {
-    if (wgRawDirty_ || wgRawOnly_) return wgInspection_;
-    wireGuardText();
-    return wgCacheKey_.isEmpty() || !wgBridgeError_.isEmpty() ? wgInspection_ : wgCacheInspection_;
-}
-
 void ProfileEditorDialog::loadWireGuard(const QString &text, const QJsonObject &inspection) {
     wgLoaded_ = text;
     wgInspection_ = inspection;
@@ -3197,7 +3191,10 @@ void ProfileEditorDialog::refreshWireGuard() {
     const QString allowed = wgRawDirty_ || wgRawOnly_ ? wgInspection_.value("fields").toObject().value("Peer/AllowedIPs").toString()
                                                       : wgForm_->values().value("Peer/AllowedIPs");
     allowedIpsList_->setText(tr("AllowedIPs: %1").arg(allowed.isEmpty() ? tr("not set") : allowed));
-    const QString coverage = wireGuardInspection().value("allowed_ips").toObject().value("coverage").toString();
+    // Never ask Core from a refresh: a stalled bridge would block the GUI again.
+    const QJsonObject inspection = wgRawDirty_ || wgRawOnly_ || wgCacheKey_.isEmpty() || !wgCacheError_.isEmpty()
+        ? wgInspection_ : wgCacheInspection_;
+    const QString coverage = inspection.value("allowed_ips").toObject().value("coverage").toString();
     QStringList notes;
     if (mode == "only")
         notes << tr("Bimeron routing rules and the default action are inactive in this mode. They stay in the profile.");

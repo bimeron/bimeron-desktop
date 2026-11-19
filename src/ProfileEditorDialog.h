@@ -178,7 +178,6 @@ private:
     void syncWireGuardRaw();
     void refreshWireGuard();
     void checkWireGuard();
-    QJsonObject wireGuardInspection() const;
     bool wireGuard_ = false;
     bool wireGuardCreatable_ = false;
     QString wgOriginal_, wgLoaded_;

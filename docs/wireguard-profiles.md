@@ -49,6 +49,10 @@ Add profile accepts:
   Both files are copied into the profile store, which supports moving a pair to another
   computer. Other references keep the existing relocation rules.
 
+Desktop reads `[AccessKey] File` as Core does: a quoted value is decoded with Go
+`strconv.Unquote` rules (a decoded leading U+FEFF stays part of the name); a name that is
+not valid UTF-8 cannot be represented by Desktop and is never looked up.
+
 Referenced files are read only when they are local regular files: Desktop never opens a
 network path (UNC, extended-length or mapped network drive on Windows, or a path through a
 symbolic link or junction, which could lead to a share) or a FIFO; Core then

@@ -68,10 +68,13 @@ bool absoluteReference(const QString &value, bool ssh = false) {
 }
 
 // Go strconv.Unquote for a double-quoted literal, which Core applies to quoted
-// option values. Bytes from \x and octal escapes must form valid UTF-8 here.
-bool goUnquote(const QString &quoted, QString *out) {
+// option values. Valid Go syntax can still produce bytes that are not UTF-8
+// (for example \xff); such a name is a real path for Core but cannot be
+// represented here, so it is reported separately from malformed syntax.
+enum class Unquoted { Ok, Malformed, Unrepresentable };
+Unquoted goUnquote(const QString &quoted, QString *out) {
     const QByteArray in = quoted.toUtf8();
-    if (in.size() < 2 || in.front() != '"' || in.back() != '"') return false;
+    if (in.size() < 2 || in.front() != '"' || in.back() != '"') return Unquoted::Malformed;
     QByteArray bytes;
     const auto hex = [](char c) { return c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10 : c >= 'A' && c <= 'F' ? c - 'A' + 10 : -1; };
     const auto rune = [&bytes](uint code) {
@@ -81,9 +84,9 @@ bool goUnquote(const QString &quoted, QString *out) {
     };
     for (qsizetype i = 1; i < in.size() - 1; ++i) {
         const char c = in.at(i);
-        if (c == '"' || c == '\n') return false;
+        if (c == '"' || c == '\n') return Unquoted::Malformed;
         if (c != '\\') { bytes += c; continue; }
-        if (++i >= in.size() - 1) return false;
+        if (++i >= in.size() - 1) return Unquoted::Malformed;
         const char e = in.at(i);
         static const QByteArray simple("abfnrtv\\\""), mapped("\a\b\f\n\r\t\v\\\"");
         if (simple.contains(e)) { bytes += mapped.at(simple.indexOf(e)); continue; }
@@ -91,29 +94,30 @@ bool goUnquote(const QString &quoted, QString *out) {
         if (digits) {
             uint value = 0;
             for (int d = 0; d < digits; ++d) {
-                if (++i >= in.size() - 1 || hex(in.at(i)) < 0) return false;
+                if (++i >= in.size() - 1 || hex(in.at(i)) < 0) return Unquoted::Malformed;
                 value = value * 16 + uint(hex(in.at(i)));
             }
             if (e == 'x') bytes += char(value);
-            else if (!rune(value)) return false;
+            else if (!rune(value)) return Unquoted::Malformed;
             continue;
         }
         if (e >= '0' && e <= '7') {
             uint value = uint(e - '0');
             for (int d = 0; d < 2; ++d) {
-                if (++i >= in.size() - 1 || in.at(i) < '0' || in.at(i) > '7') return false;
+                if (++i >= in.size() - 1 || in.at(i) < '0' || in.at(i) > '7') return Unquoted::Malformed;
                 value = value * 8 + uint(in.at(i) - '0');
             }
-            if (value > 255) return false;
+            if (value > 255) return Unquoted::Malformed;
             bytes += char(value);
             continue;
         }
-        return false;
+        return Unquoted::Malformed;
     }
-    const QString decoded = QString::fromUtf8(bytes);
-    if (decoded.toUtf8() != bytes) return false;
+    // Keep a leading U+FEFF: Core treats it as part of the file name.
+    const QString decoded = ProfileStore::keyFileText(bytes);
+    if (decoded.toUtf8() != bytes) return Unquoted::Unrepresentable;
     *out = decoded;
-    return true;
+    return Unquoted::Ok;
 }
 
 bool safeUriReferences(const QString &value) {
@@ -227,10 +231,12 @@ QString ProfileStore::keyFileReference(const QString &profileText) {
         const qsizetype equal = trimmed.indexOf('=');
         if (section != "AccessKey" || equal < 0 || trimmed.left(equal).trimmed() != "File") continue;
         // Core decodes quoted values with Go escapes; an invalid literal stays as written
-        // (Core then rejects the profile).
+        // (Core then rejects the profile). A name Desktop cannot represent is not
+        // looked up at all: the profile is treated as having no readable key file.
         const QString raw = trimmed.mid(equal + 1).trimmed();
         QString value;
-        reference = raw.startsWith('"') && goUnquote(raw, &value) ? value : raw;
+        const Unquoted result = raw.startsWith('"') ? goUnquote(raw, &value) : Unquoted::Malformed;
+        reference = result == Unquoted::Ok ? value : result == Unquoted::Unrepresentable ? QString() : raw;
     }
     return reference;
 }

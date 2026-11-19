@@ -231,7 +231,10 @@ static void wireGuardStorage(const QString &directory) {
     require(ProfileStore::keyFileReference("[AccessKey]\nFile = \"\\164\\u0075n\\U0000006eel.conf\"\n") == "tunnel.conf");
     require(ProfileStore::keyFileReference("[AccessKey]\nFile = \"a\\tb\\\\c\"\n") == "a\tb\\c");
     require(ProfileStore::keyFileReference("[AccessKey]\nFile = \"bad\\q\"\n") == "\"bad\\q\"");
-    require(ProfileStore::keyFileReference("[AccessKey]\nFile = \"\\xff\"\n") == "\"\\xff\"");
+    // A valid name Desktop cannot represent (not UTF-8) is not looked up at all.
+    require(ProfileStore::keyFileReference("[AccessKey]\nFile = \"\\xff\"\n").isEmpty());
+    // A decoded leading U+FEFF stays part of the name, as in Core.
+    require(ProfileStore::keyFileReference("[AccessKey]\nFile = \"\\xef\\xbb\\xbftunnel.conf\"\n") == QString(QChar(0xfeff)) + "tunnel.conf");
 
     // Removal deletes the pair; an external key file is never deleted.
     require(ProfileStore::removeProfileFiles(path, &error));
@@ -620,13 +623,25 @@ static void wireGuardEditor(const QString &directory) {
             return bridge.handle(input);
         });
         ProfileEditorDialog editor(profile, caps, nullptr, accepted, "fake-core", path, false, key);
+        // A refresh after the failure renders the last inspection without asking Core again.
+        int edits = 0;
+        WireGuardCore::setRunner([&bridge, &failures, &edits](const QString &, const QByteArray &input, QString *error) {
+            if (QJsonDocument::fromJson(input).object().value("op") == "edit") {
+                ++edits;
+                if (failures > 0) { --failures; *error = "timed out"; return QJsonObject(); }
+            }
+            return bridge.handle(input);
+        });
         bool pairValidated = false;
         editor.setPairValidator([&pairValidated](const QString &, const QString &draftKey, CoreFailure *) {
             pairValidated = draftKey.contains("PersistentKeepalive = 25");
             return true;
         });
         editor.findChild<QLineEdit *>("wireGuardPeer_PersistentKeepalive")->setText("25");
-        require(editor.wireGuardText() == key && failures == 0);
+        require(editor.wireGuardText() == key && failures == 0 && edits == 1);
+        editor.findChild<QComboBox *>("allowedIpsMode")->setCurrentIndex(1);
+        require(edits == 1);
+        editor.findChild<QComboBox *>("allowedIpsMode")->setCurrentIndex(0);
         editor.findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Save)->click();
         require(pairValidated && editor.result() == QDialog::Accepted);
         WireGuardCore::setRunner([&bridge](const QString &, const QByteArray &input, QString *) { return bridge.handle(input); });

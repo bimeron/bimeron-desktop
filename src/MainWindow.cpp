@@ -2634,14 +2634,15 @@ bool MainWindow::startProfile(int row) {
         QMessageBox::warning(this, tr("Profile unavailable"), tr("Core could not identify the configuration file of this profile. Check that Core is available and try again."));
         return false;
     }
-    if ((wireGuardFile || ProfileStore::managedKeyFile(profiles_[row].path, info.keyFile)) && !WireGuardCore::serviceSupported(capabilities_)) {
+    const QString keyReference = ProfileStore::keyFileReference(profileText);
+    if ((wireGuardFile || ProfileStore::managedKeyFile(profiles_[row].path, keyReference)) && !WireGuardCore::serviceSupported(capabilities_)) {
         QMessageBox::warning(this, tr("Feature not supported"), tr("The running Core does not support WireGuard and AmneziaWG. Start or update Core."));
         return false;
     }
     const QString wireGuard = wireGuardLabel(row);
     if (!wireGuard.isEmpty()) activeFileProtocol_ = wireGuard;
-    else if (!info.keyFile.isEmpty()) {
-        QFile keyFile(ProfileStore::keyFilePath(profiles_[row].path, info.keyFile));
+    else if (!keyReference.isEmpty()) {
+        QFile keyFile(ProfileStore::keyFilePath(profiles_[row].path, keyReference));
         if (ProfileStore::localRegularFile(keyFile.fileName()) && keyFile.open(QIODevice::ReadOnly)) {
             QString key = QString::fromUtf8(keyFile.read(64 * 1024)).trimmed();
             if (key.startsWith(QChar::ByteOrderMark)) key.remove(0, 1);
