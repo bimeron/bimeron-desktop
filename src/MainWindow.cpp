@@ -626,10 +626,24 @@ QWidget *MainWindow::profilesPage() {
     auto *statusRow = new QHBoxLayout;
     connectionLabel_->setWordWrap(true);
     statusRow->addWidget(connectionLabel_, 1);
+    retryNowButton_ = new QPushButton(tr("Retry now"));
+    retryNowButton_->setObjectName("retryNowButton");
+    retryNowButton_->hide();
+    statusRow->addWidget(retryNowButton_);
+    connect(retryNowButton_, &QPushButton::clicked, this, &MainWindow::retryReconnectNow);
     availabilityDetails_ = new QPushButton(tr("Fix connection"));
     statusRow->addWidget(availabilityDetails_);
     layout->addLayout(statusRow);
     connect(availabilityDetails_, &QPushButton::clicked, this, &MainWindow::openCoreManagement);
+    reconnectDetailLabel_ = new QLabel;
+    reconnectDetailLabel_->setObjectName("reconnectDetail");
+    reconnectDetailLabel_->setTextFormat(Qt::PlainText);
+    reconnectDetailLabel_->setWordWrap(true);
+    reconnectDetailLabel_->hide();
+    layout->addWidget(reconnectDetailLabel_);
+    reconnectCountdown_ = new QTimer(this);
+    reconnectCountdown_->setInterval(1000);
+    connect(reconnectCountdown_, &QTimer::timeout, this, &MainWindow::renderReconnectView);
     trafficLabel_ = new QLabel(tr("Traffic: ↑ 0 B  ↓ 0 B"));
     trafficLabel_->setStyleSheet(themedStyle("color: #66768a"));
     layout->addWidget(trafficLabel_);
@@ -2156,6 +2170,11 @@ void MainWindow::invalidateConnection(bool preserveServiceProbe) {
     pendingStartPath_.clear();
     startReadyPath_.clear();
     stopRequested_ = false;
+    retryNowRequested_ = false;
+    reconnect_ = {};
+    reconnectView_ = {};
+    reconnectCause_.clear();
+    renderReconnectView();
     helloReady_ = false;
     statusNeeded_ = true;
     capabilities_ = {};
@@ -2223,11 +2242,12 @@ void MainWindow::toggleConnection() {
         ? profileList_->currentRow() : -1;
     if (state_ == "unknown" || state_ == "stopping") return;
     autoConnectAttempted_ = true;
-    const bool active = sessionActive_ || state_ == "connected" || state_ == "connecting"
+    const bool held = reconnectView_.holdDisconnect;
+    const bool active = held || sessionActive_ || state_ == "connected" || state_ == "connecting"
         || state_ == "reconnecting";
     if (active) {
         pendingStartPath_.clear();
-        if (row >= 0 && profiles_[row].id != activeProfileId_ && packetProfile(row) && !cleanupBlocked_)
+        if (!held && row >= 0 && profiles_[row].id != activeProfileId_ && packetProfile(row) && !cleanupBlocked_)
             pendingStartPath_ = profiles_[row].path;
         operation_ = "stop";
         clearSSHAuthentication();
@@ -2382,6 +2402,18 @@ void MainWindow::poll() {
         core_.request("stop", {}, 120000);
         return;
     }
+    if (retryNowRequested_) {
+        retryNowRequested_ = false;
+        // The pause may have ended while the request waited for the client.
+        if (reconnectView_.retryNow) {
+            // Guarded like stop: Core rejects it for another instance or session.
+            QJsonObject guard;
+            if (!instance_.isEmpty() && !sessionId_.isEmpty())
+                guard = {{"instance", instance_}, {"session", sessionId_}};
+            core_.request(ReconnectPolicy::Ipc::reconnectNowCommand, guard);
+            return;
+        }
+    }
     if (statusNeeded_) { core_.request("status"); return; }
     if (!startReadyPath_.isEmpty()) {
         const QString path = startReadyPath_;
@@ -2394,7 +2426,9 @@ void MainWindow::poll() {
             && (state_ == "disconnected" || state_ == "failed")
             && QFileInfo::exists(path) && info.backend == ProfileConnectionInfo::Backend::Packet && info.connectable) {
             if (!QSettings().value("logs/keepPrevious", true).toBool()) log_->clear();
-            core_.request("start", {{"config", path}});
+            // With the kill switch, start returns after protection is installed and a
+            // handover waits for the previous cleanup; Core recommends 2 minutes.
+            core_.request("start", {{"config", path}}, 120000);
         } else {
             operation_.clear();
             if (!reconnectResultProfileId_.isEmpty()) {
@@ -2518,7 +2552,7 @@ void MainWindow::handleReply(const QString &command, const QJsonObject &response
                 reportCoreUpdateResult(tr("Core was updated, but reconnection failed"));
             reconnectResultProfileId_.clear();
         }
-        if (command == "stop") {
+        if (command == "stop" || (command == "start" && error.endsWith("_run_recover"))) {
             cleanupBlocked_ = true;
             autoConnectAttempted_ = true;
             if (serviceRecoveryButton_) serviceRecoveryButton_->show();
@@ -2531,8 +2565,17 @@ void MainWindow::handleReply(const QString &command, const QJsonObject &response
                 connectionFailure(command, CoreClient::Failure::InvalidResponse, tr("Incompatible response from core"));
                 return;
             }
-            if (command == "start" || command == "stop" || command == "shutdown") showCoreError(response);
-            else if (lastCoreError_ != error) { appendLog(safeCoreDiagnostic(error.toUtf8())); lastCoreError_ = error; }
+            if (command == "start" && error == "session_already_running") {
+                // A repeated start of the running profile: Core keeps that session; reread status.
+                const QString text = coreCodeText(errorCatalog(), error);
+                appendLog(tr("Core: %1 (%2)").arg(text.isEmpty() ? tr("A session is already running") : text, error));
+            } else if (command == "start" || command == "stop" || command == "shutdown") showCoreError(response);
+            else if (command == ReconnectPolicy::Ipc::reconnectNowCommand) {
+                // reconnect_not_pending: an attempt already started; the status refresh shows it.
+                const QString text = coreCodeText(errorCatalog(), error);
+                appendLog(text.isEmpty() ? tr("Core: %1").arg(safeCoreDiagnostic(error.toUtf8()))
+                                         : tr("Core: %1 (%2)").arg(text, error));
+            } else if (lastCoreError_ != error) { appendLog(safeCoreDiagnostic(error.toUtf8())); lastCoreError_ = error; }
             if (command != "status") statusNeeded_ = true;
             if (command == "shutdown") { quitRequested_ = false; if (tray_) tray_->show(); showWindow(); }
         }
@@ -2548,6 +2591,8 @@ void MainWindow::handleReply(const QString &command, const QJsonObject &response
         }
     } else if (command == "start") {
         operation_.clear();
+        statusNeeded_ = true;
+    } else if (command == ReconnectPolicy::Ipc::reconnectNowCommand) {
         statusNeeded_ = true;
     } else if (command == "stop") {
         operation_.clear();
@@ -2677,7 +2722,9 @@ void MainWindow::handleStatus(const QJsonObject &status) {
         startReadyPath_.clear();
         operation_.clear();
     }
-    if (status.value("LastError").toString().endsWith("cleanup_failed_run_recover") && !recoveryVerified_) {
+    // Any *_run_recover code and leftover protection route to emergency network recovery.
+    reconnect_ = ReconnectPolicy::fromIpc(status, capabilities_);
+    if (reconnect_.recoveryRequired && !recoveryVerified_) {
         cleanupBlocked_ = true;
         autoConnectAttempted_ = true;
         pendingStartPath_.clear();
@@ -2713,6 +2760,12 @@ void MainWindow::handleStatus(const QJsonObject &status) {
             && attempt == static_cast<int>(attempt) && limit == static_cast<int>(limit))
             connectionText = tr("Reconnecting… (%1/%2)").arg(static_cast<int>(attempt)).arg(static_cast<int>(limit));
     }
+    // A Core without the reconnect policy fields keeps the Desktop 0.3.0 view above.
+    reconnectCause_ = reconnect_.phase == ReconnectPolicy::Phase::Waiting
+        ? coreCodeText(errorCatalog(), status.value("LastError").toString()) : QString();
+    reconnectView_ = ReconnectPolicy::present(state_, reconnect_, reconnectCause_, activeProxyMode(),
+                                              QDateTime::currentMSecsSinceEpoch());
+    if (!reconnectView_.title.isEmpty()) connectionText = reconnectView_.title;
     connectionLabel_->setToolTip((state_ == "reconnecting" || state_ == "failed")
         ? coreConnectionProblemText(errorCatalog(), status.value("LastError").toString()) : QString());
 
@@ -2739,21 +2792,28 @@ void MainWindow::handleStatus(const QJsonObject &status) {
     connectionLabel_->setText(connectionText);
     if (state_ == "connected")
         connectionLabel_->setStyleSheet(themedStyle("color: #16803c; font-weight: 500"));
+    else if (reconnectView_.problem)
+        connectionLabel_->setStyleSheet(themedStyle("color: #c62828; font-weight: 500"));
     else if (state_ == "connecting" || state_ == "reconnecting" || state_ == "stopping")
         connectionLabel_->setStyleSheet(themedStyle("color: #d69200; font-weight: 500"));
     else if (state_ == "failed")
         connectionLabel_->setStyleSheet(themedStyle("color: #c62828; font-weight: 500"));
     else
         connectionLabel_->setStyleSheet(themedStyle("color: #66768a"));
+    renderReconnectView();
     updateProfileAppearance();
     updateConnectionButton();
+    const QString reconnectMessage = reconnectNotifications_.update(state_, reconnect_, activeProxyMode());
     if (tray_) {
         tray_->setIcon(trayIcon(state_ == "connected"));
         tray_->setToolTip(tr("Bimeron — %1").arg(connectionLabel_->text()));
         if (trayStatusAction_)
             trayStatusAction_->setText(tr("Status: %1").arg(connectionLabel_->text()));
         const bool notifications = QSettings().value("app/notifications", true).toBool();
-        if (notifications && state_ == "connected" && previousState != "connected")
+        if (notifications && !reconnectMessage.isEmpty())
+            tray_->showMessage(tr("Bimeron"), reconnectMessage,
+                state_ == "connected" ? QSystemTrayIcon::Information : QSystemTrayIcon::Warning, 4000);
+        else if (notifications && state_ == "connected" && previousState != "connected")
             tray_->showMessage(tr("Bimeron"), activeProxyMode() ? tr("Proxy connected") : tr("VPN connected"), QSystemTrayIcon::Information, 3000);
         else if (notifications && state_ == "failed" && connectionAttempted_ && previousState != "failed")
             tray_->showMessage(tr("Bimeron"), activeProxyMode() ? tr("Failed to connect the proxy") : tr("Failed to connect the VPN"), QSystemTrayIcon::Critical, 4000);
@@ -2775,21 +2835,51 @@ void MainWindow::handleStatus(const QJsonObject &status) {
             tr("Access with this key is no longer available: it has been exhausted or revoked. Replace the key in the profile and reconnect."));
 }
 
+void MainWindow::renderReconnectView() {
+    if (!connectionLabel_ || !reconnectDetailLabel_) return;
+    if (reconnectView_.countdown) {
+        reconnectView_ = ReconnectPolicy::present(state_, reconnect_, reconnectCause_, activeProxyMode(),
+                                                  QDateTime::currentMSecsSinceEpoch());
+        connectionLabel_->setText(reconnectView_.title);
+        if (tray_) tray_->setToolTip(tr("Bimeron — %1").arg(connectionLabel_->text()));
+        if (trayStatusAction_) trayStatusAction_->setText(tr("Status: %1").arg(connectionLabel_->text()));
+    }
+    reconnectDetailLabel_->setText(reconnectView_.detail);
+    reconnectDetailLabel_->setStyleSheet(themedStyle(reconnectView_.problem ? "color: #c62828" : "color: #66768a"));
+    reconnectDetailLabel_->setVisible(!reconnectView_.detail.isEmpty());
+    retryNowButton_->setVisible(reconnectView_.retryNow);
+    if (!reconnectView_.countdown) reconnectCountdown_->stop();
+    else if (!reconnectCountdown_->isActive()) reconnectCountdown_->start();
+}
+
+void MainWindow::retryReconnectNow() {
+    if (!reconnectView_.retryNow || !helloReady_ || statusNeeded_ || controlBlocked() || !operation_.isEmpty()
+        || retryNowRequested_) return;
+    retryNowRequested_ = true;
+    updateConnectionButton();
+    poll();
+}
+
 void MainWindow::updateConnectionButton() {
     updateCoreAvailability();
     const int row = profileList_->currentRow();
-    const bool active = sessionActive_ || state_ == "connecting" || state_ == "connected" || state_ == "reconnecting";
+    // While Core holds protection the only way out is an explicit stop.
+    const bool held = reconnectView_.holdDisconnect;
+    const bool active = held || sessionActive_ || state_ == "connecting" || state_ == "connected" || state_ == "reconnecting";
     const bool selected = row >= 0 && row < profiles_.size() && profileList_->currentItem()->isSelected();
     const bool nativeSelected = selected && profileInfo(row).backend == ProfileConnectionInfo::Backend::NativeIKEv2;
     if (nativeStatusLabel_ && !nativeOwnerBlocked_) {
         nativeStatusLabel_->setVisible(nativeSelected);
         if (nativeSelected) nativeStatusLabel_->setText(nativeUnavailableReason());
     }
-    connectButton_->setToolTip(nativeSelected ? nativeUnavailableReason() : QString{});
-    const bool switchProfile = active && selected && profiles_[row].id != activeProfileId_
+    const bool switchProfile = !held && active && selected && profiles_[row].id != activeProfileId_
         && packetProfile(row) && !cleanupBlocked_;
+    const bool disconnectVpn = reconnectView_.disconnectVpn && active && !switchProfile;
+    connectButton_->setToolTip(nativeSelected ? nativeUnavailableReason()
+        : disconnectVpn ? tr("Internet will work without VPN protection.") : QString{});
     connectButton_->setText(!operation_.isEmpty() ? tr("Please wait…")
         : state_ == "stopping" ? tr("Disconnecting…")
+        : disconnectVpn ? tr("Disconnect VPN")
         : active && !switchProfile ? tr("Disconnect") : tr("Connect"));
     const QString mode = active && !switchProfile ? "disconnect" : "connect";
     if (connectButton_->property("mode").toString() != mode) {
@@ -2797,6 +2887,8 @@ void MainWindow::updateConnectionButton() {
         connectButton_->style()->unpolish(connectButton_);
         connectButton_->style()->polish(connectButton_);
     }
+    if (retryNowButton_)
+        retryNowButton_->setEnabled(helloReady_ && !statusNeeded_ && !controlBlocked() && operation_.isEmpty() && !retryNowRequested_);
     connectButton_->setEnabled(helloReady_ && !statusNeeded_ && !controlBlocked() && !nativeSession_
         && operation_.isEmpty() && state_ != "stopping" && state_ != "unknown"
         && ((active && !switchProfile) || (selected && canActivateProfile(row))));
@@ -2824,11 +2916,12 @@ void MainWindow::updateProfileAppearance() {
             color = appDarkMode() ? "#76d49a" : "#16803c";
             dotColor = "#19c15f";
             item->setBackground(QColor(appDarkMode() ? "#1d4235" : "#e8f7ed"));
-        } else if (helloReady_ && profiles_[row].id == activeProfileId_ && (state_ == "connecting" || state_ == "reconnecting" || state_ == "stopping")) {
+        } else if (helloReady_ && profiles_[row].id == activeProfileId_ && !reconnectView_.problem
+                   && (state_ == "connecting" || state_ == "reconnecting" || state_ == "stopping")) {
             color = appDarkMode() ? "#f3cf72" : "#d69200";
             dotColor = "#f4c20d";
             item->setBackground(QColor(appDarkMode() ? "#493e23" : "#fff4bf"));
-        } else if (helloReady_ && profiles_[row].id == activeProfileId_ && state_ == "failed") {
+        } else if (helloReady_ && profiles_[row].id == activeProfileId_ && (state_ == "failed" || reconnectView_.problem)) {
             color = appDarkMode() ? "#ff9a92" : "#c62828";
             dotColor = "#dc3545";
             item->setBackground(QColor(appDarkMode() ? "#492d35" : "#fdecec"));
@@ -4044,7 +4137,9 @@ void MainWindow::updateCoreAvailability() {
     const bool connectionAvailable = !repairSession_ && helloReady_ && !cleanupBlocked_
         && !development_->failed() && !development_->busy();
     if (!connectionAvailable && !nativeOwnerBlocked_) {
-        connectionLabel_->setText(startupPreparationPending_ || availabilityVerificationDeadline_
+        const bool residual = helloReady_ && cleanupBlocked_ && reconnect_.residualProtection;
+        connectionLabel_->setText(residual ? ReconnectPolicy::residualProtectionText()
+            : startupPreparationPending_ || availabilityVerificationDeadline_
             ? tr("Preparing connection…") : tr("Could not prepare connection"));
         connectionLabel_->setStyleSheet(themedStyle(startupPreparationPending_ || availabilityVerificationDeadline_
             ? "color: #66768a" : "color: #c62828"));

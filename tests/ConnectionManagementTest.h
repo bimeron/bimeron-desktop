@@ -14,6 +14,8 @@
 #include <QSystemTrayIcon>
 #include <QTranslator>
 #include <QMenu>
+#include <QRegularExpression>
+#include <QTimeZone>
 #include "NativeIKEv2SessionTest.h"
 
 // Compile the application translator itself; never invoke its renamed entry point.
@@ -85,6 +87,217 @@ struct ConnectionManagementTest {
         else QSettings().remove("app/language");
         if (previousNotifications.isValid()) QSettings().setValue("app/notifications", previousNotifications);
         else QSettings().remove("app/notifications");
+    }
+
+    // Reconnect policy view (#60) through a private IPC endpoint. The policy field
+    // names are provisional; ReconnectPolicy::fromIpc() is the only mapping.
+    static void reconnectPolicyView() {
+        const QVariant previousNotifications = QSettings().value("app/notifications");
+        const QVariant previousAutoConnect = QSettings().value("app/autoConnect");
+        QSettings().setValue("app/notifications", false);
+        QSettings().setValue("app/autoConnect", false);
+        QTemporaryDir directory;
+        require(directory.isValid(), "reconnect policy directory");
+        QLocalServer server;
+        require(server.listen("bimeron-reconnect-" + QUuid::createUuid().toString()), "reconnect policy endpoint");
+        MainWindow window;
+        window.core_.setEndpoint(server.serverName());
+        window.validationExecutable_ = "missing-core";
+        window.startupPreparationPending_ = false;
+        window.cleanupBlocked_ = false;
+        window.repairSession_ = false;
+        window.development_->failed_ = false;
+        window.development_->busy_ = false;
+        for (const QString name : {QStringLiteral("A"), QStringLiteral("B")}) {
+            const QString path = directory.filePath(name + ".conf");
+            QFile file(path);
+            require(file.open(QIODevice::WriteOnly), "write reconnect profile");
+            file.write("[Profile]\nName = " + name.toUtf8() + "\n[AccessKey]\nSOCKS5 = socks5://localhost:1080\n");
+            file.close();
+            window.profiles_.append({ProfileStore::identity(path), name, path});
+            window.profileList_->addItem(name);
+        }
+        const QString profile = window.profiles_[0].id;
+        const auto session = [&](bool active) {
+            return QJsonObject{{"id", "s1"}, {"active", active}, {"profile_id", profile}, {"mode", "vpn"}};
+        };
+        const auto nextAttempt = [](qint64 ms) {
+            return QDateTime::fromMSecsSinceEpoch(QDateTime::currentMSecsSinceEpoch() + ms, QTimeZone::utc()).toString(Qt::ISODate);
+        };
+        // Core omits ReconnectAttempt/ReconnectLimit while waiting and sends NextAttemptAt in whole seconds.
+        QJsonObject status{{"State", "reconnecting"}, {"Session", session(true)}, {"ReconnectCycle", 1},
+                           {"ReconnectPhase", "waiting"}, {"NextAttemptAt", nextAttempt(59000)}, {"KillSwitch", "holding"}};
+        QJsonObject capabilities{{"vpn", true}, {"proxy", true}, {"reconnect_now", true}, {"kill_switch_hold", true}};
+        QString instance = "reconnect";
+        bool rejectReconnect = false;
+        bool rejectStart = false;
+        QStringList commands;
+        QObject::connect(&server, &QLocalServer::newConnection, &server, [&] {
+            auto *socket = server.nextPendingConnection();
+            QObject::connect(socket, &QLocalSocket::disconnected, socket, &QObject::deleteLater);
+            QObject::connect(socket, &QLocalSocket::readyRead, socket, [&, socket] {
+                while (socket->canReadLine()) {
+                    const auto request = QJsonDocument::fromJson(socket->readLine()).object();
+                    const QString command = request.value("command").toString();
+                    commands << command;
+                    require((command != "start" || rejectStart) && command != "shutdown" && command != "recover",
+                            "reconnect view never starts or recovers");
+                    QJsonObject reply{{"version", 1}, {"id", request.value("id")}, {"instance", instance},
+                                      {"core", QJsonObject{{"version", "0.4.0"}}}, {"capabilities", capabilities}};
+                    if (command == "reconnect_now") {
+                        require(request.value("instance") == instance && request.value("session") == "s1",
+                                "reconnect_now is guarded like stop");
+                        if (rejectReconnect) {
+                            reply.insert("error", "reconnect_not_pending");
+                            rejectReconnect = false;
+                        } else if (status.value("ReconnectPhase") == "waiting") {
+                            status = {{"State", "reconnecting"}, {"Session", session(true)}, {"ReconnectAttempt", 1},
+                                      {"ReconnectLimit", 10}, {"ReconnectCycle", 2}, {"ReconnectPhase", "attempting"},
+                                      {"KillSwitch", "holding"}};
+                        } else {
+                            status = {{"State", "reconnecting"}, {"Session", session(true)}, {"ReconnectAttempt", 1},
+                                      {"ReconnectLimit", 3}, {"ReconnectPhase", "attempting"}, {"KillSwitch", "holding"}};
+                        }
+                    } else if (command == "stop") {
+                        status = {{"State", "disconnected"}, {"Session", session(false)}};
+                    } else if (command == "start") {
+                        reply.insert("error", "session_already_running");
+                    }
+                    reply.insert("status", status);
+                    socket->write(QJsonDocument(reply).toJson(QJsonDocument::Compact) + '\n');
+                    socket->flush();
+                }
+            });
+        });
+        const auto synchronized = [&] { return window.helloReady_ && !window.statusNeeded_ && !window.core_.busy() && window.operation_.isEmpty(); };
+        const auto refresh = [&] {
+            window.statusNeeded_ = true;
+            window.poll();
+            require(waitFor(synchronized), "reconnect status refresh");
+        };
+        const QRegularExpression waitingTitle(QStringLiteral("^Server unavailable · retrying in 0:5\\d$"));
+
+        window.poll();
+        require(waitFor(synchronized), "reconnect hello and status");
+        require(waitingTitle.match(window.connectionLabel_->text()).hasMatch(), "waiting title with countdown");
+        require(window.connectionLabel_->styleSheet().contains("#c62828"), "waiting state is red");
+        require(!window.reconnectDetailLabel_->isHidden()
+                && window.reconnectDetailLabel_->text() == "Internet access is paused until the VPN connects.", "held line while waiting");
+        require(!window.retryNowButton_->isHidden() && window.retryNowButton_->isEnabled(), "Retry now with capability");
+        require(window.reconnectCountdown_->isActive(), "countdown ticks while waiting");
+        require(window.connectButton_->text() == "Disconnect VPN" && window.connectButton_->isEnabled()
+                && window.connectButton_->toolTip() == "Internet will work without VPN protection.", "Disconnect VPN while waiting");
+        window.profileList_->setCurrentRow(1);
+        require(window.connectButton_->text() == "Disconnect VPN", "held protection never offers a profile switch");
+
+        window.reconnect_.nextAttemptAtMs -= 10000;
+        window.renderReconnectView();
+        require(QRegularExpression(QStringLiteral("^Server unavailable · retrying in 0:4\\d$")).match(window.connectionLabel_->text()).hasMatch(),
+                "countdown re-renders every tick");
+
+        window.retryNowButton_->click();
+        require(waitFor([&] { return commands.count("reconnect_now") == 1 && synchronized(); }), "Retry now sends the command");
+        require(window.connectionLabel_->text() == "Reconnecting… (1/10)", "next cycle attempt");
+        require(window.connectionLabel_->styleSheet().contains("#d69200"), "attempts are yellow");
+        require(window.retryNowButton_->isHidden() && !window.reconnectCountdown_->isActive(), "no Retry now while attempting");
+        require(!window.reconnectDetailLabel_->isHidden(), "held line while attempting");
+        require(window.reconnectNotifications_.recovering(), "cycle notification recorded");
+
+        const QJsonObject heldFailure{{"State", "failed"}, {"Session", session(true)}, {"ReconnectAttempt", 3},
+                                      {"ReconnectLimit", 3}, {"KillSwitch", "holding"}, {"LastError", "transport_check_failed"}};
+        const QString heldText = "Couldn't connect. Check your internet connection and access key. "
+                                 "Internet access stays paused until you select Disconnect VPN.";
+        status = heldFailure;
+        refresh();
+        require(window.connectionLabel_->text() == heldText, "held failure text");
+        require(window.connectionLabel_->styleSheet().contains("#c62828") && window.reconnectDetailLabel_->isHidden(), "held failure view");
+        require(window.connectButton_->text() == "Disconnect VPN" && window.connectButton_->isEnabled(), "held failure keeps Disconnect VPN");
+        require(!window.retryNowButton_->isHidden() && window.retryNowButton_->isEnabled(), "held failure can retry");
+
+        rejectReconnect = true;
+        window.retryNowButton_->click();
+        require(waitFor([&] { return commands.count("reconnect_now") == 2 && synchronized(); }), "rejected retry refreshes status");
+        require(window.log_->toPlainText().contains("reconnect_not_pending") && window.connectionLabel_->text() == heldText,
+                "reconnect_not_pending is logged without changing the view");
+
+        window.retryNowButton_->click();
+        require(waitFor([&] { return commands.count("reconnect_now") == 3 && synchronized(); }), "held retry sends the command");
+        require(window.connectionLabel_->text() == "Connecting… (1/3)" && !window.reconnectDetailLabel_->isHidden()
+                && window.connectButton_->text() == "Disconnect VPN", "held retry restarts the initial attempts");
+
+        status = heldFailure;
+        refresh();
+        window.toggleConnection();
+        require(waitFor([&] { return commands.contains("stop") && synchronized(); }), "Disconnect VPN stops the session");
+        require(window.pendingStartPath_.isEmpty() && window.state_ == "disconnected", "held stop never switches profiles");
+        require(window.connectButton_->text() == "Connect", "Connect after release");
+
+        status = {{"State", "failed"}, {"Session", session(false)}, {"LastError", "transport_check_failed"}};
+        refresh();
+        require(window.connectionLabel_->text() == "Connection failed" && window.connectButton_->text() == "Connect",
+                "unheld failure offers Connect");
+
+        // Leftover protection after a crash or reboot, and other *_run_recover codes.
+        status = {{"State", "failed"}, {"LastError", "cleanup_failed_run_recover"}, {"LastErrorPermanent", true},
+                  {"KillSwitch", "residual"}};
+        refresh();
+        require(window.cleanupBlocked_, "residual protection routes to network recovery");
+        require(window.connectionLabel_->text() == "Internet is blocked by leftover VPN protection."
+                && window.connectionLabel_->styleSheet().contains("#c62828"), "residual text");
+        require(!window.availabilityDetails_->isHidden(), "residual offers the recovery path");
+        require(window.retryNowButton_->isHidden() && window.reconnectDetailLabel_->isHidden(), "residual is not holding");
+        require(!window.connectButton_->isEnabled() && window.connectButton_->text() == "Connect",
+                "residual blocks Connect and never offers Disconnect VPN");
+        window.cleanupBlocked_ = false;
+        status = {{"State", "failed"}, {"Session", session(false)}, {"LastError", "kill_switch_pending_run_recover"}};
+        refresh();
+        require(window.cleanupBlocked_ && window.connectionLabel_->text() == "Could not prepare connection",
+                "any run_recover code routes to network recovery");
+        window.cleanupBlocked_ = false;
+        status = {{"State", "disconnected"}, {"Session", session(false)}};
+        refresh();
+        require(!window.cleanupBlocked_, "recovery routing ends with the code");
+
+        // A repeated start of the running profile is answered quietly: a log line and a status refresh.
+        status = {{"State", "connected"}, {"Session", session(true)}, {"KillSwitch", "active"}};
+        refresh();
+        rejectStart = true;
+        bool dialogShown = false;
+        QTimer dialogWatch;
+        dialogWatch.setInterval(20);
+        QObject::connect(&dialogWatch, &QTimer::timeout, &dialogWatch, [&] {
+            if (auto *modal = QApplication::activeModalWidget()) { dialogShown = true; modal->close(); }
+        });
+        dialogWatch.start();
+        window.operation_ = "start";
+        require(window.core_.request("start", {{"config", window.profiles_[0].path}}, 120000), "repeated start request");
+        require(waitFor([&] { return commands.count("start") == 1 && synchronized(); }), "repeated start reply");
+        dialogWatch.stop();
+        rejectStart = false;
+        require(!dialogShown && window.log_->toPlainText().contains("session_already_running")
+                && window.state_ == "connected" && window.operation_.isEmpty(), "session_already_running is quiet");
+
+        // Desktop 0.3.0 Core (a restarted daemon): no policy fields or capabilities.
+        instance = "legacy";
+        capabilities = {{"vpn", true}, {"proxy", true}};
+        status = {{"State", "reconnecting"}, {"Session", session(true)}, {"ReconnectAttempt", 2}, {"ReconnectLimit", 3}};
+        refresh();
+        require(waitFor([&] { return window.instance_ == "legacy" && synchronized(); }), "old Core hello");
+        require(window.connectionLabel_->text() == "Reconnecting… (2/3)", "legacy progress unchanged");
+        require(window.retryNowButton_->isHidden() && window.reconnectDetailLabel_->isHidden(), "legacy view has no policy controls");
+        window.profileList_->setCurrentRow(0);
+        require(window.connectButton_->text() == "Disconnect", "legacy button unchanged");
+
+        status = {{"State", "connected"}, {"Session", session(true)}};
+        refresh();
+        require(window.reconnectDetailLabel_->isHidden() && !window.reconnectCountdown_->isActive()
+                && !window.reconnectNotifications_.recovering(), "connected clears the reconnect view");
+        require(commands.count("start") == 1, "only the repeated start fixture sent start");
+
+        if (previousNotifications.isValid()) QSettings().setValue("app/notifications", previousNotifications);
+        else QSettings().remove("app/notifications");
+        if (previousAutoConnect.isValid()) QSettings().setValue("app/autoConnect", previousAutoConnect);
+        else QSettings().remove("app/autoConnect");
     }
 
     // Core keeps the last session's profile_id after failed/disconnected. Only a live,
