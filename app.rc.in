@@ -15,9 +15,11 @@ BEGIN
     BEGIN
         BLOCK "040904b0"
         BEGIN
+            VALUE "CompanyName", "Bimeron Network\0"
             VALUE "FileDescription", "Bimeron\0"
             VALUE "FileVersion", "@PROJECT_VERSION@.0\0"
             VALUE "InternalName", "bimeron-desktop\0"
+            VALUE "LegalCopyright", L"\x00A9 2026 NOOB RP LTD\0"
             VALUE "OriginalFilename", "bimeron-desktop.exe\0"
             VALUE "ProductName", "Bimeron\0"
             VALUE "ProductVersion", "@PROJECT_VERSION@.0\0"

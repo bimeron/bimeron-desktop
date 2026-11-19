@@ -66,3 +66,18 @@ Qt applicationDisplayName API supported by Qt 6.2; no Linux build/install flow,
 launcher or autostart file changed. Linux native UI and ARM64 runtime remain
 unverified. No new release package was prepared; new GUI bytes require normal
 package/release validation before shipping. No publisher/signing state is inferred.
+
+## Publisher metadata
+
+The GUI PE resource adds CompanyName Bimeron Network and LegalCopyright
+© 2026 NOOB RP LTD (brand as publisher, legal entity as copyright owner).
+Task Manager Startup shows CompanyName as Publisher; Programs and Features
+already shows the MSI Manufacturer Bimeron Network. File Properties > Details
+shows Copyright but not CompanyName. The strings make no signing claim: UAC
+keeps showing an unknown publisher until Authenticode signing exists, and a
+future certificate subject will be the legal entity. Once the executable is
+signed, UAC will show NOOB RP LTD as the verified publisher while CompanyName
+still reads Bimeron Network; this split between brand and legal entity is
+intended. The LegalCopyright string is a wide literal, so it does not depend on
+the code page of the build machine. The metadata test checks
+both strings for the amd64 or ARM64 build it is given; CI runs it on Windows x64.

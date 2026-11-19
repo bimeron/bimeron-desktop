@@ -1701,7 +1701,11 @@ acceptance. Native install/GUI/polkit and upgrade tests remain release gates.
 Windows builds configure app.rc.in into build/<target>/app.rc using the project
 version. The GUI PE FileDescription and ProductName are Bimeron; InternalName and
 OriginalFilename retain bimeron-desktop and bimeron-desktop.exe. The existing
-icon remains embedded. No publisher or signing metadata is introduced.
+icon remains embedded. CompanyName is the brand Bimeron Network (shown as
+Publisher in Task Manager Startup, matching the MSI Manufacturer from
+CPACK_PACKAGE_VENDOR); LegalCopyright names the legal owner as
+© 2026 NOOB RP LTD. These are plain strings: the UAC verified publisher
+comes only from an Authenticode signature, which this metadata does not provide.
 Qt applicationDisplayName is Bimeron, while applicationName/settings identity
 remains Bimeron Desktop. Windows Run value Bimeron and its command are unchanged;
 no startup migration or StartupApproved write is required. MSI shortcuts and

@@ -4,6 +4,8 @@ param([Parameter(Mandatory=$true)][string]$Executable,
 $ErrorActionPreference = 'Stop'
 $v = [Diagnostics.FileVersionInfo]::GetVersionInfo((Resolve-Path $Executable))
 foreach ($entry in @(@('FileDescription','Bimeron'), @('ProductName','Bimeron'),
+    @('CompanyName','Bimeron Network'),
+    @('LegalCopyright',"$([char]0xA9) 2026 NOOB RP LTD"),
     @('InternalName','bimeron-desktop'), @('OriginalFilename','bimeron-desktop.exe'),
     @('FileVersion',"$Version.0"), @('ProductVersion',"$Version.0"))) {
     if ($v.($entry[0]) -cne $entry[1]) { throw "Unexpected $($entry[0])" }
