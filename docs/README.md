@@ -29,6 +29,7 @@ Start with the [repository README](../README.md) for installation and an overvie
 - [Connection management](connection-management.md)
 - [Bounded reconnect recovery](reconnect-attempts.md)
 - [Connection repair and service actions](service-actions.md)
+- [Control server identity](control-server-identity.md): verifying the Core endpoint before any request
 - [Core error presentation](core-error-presentation.md)
 - [Signed Core service updates](core-updates.md)
 - [Tray interaction](tray-interaction.md)

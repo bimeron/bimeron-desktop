@@ -2174,6 +2174,14 @@ void MainWindow::invalidateConnection(bool preserveServiceProbe) {
     if (trayMenu_) rebuildTrayMenu();
 }
 
+// Guidance for control_server_untrusted: the bundled Core's catalog text, or the
+// same English text (translated like the catalog) when no catalog is available.
+static QString untrustedServerGuidance(const CoreErrorCatalog &catalog) {
+    const QString text = coreCodeText(catalog, QStringLiteral("control_server_untrusted"));
+    return !text.isEmpty() ? text : QCoreApplication::translate("MainWindow",
+        "Could not verify the background VPN service. Update Bimeron Core to match this version of the application, then try again.");
+}
+
 void MainWindow::connectionFailure(const QString &, CoreClient::Failure reason, const QString &message) {
     if (nativeOwnerBlocked_) return;
     ipcObservedAt_ = QDateTime::currentMSecsSinceEpoch();
@@ -2192,11 +2200,18 @@ void MainWindow::connectionFailure(const QString &, CoreClient::Failure reason, 
     retryAt_ = pollClock_.elapsed() + delays[qMin(retryCount_++, 3)];
     const QString text = reason == CoreClient::Failure::AccessDenied ? tr("Access to Core was denied")
         : reason == CoreClient::Failure::Incompatible ? tr("The GUI and core protocol versions are incompatible")
+        : reason == CoreClient::Failure::Untrusted ? tr("The service needs to be updated or repaired")
         : tr("Core unavailable");
     connectionLabel_->setText(text);
     connectionLabel_->setStyleSheet(themedStyle("color: #c62828; font-weight: 500"));
     if (tray_) { tray_->setIcon(trayIcon(false)); tray_->setToolTip(tr("Bimeron — %1").arg(text)); }
-    if (lastCoreError_ != message) { appendLog(message); lastCoreError_ = message; }
+    if (lastCoreError_ != message) {
+        // Identity failures use the Core catalog guidance, like Status.LastError.
+        if (reason == CoreClient::Failure::Untrusted || reason == CoreClient::Failure::ServiceNotRunning)
+            appendLog(tr("Core: %1 (%2)").arg(untrustedServerGuidance(errorCatalog()), QStringLiteral("control_server_untrusted")));
+        appendLog(message);
+        lastCoreError_ = message;
+    }
     updateConnectionButton();
     if (trayMenu_) rebuildTrayMenu();
     if (quitRequested_) { quitRequested_ = false; if (tray_) tray_->show(); showWindow(); }
@@ -3300,8 +3315,9 @@ void MainWindow::connectRepairSession() {
         bool authenticated = false;
 #ifdef Q_OS_WIN
         ULONG peer = 0;
-        if (serviceCommandProcess_ && GetNamedPipeServerProcessId(
-                reinterpret_cast<HANDLE>(socket->socketDescriptor()), &peer)) {
+        // The retained broker handle must show the process still running.
+        if (serviceCommandProcess_ && WaitForSingleObject(reinterpret_cast<HANDLE>(serviceCommandProcess_), 0) == WAIT_TIMEOUT
+            && GetNamedPipeServerProcessId(reinterpret_cast<HANDLE>(socket->socketDescriptor()), &peer)) {
             authenticated = peer == GetProcessId(reinterpret_cast<HANDLE>(serviceCommandProcess_));
             if (!authenticated) {
                 const quintptr child = RepairBootstrap::authenticatedChild(serviceCommandProcess_, peer);
@@ -3312,7 +3328,8 @@ void MainWindow::connectRepairSession() {
 #elif defined(Q_OS_LINUX)
         struct ucred peer{};
         socklen_t length = sizeof(peer);
-        authenticated = linuxServiceProcess_ && getsockopt(int(socket->socketDescriptor()), SOL_SOCKET, SO_PEERCRED,
+        authenticated = linuxServiceProcess_ && linuxServiceProcess_->state() == QProcess::Running
+            && getsockopt(int(socket->socketDescriptor()), SOL_SOCKET, SO_PEERCRED,
             &peer, &length) == 0 && peer.uid == 0 && peer.pid == linuxServiceProcess_->processId();
 #endif
         if (!authenticated) {
@@ -3339,7 +3356,18 @@ void MainWindow::connectRepairSession() {
 #ifdef Q_OS_WIN
     socket->connectToServer(QStringLiteral("Bimeron.Repair.") + repairNonce_);
 #else
-    socket->connectToServer(QStringLiteral("/run/bimeron-repair/") + repairNonce_ + QStringLiteral(".sock"));
+    const QString path = QStringLiteral("/run/bimeron-repair/") + repairNonce_ + QStringLiteral(".sock");
+    // A missing socket is retried; an unsafe directory or path is an identity failure.
+    if (ControlServerIdentity::pathState(ControlServerIdentity::observePath(QStringLiteral("/run/bimeron-repair"), path))
+            == ControlServerIdentity::PathState::Untrusted) {
+        repairSocket_ = nullptr;
+        socket->deleteLater();
+        repairFailure_ = tr("The repair broker identity could not be verified.");
+        repairHistory_.append(repairFailure_);
+        updateCoreAvailability();
+        return;
+    }
+    socket->connectToServer(path);
 #endif
 }
 
@@ -3792,7 +3820,10 @@ void MainWindow::advanceStartupPreparation(std::function<void()> start) {
         return;
     }
     if (!startupIpcChecked_) return;
-    if (availabilityFailure_ != CoreClient::Failure::Transport && availabilityFailure_ != CoreClient::Failure::Timeout) {
+    // A service pipe without a running SCM process is untrusted and never
+    // written, but startup still waits for the service like an absent pipe.
+    if (availabilityFailure_ != CoreClient::Failure::Transport && availabilityFailure_ != CoreClient::Failure::Timeout
+        && availabilityFailure_ != CoreClient::Failure::ServiceNotRunning) {
         finishStartupPreparation(false);
         return;
     }
@@ -3978,6 +4009,9 @@ void MainWindow::updateCoreAvailability() {
     case Cause::Untrusted:
         title = tr("Service identity could not be verified");
         message = tr("Restore checks service identity before making changes."); break;
+    case Cause::IdentityRejected:
+        title = tr("The service needs to be updated or repaired");
+        message = untrustedServerGuidance(errorCatalog()); break;
     case Cause::Missing:
         title = tr("Connection service is not installed");
         message = tr("Install and start the service. Administrator permission will be requested; profiles remain disconnected."); break;
