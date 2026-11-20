@@ -24,12 +24,15 @@
 
 struct CoreProblem {
     QString code, message, section, field, source, value;
+    // "wireguard" when section/field/line refer to the WireGuard/AmneziaWG text
+    // (the File referenced from [AccessKey]); empty for the Bimeron profile.
+    QString document;
     QStringList related;
     int rule = 0, line = 0;
     QMap<QString, QString> args;
 
     // fieldKey is "Section.Field", for example "Interface.Name".
-    QString fieldKey() const { return field.isEmpty() || section.isEmpty() ? QString() : section + '.' + field; }
+    QString fieldKey() const { return field.isEmpty() || section.isEmpty() ? QString() : (document.isEmpty() ? QString() : QStringLiteral("WireGuard.")) + section + '.' + field; }
     QString sourceKey() const { return source.isEmpty() ? QString() : QStringLiteral("AccessKey.") + source; }
 };
 
@@ -70,6 +73,7 @@ inline QList<CoreProblem> parseCoreProblems(const QJsonValue &value) {
         p.field = boundedString(object.value("field"), 64);
         p.source = boundedString(object.value("source"), 64);
         if (!identifier(p.section) || !identifier(p.field) || !identifier(p.source)) continue;
+        if (boundedString(object.value("document"), 16) == QStringLiteral("wireguard")) p.document = QStringLiteral("wireguard");
         for (const auto &related : object.value("related").toArray()) {
             const QString name = boundedString(related, 64);
             if (!name.isEmpty() && identifier(name) && p.related.size() < 8) p.related.append(name);
@@ -198,9 +202,21 @@ inline QString coreFieldLabel(const CoreProblem &problem) {
         {"AccessKey.Username", QT_TRANSLATE_NOOP("CoreProblems", "Username")},
         {"AccessKey.ID", QT_TRANSLATE_NOOP("CoreProblems", "User ID (UUID)")},
         {"AccessKey.ServerName", QT_TRANSLATE_NOOP("CoreProblems", "Server name (SNI)")},
+        {"AccessKey.File", QT_TRANSLATE_NOOP("CoreProblems", "Key file")},
+        {"WireGuard.Interface.PrivateKey", QT_TRANSLATE_NOOP("CoreProblems", "Private key")},
+        {"WireGuard.Interface.Address", QT_TRANSLATE_NOOP("CoreProblems", "Addresses")},
+        {"WireGuard.Interface.DNS", QT_TRANSLATE_NOOP("CoreProblems", "DNS")},
+        {"WireGuard.Interface.MTU", QT_TRANSLATE_NOOP("CoreProblems", "Tunnel MTU")},
+        {"WireGuard.Peer.PublicKey", QT_TRANSLATE_NOOP("CoreProblems", "Server public key")},
+        {"WireGuard.Peer.PresharedKey", QT_TRANSLATE_NOOP("CoreProblems", "Preshared key")},
+        {"WireGuard.Peer.Endpoint", QT_TRANSLATE_NOOP("CoreProblems", "Endpoint")},
+        {"WireGuard.Peer.AllowedIPs", QT_TRANSLATE_NOOP("CoreProblems", "AllowedIPs")},
+        {"WireGuard.Peer.PersistentKeepalive", QT_TRANSLATE_NOOP("CoreProblems", "Keepalive, seconds")},
     };
     const auto label = labels.find(problem.fieldKey());
     if (label != labels.end()) return QCoreApplication::translate("CoreProblems", label.value());
+    // AmneziaWG parameters are known by their key names (Jc, S1, H1, ...).
+    if (problem.document == "wireguard" && !problem.field.isEmpty()) return problem.field;
     if (!problem.source.isEmpty() && problem.field.isEmpty()) return QCoreApplication::translate("CoreProblems", "Access key");
     return {};
 }

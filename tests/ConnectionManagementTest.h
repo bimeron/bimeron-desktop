@@ -2423,6 +2423,77 @@ struct ConnectionManagementTest {
             window.development_->restoreService_ = false;
         }
     }
+    // Exercises import/validation and the local Start gates with a real document CLI.
+    // The control client has a private, unserved endpoint throughout the test.
+    static void wireGuardRouting(const QString &core) {
+        QTemporaryDir directory;
+        require(directory.isValid() && QFileInfo(core).isExecutable(), "real Core routing fixture");
+        const QString database = directory.filePath("geoip.dat");
+        QString error;
+        // One protobuf country group, "zz", with the network 203.0.113.0/24.
+        require(ProfileStore::writeConfig(database, QByteArray::fromHex("0a0e0a027a7a12080a04cb0071001018"), &error), "synthetic country database");
+        MainWindow window;
+        window.core_.cancel();
+        window.core_.setEndpoint("wg-routing-" + QUuid::createUuid().toString());
+        for (auto *timer : window.findChildren<QTimer *>()) timer->stop();
+        window.validationExecutable_ = core;
+        window.store_ = ProfileStore(directory.filePath("profiles"));
+        window.profiles_.clear();
+        window.capabilities_ = {{"vpn", true}, {"ipv6", true}, {"geoip_split", true},
+            {"geodata_schema", "v2ray-protobuf"}, {"wireguard", QJsonObject{{"supported", true}}}};
+        const auto selection = GeoDataSelection::instance();
+        const auto previous = selection->selection();
+        require(selection->apply(GeoDataSelection::Paths{{"geoip", database}}, core, {}, &error), "select country database");
+        const QString key = QStringLiteral("[Interface]\nPrivateKey = %1\nAddress = 10.0.0.2/32\n"
+            "[Peer]\nPublicKey = %2\nEndpoint = 192.0.2.1:51820\nAllowedIPs = 0.0.0.0/0\n")
+            .arg(QString::fromLatin1(QByteArray(32, 'a').toBase64()), QString::fromLatin1(QByteArray(32, 'b').toBase64()));
+        const QString wrapper = window.wireGuardTemplate("Routing") + "[ Rule ]\nGeoIP = zz\nAction = direct\n";
+        const QString source = directory.filePath("source.conf");
+        require(ProfileStore::writeConfig(source, wrapper.toUtf8(), &error)
+            && ProfileStore::writeConfig(directory.filePath("wireguard.conf"), key.toUtf8(), &error), "transferred pair");
+        QTimer dismiss;
+        QObject::connect(&dismiss, &QTimer::timeout, [] {
+            if (auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget())) dialog->reject();
+        });
+        dismiss.start(10);
+        require(window.importProfile(source) && window.profiles_.size() == 1, "import pair with active country rule");
+        const QString relocated = directory.filePath("relocated.conf");
+        require(ProfileStore::writeConfig(relocated, (wrapper + "[GeoData]\nGeoSiteFile = groups.dat\n").toUtf8(), &error),
+            "write pair with another relative dependency");
+        require(!window.importProfile(relocated) && window.profiles_.size() == 1,
+            "managed sibling does not exempt an unrelated relative database reference");
+        const QString savedPath = window.profiles_.first().path;
+        QFile file(savedPath);
+        require(file.open(QIODevice::ReadOnly), "read imported pair");
+        const QString saved = QString::fromUtf8(file.readAll());
+        file.close();
+        require(saved.contains("GeoIPFile") && saved.contains("GeoIP = zz"), "materialize the selected database");
+        const QString only = QString(saved).replace("[Routing]", "[Routing]\nAllowedIPsMode = \"\\x6fnly\"")
+            + "[Rule]\nDomain = example.invalid\nAction = direct\n";
+        require(ProfileStore::writeConfig(savedPath, only.toUtf8(), &error), "save retained routing rules");
+        require(selection->apply(GeoDataSelection::Paths{}, core, {}, &error), "clear shared database selection");
+        require(QFile::remove(database), "remove inactive rule database");
+        // Dismissing the negative import can process a failed mock-endpoint poll.
+        // Establish the service capabilities for this independent Start scenario.
+        window.capabilities_ = {{"vpn", true}, {"ipv6", true}, {"wireguard", QJsonObject{{"supported", true}}}};
+        require(GeoDataSelection::requiredKinds(wrapper) == QStringList{"geoip"}
+            && GeoDataSelection::withoutRules(wrapper, {"geoip"}).contains("# GeoIP = zz")
+            && GeoDataSelection::requiredKinds(only).isEmpty(), "spaced rule header respects routing mode");
+        CoreFailure refusal;
+        require(!window.validatePair(wrapper, key, directory.path(), source, directory.path(), &refusal)
+            && refusal.text.contains("GeoIP"), "missing database does not bypass the service capability for an active rule");
+        require(window.validateConfig(savedPath, &error), "inactive rules need no service capability or database");
+        require(window.geoDataBlocker(0).isEmpty(), "inactive country rule needs no shared database check");
+        window.state_ = "disconnected";
+        window.helloReady_ = true;
+        window.statusNeeded_ = false;
+        window.startupPreparationPending_ = false;
+        require(window.startProfile(0) && window.validationProcess_, "AllowedIPs only passes local Start gates");
+        // Drop the validation before the event loop can submit a Start request.
+        window.invalidateConnection();
+        require(selection->apply(previous, core, {}, &error), "restore test database selection");
+    }
+
     static void bomImport() {
         QTemporaryDir directory;
         require(directory.isValid(), "BOM import fixture");
@@ -2458,6 +2529,8 @@ struct ConnectionManagementTest {
             "GUI rejects invalid UTF-8 before validation/storage");
     }
     static void run() {
+        const QString wireGuardCore = qEnvironmentVariable("BIMERON_WIREGUARD_CORE");
+        if (!wireGuardCore.isEmpty()) wireGuardRouting(wireGuardCore);
         bomImport();
         repairQuitOwnership();
         {

@@ -75,7 +75,13 @@ public:
         return !translations_.isEmpty();
     }
 
-    QString translate(const char *, const char *sourceText, const char *, int) const override {
+    // A disambiguated entry is stored as "<disambiguation>|<source>"; it lets a short
+    // word such as "On" have a different translation in one place.
+    QString translate(const char *, const char *sourceText, const char *disambiguation, int) const override {
+        if (disambiguation && *disambiguation) {
+            const QString key = QString::fromUtf8(disambiguation) + QLatin1Char('|') + QString::fromUtf8(sourceText);
+            if (translations_.contains(key)) return translations_.value(key);
+        }
         return translations_.value(QString::fromUtf8(sourceText));
     }
 

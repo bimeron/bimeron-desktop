@@ -527,6 +527,11 @@ int main(int argc, char **argv) {
         return 0;
     }
 
+    // This fixture emulates a Core that validates profiles without a WG bridge.
+    if (argc == 2 && std::strcmp(argv[1], "wireguard") == 0) {
+        std::fputs("unknown command\n", stderr);
+        return 1;
+    }
     if (argc == 3 && std::strcmp(argv[1], "validate") == 0) {
         QFile file(QString::fromLocal8Bit(argv[2]));
         if (!file.open(QIODevice::ReadOnly)) return 1;
@@ -583,6 +588,10 @@ int main(int argc, char **argv) {
     // No network database checks, and no shipped databases unless a fixture provides them.
     qputenv("BIMERON_DISABLE_GEODATA_UPDATES", "1");
     qputenv("BIMERON_BUNDLED_GEODATA", temporary.filePath("no-bundled-geodata").toUtf8());
+    if (app.arguments().contains("--wireguard-routing")) {
+        ConnectionManagementTest::wireGuardRouting(qEnvironmentVariable("BIMERON_WIREGUARD_CORE"));
+        return 0;
+    }
     if (app.arguments().contains("--repair-quit-ownership")) {
         ConnectionManagementTest::repairQuitOwnership();
         return 0;

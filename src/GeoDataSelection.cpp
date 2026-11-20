@@ -1,5 +1,6 @@
 #include "GeoDataSelection.h"
 #include "RoutingCompatibility.h"
+#include "ProfileTextEdit.h"
 #include <QCoreApplication>
 #include <QDir>
 #include <QElapsedTimer>
@@ -204,11 +205,12 @@ QString GeoDataSelection::releaseDate(const QString &tag) {
 }
 
 QStringList GeoDataSelection::requiredKinds(const QString &text) {
+    if (routingAllowedIPsOnly(text)) return {};
     QStringList result;
     bool rule = false;
     for (const QString &raw : text.split('\n')) {
         const QString line = raw.trimmed();
-        if (line.startsWith('[')) { rule = line.compare("[Rule]", Qt::CaseInsensitive) == 0; continue; }
+        if (line.startsWith('[')) { rule = ProfileStore::sectionName(line).compare("Rule", Qt::CaseInsensitive) == 0; continue; }
         if (!rule || line.startsWith('#') || line.startsWith(';')) continue;
         const QString key = line.section('=', 0, 0).trimmed();
         if (!line.contains('=')) continue;
@@ -241,7 +243,7 @@ QString GeoDataSelection::withoutRules(const QString &text, const QStringList &k
         const QString line = lines[i].trimmed();
         if (!line.startsWith('[')) continue;
         finish(i);
-        if (line.compare("[Rule]", Qt::CaseInsensitive) == 0) start = i;
+        if (ProfileStore::sectionName(line).compare("Rule", Qt::CaseInsensitive) == 0) start = i;
     }
     finish(lines.size());
     return lines.join('\n');
@@ -388,11 +390,12 @@ QStringList GeoDataSelection::inspect(const QString &core, const QString &kind, 
 
 QString GeoDataSelection::materialize(const QString &text, const QString &profilePath, const QString &core,
                                      const Paths &paths, QString *error, const QString &validationDirectory,
-                                     QStringList *skipped) {
+                                     QStringList *skipped, const QString &pairKeyDraft) {
     QString local;
     if (!error) error = &local;
     error->clear();
     if (skipped) skipped->clear();
+    if (routingAllowedIPsOnly(text)) return text;
     // Older CLIs remain usable for profiles without active GeoData fields.
     // Disabled blocks are comments and need neither a catalog nor a bridge.
     if (!QRegularExpression(R"((?m)^\s*Geo(?:IP|Site)\s*=)").match(text).hasMatch()) return text;
@@ -437,10 +440,16 @@ QString GeoDataSelection::materialize(const QString &text, const QString &profil
         result = patched.value("profile").toString();
     }
     if (result.toUtf8().size() > 65536) { *error = tr("The profile exceeds the 64 KiB limit."); return {}; }
-    if (!validationDirectory.isEmpty() && !ProfileStore::importReferencesSafe(result.toUtf8(), error)) return {};
+    // The pair owner supplies a replacement sibling beside the validation profile.
+    // Check all dependencies that will actually be relocated with the imported wrapper.
+    if (!validationDirectory.isEmpty()) {
+        const QString transferred = pairKeyDraft.isEmpty() ? result : ProfileTextEdit::field(result, "AccessKey", "File", {});
+        if (!ProfileStore::importReferencesSafe(transferred.toUtf8(), error)) return {};
+    }
     // Core rejects rules without their database, so the validation copy omits rules of
     // unavailable kinds; the returned profile keeps them unchanged.
-    const QString checked = withoutRules(result, unavailable);
+    QString checked = withoutRules(result, unavailable);
+    if (!pairKeyDraft.isEmpty()) checked = ProfileTextEdit::field(checked, "AccessKey", "File", pairKeyDraft);
     const QString temporary = (validationDirectory.isEmpty() ? QFileInfo(profilePath).absoluteDir() : QDir(validationDirectory)).filePath(
         ".bimeron-geodata-" + QUuid::createUuid().toString(QUuid::WithoutBraces) + ".conf");
     if (!ProfileStore::writeConfig(temporary, checked.toUtf8(), error)) return {};
@@ -504,6 +513,7 @@ bool GeoDataSelection::apply(const Selection &requested, const QString &core, co
         if (!QRegularExpression(R"((?m)^\s*Geo(?:IP|Site)\s*=)").match(text).hasMatch()) continue;
         if (bytes.size() > 65536) { *error = tr("Managed profile %1 exceeds the 64 KiB limit.").arg(profile.name); return false; }
         if (text.toUtf8() != bytes) { *error = tr("Managed profile %1 is not valid UTF-8.").arg(profile.name); return false; }
+        if (routingAllowedIPsOnly(text)) continue;
         const auto inspected = document(core, text, {}, error);
         for (const auto &value : inspected.value("rules").toArray()) {
             const auto rule = value.toObject();

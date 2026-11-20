@@ -1,5 +1,7 @@
 #pragma once
 
+#include <QHash>
+
 #include "CoreClient.h"
 #include "CoreProblems.h"
 #include "ConnectionRepair.h"
@@ -72,6 +74,18 @@ private:
     void createNativeProfile();
     bool importProfile(const QString &source);
     bool createProfile();
+    // WireGuard/AmneziaWG pairs: profileText is a Bimeron profile whose File
+    // reference is replaced when the pair is stored.
+    static QString wireGuardTemplate(const QString &name);
+    bool importWireGuard(const QString &profileText, const QString &wireGuardText, QWidget *parent);
+    bool importWireGuardLink(const QString &uri, const QString &name, QWidget *parent);
+    bool importWireGuardText(const QString &text, QWidget *parent);
+    bool validatePair(const QString &profileText, const QString &wireGuardText, const QString &directory,
+                      const QString &profilePath, const QString &draftDirectory, CoreFailure *failure, QString *preparedProfile = nullptr) const;
+    bool readWireGuard(const QString &profilePath, const QString &profileText, QByteArray *data, bool *definitive = nullptr) const;
+    QString wireGuardLabel(int row) const;
+    QString profileDetail(int row, const ProfileConnectionInfo &info) const;
+    QString describeProblems(const QList<CoreProblem> &problems) const;
     void removeProfile();
     void moveProfile(int delta);
     void toggleConnection();
@@ -267,6 +281,15 @@ private:
     QStackedWidget *pages_ = nullptr;
     QString state_ = "unknown";
     QString activeFileProtocol_;
+    // Protocol labels of WireGuard key files, keyed by file identity.
+    mutable QHash<QString, QString> wireGuardLabels_;
+    // Label probes run off the GUI thread; transient failures wait before a retry.
+    mutable QSet<QString> wireGuardProbes_;
+    bool wireGuardRefreshQueued_ = false;
+    mutable QHash<QString, qint64> wireGuardRetryAt_;
+    void finishWireGuardProbe(const QString &identity, const QString &label, bool definitive);
+    static bool probeWireGuard(const QString &executable, const QString &profilePath, const QString &profileText,
+                               QByteArray *data, bool *definitive);
     QString activeProfileId_;
     bool lastProxyMode_ = false;
     QString reconnectProfileAfterUpdate_;

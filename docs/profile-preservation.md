@@ -84,3 +84,13 @@ This does not change the bundled Core or establish runtime interoperability.
 GeoIP/GeoSite routing and the Core document CLI boundary are described in
 [GeoData routing](geodata-routing.md). The running endpoint capabilities and
 selected validator identity remain separate; no bundle pin changes are implied.
+
+## WireGuard and AmneziaWG pairs
+
+A WG/AWG profile is a Bimeron profile plus a managed key file referenced by
+`[AccessKey] File`. The key file is stored byte for byte, including a BOM and CRLF, and is
+edited only through Core `set_field` operations or its own raw tab. Saving writes a new key
+file revision before the profile references it and removes the old revision last, so a
+failure keeps the previous pair. Deletion removes only a managed key file inside the pair.
+Importing a Bimeron profile with a WG/AWG `File` reference copies both files instead of
+refusing the relocation. See [WireGuard and AmneziaWG profiles](wireguard-profiles.md#storage).

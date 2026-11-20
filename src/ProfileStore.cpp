@@ -1,4 +1,5 @@
 #include "ProfileStore.h"
+#include "ProfileTextEdit.h"
 
 #include <QCryptographicHash>
 #include <QDir>
@@ -10,6 +11,7 @@
 #include <QSaveFile>
 #include <QSet>
 #include <QMap>
+#include <QRandomGenerator>
 #include <QStandardPaths>
 #include <QUrl>
 #include <QUrlQuery>
@@ -65,6 +67,59 @@ bool absoluteReference(const QString &value, bool ssh = false) {
         || (ssh && (value == "~" || value.startsWith("~/") || value.startsWith("~\\")))));
 }
 
+// Go strconv.Unquote for a double-quoted literal, which Core applies to quoted
+// option values. Valid Go syntax can still produce bytes that are not UTF-8
+// (for example \xff); such a name is a real path for Core but cannot be
+// represented here, so it is reported separately from malformed syntax.
+enum class Unquoted { Ok, Malformed, Unrepresentable };
+Unquoted goUnquote(const QString &quoted, QString *out) {
+    const QByteArray in = quoted.toUtf8();
+    if (in.size() < 2 || in.front() != '"' || in.back() != '"') return Unquoted::Malformed;
+    QByteArray bytes;
+    const auto hex = [](char c) { return c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10 : c >= 'A' && c <= 'F' ? c - 'A' + 10 : -1; };
+    const auto rune = [&bytes](uint code) {
+        if (code > 0x10FFFF || (code >= 0xD800 && code <= 0xDFFF)) return false;
+        bytes += QString::fromUcs4(reinterpret_cast<const char32_t *>(&code), 1).toUtf8();
+        return true;
+    };
+    for (qsizetype i = 1; i < in.size() - 1; ++i) {
+        const char c = in.at(i);
+        if (c == '"' || c == '\n') return Unquoted::Malformed;
+        if (c != '\\') { bytes += c; continue; }
+        if (++i >= in.size() - 1) return Unquoted::Malformed;
+        const char e = in.at(i);
+        static const QByteArray simple("abfnrtv\\\""), mapped("\a\b\f\n\r\t\v\\\"");
+        if (simple.contains(e)) { bytes += mapped.at(simple.indexOf(e)); continue; }
+        int digits = e == 'x' ? 2 : e == 'u' ? 4 : e == 'U' ? 8 : 0;
+        if (digits) {
+            uint value = 0;
+            for (int d = 0; d < digits; ++d) {
+                if (++i >= in.size() - 1 || hex(in.at(i)) < 0) return Unquoted::Malformed;
+                value = value * 16 + uint(hex(in.at(i)));
+            }
+            if (e == 'x') bytes += char(value);
+            else if (!rune(value)) return Unquoted::Malformed;
+            continue;
+        }
+        if (e >= '0' && e <= '7') {
+            uint value = uint(e - '0');
+            for (int d = 0; d < 2; ++d) {
+                if (++i >= in.size() - 1 || in.at(i) < '0' || in.at(i) > '7') return Unquoted::Malformed;
+                value = value * 8 + uint(in.at(i) - '0');
+            }
+            if (value > 255) return Unquoted::Malformed;
+            bytes += char(value);
+            continue;
+        }
+        return Unquoted::Malformed;
+    }
+    // Keep a leading U+FEFF: Core treats it as part of the file name.
+    const QString decoded = ProfileStore::keyFileText(bytes);
+    if (decoded.toUtf8() != bytes) return Unquoted::Unrepresentable;
+    *out = decoded;
+    return Unquoted::Ok;
+}
+
 bool safeUriReferences(const QString &value) {
     if (value.startsWith('"')) return false; // Core quoting is not URI percent encoding.
     const QUrl uri(value);
@@ -77,6 +132,11 @@ bool safeUriReferences(const QString &value) {
     }
     return true;
 }
+}
+
+QString ProfileStore::decodeOptionValue(const QString &value) {
+    QString decoded;
+    return value.startsWith('"') && goUnquote(value, &decoded) == Unquoted::Ok ? decoded : value;
 }
 
 bool ProfileStore::writeConfig(const QString &path, const QByteArray &data, QString *error) {
@@ -142,8 +202,8 @@ bool ProfileStore::importReferencesSafe(const QByteArray &data, QString *error) 
         if (key == "IdentityFile" || key == "KnownHostsFile") safe = absoluteReference(value, true);
         else if (key == "CAFile") safe = absoluteReference(value);
         else if (key == "File") {
-            safe = absoluteReference(value);
-            if (safe) {
+            safe = absoluteReference(value) && (value.isEmpty() || localRegularFile(value));
+            if (safe && !value.isEmpty()) {
                 QFile file(value);
                 safe = file.open(QIODevice::ReadOnly);
                 if (safe) {
@@ -159,6 +219,152 @@ bool ProfileStore::importReferencesSafe(const QByteArray &data, QString *error) 
             if (error) *error = QObject::tr("Import would relocate a relative or ambiguous file reference. Use explicit absolute paths in the source profile first; no dependency files were copied.");
             return false;
         }
+    }
+    return true;
+}
+
+QString ProfileStore::keyFileReference(const QString &profileText) {
+    // Unlike connectionInfo(), which drops U+FEFF anywhere for labels, keep every
+    // character except a document BOM: Core reads the reference exactly.
+    QString text = profileText;
+    if (text.startsWith(QChar(0xfeff))) text.remove(0, 1);
+    QString section, reference;
+    for (const QString &line : text.split('\n')) {
+        const QString trimmed = line.trimmed();
+        if (trimmed.startsWith('#') || trimmed.startsWith(';')) continue;
+        if (trimmed.startsWith('[') && trimmed.endsWith(']')) { section = sectionName(trimmed); continue; }
+        const qsizetype equal = trimmed.indexOf('=');
+        if (section != "AccessKey" || equal < 0 || trimmed.left(equal).trimmed() != "File") continue;
+        // Core decodes quoted values with Go escapes; an invalid literal stays as written
+        // (Core then rejects the profile). A name Desktop cannot represent is not
+        // looked up at all: the profile is treated as having no readable key file.
+        const QString raw = trimmed.mid(equal + 1).trimmed();
+        QString value;
+        const Unquoted result = raw.startsWith('"') ? goUnquote(raw, &value) : Unquoted::Malformed;
+        reference = result == Unquoted::Ok ? value : result == Unquoted::Unrepresentable ? QString() : raw;
+    }
+    return reference;
+}
+
+QString ProfileStore::keyFilePath(const QString &profilePath, const QString &reference) {
+    if (reference.isEmpty()) return {};
+    return QDir::cleanPath(QFileInfo(reference).isAbsolute() ? reference
+        : QFileInfo(profilePath).absoluteDir().filePath(reference));
+}
+
+bool ProfileStore::managedKeyFile(const QString &profilePath, const QString &reference) {
+    const QRegularExpression pattern(QStringLiteral("^%1\\.[0-9a-f]{8}\\.wg\\.conf$")
+        .arg(QRegularExpression::escape(QFileInfo(profilePath).completeBaseName())));
+    return !reference.contains('/') && !reference.contains('\\') && pattern.match(reference).hasMatch();
+}
+
+QString ProfileStore::nextKeyFileName(const QString &profilePath) {
+    const QDir directory = QFileInfo(profilePath).absoluteDir();
+    for (int attempt = 0; attempt < 16; ++attempt) {
+        const QString name = QStringLiteral("%1.%2.wg.conf").arg(QFileInfo(profilePath).completeBaseName(),
+            QString::number(QRandomGenerator::system()->generate(), 16).rightJustified(8, '0'));
+        if (!QFileInfo::exists(directory.filePath(name))) return name;
+    }
+    return {};
+}
+
+QString ProfileStore::keyFileText(const QByteArray &data) {
+    const QByteArray bom = QByteArray::fromHex("efbbbf");
+    return data.startsWith(bom) ? QString(QChar::ByteOrderMark) + QString::fromUtf8(data.mid(3)) : QString::fromUtf8(data);
+}
+
+bool ProfileStore::localRegularFile(const QString &path) {
+    if (path.isEmpty() || !QDir::isAbsolutePath(path)) return false;
+#ifdef Q_OS_WIN
+    const QString native = QDir::toNativeSeparators(path);
+    // UNC, device and extended-length paths, and mapped network drives.
+    if (native.startsWith(QStringLiteral("\\\\")) || native.size() < 3 || native.at(1) != ':') return false;
+    const std::wstring root = native.left(3).toStdWString();
+    if (GetDriveTypeW(root.c_str()) == DRIVE_REMOTE) return false;
+    // A symbolic link or junction can redirect a local-looking path to a share.
+    // GetFileAttributesW reports the link itself and does not follow it.
+    QString prefix = native.left(2);
+    for (const QString &part : native.mid(3).split(QLatin1Char('\\'), Qt::SkipEmptyParts)) {
+        prefix += QLatin1Char('\\') + part;
+        const DWORD attributes = GetFileAttributesW(reinterpret_cast<const wchar_t *>(prefix.utf16()));
+        if (attributes == INVALID_FILE_ATTRIBUTES || (attributes & FILE_ATTRIBUTE_REPARSE_POINT)) return false;
+    }
+#endif
+    return QFileInfo(path).isFile();
+}
+
+bool ProfileStore::readKeyFile(const QString &profilePath, const QString &reference, QByteArray *data, QString *error) {
+    const QString path = keyFilePath(profilePath, reference);
+    QFile file(path);
+    if (reference.isEmpty() || !localRegularFile(path) || !file.open(QIODevice::ReadOnly)) {
+        if (error) *error = QObject::tr("The WireGuard configuration file of this profile is unavailable.");
+        return false;
+    }
+    *data = file.read(64 * 1024 + 1);
+    if (data->size() > 64 * 1024 || keyFileText(*data).toUtf8() != *data) {
+        if (error) *error = QObject::tr("The WireGuard configuration must be valid UTF-8 and at most 64 KiB.");
+        return false;
+    }
+    return true;
+}
+
+bool ProfileStore::writeProfilePair(const QString &profilePath, const QByteArray &profile,
+                                    const QByteArray *keyFile, QString *error) {
+    QString previous;
+    {
+        QFile current(profilePath);
+        if (current.open(QIODevice::ReadOnly)) previous = keyFileReference(QString::fromUtf8(current.read(64 * 1024 + 1)));
+    }
+    if (!keyFile) return writeConfig(profilePath, profile, error);
+    const QString name = nextKeyFileName(profilePath);
+    const QString keyPath = QFileInfo(profilePath).absoluteDir().filePath(name);
+    if (name.isEmpty() || keyFile->size() > 64 * 1024) {
+        if (error) *error = QObject::tr("Cannot create the WireGuard configuration file; the previous profile was retained.");
+        return false;
+    }
+    if (!writeConfig(keyPath, *keyFile, error)) { QFile::remove(keyPath); return false; }
+    const QByteArray text = ProfileTextEdit::field(QString::fromUtf8(profile), "AccessKey", "File", name).toUtf8();
+    if (text.size() > 64 * 1024 || !writeConfig(profilePath, text, error)) {
+        if (error && text.size() > 64 * 1024) *error = QObject::tr("Profile exceeds 64 KiB.");
+        QFile::remove(keyPath);
+        return false;
+    }
+    // The profile now references the new revision. A stale previous revision is
+    // harmless; it is removed best-effort and never outside the managed pair.
+    if (previous != name && managedKeyFile(profilePath, previous))
+        QFile::remove(keyFilePath(profilePath, previous));
+    return true;
+}
+
+QString ProfileStore::createPair(const QByteArray &profile, const QByteArray &keyFile, QString *error) const {
+    const QString destination = QDir(root_).filePath(QUuid::createUuid().toString(QUuid::WithoutBraces) + ".conf");
+    if (QFileInfo::exists(destination)) {
+        if (error) *error = QObject::tr("Cannot create the profile file.");
+        return {};
+    }
+    if (!writeProfilePair(destination, profile, &keyFile, error)) {
+        QFile::remove(destination);
+        return {};
+    }
+    return QFileInfo(destination).absoluteFilePath();
+}
+
+bool ProfileStore::removeProfileFiles(const QString &profilePath, QString *error) {
+    QString reference;
+    {
+        QFile current(profilePath);
+        if (current.open(QIODevice::ReadOnly)) reference = keyFileReference(QString::fromUtf8(current.read(64 * 1024 + 1)));
+    }
+    if (QFileInfo::exists(profilePath) && !QFile::remove(profilePath)) {
+        if (error) *error = QObject::tr("Cannot remove the profile file.");
+        return false;
+    }
+    // The managed key file is removed after its profile: a failure leaves an
+    // unreferenced file, never a profile without its configuration.
+    if (managedKeyFile(profilePath, reference) && QFileInfo::exists(keyFilePath(profilePath, reference))
+        && !QFile::remove(keyFilePath(profilePath, reference))) {
+        if (error) *error = QObject::tr("The profile was removed, but its WireGuard configuration file could not be deleted.");
+        return false;
     }
     return true;
 }
@@ -432,6 +638,8 @@ bool ProfileStore::sshFilesReadable(const QString &configText, const QString &pr
     QString source = values.value("SSH", values.value("Key"));
     const QDir base = QFileInfo(profilePath).absoluteDir();
     if (values.contains("File")) {
+        // Core reports a non-local or irregular file itself; the GUI never opens it.
+        if (!localRegularFile(base.filePath(values.value("File")))) return true;
         QFile file(base.filePath(values.value("File")));
         if (!file.open(QIODevice::ReadOnly)) return false;
         source = QString::fromUtf8(file.read(64 * 1024 + 1)).trimmed();
