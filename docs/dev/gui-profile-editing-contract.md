@@ -128,8 +128,22 @@ document patch and validation. Set `BIMERON_OLD_DOH_CORE` to a pre-DoH CLI to
 check rejection of the same encrypted profile. Use a native profile file or
 the Raw config tab when transferring the full profile with its DNS settings.
 The #246 integration candidate uses Core
-`63298377201b6c90ab11f18a2271696fe2935c84` and its
-`internal/dnsconfig/testdata/doh-v1.json` vectors.
+`9292ae17d2c746ff6294f77926432959a2283732` and its
+`internal/dnsconfig/testdata/doh-v1.json` vectors. The development CLIs omit
+embedded VCS identity. Verify the binaries by SHA-256.
+
+| CLI | SHA-256 |
+| --- | --- |
+| Windows amd64 | `9562e2237e8c036a873c9850bea84a79bea5202a2b9f1a7c1f5dea0f62041d13` |
+| Linux amd64 | `d713e5a2a59c5dde44e671765c0aef1c50f57f63f709d6f08fe051d3bb5d74fb` |
+
+The shared vectors Git blob SHA-256 is
+`788b08b592c84f72421c810a15c2db884dd6b6bea33abb7da083b18f09736844`.
+Desktop CTest passed on Windows amd64 (13 tests) and Linux amd64 (12 tests)
+with those CLIs. The Windows run also checked rejection with the installed
+pre-DoH CLI. Core loopback tests on both platforms passed for terminal
+NXDOMAIN and TLS failure without plaintext fallback. Windows additionally
+passed the native trust test for an incomplete cold chain with zero AIA requests.
 
 ### General profile editing
 
