@@ -22,6 +22,13 @@ The restricted mode was run in the disposable VM; no guest run of the new mode h
 
 ## Build and offline checks
 
+Preparation needs the exact frozen input MSI `lab-trace-Success.msi`
+(SHA-256 `0c73788944a2d520628e7dd619df2eb507821021fd76cef4dd879851586d0dbf`) from the
+final x64 lab component build. Stage it at
+`build/foreground-lab-component-final-x64/Release/lab-trace-Success.msi` in this
+checkout, or pass its path as the first argument of `prepare.py`. The script refuses
+any other file.
+
 Use cached Visual Studio 18 Build Tools and CMake, without dependencies:
 
 ```powershell
@@ -183,7 +190,7 @@ installation or enrollment approval.
 
 ### Observed one-shot result (2026-10-30)
 
-The authorized Windows 10 STD VM ran the pinned `both.msi` through native x64
+The authorized Windows test VM ran the pinned `both.msi` through native x64
 `msiexec /i /qn /norestart` from an elevated, noninteractive PowerShell Direct
 session. Exit code was 0. Server CostInitialize, InstallInitialize and
 InstallFinalize succeeded. Observed callbacks were Preflight, DeferredBegin,

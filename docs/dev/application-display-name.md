@@ -35,7 +35,7 @@ Benchmarks/profiling are inapplicable to static display metadata.
   version and machine type. Initial developer-mode-test failed at the existing
   Loyalsoldier status-line UI fixture; after supplying the documented
   QT_QPA_FONTDIR=C:/Windows/Fonts, its focused retry and the full suite passed.
-- Windows 10 STD (Virtual Machine, build 19044) exclusive testing window:
+- Windows test VM (Virtual Machine, build 19044) exclusive testing window:
   temporarily replaced only the installed GUI with the GUI-only amd64 build,
   retaining an exact original backup. Processes > Apps displayed Bimeron;
   Details retained bimeron-desktop.exe. Startup displayed Bimeron after restarting

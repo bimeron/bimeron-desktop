@@ -80,7 +80,7 @@ Package inspection:
 
 ## VM acceptance
 
-Windows 10 STD (Hyper-V, x64). Start state: Desktop 0.3.0 with its Core
+Windows 10 test VM (Hyper-V, x64). Start state: Desktop 0.3.0 with its Core
 `v0.4.0-beta.1` service (`14c88367…`), three profiles. A checkpoint
 `bimeron-rel031-pre-0.3.0-beta1` was taken first. UAC consent and credential
 prompts were driven through the Hyper-V virtual keyboard; a SYSTEM watcher
@@ -89,7 +89,7 @@ git-ignored `build/rel/vm-win`.
 
 | Scenario | Result | Evidence |
 |---|---|---|
-| b+ 1. Upgrade 0.3.0 → 0.3.1 with a beta.1 service | PASS | `msiexec /i /qn` exit 0 in 5 s; log `Bimeron installer Core: service updated; reconnect VPN in GUI`. Service, bundled CLI and broker are `99cae551…`, service reports `0.4.0-beta.2` / `5251bd09`, `modified=false`. Profile files byte-identical. After a GUI restart: connected (`Подключено · 66.90.90.98:9108`). Repair with the service stopped: one consent prompt, service image not replaced (same hash and modification time), ready. Reconnected. |
+| b+ 1. Upgrade 0.3.0 → 0.3.1 with a beta.1 service | PASS | `msiexec /i /qn` exit 0 in 5 s; log `Bimeron installer Core: service updated; reconnect VPN in GUI`. Service, bundled CLI and broker are `99cae551…`, service reports `0.4.0-beta.2` / `5251bd09`, `modified=false`. Profile files byte-identical. After a GUI restart: connected (`Подключено · 203.0.113.10:9108`). Repair with the service stopped: one consent prompt, service image not replaced (same hash and modification time), ready. Reconnected. |
 | b+ 2. Upgrade with a service already on beta.2 | PASS | Uninstalled 0.3.1 (service kept), reinstalled 0.3.0: `newer installed version; skipped`, service PID unchanged. Upgrade to 0.3.1: `equal version, identical or unknown build; skipped`, service PID 1056 unchanged, no service events. Connect, Repair (one prompt, image unchanged), reconnect. |
 | c. Clean install, corrupted image, alternate administrator | PASS | Service and package removed, no Bimeron directories left. Clean MSI install: `absent or untrusted service/payload; skipped`, no service. Restore installed the service with one prompt (pin, ready). Corrupted image (512 bytes XOR at 0x1000): Restore replaced it with the pin, one prompt. Alternate administrator: standard user `bimstd` signed in on the console; Restore showed the credential prompt for `bimeron-repair.exe`, credentials of administrator `test` entered. Installation and then repair of a corrupted image each took one prompt; the broker ran as `test` with the `bimstd` GUI as parent; service registered for the `bimstd` SID and ready within 1 s. |
 | d. Wrong digest | PASS | `bimeron-core service update -source <beta.2 exe> -version 0.4.0-beta.2 -sha256 <last digit changed>`: exit 1, `staged executable SHA-256 mismatch`; service PID, state and image hash unchanged, no service or SCM events. |
@@ -154,7 +154,7 @@ release; users install Desktop packages manually.
 
 ## Scenario (a): Desktop 0.3.0 users
 
-Run on Windows 10 STD after Core `v0.4.0-beta.2` was published
+Run on the Windows test VM after Core `v0.4.0-beta.2` was published
 (tag `v0.4.0-beta.2` → `5251bd09`, signed manifest SHA-256
 `31c7f51e62d23608c6440071813b05f74185cb953a33953e8c911ec613153bca`, key
 `7370a2d8cf890e5e`), from the checkpoint with Desktop 0.3.0 and its beta.1
@@ -170,7 +170,7 @@ service. The installed, unmodified 0.3.0 read the real GitHub release.
 
 ## Restored state
 
-- Windows 10 STD: rolled back to the acceptance checkpoint (Desktop 0.3.0, Core
+- Windows test VM: rolled back to the acceptance checkpoint (Desktop 0.3.0, Core
   `v0.4.0-beta.1` service `14c88367…` owned by `test`, the original four profile
   files), then the checkpoint was deleted. Removed afterwards: the acceptance
   watcher tasks and working directory, the temporary firewall rule, the standard

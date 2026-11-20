@@ -152,7 +152,7 @@ the control pipe.
   service, console daemon and Unix decision, including the old-service owner.
 - `developer-mode-test` shows that a fixture pipe or socket under the service
   policy receives no bytes, and that the failure is `Untrusted`.
-- VM checks on Windows 10 STD, as a standard user and as an administrator:
+- VM checks on the Windows test VM, as a standard user and as an administrator:
   actual pipe owner (old service `S-1-5-32-544`, #159 service `S-1-5-18`),
   `READ_CONTROL` on the client handle, `QueryServiceStatusEx` access, rejection
   of a squatted pipe with nothing written, and the old-service route to repair.
@@ -171,7 +171,7 @@ Linux amd64 Release (Ubuntu 22.04, Qt 6.2) on the Linux VM. Tests and probes
 ran only on the VMs. The Core #159 test binary was built from bimeron-core
 `d08b2afe` with version `0.4.0-beta.2.identity159`.
 
-Windows 10 STD VM. The installed Desktop 0.3.0 GUI and its Core `5fcadd71`
+Windows test VM. The installed Desktop 0.3.0 GUI and its Core `5fcadd71`
 service stayed in place; the service binary, `ImagePath` and state were
 restored afterwards (SHA-256 `14c88367...acb1e`).
 
