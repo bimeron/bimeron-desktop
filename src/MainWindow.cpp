@@ -609,6 +609,8 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), core_(this) {
     refreshProfiles();
     geoDataUpdater_ = new GeoDataUpdater([this] { return validationExecutable_; }, [this] { return profiles_; }, this);
     connect(geoDataUpdater_, &GeoDataUpdater::updated, this, [this] { offerGeoDataReconnect(); });
+    connect(GeoDataSelection::instance(), &GeoDataSelection::downloadedSelectionApplied,
+            this, &MainWindow::offerGeoDataReconnect);
     // Test harnesses disable network checks; the first check is a child timer they can stop.
     if (!qEnvironmentVariableIsSet("BIMERON_DISABLE_GEODATA_UPDATES")) geoDataUpdater_->start();
     connectionLabel_->setText(tr("Connecting to core…"));
@@ -2318,31 +2320,55 @@ void MainWindow::reportUnavailableProfile(int row, const QString &reason) {
 }
 
 void MainWindow::offerGeoDataReconnect() {
-    // Disconnected: the new databases simply apply to the next connection.
-    if (!sessionActive_ && state_ != "connected") return;
+    if (!sessionActive_ || nativeSession_ || activeProfileId_.isEmpty()
+        || sessionId_.isEmpty() || !geoDataReconnectProfileId_.isEmpty()) return;
+    const QString instance = instance_;
+    const QString sessionId = sessionId_;
+    const QString profileId = activeProfileId_;
     QMessageBox box(QMessageBox::Question, tr("Bimeron"), tr("New databases were downloaded. Reconnect now?"),
                     QMessageBox::NoButton, this);
     box.setObjectName("geoDataReconnect");
     auto *now = box.addButton(tr("Now"), QMessageBox::AcceptRole);
-    box.addButton(tr("Later"), QMessageBox::RejectRole);
-    box.setDefaultButton(now);
+    auto *later = box.addButton(tr("Later"), QMessageBox::RejectRole);
+    box.setDefaultButton(later);
+    box.setEscapeButton(later);
     box.exec();
-    if (box.clickedButton() == now) reconnectActiveProfile();
+    if (box.clickedButton() != now) return;
+    if (!sessionActive_ || instance_ != instance || sessionId_ != sessionId || activeProfileId_ != profileId) {
+        appendLog(tr("GeoData reconnection canceled because the VPN session changed"));
+        return;
+    }
+    reconnectActiveProfile(profileId);
 }
 
-void MainWindow::reconnectActiveProfile() {
-    if (controlBlocked() || !helloReady_ || statusNeeded_ || !operation_.isEmpty() || nativeSession_ || cleanupBlocked_) return;
+void MainWindow::reconnectActiveProfile(const QString &profileId) {
+    if (controlBlocked() || !helloReady_ || !operation_.isEmpty() || nativeSession_ || cleanupBlocked_ || state_ == "stopping") {
+        appendLog(tr("GeoData reconnection canceled before stopping the VPN because the connection is busy"));
+        return;
+    }
     QString path;
     for (int row = 0; row < profiles_.size(); ++row)
-        if (profiles_[row].id == activeProfileId_ && packetProfile(row)) { path = profiles_[row].path; break; }
-    if (path.isEmpty()) return;
+        if (profiles_[row].id == profileId && packetProfile(row)) { path = profiles_[row].path; break; }
+    if (path.isEmpty()) {
+        appendLog(tr("GeoData reconnection canceled because the active profile is unavailable"));
+        return;
+    }
     // The existing stop-then-start path prepares the profile again with the new databases.
     pendingStartPath_ = path;
+    geoDataReconnectProfileId_ = profileId;
+    geoDataStopSessionId_ = sessionId_;
     operation_ = "stop";
     clearSSHAuthentication();
     stopRequested_ = true;
     updateConnectionButton();
     poll();
+}
+
+void MainWindow::finishGeoDataReconnect(const QString &message) {
+    if (geoDataReconnectProfileId_.isEmpty()) return;
+    geoDataReconnectProfileId_.clear();
+    geoDataStopSessionId_.clear();
+    appendLog(message);
 }
 
 bool MainWindow::packetProfile(int row) const {
@@ -2506,6 +2532,7 @@ void MainWindow::resetMeasurements() {
 }
 
 void MainWindow::invalidateConnection(bool preserveServiceProbe) {
+    finishGeoDataReconnect(tr("GeoData reconnection interrupted while checking the Core connection"));
     connectionLabel_->setToolTip({});
     clearSSHAuthentication();
     sshSeen_.clear();
@@ -2556,8 +2583,10 @@ static QString untrustedServerGuidance(const CoreErrorCatalog &catalog) {
         "Could not verify the background VPN service. Update Bimeron Core to match this version of the application, then try again.");
 }
 
-void MainWindow::connectionFailure(const QString &, CoreClient::Failure reason, const QString &message) {
+void MainWindow::connectionFailure(const QString &command, CoreClient::Failure reason, const QString &message) {
     if (nativeOwnerBlocked_) return;
+    if (command == "stop") finishGeoDataReconnect(tr("GeoData reconnection failed while waiting for Core to stop the VPN"));
+    if (command == "start") finishGeoDataReconnect(tr("GeoData reconnection failed while waiting for Core to start the VPN"));
     ipcObservedAt_ = QDateTime::currentMSecsSinceEpoch();
     availabilityFailure_ = reason;
     startupIpcChecked_ = true;
@@ -2738,6 +2767,8 @@ bool MainWindow::startProfile(int row) {
             reconnectResultProfileId_.clear();
             reportCoreUpdateResult(tr("Core was updated, but reconnection was canceled"));
         }
+        if (startReadyPath_.isEmpty())
+            finishGeoDataReconnect(tr("GeoData reconnection failed during profile validation"));
         updateConnectionButton();
         poll();
     };
@@ -2768,9 +2799,26 @@ void MainWindow::poll() {
         return;
     }
     if (stopRequested_ && !nativeSession_) {
+        if (!geoDataStopSessionId_.isEmpty() && statusNeeded_) {
+            core_.request("status");
+            return;
+        }
         clearSSHAuthentication();
         stopRequested_ = false;
-        core_.request("stop", {}, 120000);
+        QJsonObject guard;
+        if (!geoDataStopSessionId_.isEmpty()) {
+            if (!sessionActive_ || sessionId_ != geoDataStopSessionId_ || activeProfileId_ != geoDataReconnectProfileId_) {
+                pendingStartPath_.clear();
+                operation_.clear();
+                finishGeoDataReconnect(tr("GeoData reconnection canceled because the VPN session changed"));
+                updateConnectionButton();
+                return;
+            }
+            if (capabilities_.value("daemon_session_guards").toBool())
+                guard = {{"instance", instance_}, {"session", geoDataStopSessionId_}};
+            geoDataStopSessionId_.clear();
+        }
+        core_.request("stop", guard, 120000);
         return;
     }
     if (retryNowRequested_) {
@@ -2802,6 +2850,7 @@ void MainWindow::poll() {
             core_.request("start", {{"config", path}}, 120000);
         } else {
             operation_.clear();
+            finishGeoDataReconnect(tr("GeoData reconnection canceled before starting the updated profile"));
             if (!reconnectResultProfileId_.isEmpty()) {
                 reconnectResultProfileId_.clear();
                 reportCoreUpdateResult(tr("Core was updated, but reconnection was canceled"));
@@ -2916,12 +2965,23 @@ void MainWindow::handleReply(const QString &command, const QJsonObject &response
     }
     if (!error.isEmpty()) {
         if (command == "start" || command == "stop") {
+            const bool geoDataReconnect = !geoDataReconnectProfileId_.isEmpty();
+            const bool staleGeoDataStop = geoDataReconnect && command == "stop"
+                && (error == "stale_session" || error == "stale_instance");
+            finishGeoDataReconnect(command == "stop" ? tr("GeoData reconnection failed while stopping the VPN")
+                                                       : tr("GeoData reconnection failed while starting the VPN"));
             operation_.clear();
             startReadyPath_.clear();
             pendingStartPath_.clear();
             if (!reconnectResultProfileId_.isEmpty())
                 reportCoreUpdateResult(tr("Core was updated, but reconnection failed"));
             reconnectResultProfileId_.clear();
+            if (staleGeoDataStop) {
+                statusNeeded_ = true;
+                updateConnectionButton();
+                QTimer::singleShot(0, this, &MainWindow::poll);
+                return;
+            }
         }
         if (command == "stop" || (command == "start" && error.endsWith("_run_recover"))) {
             cleanupBlocked_ = true;
@@ -2963,6 +3023,7 @@ void MainWindow::handleReply(const QString &command, const QJsonObject &response
     } else if (command == "start") {
         operation_.clear();
         statusNeeded_ = true;
+        finishGeoDataReconnect(tr("Core accepted the VPN start with the updated GeoData selection"));
     } else if (command == ReconnectPolicy::Ipc::reconnectNowCommand) {
         statusNeeded_ = true;
     } else if (command == "stop") {
@@ -2970,15 +3031,20 @@ void MainWindow::handleReply(const QString &command, const QJsonObject &response
         stopRequested_ = false;
         const QString path = pendingStartPath_;
         pendingStartPath_.clear();
+        bool starting = false;
         if (cleanDisconnected() && !path.isEmpty()) {
             for (int row = 0; row < profiles_.size(); ++row) {
-                if (profiles_[row].path == path) {
+                if (profiles_[row].path == path && (geoDataReconnectProfileId_.isEmpty()
+                    || profiles_[row].id == geoDataReconnectProfileId_)) {
                     profileList_->setCurrentRow(row);
-                    startProfile(row);
+                    starting = startProfile(row);
                     break;
                 }
             }
         }
+        if (!starting) finishGeoDataReconnect(cleanDisconnected()
+            ? tr("GeoData reconnection failed while preparing the updated profile")
+            : tr("GeoData reconnection canceled because VPN cleanup was not confirmed"));
     } else if (command == "stats" && state_ == "connected" && !nativeSession_) {
         if (sessionId_ != previousSession) { resetMeasurements(); return; }
         const auto stats = response.value("stats").toObject();
