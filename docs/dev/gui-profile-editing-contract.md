@@ -103,6 +103,36 @@ Service start rejection must not rewrite the profile or expose credentials.
 
 ## Portable acceptance cases
 
+### Desktop DNS modes
+
+The Network tab selects ordinary DNS or DoH. Keep the existing `DNS` assignment
+or omission when switching modes. Applying DoH sets `DoH` and `DoHBootstrap`
+together. Applying ordinary DNS removes both together. Captured VPN DNS uses
+only DoH while the pair exists. Ordinary DNS can still be used for physical
+upstream and SSConf bootstrap where applicable.
+
+Preserve the URL spelling and both levels of order. Commas separate URLs and
+positional bootstrap groups. Pipes separate the numeric IPs within each group.
+The independent limits are four DoH endpoints, four bootstrap IPs per endpoint,
+and four ordinary IPv4 DNS addresses. Preserve stored IPv6 addresses even when
+the profile disables IPv6. Core validates usable addresses and WG/AWG AllowedIPs.
+
+Verify both clipboard paste paths replace selections and normalize mixed
+separators without truncation. Verify cancel, reorder and import/save/export
+round trips. When Core lacks the `doh` capability, the editor cannot enable DoH.
+Validation failure must preserve an existing DoH document.
+
+The Desktop profile regression runs the editor and clipboard checks on both
+platforms. Set `BIMERON_DOH_CORE` to a DoH-capable CLI to exercise the real
+document patch and validation. Set `BIMERON_OLD_DOH_CORE` to a pre-DoH CLI to
+check rejection of the same encrypted profile. Use a native profile file or
+the Raw config tab when transferring the full profile with its DNS settings.
+The #246 integration candidate uses Core
+`63298377201b6c90ab11f18a2271696fe2935c84` and its
+`internal/dnsconfig/testdata/doh-v1.json` vectors.
+
+### General profile editing
+
 Run these through the actual editor save/reopen path, with and without any document
 API path the implementation supports:
 
