@@ -224,8 +224,9 @@ service and CLI capability gating, creation and the bridge helpers. With
 `BIMERON_WIREGUARD_CORE` pointing to a Core with the bridge it repeats detect, inspect,
 edit, link import and an editor round trip against the real Core.
 
-Development and tests use Core `feat/wireguard-awg` at
-`64759ac72fe8b8f6e78111859420998e3c12e044` (bridge and runtime adapter; live server checks pending). The final
-pin follows the Core `master` commit after the Core pull request merges.
+Build the WG/AWG integration CLI from Core commit
+`f052ebdef9756b4ce1ed89bada26c65f457ddc9f` (the merge of bimeron/bimeron-core#256)
+and set `BIMERON_WIREGUARD_CORE` to the resulting executable. The packaged Core
+has a separate release archive pin in `cmake/core-release.cmake`.
 
 Live connection checks run only on the test VMs. Ordinary Desktop CI does not download Core.
