@@ -563,7 +563,7 @@ reviewed development Core rather than the older pinned build payload.
 ## English GeoIP labels and special-group priority — 2026-11-02
 
 Added GeoIPLabels.h using existing QtCore territory names and explicit labels for
-the ten special IDs from the external Bimeron-GeoIP-Analysis verification. GeoIP
+the ten special IDs from the external GeoIP verification. GeoIP
 picker and summary show English names with uppercase codes; GeoSite labels and
 serialized IDs remain unchanged. A stable special-first partition follows the
 existing selected-first partition, retaining selected-first behavior inside each
