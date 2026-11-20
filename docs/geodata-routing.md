@@ -37,13 +37,30 @@ day while it runs and downloads only a newer release; a new file replaces the
 current one only after the selected Core reads it and managed profiles' active
 groups still exist. A failed check keeps the current file and shows "Last check
 failed". Only the current and previous managed copies are kept; own files are
-never deleted. If a VPN is connected when a database changes, the application
-asks whether to reconnect now; otherwise the next connection uses it. Every row
-has an Actions menu (Update now or Install Loyalsoldier database, Choose own
+never deleted. After an automatic download is applied, or after Apply saves a
+download from the database manager, the application asks whether to reconnect
+the active managed VPN. Now stops that session, waits for cleanup, and starts
+the same profile with the new databases. Later is the default. Escape and
+closing the question have the same effect as Later. The current VPN keeps its
+loaded databases and the new selection takes effect on the next manual
+connection. A disconnected VPN uses the new selection on its next connection.
+Every row has an Actions menu (Update now or Install Loyalsoldier database, Choose own
 file, Check again, Disable database); "Install Loyalsoldier databases" restores
 both kinds and enables automatic updates. On first start of this version, a path
 in the managed download store becomes Loyalsoldier, any other path stays an own
 file, and an empty selection becomes Loyalsoldier.
+
+To verify reconnection on an installed system, use a test VPN profile with
+enabled GeoIP and GeoSite rules and two readable database releases with the
+required groups. Repeat the update for Now, Later, Escape, and window close.
+Check the session identity before and after each choice. Later, Escape, and
+close retain the current session and profile contents. A subsequent manual
+disconnect and connect should create a new session using the updated database
+paths. With Now, check for one stop, clean disconnection, one start of the same
+profile, and a new connected session. For a failure, capture the Desktop and
+Core versions, update source, and the sanitized Desktop log and Core error
+code. The Desktop log identifies whether reconnection stopped at cleanup,
+profile preparation, validation, or start.
 
 A kind may be disabled even when profiles use it. Such a profile can still be
 edited and saved: the routing tab disables the rule's Target, keeps Enabled and

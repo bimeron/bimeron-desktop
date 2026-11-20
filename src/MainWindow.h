@@ -114,7 +114,8 @@ private:
     bool validateWithout(const QString &path, const QStringList &kinds, QString *error) const;
     void reportUnavailableProfile(int row, const QString &reason);
     void offerGeoDataReconnect();
-    void reconnectActiveProfile();
+    void reconnectActiveProfile(const QString &profileId);
+    void finishGeoDataReconnect(const QString &message);
     // Shows the reconnect policy view (#60): title, detail line, Retry now and countdown.
     void renderReconnectView();
     void retryReconnectNow();
@@ -298,6 +299,8 @@ private:
     QString lastCoreError_;
     QString runningCoreVersion_;
     QString pendingStartPath_;
+    QString geoDataReconnectProfileId_;
+    QString geoDataStopSessionId_;
     class GeoDataUpdater *geoDataUpdater_ = nullptr;
     bool automaticStart_ = false;
     QString instance_;

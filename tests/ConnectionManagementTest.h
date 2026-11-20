@@ -1027,6 +1027,200 @@ struct ConnectionManagementTest {
             QString error; require(selection->apply(previous, core, {}, &error), "restore prior test selection");
         }
     }
+    static void geoDataReconnect() {
+        QTemporaryDir directory;
+        require(directory.isValid(), "GeoData reconnect directory");
+        auto *selection = GeoDataSelection::instance();
+        const auto previous = selection->selection();
+        const QString realCore = qEnvironmentVariable("BIMERON_GEODATA_RECONNECT_CORE");
+        const QString core = realCore.isEmpty() ? QCoreApplication::applicationFilePath() : realCore;
+        if (realCore.isEmpty()) {
+            qputenv("BIMERON_FAKE_GEODATA", "ok");
+            qputenv("BIMERON_FAKE_GEODATA_RECONNECT", "1");
+        }
+        const QString path = directory.filePath("vpn.conf");
+        const QString oldDatabase = directory.filePath("old.dat");
+        const QString oldSiteDatabase = directory.filePath("old-site.dat");
+        const auto config = "[Profile]\nVersion=1\nName=Test VPN\n[AccessKey]\nType=shadowsocks\n"
+            "Server=example.invalid\nPort=443\nMethod=aes-256-gcm\nPassword=SYNTHETIC\n"
+            "[Interface]\nMode=vpn\n[Rule]\nGeoIP=ru\nAction=direct\n[Rule]\nGeoSite=github\nAction=direct\n"
+            "[GeoData]\nGeoIPFile=" + oldDatabase.toUtf8() + "\nGeoSiteFile=" + oldSiteDatabase.toUtf8() + "\n";
+        const QByteArray oldBytes = QByteArray::fromHex("0a0e0a02727512080a04cb0071001018");
+        const QByteArray newBytes = QByteArray::fromHex("0a0e0a02727512080a04c63364001018");
+        const QByteArray oldSiteBytes = QByteArray::fromHex("0a180a06676974687562120e0802120a6769746875622e636f6d");
+        const QByteArray newSiteBytes = QByteArray::fromHex("0a180a06676974687562120e0802120a6769746875622e6e6574");
+        const auto writeDatabase = [](const QString &path, const QByteArray &data) {
+            QFile database(path);
+            require(database.open(QIODevice::WriteOnly) && database.write(data) == data.size(), "write old database");
+        };
+        writeDatabase(oldDatabase, oldBytes);
+        writeDatabase(oldSiteDatabase, oldSiteBytes);
+        const Profile profile{ProfileStore::identity(path), "Test VPN", path};
+        const QList<Profile> profiles{profile};
+        const auto readProfile = [&] {
+            QFile file(path);
+            require(file.open(QIODevice::ReadOnly), "read VPN profile");
+            return file.readAll();
+        };
+
+        QLocalServer server;
+        require(server.listen("bimeron-geodata-" + QUuid::createUuid().toString()), "GeoData IPC endpoint");
+        MainWindow window;
+        window.core_.cancel();
+        window.core_.setEndpoint(server.serverName());
+        for (auto *timer : window.findChildren<QTimer *>()) timer->stop();
+        window.validationExecutable_ = core;
+        window.profiles_ = profiles;
+        window.profileList_->addItem(profile.name);
+        window.profileList_->setCurrentRow(0);
+        window.autoConnectAttempted_ = true;
+        const QJsonObject capabilities{{"vpn", true}, {"ipv6", true}, {"domain_split", true},
+            {"geoip_split", true}, {"geosite_split", true}, {"geodata_schema", "v2ray-protobuf"}, {"daemon_session_guards", true}};
+        const auto statusFor = [&](const QString &state, const QString &sessionId, bool active) {
+            return QJsonObject{{"State", state}, {"Session", QJsonObject{
+                {"id", sessionId}, {"active", active}, {"profile_id", profile.id}, {"mode", "vpn"}}}};
+        };
+        QJsonObject status = statusFor("connected", "old-session", true);
+        QStringList mutations;
+        QString expectedPath;
+        QString expectedSitePath;
+        bool consent = false;
+        QObject::connect(&server, &QLocalServer::newConnection, &server, [&] {
+            auto *socket = server.nextPendingConnection();
+            QObject::connect(socket, &QLocalSocket::disconnected, socket, &QObject::deleteLater);
+            QObject::connect(socket, &QLocalSocket::readyRead, socket, [&, socket] {
+                if (!socket->canReadLine()) return;
+                const auto request = QJsonDocument::fromJson(socket->readLine()).object();
+                const auto command = request.value("command").toString();
+                if (command == "stop") {
+                    require(mutations.isEmpty() && readProfile() == config, "stop precedes profile preparation");
+                    require(!consent || (request.value("instance") == "geodata-instance"
+                        && request.value("session") == "old-session"), "update stop targets the consented session");
+                    mutations << command;
+                    status = statusFor("disconnected", "old-session", false);
+                } else if (command == "start") {
+                    require(mutations == QStringList{"stop"} && request.value("config").toString() == path,
+                            "one stop before starting the same profile");
+                    const QByteArray prepared = readProfile();
+                    require(prepared.contains(expectedPath.toUtf8()) && !prepared.contains(oldDatabase.toUtf8())
+                            && prepared.contains(expectedSitePath.toUtf8()),
+                            "start uses the newly applied database");
+                    mutations << command;
+                    status = statusFor("connected", "new-session", true);
+                }
+                const QJsonObject reply{{"version", 1}, {"id", request.value("id")}, {"instance", "geodata-instance"},
+                    {"status", status}, {"capabilities", capabilities}};
+                socket->write(QJsonDocument(reply).toJson(QJsonDocument::Compact) + '\n');
+                socket->flush();
+            });
+        });
+        const auto synchronized = [&] { return window.helloReady_ && !window.statusNeeded_ && !window.core_.busy(); };
+        window.poll();
+        require(waitFor(synchronized), "GeoData IPC synchronization");
+
+        for (const QString action : {QString("now"), QString("later"), QString("escape"), QString("close"), QString("return")}) {
+            consent = action == "now";
+            mutations.clear();
+            status = statusFor("connected", "old-session", true);
+            window.handleStatus(status);
+            require(ProfileStore::writeConfig(path, config), "reset VPN configuration");
+            GeoDataSelection::Selection original;
+            original.paths["geoip"] = oldDatabase;
+            original.sources["geoip"] = GeoDataSelection::Source::Loyalsoldier;
+            original.tags["geoip"] = "202601010000";
+            original.paths["geosite"] = oldSiteDatabase;
+            original.sources["geosite"] = GeoDataSelection::Source::Loyalsoldier;
+            original.tags["geosite"] = "202601010000";
+            QString error;
+            require(selection->apply(original, core, profiles, &error), "select old GeoData");
+            require(mutations.isEmpty() && readProfile() == config, "selection alone does not change the VPN");
+
+            bool prompted = false;
+            QTimer answer;
+            answer.setInterval(10);
+            QTimer watchdog;
+            watchdog.setSingleShot(true);
+            QObject::connect(&watchdog, &QTimer::timeout, &window, [] {
+                require(false, "GeoData reconnect dialog and selection timed out");
+            });
+            QObject::connect(&answer, &QTimer::timeout, &window, [&] {
+                auto *box = qobject_cast<QMessageBox *>(QApplication::activeModalWidget());
+                if (!box || box->objectName() != "geoDataReconnect") return;
+                answer.stop();
+                prompted = true;
+                expectedPath = selection->paths().value("geoip");
+                expectedSitePath = selection->paths().value("geosite");
+                require(expectedPath != oldDatabase && mutations.isEmpty() && readProfile() == config
+                    && window.sessionId_ == "old-session" && window.state_ == "connected",
+                    "download applies before consent without touching the active session");
+                require((expectedSitePath == oldSiteDatabase) == (action == "later"),
+                        "the prompt follows all applied downloads");
+                require(box->defaultButton() && box->escapeButton() == box->defaultButton()
+                    && box->buttonRole(box->defaultButton()) == QMessageBox::RejectRole, "Later is default and escape");
+                if (action == "close") box->close();
+                else if (action == "later") box->defaultButton()->click();
+                else if (consent) {
+                    window.statusNeeded_ = true;
+                    for (auto *button : box->buttons())
+                        if (box->buttonRole(button) == QMessageBox::AcceptRole) { button->click(); break; }
+                } else {
+                    QKeyEvent key(QEvent::KeyPress, action == "escape" ? Qt::Key_Escape : Qt::Key_Return, Qt::NoModifier);
+                    QApplication::sendEvent(box, &key);
+                }
+            });
+            answer.start();
+            watchdog.start(10000);
+            GeoDataFixture::Network network;
+            network.responses = {{GeoDataFixture::metadata("geoip", "202601020000")},
+                {GeoDataFixture::checksum(newBytes)}, {newBytes}};
+            GeoDataDownload download(&network);
+            if (action == "later") {
+                QTimer::singleShot(0, &window, [&] {
+                    auto *manager = QApplication::activeModalWidget();
+                    require(manager && manager->objectName() == "sharedGeoDataDialog", "manual GeoData manager");
+                    require(waitFor([&] { return !selection->catalogsBusy(); }), "initial manager catalog");
+                    manager->findChild<QAction *>("geoipUpdate")->trigger();
+                    auto *apply = manager->findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Apply);
+                    require(waitFor([&] { return apply->isEnabled(); }), "download enables Apply");
+                    require(!prompted && selection->paths().value("geoip") == oldDatabase, "draft download awaits Apply");
+                    apply->click();
+                });
+                manageSharedGeoData(&window, core, {}, {}, &download);
+            } else {
+                network.responses.append({GeoDataFixture::metadata("geosite", "202601020000")});
+                network.responses.append({GeoDataFixture::checksum(newSiteBytes, "geosite")});
+                network.responses.append({newSiteBytes});
+                GeoDataUpdater updater([&] { return core; }, [&] { return profiles; }, &window, &download);
+                QObject::connect(&updater, &GeoDataUpdater::updated, &window, [&](const QStringList &kinds) {
+                    emit window.geoDataUpdater_->updated(kinds);
+                });
+                require(updater.check(true) && waitFor([&] { return prompted; }), "automatic update offers reconnection");
+            }
+            require(prompted, "applied download prompts once");
+            watchdog.stop();
+            if (!consent) {
+                require(mutations.isEmpty() && window.sessionId_ == "old-session" && readProfile() == config,
+                        "declining keeps the active VPN and current profile file");
+                window.toggleConnection();
+                require(waitFor([&] { return window.cleanDisconnected() && synchronized(); }), "manual disconnect");
+                window.toggleConnection();
+            }
+            const bool reconnected = waitFor([&] {
+                return mutations.size() == 2 && window.sessionId_ == "new-session" && synchronized();
+            }, 10000);
+            if (!reconnected)
+                qWarning().noquote() << "GeoData reconnect action:" << action << "IPC:" << mutations
+                    << "state:" << window.state_ << "operation:" << window.operation_ << window.log_->toPlainText();
+            require(reconnected, "updated profile reaches connected after one stop and one start");
+        }
+        QString error;
+        require(selection->apply(previous, core, {}, &error), "restore GeoData selection");
+        if (realCore.isEmpty()) {
+            qunsetenv("BIMERON_FAKE_GEODATA_RECONNECT");
+            qunsetenv("BIMERON_FAKE_GEODATA");
+        }
+    }
+
     static void sharedGeoDataPreparation() {
         const QString core = qEnvironmentVariable("BIMERON_GEODATA_CORE");
         if (core.isEmpty()) return;

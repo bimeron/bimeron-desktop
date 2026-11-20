@@ -94,6 +94,7 @@ public:
     void cancelCatalog(const QString &key);
 signals:
     void changed();
+    void downloadedSelectionApplied();
     void catalogResult(QString key, QStringList groups, QString error, GeoDataSelection::CatalogFailure failure);
     void catalogInvalidated(QString key);
 private:
