@@ -7,6 +7,9 @@
 #include <QJsonDocument>
 #include <QMutex>
 #include <QProcess>
+#include <QPromise>
+#include <QThreadPool>
+#include <memory>
 #include <QUrl>
 
 namespace WireGuardCore {
@@ -77,6 +80,10 @@ bool wellFormed(const QString &op, const QJsonObject &object) {
     if (!problems.isUndefined() && !problems.isArray()) return false;
     if (!problems.toArray().isEmpty() && op != "edit") return true;
     if (op == "capabilities") return object.value("capabilities").toObject().value("supported").isBool();
+    if (op == "generate_keypair")
+        return !object.value("private_key").toString().isEmpty() && !object.value("public_key").toString().isEmpty();
+    if (op == "public_key") return !object.value("public_key").toString().isEmpty();
+    if (op == "generate_preshared_key") return !object.value("preshared_key").toString().isEmpty();
     if (op == "detect") {
         const QString format = object.value("format").toString();
         return format == "bimeron" || format == "wireguard";
@@ -89,25 +96,21 @@ bool wellFormed(const QString &op, const QJsonObject &object) {
     }
     return false;
 }
-} // namespace
-
-void setRunner(Runner runner) { customRunner() = std::move(runner); }
-
-Reply request(const QString &executable, const QJsonObject &request) {
+Reply runRequest(const QString &executable, const QJsonObject &request, const Runner &runner) {
     Reply reply;
     const QByteArray input = QJsonDocument(request).toJson(QJsonDocument::Compact);
     if (input.size() > 1024 * 1024) {
         reply.error = QObject::tr("The WireGuard configuration exceeds the 64 KiB limit.");
         return reply;
     }
-    if (executable.isEmpty() && !customRunner()) {
+    if (executable.isEmpty() && !runner) {
         reply.error = QObject::tr("Core WireGuard bridge is unavailable. Use the WG/AWG config tab.");
         return reply;
     }
     bool definitive = true;
-    const QJsonObject object = customRunner() ? customRunner()(executable, input, &reply.error)
+    const QJsonObject object = runner ? runner(executable, input, &reply.error)
                                               : runProcess(executable, input, &reply.error, &definitive);
-    reply.definitive = definitive && (customRunner() ? reply.error.isEmpty() : true);
+    reply.definitive = definitive && (!runner || reply.error.isEmpty());
     if (!reply.error.isEmpty()) return reply;
     if (!wellFormed(request.value("op").toString(), object)) {
         reply.error = QObject::tr("Core WireGuard bridge returned an invalid response. The draft has been retained.");
@@ -123,6 +126,26 @@ Reply request(const QString &executable, const QJsonObject &request) {
         reply.problems.append(problem);
     }
     return reply;
+}
+
+} // namespace
+
+void setRunner(Runner runner) { customRunner() = std::move(runner); }
+
+Reply request(const QString &executable, const QJsonObject &request) {
+    return runRequest(executable, request, customRunner());
+}
+
+QFuture<QJsonObject> keyOperation(const QString &executable, const QJsonObject &request) {
+    auto promise = std::make_shared<QPromise<QJsonObject>>();
+    auto future = promise->future();
+    promise->start();
+    QThreadPool::globalInstance()->start([promise, executable, request, runner = customRunner()] {
+        const auto reply = runRequest(executable, request, runner);
+        promise->addResult(reply.clean() ? reply.object : QJsonObject());
+        promise->finish();
+    });
+    return future;
 }
 
 Reply detect(const QString &executable, const QString &text) {
@@ -145,15 +168,20 @@ QJsonObject setField(const QString &section, const QString &key, const QString &
     return {{"op", "set_field"}, {"section", section}, {"key", key}, {"value", value}};
 }
 
-bool cliSupported(const QString &executable, bool *definitive) {
+bool cliSupported(const QString &executable, bool *definitive, QJsonArray *keyOperations) {
+    if (keyOperations) *keyOperations = {};
     if (definitive) *definitive = true;
     if (executable.isEmpty() && !customRunner()) return false;
     const QString key = identity(executable);
     static QMutex mutex;
-    static QHash<QString, bool> cache;
+    static QHash<QString, QJsonObject> cache;
     if (!customRunner()) {
         QMutexLocker lock(&mutex);
-        if (cache.contains(key)) return cache.value(key);
+        if (cache.contains(key)) {
+            const auto caps = cache.value(key);
+            if (keyOperations) *keyOperations = caps.value("key_operations").toArray();
+            return !caps.isEmpty();
+        }
     }
     const Reply reply = request(executable, {{"version", 1}, {"op", "capabilities"}});
     if (definitive) *definitive = reply.definitive;
@@ -161,9 +189,10 @@ bool cliSupported(const QString &executable, bool *definitive) {
     const QJsonObject capabilities = reply.object.value("capabilities").toObject();
     const bool supported = reply.answered() && reply.problems.isEmpty()
         && capabilities.value("supported").toBool() && capabilities.value("document_api").toInt() >= 1;
+    if (supported && keyOperations) *keyOperations = capabilities.value("key_operations").toArray();
     if (!customRunner() && reply.definitive) {
         QMutexLocker lock(&mutex);
-        cache.insert(key, supported);
+        cache.insert(key, supported ? capabilities : QJsonObject());
     }
     return supported;
 }

@@ -3,6 +3,7 @@
 #include "CoreProblems.h"
 
 #include <QJsonArray>
+#include <QFuture>
 #include <QJsonObject>
 #include <QString>
 #include <functional>
@@ -35,6 +36,8 @@ using Runner = std::function<QJsonObject(const QString &executable, const QByteA
 void setRunner(Runner runner); // Tests inject a fake bridge; an empty runner restores the default.
 
 Reply request(const QString &executable, const QJsonObject &request);
+// Key operations run on a worker. An empty object denotes a rejected or failed operation.
+QFuture<QJsonObject> keyOperation(const QString &executable, const QJsonObject &request);
 Reply detect(const QString &executable, const QString &text);
 Reply inspect(const QString &executable, const QString &text);
 Reply edit(const QString &executable, const QString &text, const QJsonArray &operations);
@@ -45,7 +48,7 @@ QJsonObject setField(const QString &section, const QString &key, const QString &
 // answers are cached per executable identity (path, size, modification time),
 // so replacing the file at the same path is noticed; transient failures are not.
 // definitive is false when the probe failed transiently (start failure, timeout, crash).
-bool cliSupported(const QString &executable, bool *definitive = nullptr);
+bool cliSupported(const QString &executable, bool *definitive = nullptr, QJsonArray *keyOperations = nullptr);
 // True when the running service advertises WireGuard support in hello.
 bool serviceSupported(const QJsonObject &capabilities);
 // "WireGuard" or "AmneziaWG <version>" from an inspect response.

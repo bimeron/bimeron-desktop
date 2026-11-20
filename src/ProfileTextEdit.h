@@ -162,6 +162,26 @@ inline QString field(QString text, const QString &section, const QString &key, c
     }
     return source.join("");
 }
+// WG/AWG network settings belong to the sibling document. Keep all other lines verbatim.
+inline QString withoutWireGuardNetworkOverrides(const QString &profile) {
+    QString result;
+    bool inInterface = false;
+    for (const QString &line : lines(profile)) {
+        const QString content = clean(line);
+        if (!content.startsWith('#') && !content.startsWith(';')) {
+            const QString section = header(line);
+            if (!section.isEmpty()) inInterface = section == "Interface";
+            const int equal = content.indexOf('=');
+            if (inInterface && equal > 0) {
+                const QString key = content.left(equal).trimmed();
+                if (key == "DNS" || key == "MTU") continue;
+            }
+        }
+        result += line;
+    }
+    return result;
+}
+
 inline QString normalizeRules(const QString &text, const QSet<int> &changed) {
     QString result;
     int index = -1;

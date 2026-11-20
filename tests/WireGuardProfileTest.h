@@ -10,6 +10,9 @@
 #include "WireGuardForm.h"
 
 #include <QToolButton>
+#include <QSemaphore>
+#include <QMutex>
+#include <memory>
 
 namespace wireguardfixture {
 
@@ -117,9 +120,11 @@ QString setField(const QString &text, const QString &section, const QString &key
 }
 
 struct Bridge {
+    QMutex mutex;
     QStringList operations;
     QJsonObject capabilities{{"supported", true}, {"document_api", 1}};
     QJsonObject handle(const QByteArray &input) {
+        QMutexLocker lock(&mutex);
         const QJsonObject request = QJsonDocument::fromJson(input).object();
         const QString op = request.value("op").toString();
         operations << op;
@@ -131,6 +136,12 @@ struct Bridge {
             if (bimeron && wireGuard) return {{"version", 1}, {"problems", QJsonArray{QJsonObject{{"code", "document_format_ambiguous"}}}}};
             if (!bimeron && !wireGuard) return {{"version", 1}, {"problems", QJsonArray{QJsonObject{{"code", "document_format_unknown"}}}}};
             return {{"version", 1}, {"format", bimeron ? "bimeron" : "wireguard"}};
+        }
+        if (op == "generate_keypair") return {{"version", 1}, {"private_key", "GENERATED"}, {"public_key", "GENERATED_PUBLIC"}};
+        if (op == "generate_preshared_key") return {{"version", 1}, {"preshared_key", "GENERATED_PSK"}};
+        if (op == "public_key") {
+            if (request.value("private_key").toString() == privateKey) return {{"version", 1}, {"public_key", "IMPORTED_PUBLIC"}};
+            return {{"version", 1}, {"problems", QJsonArray{QJsonObject{{"code", "wireguard_key_invalid"}}}}};
         }
         if (op == "inspect") return inspect(text);
         if (op == "edit") {
@@ -248,7 +259,90 @@ static void wireGuardStorage(const QString &directory) {
     require(ProfileStore::removeProfileFiles(foreign, &error) && QFileInfo::exists(external));
 }
 
+static bool awaitWireGuardResult(const std::function<bool()> &ready) {
+    QElapsedTimer elapsed;
+    elapsed.start();
+    while (!ready() && elapsed.elapsed() < 5000)
+        QApplication::processEvents(QEventLoop::AllEvents, 30);
+    return ready();
+}
+
+static void wireGuardDelayedDerivation() {
+    struct DelayedReply {
+        QSemaphore entered, resume, returned;
+    };
+    auto delayed = std::make_shared<DelayedReply>();
+    WireGuardCore::setRunner([delayed](const QString &, const QByteArray &input, QString *) {
+        const QString key = QJsonDocument::fromJson(input).object().value("private_key").toString();
+        if (key == "delayed") {
+            delayed->entered.release();
+            if (!delayed->resume.tryAcquire(1, 5000)) return QJsonObject();
+            delayed->returned.release();
+        }
+        return QJsonObject{{"version", 1}, {"public_key", key == "delayed" ? "OLD_PUBLIC" : "NEW_PUBLIC"}};
+    });
+    QWidget networkPage;
+    auto *network = new QFormLayout(&networkPage);
+    auto form = std::make_unique<WireGuardForm>(network, "fake-core", QJsonArray{"public_key"});
+    auto *display = form->findChild<QLineEdit *>("wireGuardClientPublicKey");
+    QStringList displayed;
+    QObject::connect(display, &QLineEdit::textChanged, form.get(), [&displayed](const QString &value) { displayed << value; });
+    form->setValues({{"Interface/PrivateKey", "delayed"}});
+    require(awaitWireGuardResult([&] { return delayed->entered.available() == 1; }));
+    form->setValues({{"Interface/PrivateKey", "replacement"}});
+    delayed->resume.release();
+    require(awaitWireGuardResult([&] { return display->text() == "NEW_PUBLIC"; }));
+    require(!displayed.contains("OLD_PUBLIC"));
+    form->setValues({{"Interface/PrivateKey", "delayed"}});
+    require(awaitWireGuardResult([&] { return delayed->entered.available() == 2; }));
+    form.reset();
+    delayed->resume.release();
+    require(awaitWireGuardResult([&] { return delayed->returned.available() == 2; }));
+    WireGuardCore::setRunner({});
+}
+
+static void wireGuardDelayedGeneration() {
+    auto gate = std::make_shared<QSemaphore>();
+    WireGuardCore::setRunner([gate](const QString &, const QByteArray &input, QString *) {
+        if (!gate->tryAcquire(1, 5000)) return QJsonObject();
+        const auto op = QJsonDocument::fromJson(input).object().value("op").toString();
+        if (op == "generate_keypair")
+            return QJsonObject{{"version", 1}, {"private_key", "GENERATED"}, {"public_key", "GENERATED_PUBLIC"}};
+        return QJsonObject{{"version", 1}, {"preshared_key", "GENERATED_PSK"}};
+    });
+    QWidget networkPage;
+    auto *network = new QFormLayout(&networkPage);
+    WireGuardForm form(network, "fake-core", QJsonArray{"generate_keypair", "generate_preshared_key"});
+    auto *psk = form.findChild<QPushButton *>("wireGuardGeneratePsk");
+    const auto finishRequest = [&] {
+        bool delivered = false;
+        // Previous watchers are removed before another request starts.
+        auto *watcher = form.findChild<QFutureWatcherBase *>();
+        require(watcher);
+        QObject::connect(watcher, &QFutureWatcherBase::finished, &form, [&] { delivered = true; });
+        gate->release();
+        require(awaitWireGuardResult([&] { return delivered; }));
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    };
+    form.initializeNewKey();
+    require(form.keyGenerationPending());
+    form.edit("Interface/PrivateKey")->setText("typed");
+    finishRequest();
+    require(form.edit("Interface/PrivateKey")->text() == "typed");
+    psk->click();
+    form.edit("Peer/PresharedKey")->setText("typed PSK");
+    finishRequest();
+    require(form.edit("Peer/PresharedKey")->text() == "typed PSK");
+    psk->click();
+    form.invalidateKeyGeneration(); // Changed source or raw draft.
+    finishRequest();
+    require(form.edit("Peer/PresharedKey")->text() == "typed PSK");
+    WireGuardCore::setRunner({});
+}
+
 static void wireGuardEditor(const QString &directory) {
+    wireGuardDelayedDerivation();
+    wireGuardDelayedGeneration();
     using namespace wireguardfixture;
     Bridge bridge;
     WireGuardCore::setRunner([&bridge](const QString &, const QByteArray &input, QString *) { return bridge.handle(input); });
@@ -262,7 +356,7 @@ static void wireGuardEditor(const QString &directory) {
     {
         ProfileEditorDialog editor(profile, caps, nullptr, accepted, "fake-core", path, false, key);
         auto *tabWidget = tabs(editor);
-        const int form = tabIndex(editor, "WireGuard"), raw = tabIndex(editor, "WG/AWG config");
+        const int form = tabIndex(editor, "AmneziaWG"), raw = tabIndex(editor, "WG/AWG config");
         require(form >= 0 && raw >= 0 && tabWidget->isTabVisible(form) && tabWidget->isTabEnabled(form) && tabWidget->isTabVisible(raw));
         require(tabWidget->tabText(tabWidget->count() - 1) == "Bimeron config");
         require(editor.isWireGuard() && editor.findChild<QComboBox *>("keySource")->currentData() == "WireGuard");
@@ -324,14 +418,11 @@ static void wireGuardEditor(const QString &directory) {
         endpoint->setText("vpn.example:51820");
         editor.findChild<QLineEdit *>("wireGuardInterface_Address")->setText("10.0.0.2/32 # comment");
         editor.wireGuardText();
-        bool refused = false;
-        QTimer::singleShot(0, [&refused] {
-            auto *dialog = QApplication::activeModalWidget();
-            refused = dialog && dialog->objectName() == "coreProblemDialog";
-            if (dialog) static_cast<QDialog *>(dialog)->reject();
-        });
         editor.findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Save)->click();
-        require(refused && editor.result() != QDialog::Accepted);
+        const auto *problem = editor.findChild<QLabel *>("wireGuardInterface_AddressProblem");
+        require(problem && !problem->isHidden() && !problem->text().isEmpty());
+        require(editor.findChild<QLineEdit *>("wireGuardInterface_Address")->text() == "10.0.0.2/32 # comment");
+        require(editor.result() != QDialog::Accepted);
     }
     {
         // Ambiguous documents stay in the WG/AWG config tab.
@@ -351,12 +442,41 @@ static void wireGuardEditor(const QString &directory) {
             && tabs(plain)->tabText(tabs(plain)->count() - 1) == "Raw config");
     }
     {
+        bridge.capabilities.insert("key_operations", QJsonArray{"generate_keypair", "public_key", "generate_preshared_key"});
+        bridge.operations.clear();
+        ProfileEditorDialog imported(profile, caps, nullptr, accepted, "fake-core", path, false, key);
+        auto *derived = imported.findChild<QLineEdit *>("wireGuardClientPublicKey");
+        require(derived && derived->isReadOnly());
+        require(awaitWireGuardResult([&] { return derived->text() == "IMPORTED_PUBLIC"; }));
+        require(imported.wireGuardText() == key && !bridge.operations.contains("generate_keypair"));
+        ProfileEditorDialog fresh({}, caps, nullptr, accepted, "fake-core", {}, true);
+        auto *source = fresh.findChild<QComboBox *>("keySource");
+        require(!bridge.operations.contains("generate_keypair"));
+        source->setCurrentIndex(source->findData("WireGuard"));
+        auto *secret = fresh.findChild<QLineEdit *>("wireGuardInterface_PrivateKey");
+        auto *publicKey = fresh.findChild<QLineEdit *>("wireGuardClientPublicKey");
+        require(secret && publicKey && awaitWireGuardResult([&] { return secret->text() == "GENERATED" && publicKey->text() == "GENERATED_PUBLIC"; }));
+        source->setCurrentIndex(source->findData("Explicit"));
+        source->setCurrentIndex(source->findData("WireGuard"));
+        require(bridge.operations.count("generate_keypair") == 1);
+        auto *generate = fresh.findChild<QPushButton *>("wireGuardGeneratePsk");
+        require(generate && !fresh.wireGuardText().contains("PresharedKey"));
+        generate->click();
+        require(awaitWireGuardResult([&] { return fresh.findChild<QLineEdit *>("wireGuardPeer_PresharedKey")->text() == "GENERATED_PSK"; }));
+        require(fresh.wireGuardText().contains("PresharedKey = GENERATED_PSK"));
+        secret->setText("INVALID");
+        require(publicKey->text().isEmpty());
+        bridge.capabilities.remove("key_operations");
+    }
+    {
         // Creation offers WireGuard only with service and CLI support.
         ProfileEditorDialog draft({}, caps, nullptr, accepted, "fake-core", {}, true);
         auto *sources = draft.findChild<QComboBox *>("keySource");
         require(sources->findData("WireGuard") >= 0 && !draft.findChild<QLabel *>("wireGuardUnavailable"));
         sources->setCurrentIndex(sources->findData("WireGuard"));
         require(draft.isWireGuard() && tabs(draft)->isTabVisible(tabIndex(draft, "WireGuard")));
+        require(!draft.findChild<QLineEdit *>("wireGuardClientPublicKey") && !draft.findChild<QPushButton *>("wireGuardGeneratePsk"));
+        require(draft.findChild<QLineEdit *>("wireGuardInterface_PrivateKey")->text().isEmpty());
         draft.findChild<QLineEdit *>("profileName")->setText("Created");
         draft.findChild<QLineEdit *>("wireGuardInterface_PrivateKey")->setText(privateKey);
         draft.findChild<QLineEdit *>("wireGuardPeer_Endpoint")->setText("vpn.example:51820");
@@ -424,6 +544,29 @@ static void wireGuardEditor(const QString &directory) {
         const QString odd = "[Interface]\nPrivateKey = " + privateKey + "\nRandomTrailers = maybe\n\n[Peer]\nPublicKey = PUBLIC\n";
         ProfileEditorDialog oddEditor(profile, caps, nullptr, accepted, "fake-core", path, false, odd);
         require(oddEditor.findChild<QComboBox *>("wireGuardInterface_RandomTrailers")->currentIndex() == 0 && oddEditor.wireGuardText() == odd);
+    }
+    {
+        // An unsupported wrapper section leaves the independently editable sibling on Network.
+        ProfileEditorDialog editor(profile + "[Future]\nSetting = value\n", caps, nullptr, accepted, "fake-core", path, false, key);
+        auto *network = tabs(editor);
+        require(network->isTabEnabled(tabIndex(editor, "Network")));
+        auto *mtu = editor.findChild<QLineEdit *>("wireGuardInterface_MTU");
+        mtu->setText("1380");
+        require(editor.wireGuardText().contains("MTU = 1380") && editor.configText().contains("Setting = value"));
+    }
+    {
+        // Saving a legacy profile drops matching and differing wrapper settings.
+        const QString legacy = QString(profile).replace("Mode = vpn", "Mode = vpn\n# preserved\nDNS = 192.0.2.1\nMTU = 1400");
+        for (const QString &settings : {QString(), QString("DNS = 192.0.2.1\nMTU = 1400\n"), QString("DNS = 192.0.2.2\nMTU = 1380\n")}) {
+            const QString sibling = "[Interface]\n" + settings + "# retained\nPrivateKey = " + privateKey + "\n[Peer]\nPublicKey = PUBLIC\n";
+            ProfileEditorDialog editor(legacy, caps, nullptr, accepted, "fake-core", path, false, sibling);
+            require(editor.configText() == QString(profile).replace("Mode = vpn", "Mode = vpn\n# preserved"));
+            require(editor.wireGuardText() == sibling);
+            auto *mtu = editor.findChild<QLineEdit *>("wireGuardInterface_MTU");
+            require(mtu->text() == inspect(sibling).value("fields").toObject().value("Interface/MTU").toString());
+            mtu->setText("1390");
+            require(editor.wireGuardText().contains("# retained\n") && editor.wireGuardText().contains("MTU = 1390"));
+        }
     }
     {
         // An untouched value longer than QLineEdit's default limit survives an unrelated edit.
@@ -565,7 +708,7 @@ static void wireGuardEditor(const QString &directory) {
         });
         auto *tabWidget = tabs(editor);
         tabWidget->setCurrentIndex(tabIndex(editor, "WG/AWG config"));
-        require(warned && tabWidget->currentIndex() == tabIndex(editor, "WireGuard"));
+        require(warned && tabWidget->currentIndex() == tabIndex(editor, "AmneziaWG"));
         require(editor.findChild<QLineEdit *>("wireGuardPeer_Endpoint")->text() == "other.example:51820");
     }
     {
@@ -580,7 +723,7 @@ static void wireGuardEditor(const QString &directory) {
         tabWidget->setCurrentIndex(tabWidget->count() - 1);
         auto *raw = editor.findChild<QPlainTextEdit *>("rawConfig");
         raw->setPlainText(raw->toPlainText().replace("Name = Tunnel", "Name = Renamed"));
-        const int form = tabIndex(editor, "WireGuard");
+        const int form = tabIndex(editor, "AmneziaWG");
         tabWidget->setCurrentIndex(form);
         require(tabWidget->currentIndex() == form);
         address->setText("10.0.0.3/32");
@@ -605,7 +748,7 @@ static void wireGuardEditor(const QString &directory) {
             rejected = box && box->objectName() == "wireGuardRawRejected";
             if (box) box->accept();
         });
-        tabWidget->setCurrentIndex(tabIndex(editor, "WireGuard"));
+        tabWidget->setCurrentIndex(tabIndex(editor, "AmneziaWG"));
         require(rejected && tabWidget->currentIndex() == raw);
         require(editor.findChild<QLineEdit *>("wireGuardPeer_Endpoint")->text() == "vpn.example:51820");
         WireGuardCore::setRunner([&bridge](const QString &, const QByteArray &input, QString *) { return bridge.handle(input); });
@@ -734,7 +877,21 @@ static void wireGuardEditor(const QString &directory) {
     // Optional real-Core round trip.
     const QString core = qEnvironmentVariable("BIMERON_WIREGUARD_CORE");
     if (core.isEmpty()) return;
-    require(WireGuardCore::cliSupported(core));
+    QJsonArray keyOperations;
+    require(WireGuardCore::cliSupported(core, nullptr, &keyOperations));
+    if (keyOperations.contains("generate_keypair") && keyOperations.contains("public_key")) {
+        const auto pair = WireGuardCore::request(core, {{"version", 1}, {"op", "generate_keypair"}});
+        require(pair.clean());
+        const auto derived = WireGuardCore::request(core, {{"version", 1}, {"op", "public_key"},
+            {"private_key", pair.object.value("private_key")}});
+        require(derived.clean() && derived.object.value("public_key") == pair.object.value("public_key"));
+        const auto invalid = WireGuardCore::request(core, {{"version", 1}, {"op", "public_key"}, {"private_key", "invalid"}});
+        require(invalid.problems.size() == 1 && invalid.problems.first().code == "wireguard_key_invalid");
+    }
+    if (keyOperations.contains("generate_preshared_key")) {
+        const auto psk = WireGuardCore::request(core, {{"version", 1}, {"op", "generate_preshared_key"}});
+        require(psk.clean() && !psk.object.value("preshared_key").toString().isEmpty());
+    }
     {
         // Record which Core build the round trips ran against (docs/wireguard-profiles.md).
         QProcess version;
@@ -758,6 +915,17 @@ static void wireGuardEditor(const QString &directory) {
     require(editor.isWireGuard() && editor.wireGuardText() == realKey && editor.configText() == profile);
     require(editor.findChild<QLineEdit *>("wireGuardPeer_Endpoint")->text() == "203.0.113.1:51820");
     require(editor.findChild<QLabel *>("allowedIpsNote")->text().contains("first three"));
+    auto *networkMtu = editor.findChild<QLineEdit *>("wireGuardInterface_MTU");
+    auto *networkDns = editor.findChild<QLineEdit *>("wireGuardInterface_DNS");
+    require(networkMtu->text().isEmpty() && networkDns->text().isEmpty());
+    networkMtu->setText("1380");
+    networkDns->setText("192.0.2.53");
+    const auto network = WireGuardCore::inspect(core, editor.wireGuardText());
+    require(network.clean() && network.fields().value("Interface/MTU").toString() == "1380"
+        && network.fields().value("Interface/DNS").toString() == "192.0.2.53");
+    networkMtu->clear();
+    networkDns->clear();
+    require(editor.wireGuardText() == realKey && editor.configText() == profile);
     editor.findChild<QLineEdit *>("wireGuardPeer_PersistentKeepalive")->setText("25");
     const QString realEdited = editor.wireGuardText();
     require(realEdited.startsWith(QChar::ByteOrderMark) && realEdited.contains("PersistentKeepalive = 25\r\n"));

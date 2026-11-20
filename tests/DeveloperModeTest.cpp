@@ -527,6 +527,11 @@ int main(int argc, char **argv) {
         return 0;
     }
 
+    // This fixture emulates a Core that validates profiles without a WG bridge.
+    if (argc == 2 && std::strcmp(argv[1], "wireguard") == 0) {
+        std::fputs("unknown command\n", stderr);
+        return 1;
+    }
     if (argc == 3 && std::strcmp(argv[1], "validate") == 0) {
         QFile file(QString::fromLocal8Bit(argv[2]));
         if (!file.open(QIODevice::ReadOnly)) return 1;

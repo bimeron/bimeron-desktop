@@ -20,6 +20,9 @@ JSON response on stdout, no arguments, files, network or DNS. Desktop uses these
 | `capabilities` | Whether the selected CLI has the bridge: `supported` and `document_api` 1 or later (mobile packet backends report `document_api` 0, which offers no editing). An older CLI answers `unknown command` with a nonzero exit; WG/AWG import and editing are then unavailable. The result is cached per executable path, size and modification time. |
 | `detect` | Decides whether an imported `.conf`, a clipboard text or a referenced `File` is a Bimeron profile or a WG/AWG configuration. |
 | `inspect` | Decoded fields, protocol and AWG version, AllowedIPs coverage and validation problems for the editor and the profile list label. |
+| `generate_keypair` | Creates the client key pair when the user first selects WireGuard for a new profile. |
+| `public_key` | Derives the read-only client public key for display and copying. |
+| `generate_preshared_key` | Creates a preshared key on request. |
 | `edit` | Applies `set_field` operations to the WG/AWG text; an empty value removes the key. A refused operation returns `error`, its problem and the original text. |
 | `import_uri` | Converts `vpn://`, `wireguard://` and `wg://` links to WG/AWG text and a suggested name. A link that cannot be converted returns problems only. |
 
@@ -89,10 +92,9 @@ Mode = vpn
 Default = proxy
 ```
 
-`[Interface] DNS` and `MTU` are deliberately omitted. WG `MTU` is the tunnel MTU and is
-independent of the Bimeron `[Interface] MTU` of the local TUN. WG `DNS` applies only while
-the profile sets no `[Interface] DNS`; an explicit Bimeron DNS wins, and without either
-Core uses 1.1.1.1.
+The Network tab reads DNS and MTU from the WireGuard document. Leaving either field
+empty uses Core defaults (DNS 1.1.1.1 and MTU 1420). Core also uses the WG MTU for the system adapter within 1280–1500. Import preserves an omitted MTU. Saving the profile removes any legacy Bimeron DNS and MTU overrides, including
+values that differ from the WireGuard document. Direct import preserves existing overrides until the first editor Save. Opening a profile leaves both files intact.
 
 ## Storage
 
@@ -129,8 +131,10 @@ A WG/AWG profile shows:
   config whose `File` differs from the stored reference (a new draft keeps the placeholder
   `wireguard.conf`, replaced when the pair is stored). When the running service lacks WG/AWG support, a notice
   explains that the profile can be edited but connects only after Core is started or updated.
-- **WireGuard**: private key and preshared key (masked, with Show), addresses, DNS, tunnel
-  MTU, server public key, endpoint, AllowedIPs and keepalive. A collapsed "AmneziaWG"
+- Key operations are enabled individually through the CLI's `capabilities.key_operations`.
+  Imported configurations retain their private and preshared keys. Older CLIs without
+  these operations still support manual entry. Only the client public key has a Copy action.
+- **WireGuard**: private key and preshared key (masked, with Show), addresses, server public key, endpoint, AllowedIPs and keepalive. A collapsed "AmneziaWG"
   section lists every AWG parameter grouped by version: `Jc`, `Jmin`, `Jmax`, `S1`, `S2`,
   `H1`-`H4` (values or `lo-hi` ranges), `I1`-`I5`, `S3`, `S4`, `HeaderProtectionKey`,
   `ContentPaddingAddition`, `RekeyAfterTime`, `RekeyTimeout`, `RejectAfterTime`,
@@ -151,8 +155,8 @@ the text and reloads the fields; a document Core cannot show as fields (`fields_
 duplicate keys, several `[Peer]` sections, malformed lines) stays in that tab and the
 WireGuard tab is disabled. While Core refuses a field edit, the WG/AWG config tab does not
 open, so the pending field draft is never replaced by the original text. Raw edits of a CRLF
-document keep CRLF. Opening, cancelling or
-saving without changes rewrites neither file.
+document keep CRLF. Opening and cancelling preserve both files. Saving an otherwise unchanged pair
+only updates the Bimeron file if it contains legacy DNS or MTU overrides.
 
 Save first requires Core `detect` to classify the WG/AWG text as `wireguard`: Core also accepts
 URI-backed `File` profiles, so another text would otherwise replace the managed key file.
@@ -176,8 +180,8 @@ already present:
 
 | Option | Value | Behavior |
 | --- | --- | --- |
-| Bimeron rules, outside AllowedIPs directly | `direct` (default) | Bimeron rules decide; tunnel traffic outside AllowedIPs goes directly. |
-| Bimeron rules, outside AllowedIPs blocked | `block` | The same, but that traffic is blocked. |
+| Direct outside AllowedIPs | `direct` (default) | Bimeron rules decide; tunnel traffic outside AllowedIPs goes directly. |
+| Block outside AllowedIPs | `block` | The same, but that traffic is blocked. |
 | Ignore AllowedIPs | `ignore` | All tunnel traffic goes into the tunnel. |
 | AllowedIPs only | `only` | As in plain WireGuard; Bimeron rules and the default action are not applied but stay in the profile. |
 
@@ -215,7 +219,7 @@ service and CLI capability gating, creation and the bridge helpers. With
 edit, link import and an editor round trip against the real Core.
 
 Development and tests use Core `feat/wireguard-awg` at
-`f902ecd375fea45ca5887a00eb6080250560cd33` (bridge and runtime adapter; live server checks pending). The final
+`660cb2cd6ae5ff62bb35a1fdd49a299b56e29e5a` (bridge and runtime adapter; live server checks pending). The final
 pin follows the Core `master` commit after the Core pull request merges.
 
 Live connection checks run only on the test VMs. Ordinary Desktop CI does not download Core.

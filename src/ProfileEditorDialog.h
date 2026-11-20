@@ -81,6 +81,7 @@ private:
     mutable QString bridgeError_;
     mutable QString cachedVisual_, cachedDocument_;
     void loadText(const QString &text);
+    QString draftConfigText() const;
     QString buildText() const;
     void addRule(const Rule &rule);
     void moveRule(int delta);
@@ -178,6 +179,8 @@ private:
     void syncWireGuardRaw();
     void refreshWireGuard();
     void checkWireGuard();
+    // Shows Core problems under their WireGuard fields; returns false when none maps to a field.
+    bool showWireGuardFieldProblems(const QList<CoreProblem> &problems);
     bool wireGuard_ = false;
     bool wireGuardCreatable_ = false;
     QString wgOriginal_, wgLoaded_;

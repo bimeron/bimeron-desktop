@@ -309,8 +309,10 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
     creating_ = freshDraft_ = create;
     wireGuard_ = !create && wireGuardText.has_value();
     // New WireGuard drafts need both the running service and the selected CLI bridge.
-    wireGuardCreatable_ = create && WireGuardCore::serviceSupported(capabilities)
-        && WireGuardCore::cliSupported(coreExecutable);
+    QJsonArray keyOperations;
+    const bool bridge = (wireGuard_ || (create && WireGuardCore::serviceSupported(capabilities)))
+        && WireGuardCore::cliSupported(coreExecutable, nullptr, &keyOperations);
+    wireGuardCreatable_ = create && bridge;
     setWindowTitle(create ? tr("Create profile") : tr("Profile settings"));
     resize(680, 520);
     setMinimumSize(620, 460);
@@ -715,8 +717,8 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
     allowedIpsMode_ = new HiDpiComboBox;
     allowedIpsMode_->setObjectName("allowedIpsMode");
     for (const auto &[label, value, hint] : std::initializer_list<std::tuple<QString, const char *, QString>>{
-             {tr("Bimeron rules, outside AllowedIPs directly"), "direct", tr("Default. Bimeron rules decide; tunnel traffic outside AllowedIPs goes directly.")},
-             {tr("Bimeron rules, outside AllowedIPs blocked"), "block", tr("Bimeron rules decide; tunnel traffic outside AllowedIPs is blocked.")},
+             {tr("Direct outside AllowedIPs"), "direct", tr("Default. Bimeron rules decide; tunnel traffic outside AllowedIPs goes directly.")},
+             {tr("Block outside AllowedIPs"), "block", tr("Bimeron rules decide; tunnel traffic outside AllowedIPs is blocked.")},
              {tr("Ignore AllowedIPs"), "ignore", tr("Bimeron rules decide; all tunnel traffic goes into the tunnel.")},
              {tr("AllowedIPs only"), "only", tr("As in plain WireGuard: AllowedIPs go into the tunnel, everything else directly. Bimeron rules are inactive.")}}) {
         allowedIpsMode_->addItem(label, QString(value));
@@ -871,7 +873,7 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
     buttons->button(QDialogButtonBox::Cancel)->setText(tr("Cancel"));
     connect(buttons, &QDialogButtonBox::accepted, this, [this] {
         if (native_ && nativeAuthPreview_) return;
-        if (rawOnly_ && tabs_->currentIndex() != tabs_->count() - 1) {
+        if (rawOnly_ && !isWireGuard() && tabs_->currentIndex() != tabs_->count() - 1) {
             tabs_->setCurrentIndex(tabs_->count() - 1);
             return;
         }
@@ -1023,7 +1025,7 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
     scroll->viewport()->setAutoFillBackground(false);
     parameterLayout->addWidget(scroll);
     tabs_->insertTab(tabs_->count() - 1, parameterPage_, tr("Protocol"));
-    wgForm_ = new WireGuardForm;
+    wgForm_ = new WireGuardForm(networkForm, coreExecutable, keyOperations);
     auto *wgScroll = new QScrollArea;
     wgScroll->setObjectName("wireGuardScroll");
     wgScroll->setWidgetResizable(true);
@@ -1050,7 +1052,13 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
     wgCheck_->setInterval(600);
     connect(wgCheck_, &QTimer::timeout, this, [this] { checkWireGuard(); });
     connect(wgForm_, &WireGuardForm::edited, this, [this] { wgEdited_ = true; wgCheck_->start(); });
+    connect(wgForm_, &WireGuardForm::versionChanged, this, [this] { refreshWireGuard(); });
+    connect(wgForm_, &WireGuardForm::keyGenerated, this, [this] {
+        if (!wgRawDirty_ && tabs_->currentWidget() == wgRawPage_) syncWireGuardRaw();
+        wgCheck_->start();
+    });
     connect(wgRaw_, &QPlainTextEdit::textChanged, this, [this] {
+        wgForm_->invalidateKeyGeneration();
         wgRawDirty_ = wgEdited_ = true;
         if (wgPage_) tabs_->setTabEnabled(tabs_->indexOf(wgPage_), true);
     });
@@ -1270,6 +1278,8 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
         refreshWireGuard();
     };
     connect(keySource_, &QComboBox::currentIndexChanged, this, [this, updateKeyControls] {
+        if (creating_ && isWireGuard()) wgForm_->initializeNewKey();
+        else if (!isWireGuard()) wgForm_->invalidateKeyGeneration();
         keyRevealed_ = false;
         updateKeyControls();
     });
@@ -1965,8 +1975,8 @@ QString ProfileEditorDialog::buildText() const {
         + "\n\n[AccessKey]\n" + accessKey
         + "\n\n[Interface]\nMode = " + mode_->currentData().toString()
         + "\nName = " + interfaceName_->text()
-        + "\nMTU = " + QString::number(mtu_->value())
-        + "\nDNS = " + dns_->text()
+        + "\nMTU = " + (isWireGuard() ? valueFor(loadedText_, "Interface", "MTU") : QString::number(mtu_->value()))
+        + "\nDNS = " + (isWireGuard() ? valueFor(loadedText_, "Interface", "DNS") : dns_->text())
         + "\nIPv6 = " + ipv6_->currentData().toString()
         + "\nKillSwitch = " + QString(killSwitch_->isChecked() ? "true" : "false")
         + "\nListen = " + listen_->text()
@@ -2206,6 +2216,11 @@ void ProfileEditorDialog::syncRaw() {
 }
 
 QString ProfileEditorDialog::configText() const {
+    const QString draft = draftConfigText();
+    return isWireGuard() ? ProfileTextEdit::withoutWireGuardNetworkOverrides(draft) : draft;
+}
+
+QString ProfileEditorDialog::draftConfigText() const {
     if (rawDirty_) {
         // QPlainTextEdit normalizes line endings; untouched Raw retains the source.
         QString normalized = loadedText_;
@@ -2261,7 +2276,7 @@ void ProfileEditorDialog::reject() {
     }
     const bool wireGuardChanged = isWireGuard() && (creating_ ? wgEdited_
         : (wireGuardText() != wgOriginal_ || !wgBridgeError_.isEmpty()));
-    if (reordered || wireGuardChanged || buildText() != visualBaseline_ || (freshDraft_ ? rawDirty_ : configText() != originalText_)) {
+    if (reordered || wireGuardChanged || buildText() != visualBaseline_ || (freshDraft_ ? rawDirty_ : draftConfigText() != originalText_)) {
         QMessageBox prompt(QMessageBox::Question, tr("Discard changes"), tr("Discard unsaved changes?"), QMessageBox::NoButton, this);
         auto *discard = prompt.addButton(tr("Discard changes"), QMessageBox::DestructiveRole);
         prompt.addButton(tr("Continue editing"), QMessageBox::RejectRole);
@@ -2944,6 +2959,16 @@ void ProfileEditorDialog::focusProblem(const CoreProblem &problem) {
 }
 
 void ProfileEditorDialog::showProblems(const CoreFailure &failure) {
+    bool inline_ = !failure.problems.isEmpty() && wgForm_ && !(wgRawDirty_ || wgRawOnly_);
+    for (const auto &problem : failure.problems) inline_ = inline_ && problem.document == "wireguard";
+    if (inline_ && problemWidget(failure.problems.first()) && showWireGuardFieldProblems(failure.problems)) {
+        const CoreErrorCatalog catalog = CoreErrorCatalog::forExecutable(coreExecutable_);
+        QStringList lines;
+        for (const auto &problem : failure.problems) lines << describeCoreProblem(problem, catalog, problemLabel(problemWidget(problem)));
+        wgForm_->setStatus(lines.join('\n'), true);
+        focusProblem(failure.problems.first());
+        return;
+    }
     if (failure.problems.isEmpty()) {
         QMessageBox box(QMessageBox::Warning, tr("Error"), safeCoreDiagnostic(failure.text.toUtf8()), QMessageBox::Ok, this);
         box.setTextFormat(Qt::PlainText);
@@ -3042,6 +3067,10 @@ bool ProfileEditorDialog::validateDraft(const QString &text, CoreFailure *failur
         return false;
     }
     if (isWireGuard()) {
+        if (wgForm_->keyGenerationPending()) {
+            failure->text = tr("Wait for Core to finish generating the key before saving.");
+            return false;
+        }
         const QString wireGuard = wireGuardOverride ? *wireGuardOverride : wireGuardText();
         if (!wireGuardOverride && !wgBridgeError_.isEmpty()) {
             failure->text = wgBridgeError_;
@@ -3125,6 +3154,7 @@ void ProfileEditorDialog::loadWireGuard(const QString &text, const QJsonObject &
     // WG/AWG config tab edits the text.
     wgRawOnly_ = (inspection.isEmpty() && !text.isEmpty()) || !inspection.value("fields_error").toString().isEmpty();
     wgForm_->setValues(inspection.value("fields").toObject());
+    wgForm_->setAmneziaVersion(inspection.value("awg_version").toString());
     {
         const QSignalBlocker blocker(wgRaw_);
         wgRaw_->setPlainText(text);
@@ -3180,13 +3210,22 @@ void ProfileEditorDialog::refreshWireGuard() {
     tabs_->setTabEnabled(formIndex, wireGuard && !wgRawOnly_);
     tabs_->setTabEnabled(rawIndex, wireGuard);
     tabs_->setTabText(tabs_->count() - 1, wireGuard ? tr("Bimeron config") : tr("Raw config"));
+    tabs_->setTabText(formIndex, wgForm_->amneziaVersion().isEmpty() ? QStringLiteral("WireGuard") : QStringLiteral("AmneziaWG"));
     if (auto *general = qobject_cast<QFormLayout *>(name_->parentWidget()->layout()))
         setFormRowVisible(general, wgServiceNotice_, wireGuard && !creating_ && !WireGuardCore::serviceSupported(capabilities_));
+    auto *networkForm = qobject_cast<QFormLayout *>(mtu_->parentWidget()->layout());
+    if (wireGuard) {
+        tabs_->setTabEnabled(tabs_->indexOf(networkForm->parentWidget()), !rawOnly_ || !wgRawOnly_);
+    }
+    for (QWidget *control : QList<QWidget *>{interfaceName_, ipv6_, killSwitch_})
+        setFormRowVisible(networkForm, control, !wireGuard || !rawOnly_);
+    setFormRowVisible(networkForm, mtu_, !wireGuard);
+    setFormRowVisible(networkForm, dns_, !wireGuard);
+    wgForm_->showNetworkFields(wireGuard, !wgRawOnly_ && !wgRawDirty_);
     allowedIpsGroup_->setVisible(wireGuard);
     const QString mode = allowedIpsMode_->currentData().toString();
     for (QWidget *widget : std::as_const(ruleControls_)) widget->setEnabled(!wireGuard || mode != "only");
     if (!wireGuard) return;
-    dns_->setPlaceholderText(tr("Empty uses the WireGuard DNS, otherwise 1.1.1.1"));
     allowedIpsHint_->setText(allowedIpsMode_->currentData(Qt::ToolTipRole).toString());
     const QString allowed = wgRawDirty_ || wgRawOnly_ ? wgInspection_.value("fields").toObject().value("Peer/AllowedIPs").toString()
                                                       : wgForm_->values().value("Peer/AllowedIPs");
@@ -3222,15 +3261,33 @@ void ProfileEditorDialog::checkWireGuard() {
         lines << describeCoreProblem(problem, catalog, problemLabel(problemWidget(problem)));
     }
     // Mark the fields Core names, so a rejected value is visible where it is edited.
-    for (QWidget *widget : wgForm_->findChildren<QWidget *>()) {
+    showWireGuardFieldProblems(problems);
+    if (wgInspection_.isEmpty() && wgCacheKey_.isEmpty()) wgForm_->setStatus({}, false);
+    else wgForm_->setStatus(lines.isEmpty() ? tr("Core accepts this WireGuard configuration.") : lines.join('\n'), !lines.isEmpty());
+    refreshWireGuard();
+}
+
+bool ProfileEditorDialog::showWireGuardFieldProblems(const QList<CoreProblem> &problems) {
+    // Clear earlier marks and messages of the WireGuard form, then mark the fields
+    // Core names and show each message directly under its field.
+    for (const QString &id : WireGuardForm::mainFields() + WireGuardForm::amneziaFields()) {
+        QWidget *widget = wgForm_->widget(id);
         if (!widget->property("coreProblem").toBool()) continue;
         widget->setProperty("coreProblem", false);
         widget->style()->unpolish(widget);
         widget->style()->polish(widget);
     }
-    for (const auto &problem : problems)
-        if (QWidget *widget = problemWidget(problem)) markProblemField(widget);
-    if (wgInspection_.isEmpty() && wgCacheKey_.isEmpty()) wgForm_->setStatus({}, false);
-    else wgForm_->setStatus(lines.isEmpty() ? tr("Core accepts this WireGuard configuration.") : lines.join('\n'), !lines.isEmpty());
-    refreshWireGuard();
+    wgForm_->clearFieldProblems();
+    const CoreErrorCatalog catalog = CoreErrorCatalog::forExecutable(coreExecutable_);
+    bool shown = false;
+    for (const auto &problem : problems) {
+        QWidget *widget = problemWidget(problem);
+        if (!widget || problem.document != "wireguard") continue;
+        markProblemField(widget);
+        const QString message = describeCoreProblem(problem, catalog, QString());
+        wgForm_->setFieldProblem(problem.section + '/' + problem.field,
+            message.isEmpty() ? tr("Core rejected this field value.") : message);
+        shown = true;
+    }
+    return shown;
 }
