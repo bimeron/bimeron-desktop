@@ -625,6 +625,12 @@ static void defaultDnsRoundTrip(const QString &directory) {
         editor.findChild<QLineEdit *>("interfaceName")->setText("Edited");
         return editor.configText();
     };
+    const QString bundledDns = "1.1.1.1, 1.0.0.1";
+    ProfileEditorDialog offlineDraft({}, {}, nullptr, {}, {}, {}, true);
+    require(dnsField(offlineDraft)->text().isEmpty() && dnsField(offlineDraft)->placeholderText() == bundledDns);
+    require(dnsField(offlineDraft)->toolTip().contains(bundledDns));
+    require(!offlineDraft.configText().contains("DNS ="));
+
     // A new draft leaves DNS empty, shows the Core default and omits the option.
     ProfileEditorDialog draft({}, advertising, nullptr, {}, {}, {}, true);
     require(dnsField(draft)->text().isEmpty() && dnsField(draft)->placeholderText() == advertised);
@@ -643,11 +649,15 @@ static void defaultDnsRoundTrip(const QString &directory) {
     ProfileEditorDialog opened(created, advertising);
     require(opened.findChild<QTabWidget *>()->isTabEnabled(0));
     require(dnsField(opened)->text().isEmpty() && dnsField(opened)->placeholderText() == advertised);
+    require(dnsField(opened)->toolTip().contains(advertised));
     require(opened.configText() == created);
     const QString edited = editInterface(opened);
     require(edited.contains("\nName = Edited\n") && !edited.contains("DNS ="));
     require(ProfileStore::writeConfig(path, edited.toUtf8(), &error));
     require(readProfile(path) == edited);
+    ProfileEditorDialog offlineReopened(readProfile(path), {});
+    require(dnsField(offlineReopened)->text().isEmpty() && dnsField(offlineReopened)->placeholderText() == bundledDns);
+    require(offlineReopened.configText() == edited);
     ProfileEditorDialog reopened(edited, caps);
     require(dnsField(reopened)->text().isEmpty() && dnsField(reopened)->placeholderText() == "1.1.1.1");
     require(reopened.configText() == edited);

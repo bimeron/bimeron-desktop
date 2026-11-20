@@ -12,7 +12,7 @@ set(BIMERON_CORE_UPDATE_PINNED_KEYS
     # Software key: signed every Core release up to and including v0.4.0-beta.2; signs nothing new.
     "7370a2d8cf890e5e:bk6SfABmDG88uhUupYT+ia6dtSrpHbnGaBCfYvihJF0="
     # YubiKey A, serial 22337246, OpenPGP signature slot, Ed25519 generated on-card:
-    # primary signer from Core v0.4.0-beta.3 on.
+    # primary signer from Core v0.4.0 on.
     "e6fb20d55656904a:lRcnhdj4yU4TrinOa4U177FG7wrwUPv/v9zxA/WiJMI="
     # YubiKey B, serial 19344964, OpenPGP signature slot, Ed25519 generated on-card:
     # backup signer, used only when YubiKey A is unavailable.
