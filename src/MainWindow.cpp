@@ -1359,10 +1359,13 @@ QString MainWindow::wireGuardTemplate(const QString &name) {
 // Validates a pair as Core will read it: the profile references a protected
 // draft of the WG/AWG text beside it. Both drafts are removed afterwards.
 bool MainWindow::validatePair(const QString &profileText, const QString &wireGuardText, const QString &directory,
-                              const QString &profilePath, const QString &draftDirectory, CoreFailure *failure) const {
+                              const QString &profilePath, const QString &draftDirectory, CoreFailure *failure, QString *preparedProfile) const {
     CoreFailure local;
     if (!failure) failure = &local;
     QString *error = &failure->text;
+    if (!draftDirectory.isEmpty()
+        && !ProfileStore::importReferencesSafe(ProfileTextEdit::field(profileText, "AccessKey", "File", {}).toUtf8(), error))
+        return false;
     // Core accepts URI-backed File profiles too; a pair must hold a WireGuard file.
     const auto detected = WireGuardCore::detect(validationExecutable_, wireGuardText);
     if (!detected.answered()) { *error = detected.error; return false; }
@@ -1371,20 +1374,20 @@ bool MainWindow::validatePair(const QString &profileText, const QString &wireGua
         failure->problems = detected.problems;
         return false;
     }
-    QStringList skipped;
-    const QString prepared = GeoDataSelection::materialize(profileText, profilePath, validationExecutable_,
-        GeoDataSelection::instance()->paths(), error, draftDirectory, &skipped);
-    if (!error->isEmpty()) return false;
-    const QString conflict = routingCompatibilityError(prepared, capabilities_);
-    if (!conflict.isEmpty()) { *error = conflict; return false; }
     const QString id = QUuid::createUuid().toString(QUuid::WithoutBraces);
     const QString keyName = QStringLiteral(".bimeron-validate-%1.wg.conf").arg(id);
     const QString keyPath = QDir(directory).filePath(keyName);
     const QString draftPath = QDir(directory).filePath(QStringLiteral(".bimeron-validate-%1.conf").arg(id));
-    const QByteArray draft = ProfileTextEdit::field(GeoDataSelection::withoutRules(prepared, skipped), "AccessKey", "File", keyName).toUtf8();
-    bool valid = ProfileStore::writeConfig(keyPath, wireGuardText.toUtf8(), error)
-        && ProfileStore::writeConfig(draftPath, draft, error);
-    if (valid) valid = validateConfig(draftPath, failure);
+    if (!ProfileStore::writeConfig(keyPath, wireGuardText.toUtf8(), error)) return false;
+    QStringList skipped;
+    const QString prepared = GeoDataSelection::materialize(profileText, profilePath, validationExecutable_,
+        GeoDataSelection::instance()->paths(), error, draftDirectory, &skipped, keyName);
+    if (error->isEmpty()) *error = routingCompatibilityError(prepared, capabilities_);
+    bool valid = error->isEmpty();
+    if (valid) {
+        const QString draft = ProfileTextEdit::field(GeoDataSelection::withoutRules(prepared, skipped), "AccessKey", "File", keyName);
+        valid = ProfileStore::writeConfig(draftPath, draft.toUtf8(), error) && validateConfig(draftPath, failure);
+    }
     // Remove both drafts independently: the key draft holds the private key.
     const bool profileRemoved = !QFileInfo::exists(draftPath) || QFile::remove(draftPath);
     const bool keyRemoved = !QFileInfo::exists(keyPath) || QFile::remove(keyPath);
@@ -1394,6 +1397,7 @@ bool MainWindow::validatePair(const QString &profileText, const QString &wireGua
         *error = tr("Cannot remove the protected validation draft; the original profile was retained.");
         return false;
     }
+    if (valid && preparedProfile) *preparedProfile = prepared;
     return valid;
 }
 
@@ -1668,24 +1672,33 @@ void MainWindow::editProfile(int row) {
     dialog.setDeveloperMode(developerMode_);
     while (dialog.exec() == QDialog::Accepted) {
         QString error;
-        QStringList skipped;
-        const QString prepared = GeoDataSelection::materialize(dialog.configText(), profiles_[row].path,
-            validationExecutable_, GeoDataSelection::instance()->paths(), &error, {}, &skipped);
-        if (!error.isEmpty()) { QMessageBox::warning(&dialog, tr("Error"), error); continue; }
-        const QByteArray data = prepared.toUtf8();
+        const QString draft = dialog.configText();
         const QByteArray keyData = wireGuard ? dialog.wireGuardText().toUtf8() : QByteArray();
         const bool keyChanged = wireGuard && keyData != wireGuardData;
-        if (data == originalData && !keyChanged) break;
         CoreFailure failure;
-        if (wireGuard && ProfileStore::keyFileReference(prepared) != wireGuardReference) {
-            QMessageBox::warning(&dialog, tr("Error"), tr("The WireGuard configuration file of this profile is managed by Bimeron. Keep File = %1 and edit the WG/AWG config tab instead.").arg(wireGuardReference));
-            continue;
+        QString prepared;
+        if (wireGuard) {
+            if (ProfileStore::keyFileReference(draft) != wireGuardReference) {
+                QMessageBox::warning(&dialog, tr("Error"), tr("The WireGuard configuration file of this profile is managed by Bimeron. Keep File = %1 and edit the WG/AWG config tab instead.").arg(wireGuardReference));
+                continue;
+            }
+            if (!validatePair(draft, ProfileStore::keyFileText(keyData), profileDirectory, profiles_[row].path, {}, &failure, &prepared)) {
+                QMessageBox::warning(&dialog, tr("Error"), failure.text.isEmpty() ? describeProblems(failure.problems) : failure.text);
+                continue;
+            }
+        } else {
+            QStringList skipped;
+            prepared = GeoDataSelection::materialize(draft, profiles_[row].path,
+                validationExecutable_, GeoDataSelection::instance()->paths(), &error, {}, &skipped);
+            if (!error.isEmpty()) { QMessageBox::warning(&dialog, tr("Error"), error); continue; }
+            if (prepared.toUtf8() == originalData) break;
+            if (!validateDraft(prepared, &failure)) {
+                QMessageBox::warning(&dialog, tr("Error"), failure.text.isEmpty() ? describeProblems(failure.problems) : failure.text);
+                continue;
+            }
         }
-        if (wireGuard ? !validatePair(prepared, ProfileStore::keyFileText(keyData), profileDirectory, profiles_[row].path, {}, &failure)
-                      : !validateDraft(prepared, &failure)) {
-            QMessageBox::warning(&dialog, tr("Error"), failure.text.isEmpty() ? describeProblems(failure.problems) : failure.text, QMessageBox::Ok);
-            continue;
-        }
+        const QByteArray data = prepared.toUtf8();
+        if (data == originalData && !keyChanged) break;
         QFile current(profiles_[row].path);
         QByteArray currentKey;
         if (!current.open(QIODevice::ReadOnly) || current.read(65537) != originalData
@@ -2656,6 +2669,7 @@ bool MainWindow::startProfile(int row) {
         return false;
     }
     const QString mode = routingInterfaceValue(profileText, "Mode", "vpn");
+    const bool onlyAllowedIPs = routingAllowedIPsOnly(profileText);
     const QString routingConflict = routingCompatibilityError(profileText, capabilities_);
     if (!routingConflict.isEmpty()) {
         QMessageBox::warning(this, tr("Feature not supported"), routingConflict);
@@ -2664,8 +2678,10 @@ bool MainWindow::startProfile(int row) {
     QString unsupported;
     if (mode == "vpn" && !capabilities_.value("vpn").toBool()) unsupported = tr("system VPN");
     else if (mode == "proxy" && !capabilities_.value("proxy").toBool()) unsupported = tr("local SOCKS5");
-    else if (QRegularExpression(R"((?im)^\s*Domain\s*=)").match(profileText).hasMatch() && !capabilities_.value("domain_split").toBool()) unsupported = tr("domain rules");
-    else if (QRegularExpression(R"((?im)^\s*CIDR\s*=)").match(profileText).hasMatch() && !capabilities_.value("ip_split").toBool()) unsupported = tr("IP/CIDR rules");
+    else if (!onlyAllowedIPs
+             && QRegularExpression(R"((?im)^\s*Domain\s*=)").match(profileText).hasMatch() && !capabilities_.value("domain_split").toBool()) unsupported = tr("domain rules");
+    else if (!onlyAllowedIPs
+             && QRegularExpression(R"((?im)^\s*CIDR\s*=)").match(profileText).hasMatch() && !capabilities_.value("ip_split").toBool()) unsupported = tr("IP/CIDR rules");
     else if (mode == "vpn" && !capabilities_.value("ipv6").toBool()
              && routingInterfaceValue(profileText, "IPv6", "enable") != "disable") unsupported = tr("IPv6");
     else if (routingInterfaceValue(profileText, "KillSwitch", "false") == "true" && !capabilities_.value("kill_switch").toBool()) unsupported = tr("kill switch");
@@ -2681,7 +2697,7 @@ bool MainWindow::startProfile(int row) {
     auto *process = new QProcess(this);
     validationProcess_ = process;
     process->setProgram(executable);
-    const bool geoValidation = QRegularExpression(R"((?m)^\s*Geo(?:IP|Site)\s*=)").match(profileText).hasMatch();
+    const bool geoValidation = !GeoDataSelection::requiredKinds(profileText).isEmpty();
     process->setArguments(geoValidation ? QStringList{"validate", "--json", path} : QStringList{"validate", path});
     connect(process, &QProcess::readyReadStandardOutput, this, [process, geoValidation] {
         const QByteArray chunk = process->readAllStandardOutput();
@@ -3395,7 +3411,7 @@ bool MainWindow::validateConfig(const QString &path, CoreFailure *failure, bool 
     // Cores that publish an error catalog return structured problems from
     // validate --json for every profile; older cores keep the previous flow.
     const CoreErrorCatalog catalog = errorCatalog();
-    const bool geoValidation = QRegularExpression(R"((?m)^\s*Geo(?:IP|Site)\s*=)").match(QString::fromUtf8(bytes)).hasMatch();
+    const bool geoValidation = !GeoDataSelection::requiredKinds(QString::fromUtf8(bytes)).isEmpty();
     const bool structured = catalog.available();
     process.setArguments(geoValidation || structured ? QStringList{"validate", "--json", QFileInfo(path).absoluteFilePath()}
                                                      : QStringList{"validate", QFileInfo(path).absoluteFilePath()});

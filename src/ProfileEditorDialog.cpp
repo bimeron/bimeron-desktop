@@ -1,5 +1,6 @@
 #include "ProfileEditorDialog.h"
 #include "ProfileTextEdit.h"
+#include "RoutingCompatibility.h"
 #include "HiDpiCheckBox.h"
 #include "FormRowVisibility.h"
 #include "HiDpiComboBox.h"
@@ -739,7 +740,7 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
     allowedIpsNote_->setObjectName("allowedIpsNote");
     allowedIpsGroup_->hide();
     routingLayout->addWidget(allowedIpsGroup_);
-    connect(allowedIpsMode_, &QComboBox::currentIndexChanged, this, [this] { refreshWireGuard(); });
+    connect(allowedIpsMode_, &QComboBox::currentIndexChanged, this, [this] { refreshRouting(); refreshWireGuard(); });
     auto *rulesArea = new QWidget;
     rulesArea->setObjectName("routingRules");
     auto *rulesLayout = new QVBoxLayout(rulesArea);
@@ -1681,7 +1682,9 @@ void ProfileEditorDialog::loadText(const QString &text) {
     const int mtu = fieldValue("Interface", "MTU").toInt();
     mtu_->setValue(mtu ? mtu : 1420);
     dns_->setText(fieldValue("Interface", "DNS").isEmpty() ? (wireGuard_ ? QString() : QStringLiteral("1.1.1.1")) : fieldValue("Interface", "DNS"));
-    const QString allowedMode = fieldValue("Routing", "AllowedIPsMode");
+    const QString allowedMode = documentFields_.contains("Routing/AllowedIPsMode")
+        ? documentFields_.value("Routing/AllowedIPsMode").toString()
+        : ProfileStore::decodeOptionValue(routingSectionValue(text, "Routing", "AllowedIPsMode"));
     const int allowedIndex = allowedIpsMode_->findData(allowedMode.isEmpty() ? QStringLiteral("direct") : allowedMode);
     if (allowedIndex < 0) hasUnknownSettings_ = rawOnly_ = true;
     allowedIpsMode_->setCurrentIndex(qMax(0, allowedIndex));
@@ -2435,7 +2438,7 @@ QString ProfileEditorDialog::documentText() const {
 
 QString ProfileEditorDialog::routingError() const {
     if (coreExecutable_.isEmpty()) return {};
-    if (rawDirty_ || rawOnly_) return {};
+    if (rawDirty_ || rawOnly_ || (isWireGuard() && allowedIpsMode_->currentData() == "only")) return {};
     for (int row = 0; row < rules_->rowCount(); ++row) {
         if (!rules_->cellWidget(row, 3)) continue;
         const Rule rule = tableRule(row);
@@ -2533,7 +2536,7 @@ void ProfileEditorDialog::refreshRouting() {
     const bool dark = palette().color(QPalette::Window).lightness() < 128;
     routingStatus_->setStyleSheet(notes.isEmpty() ? QString() : QStringLiteral("color: %1").arg(dark ? "#f3cf72" : "#b54708"));
     auto *statusScroll = findChild<QScrollArea *>("routingStatusScroll");
-    statusScroll->setVisible(!notes.isEmpty());
+    statusScroll->setVisible(!notes.isEmpty() && !(isWireGuard() && allowedIpsMode_->currentData() == "only"));
 }
 
 void ProfileEditorDialog::inspectDataset(const QString &kind) {

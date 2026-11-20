@@ -185,6 +185,12 @@ already present:
 | Ignore AllowedIPs | `ignore` | All tunnel traffic goes into the tunnel. |
 | AllowedIPs only | `only` | As in plain WireGuard; Bimeron rules and the default action are not applied but stay in the profile. |
 
+For a new or imported pair with active GeoData rules, validation uses a protected draft
+of the WG/AWG sibling. Other relative dependencies remain subject to the import checks.
+In `only` mode Desktop keeps the rules and skips their service capability and GeoData
+availability checks. Quoted values in the Bimeron config use Core's Go string escapes.
+Core validates the complete profile before a connection.
+
 Block rules win in the first three options and direct rules apply inside AllowedIPs (Core
 behavior). Beside the selector the tab shows the option's hint and the AllowedIPs list
 (read only, from the WireGuard tab). Notes use Core's `allowed_ips.coverage`, never a
@@ -219,7 +225,7 @@ service and CLI capability gating, creation and the bridge helpers. With
 edit, link import and an editor round trip against the real Core.
 
 Development and tests use Core `feat/wireguard-awg` at
-`660cb2cd6ae5ff62bb35a1fdd49a299b56e29e5a` (bridge and runtime adapter; live server checks pending). The final
+`64759ac72fe8b8f6e78111859420998e3c12e044` (bridge and runtime adapter; live server checks pending). The final
 pin follows the Core `master` commit after the Core pull request merges.
 
 Live connection checks run only on the test VMs. Ordinary Desktop CI does not download Core.

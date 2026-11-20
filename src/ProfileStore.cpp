@@ -134,6 +134,11 @@ bool safeUriReferences(const QString &value) {
 }
 }
 
+QString ProfileStore::decodeOptionValue(const QString &value) {
+    QString decoded;
+    return value.startsWith('"') && goUnquote(value, &decoded) == Unquoted::Ok ? decoded : value;
+}
+
 bool ProfileStore::writeConfig(const QString &path, const QByteArray &data, QString *error) {
     const QFileInfo existing(path);
     if (existing.exists() && (!existing.isWritable() || !(existing.permissions()

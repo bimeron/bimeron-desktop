@@ -1,4 +1,5 @@
 #pragma once
+#include "ProfileStore.h"
 #include <QJsonObject>
 #include <QObject>
 #include <QStringList>
@@ -48,9 +49,7 @@ inline QStringList routingRetainedGroups(QStringList checked, const QStringList 
     return result;
 }
 
-// Decode the JSON-compatible quoted values emitted by Core section patches.
-// Unsupported Go escape syntax remains unavailable to host interpretation.
-inline QString routingInterfaceValue(const QString &text, const QString &key, const QString &fallback = {}) {
+inline QString routingSectionValue(const QString &text, const QString &sectionName, const QString &key, const QString &fallback = {}) {
     QString section;
     for (QString line : text.split('\n')) {
         line = line.trimmed();
@@ -58,15 +57,25 @@ inline QString routingInterfaceValue(const QString &text, const QString &key, co
         if (line.isEmpty() || line.startsWith('#') || line.startsWith(';')) continue;
         if (line.startsWith('[') && line.endsWith(']')) { section = line.mid(1, line.size() - 2).trimmed(); continue; }
         const int eq = line.indexOf('=');
-        if (section != "Interface" || eq < 0 || line.left(eq).trimmed() != key) continue;
-        const QString value = line.mid(eq + 1).trimmed();
-        if (!value.startsWith('"')) return value;
-        QJsonParseError error;
-        const auto parsed = QJsonDocument::fromJson(('[' + value + ']').toUtf8(), &error);
-        if (error.error == QJsonParseError::NoError && parsed.isArray() && parsed.array().size() == 1 && parsed.array().at(0).isString()) return parsed.array().at(0).toString();
-        return fallback;
+        if (section != sectionName || eq < 0 || line.left(eq).trimmed() != key) continue;
+        return line.mid(eq + 1).trimmed();
     }
     return fallback;
+}
+
+inline QString routingInterfaceValue(const QString &text, const QString &key, const QString &fallback = {}) {
+    const QString value = routingSectionValue(text, "Interface", key, fallback);
+    if (!value.startsWith('"')) return value;
+    QJsonParseError error;
+    const auto parsed = QJsonDocument::fromJson(('[' + value + ']').toUtf8(), &error);
+    if (error.error == QJsonParseError::NoError && parsed.isArray() && parsed.array().size() == 1 && parsed.array().at(0).isString())
+        return parsed.array().at(0).toString();
+    return fallback;
+}
+
+// Core validates that this setting belongs to a WireGuard profile.
+inline bool routingAllowedIPsOnly(const QString &text) {
+    return ProfileStore::decodeOptionValue(routingSectionValue(text, "Routing", "AllowedIPsMode")) == "only";
 }
 
 // Conservative host gate; Core independently validates executable policy.
@@ -107,6 +116,7 @@ inline QString routingCompatibilityError(const QString &text, const QJsonObject 
         if (section == "Rule" && QStringList{"CIDR", "Domain", "GeoIP", "GeoSite"}.contains(key)) matchers.append(key);
     }
     if (ikev2 && !matchers.isEmpty()) return QObject::tr("IKEv2 does not support split routing. Correct the profile or keep the rules disabled.");
+    if (routingAllowedIPsOnly(text)) return {};
     for (const QString &matcher : matchers) {
         if (kill && matcher != "CIDR") return QObject::tr("Kill switch permits only CIDR rules. Disable incompatible rules explicitly or change protection explicitly.");
         const QString flag = matcher == "CIDR" ? "ip_split" : matcher == "Domain" ? "domain_split" : matcher == "GeoIP" ? "geoip_split" : "geosite_split";

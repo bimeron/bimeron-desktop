@@ -81,7 +81,7 @@ private:
     bool importWireGuardLink(const QString &uri, const QString &name, QWidget *parent);
     bool importWireGuardText(const QString &text, QWidget *parent);
     bool validatePair(const QString &profileText, const QString &wireGuardText, const QString &directory,
-                      const QString &profilePath, const QString &draftDirectory, CoreFailure *failure) const;
+                      const QString &profilePath, const QString &draftDirectory, CoreFailure *failure, QString *preparedProfile = nullptr) const;
     bool readWireGuard(const QString &profilePath, const QString &profileText, QByteArray *data, bool *definitive = nullptr) const;
     QString wireGuardLabel(int row) const;
     QString profileDetail(int row, const ProfileConnectionInfo &info) const;

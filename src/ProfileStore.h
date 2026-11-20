@@ -30,6 +30,8 @@ public:
                          const QString &identityFile = {}, const QString &knownHostsFile = {}) const;
     static bool sshFilesReadable(const QString &configText, const QString &profilePath, QString *error = nullptr);
     static QString sectionName(const QString &line);
+    // Decode a Core double-quoted option. Invalid values keep their original spelling.
+    static QString decodeOptionValue(const QString &value);
     static QString uriSourceField(const QString &uri);
     static QString identity(const QString &absolutePath);
     static QString displayName(const QString &configPath);

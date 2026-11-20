@@ -404,6 +404,11 @@ static void wireGuardEditor(const QString &directory) {
         require(!editor.findChild<QWidget *>("routingRules")->isEnabled());
         require(editor.findChild<QLabel *>("allowedIpsNote")->text().contains("inactive"));
         require(editor.configText().contains("AllowedIPsMode = only"));
+        const QString retained = editor.configText() + "[Rule]\nDomain = example.invalid\nAction = direct\n"
+            "[Rule]\nGeoIP = zz\nAction = direct\n";
+        require(routingCompatibilityError(retained, {}).isEmpty() && GeoDataSelection::requiredKinds(retained).isEmpty());
+        const QString active = QString(retained).replace("AllowedIPsMode = only", "AllowedIPsMode = block");
+        require(!routingCompatibilityError(active, {}).isEmpty() && GeoDataSelection::requiredKinds(active).contains("geoip"));
         mode->setCurrentIndex(mode->findData("direct"));
         require(editor.findChild<QWidget *>("routingRules")->isEnabled() && !editor.configText().contains("AllowedIPsMode"));
 
@@ -423,6 +428,12 @@ static void wireGuardEditor(const QString &directory) {
         require(problem && !problem->isHidden() && !problem->text().isEmpty());
         require(editor.findChild<QLineEdit *>("wireGuardInterface_Address")->text() == "10.0.0.2/32 # comment");
         require(editor.result() != QDialog::Accepted);
+    }
+    {
+        const QString quotedMode = profile + "AllowedIPsMode = \"\\x6fnly\"\n";
+        ProfileEditorDialog editor(quotedMode, caps, nullptr, accepted, "fake-core", path, false, key);
+        require(editor.findChild<QComboBox *>("allowedIpsMode")->currentData() == "only");
+        require(!editor.findChild<QWidget *>("routingRules")->isEnabled() && editor.configText() == quotedMode);
     }
     {
         // Ambiguous documents stay in the WG/AWG config tab.

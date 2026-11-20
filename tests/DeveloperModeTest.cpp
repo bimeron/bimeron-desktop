@@ -588,6 +588,10 @@ int main(int argc, char **argv) {
     // No network database checks, and no shipped databases unless a fixture provides them.
     qputenv("BIMERON_DISABLE_GEODATA_UPDATES", "1");
     qputenv("BIMERON_BUNDLED_GEODATA", temporary.filePath("no-bundled-geodata").toUtf8());
+    if (app.arguments().contains("--wireguard-routing")) {
+        ConnectionManagementTest::wireGuardRouting(qEnvironmentVariable("BIMERON_WIREGUARD_CORE"));
+        return 0;
+    }
     if (app.arguments().contains("--repair-quit-ownership")) {
         ConnectionManagementTest::repairQuitOwnership();
         return 0;
