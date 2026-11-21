@@ -1239,9 +1239,6 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
         key_->setEnabled(true);
         const bool wireGuard = source == "WireGuard";
         setFormRowVisible(generalForm, keyRow, !explicitKey && !explicitSocks5 && !explicitVless && !explicitSsh && !added && !wireGuard);
-        // WireGuard DNS applies only while the profile sets no DNS of its own.
-        if (freshDraft_ && wireGuard && dns_->text() == "1.1.1.1") dns_->clear();
-        else if (freshDraft_ && !wireGuard && dns_->text().isEmpty()) dns_->setText("1.1.1.1");
         key_->setVisible(file || keyRevealed_);
         browse->setVisible(file);
         reveal->setVisible(ss || ssconf || socks5 || source == "VLESS" || source == "Hysteria2" || source == "SSH" || source == "Key" || linkSources().contains(source));
