@@ -1795,3 +1795,21 @@ hold. After the helper exits, Desktop obtains a new authenticated hello and
 status, and records a guarded resume attempt in the current Windows user's
 local, non-roaming application data before dispatch. A service restart cannot
 reset the attempt for the same residual profile and generation.
+
+### Windows MSI service preflight
+
+The Windows package embeds an architecture-matched, statically linked
+preflight DLL in the MSI Binary table. It runs in InstallExecuteSequence
+before InstallValidate for a locally installed product feature. Full UI
+and quiet installation use the same check. Full removal skips the check.
+The preflight queries SCM and hashes the registered service image at the
+standard protected service location. An absent service or the exact pinned
+bundle is allowed. Distinct or unverified service evidence returns
+`upgrade_deferred` before package execution, including when SCM reports
+Stopped. SCM state alone does not establish clean VPN idle or compatibility.
+
+This conservative path does not initiate service replacement. Interactive
+hold, administrative deferral for a verified compatible distinct Core, and
+session-bound Desktop relaunch and rollback require separate admission and
+native acceptance. Verify the compiled MSI sequence places the preflight
+before both InstallValidate and removal of the previous product.
