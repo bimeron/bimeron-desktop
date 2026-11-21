@@ -1802,6 +1802,13 @@ The Windows package embeds an architecture-matched, statically linked
 preflight DLL in the MSI Binary table. It runs in InstallExecuteSequence
 before InstallValidate for a locally installed product feature. Full UI
 and quiet installation use the same check. Full removal skips the check.
+A process snapshot taken before InstallValidate defers if Desktop is open in
+a window, in the tray, or in another session. An unreadable process list also
+defers. A same-name process whose identity is unknown counts as possibly
+running Desktop. The interactive error asks the user to disconnect the VPN,
+choose Quit from the tray, and retry. Quiet installation returns 1603 and
+records the named `upgrade_deferred` reason in the verbose MSI log. The
+snapshot is a refusal check, not a lock against a later concurrent launch.
 The preflight queries SCM and hashes the registered service image at the
 standard protected service location. An absent service or the exact pinned
 bundle is allowed. Distinct or unverified service evidence returns

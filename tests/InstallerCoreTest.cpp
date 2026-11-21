@@ -2,10 +2,18 @@
 #include <QTemporaryDir>
 #ifdef Q_OS_WIN
 #include "../packaging/windows/installer-preflight-digest.h"
+#include "../packaging/windows/installer-preflight-process.h"
 #include <QDir>
+#include <QThread>
 #endif
 int main(int argc, char **argv) {
     QCoreApplication app(argc,argv);
+#ifdef Q_OS_WIN
+    if (app.arguments().contains("--fake-desktop-process")) {
+        QThread::sleep(10);
+        return 0;
+    }
+#endif
     if(app.arguments().contains("--fake-failure")) return 7;
     if(app.arguments().contains("--fake-version")) {
         printf("{\"version\":\"0.2.0-beta.1\"}"); return 0;
@@ -56,6 +64,16 @@ int main(int argc, char **argv) {
     if (!fixture.open(QIODevice::WriteOnly | QIODevice::Truncate)) return 21;
     fixture.close();
     if (InstallerPreflight::matchesPinnedDigest(native, pinned)) return 22;
+    const QString fakeDesktop = dir.filePath("bimeron-desktop.exe");
+    if (!QFile::copy(app.applicationFilePath(), fakeDesktop)) return 23;
+    QProcess process;
+    process.start(fakeDesktop, {"--fake-desktop-process"});
+    if (!process.waitForStarted(3000)) return 24;
+    const bool refusedWhileRunning = !InstallerPreflight::desktopIsClosed()
+        && process.state() == QProcess::Running;
+    process.kill();
+    process.waitForFinished();
+    if (!refusedWhileRunning) return 25;
 #endif
     const struct {const char *a,*b;bool want;} cases[]={
         {"0.2.0-beta.1","0.4.0-beta.1",true},

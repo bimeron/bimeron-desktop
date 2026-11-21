@@ -4,6 +4,7 @@
 #include <msi.h>
 #include <msiquery.h>
 #include <shlobj.h>
+#include "installer-preflight-process.h"
 
 #include <memory>
 #include <string>
@@ -53,6 +54,12 @@ bool registeredImageMatches(SC_HANDLE service, const std::wstring &path) {
 }
 
 extern "C" __declspec(dllexport) UINT __stdcall BimeronPreflight(MSIHANDLE session) {
+    if (!InstallerPreflight::desktopIsClosed()) {
+        log(session, INSTALLMESSAGE_ERROR,
+            L"Bimeron upgrade_deferred: Desktop may still be running. Disconnect the VPN, "
+            L"select Quit from the Bimeron tray menu, and run the MSI again.");
+        return ERROR_INSTALL_FAILURE;
+    }
     const ServiceHandle manager(OpenSCManagerW(nullptr, nullptr, SC_MANAGER_CONNECT));
     if (manager) {
         const ServiceHandle service(OpenServiceW(manager.get(), L"BimeronCore", SERVICE_QUERY_CONFIG | SERVICE_QUERY_STATUS));
