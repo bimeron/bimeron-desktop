@@ -2,6 +2,7 @@
 #include <QDesktopServices>
 #include "MainWindow.h"
 #include "CoreUpdatePrompt.h"
+#include "CoreUpdateResume.h"
 #include "CoreUpdateStaging.h"
 #include "ElevationOwner.h"
 #include "WindowsTheme.h"
@@ -2522,6 +2523,8 @@ void MainWindow::invalidateConnection(bool preserveServiceProbe) {
     pendingStartPath_.clear();
     startReadyPath_.clear();
     stopRequested_ = false;
+    updateResidual_ = {};
+    startReadyResume_ = {};
     retryNowRequested_ = false;
     reconnect_ = {};
     reconnectView_ = {};
@@ -2613,8 +2616,9 @@ void MainWindow::toggleConnection() {
     }
 }
 
-bool MainWindow::startProfile(int row) {
-    if (controlBlocked() || !helloReady_ || statusNeeded_ || !operation_.isEmpty() || cleanupBlocked_
+bool MainWindow::startProfile(int row, QJsonObject resume) {
+    if (controlBlocked() || !helloReady_ || statusNeeded_ || !operation_.isEmpty()
+        || (cleanupBlocked_ && (resume.isEmpty() || resume != updateResidual_))
         || nativeSession_ || sessionActive_ || (state_ != "disconnected" && state_ != "failed")) return false;
     if (row < 0 || row >= profiles_.size())
         return false;
@@ -2668,6 +2672,8 @@ bool MainWindow::startProfile(int row) {
         return false;
     }
     const QString mode = routingInterfaceValue(profileText, "Mode", "vpn");
+    if (!resume.isEmpty() && (mode != "vpn" ||
+        routingInterfaceValue(profileText, "KillSwitch", "false") != "true")) return false;
     const bool onlyAllowedIPs = routingAllowedIPsOnly(profileText);
     const QString routingConflict = routingCompatibilityError(profileText, capabilities_);
     if (!routingConflict.isEmpty()) {
@@ -2707,7 +2713,7 @@ bool MainWindow::startProfile(int row) {
     });
     connect(process, &QProcess::readyReadStandardError, this, [process] { process->readAllStandardError(); });
     const auto sharedPaths = GeoDataSelection::instance()->paths();
-    const auto finished = [this, process, path, generation, profileBytes, geoValidation, sharedPaths](int code, QProcess::ExitStatus status) {
+    const auto finished = [this, process, path, generation, profileBytes, geoValidation, sharedPaths, resume](int code, QProcess::ExitStatus status) {
         if (validationProcess_ != process || generation != connectionGeneration_) return;
         validationProcess_ = nullptr;
         process->deleteLater();
@@ -2723,10 +2729,12 @@ bool MainWindow::startProfile(int row) {
                 reportCoreUpdateResult(tr("Core was updated, but profile validation failed; reconnection was canceled"));
             reconnectResultProfileId_.clear();
         } else if (unchanged && !controlBlocked() && helloReady_ && !statusNeeded_ && !sessionActive_
-                   && !cleanupBlocked_ && (state_ == "disconnected" || state_ == "failed")) {
+                   && (resume.isEmpty() ? !cleanupBlocked_ : resume == updateResidual_)
+                   && (state_ == "disconnected" || state_ == "failed")) {
             for (const auto &profile : profiles_) {
                 if (QFileInfo(profile.path).absoluteFilePath() == path && QFileInfo::exists(path)) {
                     startReadyPath_ = path;
+                    startReadyResume_ = resume;
                     startUsesGeoData_ = geoValidation; startSharedPaths_ = sharedPaths;
                     operation_ = "start";
                     break;
@@ -2807,17 +2815,26 @@ void MainWindow::poll() {
     if (!startReadyPath_.isEmpty()) {
         const QString path = startReadyPath_;
         startReadyPath_.clear();
+        QJsonObject resume;
+        resume.swap(startReadyResume_);
         QFile file(path);
         const auto info = file.open(QIODevice::ReadOnly)
             ? ProfileStore::connectionInfo(QString::fromUtf8(file.read(64 * 1024 + 1))) : ProfileConnectionInfo{};
-        if (!controlBlocked() && !cleanupBlocked_ && !sessionActive_ && !nativeSession_
+        if (!controlBlocked() && (resume.isEmpty() ? !cleanupBlocked_ : resume == updateResidual_)
+            && !sessionActive_ && !nativeSession_
             && (!startUsesGeoData_ || startSharedPaths_ == GeoDataSelection::instance()->paths())
             && (state_ == "disconnected" || state_ == "failed")
             && QFileInfo::exists(path) && info.backend == ProfileConnectionInfo::Backend::Packet && info.connectable) {
             if (!QSettings().value("logs/keepPrevious", true).toBool()) log_->clear();
             // With the kill switch, start returns after protection is installed and a
             // handover waits for the previous cleanup; Core recommends 2 minutes.
-            core_.request("start", {{"config", path}}, 120000);
+            if (resume.isEmpty()) {
+                core_.request("start", {{"config", path}}, 120000);
+            } else {
+                attemptedResumeProfile_ = resume.value("residual_profile").toString();
+                resume.insert("config", path);
+                core_.request("resume_update", resume, 120000);
+            }
         } else {
             operation_.clear();
             finishGeoDataReconnect(tr("GeoData reconnection canceled before starting the updated profile"));
@@ -2918,6 +2935,14 @@ void MainWindow::handleReply(const QString &command, const QJsonObject &response
         }
     }
     handleStatus(status);
+    if (command == "resume_update") {
+        operation_.clear();
+        statusNeeded_ = true;
+        if (!error.isEmpty()) appendLog(tr("Core did not accept the protected VPN resume. Checking service state."));
+        updateConnectionButton();
+        QTimer::singleShot(0, this, &MainWindow::poll);
+        return;
+    }
     if (command == "auth_pending" || command == "auth_reply") {
         if (error == "unknown_command") {
             sshAuthSupported_ = false;
@@ -3065,14 +3090,27 @@ void MainWindow::handleReply(const QString &command, const QJsonObject &response
 }
 
 void MainWindow::completeSynchronization() {
+#ifdef Q_OS_WIN
+    if (!attemptedResumeProfile_.isEmpty() && sessionActive_ && activeProfileId_ == attemptedResumeProfile_
+        && reconnect_.sessionProtected && !reconnect_.recoveryRequired) {
+        cleanupBlocked_ = false;
+        attemptedResumeProfile_.clear();
+        if (serviceRecoveryButton_) serviceRecoveryButton_->hide();
+    }
+#endif
     if (coreUpdateAwaitingResult_ && !coreUpdateCommand_ && !expectedCoreVersionAfterUpdate_.isEmpty()) {
         const QString profileId = reconnectProfileAfterUpdate_;
+        const QString version = expectedCoreVersionAfterUpdate_;
         reconnectResultProfileId_.clear();
         const bool verified = runningCoreVersion_ == expectedCoreVersionAfterUpdate_ && cleanDisconnected();
         coreUpdateAwaitingResult_ = false;
         expectedCoreVersionAfterUpdate_.clear();
         reconnectProfileAfterUpdate_.clear();
-        if (!verified) {
+        if (!updateResidual_.isEmpty()) {
+            reportCoreUpdateResult(runningCoreVersion_ == version
+                ? tr("Core %1 installed and verified; checking protected VPN resume").arg(runningCoreVersion_)
+                : tr("Core update could not be verified; checking protected VPN resume"));
+        } else if (!verified) {
             reportCoreUpdateResult(activeProxyMode() ? tr("Core update could not be verified; proxy was not reconnected") : tr("Core update could not be verified; VPN was not reconnected"));
         } else if (profileId.isEmpty()) {
             reportCoreUpdateResult(tr("Core %1 installed and verified; connection remains disconnected").arg(runningCoreVersion_));
@@ -3096,6 +3134,20 @@ void MainWindow::completeSynchronization() {
         }
     }
     if (startupPreparationPending_) advanceStartupPreparation();
+#ifdef Q_OS_WIN
+    if (!updateResidual_.isEmpty() && !controlBlocked() && operation_.isEmpty() && !sessionActive_) {
+        const QString profile = updateResidual_.value("residual_profile").toString();
+        int match = -1;
+        for (int row = 0; row < profiles_.size(); ++row) {
+            if (!packetProfile(row) || CoreUpdateResume::windowsProfileIdentity(profiles_[row].path) != profile) continue;
+            if (match >= 0) { match = -1; break; }
+            match = row;
+        }
+        if (match >= 0 && CoreUpdateResume::claim(
+                QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation), updateResidual_))
+            startProfile(match, updateResidual_);
+    }
+#endif
     if (!autoConnectAttempted_ && !startupPreparationPending_) {
         autoConnectAttempted_ = true;
         if (cleanDisconnected() && QSettings().value("app/autoConnect", false).toBool()) {
@@ -3141,6 +3193,11 @@ void MainWindow::handleStatus(const QJsonObject &status) {
         if (serviceRecoveryButton_) serviceRecoveryButton_->show();
     }
     activeProfileId_ = session.value("profile_id").toString();
+    updateResidual_ = {};
+#ifdef Q_OS_WIN
+    if (helloReady_ && !development_->local())
+        updateResidual_ = CoreUpdateResume::guard(status, capabilities_, instance_);
+#endif
     if (!reconnectResultProfileId_.isEmpty()) {
         if (state_ == "connected" && activeProfileId_ == reconnectResultProfileId_) {
             reconnectResultProfileId_.clear();
@@ -3814,10 +3871,21 @@ void MainWindow::offerCoreUpdate() {
     case Action::Proceed:
         break;
     }
+    const auto supportsHold = [this] {
+#ifdef BIMERON_PINNED_CORE_UPDATE_HELPER_SHA256
+        return updater_.stagedSupportsUpdateHold()
+            && CoreUpdateResume::supported(capabilities_)
+            && TrustedCore::supportsUpdateHold(coreExecutablePath(), BIMERON_PINNED_CORE_UPDATE_HELPER_SHA256);
+#else
+        return false;
+#endif
+    };
+    const bool keepProtection = supportsHold();
     const QString confirmedInstance = instance_;
     const QString confirmedSession = sessionId_;
+    const bool confirmedProtected = reconnect_.sessionProtected;
     // A held failed run counts as active: the update stops it and the profile starts again.
-    const auto prompt = CoreUpdatePrompt::prompt(version, state_, reconnect_, activeProxyMode());
+    const auto prompt = CoreUpdatePrompt::prompt(version, state_, reconnect_, activeProxyMode(), keepProtection);
     const bool sessionActive = prompt.reconnect;
     coreUpdatePrompting_ = true;
     const bool confirmed = QMessageBox::question(this, tr("Core update ready"), prompt.text,
@@ -3827,7 +3895,9 @@ void MainWindow::offerCoreUpdate() {
     if (!updater_.hasStaged() || updater_.stagedVersion() != version) return;
     const bool busy = connectionBusy();
     switch (CoreUpdateStaging::afterPrompt(confirmed, busy, !busy && applies(),
-                                           instance_ == confirmedInstance && sessionId_ == confirmedSession)) {
+                                           instance_ == confirmedInstance && sessionId_ == confirmedSession
+                                           && reconnect_.sessionProtected == confirmedProtected
+                                           && (!confirmed || keepProtection == supportsHold()))) {
     case Action::Discard:
         discard();
         return;
@@ -3847,7 +3917,8 @@ void MainWindow::offerCoreUpdate() {
     updater_.setInstalling(true);
     coreUpdateCommand_ = true;
     // runServiceCommand repeats the prerequisite and busy checks before elevating.
-    const QStringList arguments = TrustedCore::updateArguments(path, version, digest);
+    QStringList arguments = TrustedCore::updateArguments(path, version, digest);
+    if (keepProtection && !arguments.isEmpty()) arguments.append("-keep-kill-switch");
     if (arguments.isEmpty() || !runServiceCommand(arguments, tr("Updating service"))) {
         coreUpdateCommand_ = false;
         reconnectProfileAfterUpdate_.clear();
@@ -4300,6 +4371,7 @@ void MainWindow::finishServiceCommand(int exitCode, const QString &details) {
     const bool finishedCoreUpdate = coreUpdateCommand_;
     coreUpdateCommand_ = false;
     if (finishedCoreUpdate) {
+        refreshCoreAfterUpdate();
         updater_.setInstalling(false);
 #ifdef Q_OS_LINUX
         constexpr bool linuxHelper = true;
@@ -4356,14 +4428,12 @@ void MainWindow::finishServiceCommand(int exitCode, const QString &details) {
             coreUpdateLabel_->setText(tr("Core service updated; verifying version and connection state…"));
         }
     }
-    if (finishedCoreUpdate)
-        QTimer::singleShot(500, this, &MainWindow::refreshCoreAfterUpdate);
 }
 
 void MainWindow::refreshCoreAfterUpdate() {
     if (nativeOwnerBlocked_) return;
-    if (core_.busy()) QTimer::singleShot(250, this, &MainWindow::refreshCoreAfterUpdate);
-    else { invalidateConnection(); core_.request("hello"); }
+    invalidateConnection();
+    QTimer::singleShot(0, this, &MainWindow::poll);
 }
 
 void MainWindow::reportCoreUpdateResult(const QString &message) {

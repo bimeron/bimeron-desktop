@@ -10,6 +10,7 @@ bool protectedExecutable(const QString &path);
 // result is a missing trust root, never permission to elevate a downloaded file.
 QString repairExecutable();
 bool supportsSourceUpdate(const QString &path);
+bool supportsUpdateHold(const QString &path, const QByteArray &pinnedDigest);
 QStringList updateArguments(const QString &source, const QString &version, const QString &sha256);
 QString windowsCommandLine(const QStringList &arguments);
 QString failureMessage(int exitCode, const QString &details);

@@ -244,6 +244,15 @@ endif()
 set(BIMERON_PINNED_CORE_DEFINITIONS
     BIMERON_PINNED_CORE_VERSION="${BIMERON_CORE_VERSION}"
     BIMERON_PINNED_CORE_REVISION="${BIMERON_CORE_REVISION}")
+if(WIN32)
+    if(CMAKE_CXX_COMPILER_ARCHITECTURE_ID STREQUAL "ARM64")
+        set(core_update_helper_arch arm64)
+    else()
+        set(core_update_helper_arch amd64)
+    endif()
+    list(APPEND BIMERON_PINNED_CORE_DEFINITIONS
+        BIMERON_PINNED_CORE_UPDATE_HELPER_SHA256="${BIMERON_CORE_EXECUTABLE_SHA256_windows_${core_update_helper_arch}}")
+endif()
 target_compile_definitions(bimeron-desktop PRIVATE ${BIMERON_PINNED_CORE_DEFINITIONS})
 if(BUILD_TESTING)
     target_compile_definitions(developer-mode-test PRIVATE ${BIMERON_PINNED_CORE_DEFINITIONS})

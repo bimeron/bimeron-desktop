@@ -1787,3 +1787,11 @@ profiling applies to this explicit cold repair/import path. No package, dist,
 pin, frozen candidate, installed service or network changes were made. Builds
 omit optional embedded-resource fixtures; provisioning uses inert test bytes.
 ARM64 CI and real UAC/polkit package restoration remain separate evidence.
+
+The Windows in-app updater compares the protected bundled CLI with the
+architecture-specific executable SHA-256 pinned by the build before probing
+`service update-contract`. A matching signed archive alone does not enable
+hold. After the helper exits, Desktop obtains a new authenticated hello and
+status, and records a guarded resume attempt in the current Windows user's
+local, non-roaming application data before dispatch. A service restart cannot
+reset the attempt for the same residual profile and generation.

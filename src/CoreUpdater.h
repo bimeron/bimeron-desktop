@@ -24,6 +24,7 @@ public:
     // session until it is installed or no longer applies.
     bool hasStaged() const { return staged_ != nullptr; }
     QString stagedVersion() const;
+    bool stagedSupportsUpdateHold() const { return staged_ && staged_->release.supportsUpdateHold; }
     void discardStaged();
     // Discards the staged executable when it was prepared for another installed
     // Core version or service instance, or is a beta while betas are disabled.
