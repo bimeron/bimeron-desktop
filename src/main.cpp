@@ -1,6 +1,10 @@
 #include "InstallerCore.h"
 #include "MainWindow.h"
 #include "RepairBootstrap.h"
+#ifdef BIMERON_MSI_HANDOFF_LAB_EXECUTION
+#include "../packaging/windows/msi-handoff-lab-ack.h"
+#include <QTimer>
+#endif
 #include <cstring>
 #include "WindowsTheme.h"
 
@@ -182,6 +186,20 @@ int main(int argc, char *argv[]) {
             });
         }
     });
+#ifdef BIMERON_MSI_HANDOFF_LAB_EXECUTION
+    const auto arguments = app.arguments();
+    if (arguments.size() == 4 && arguments[1] == "--restart"
+        && (arguments[2] == "--msi-handoff-lab-window" || arguments[2] == "--msi-handoff-lab-tray")) {
+        const bool tray = arguments[2] == "--msi-handoff-lab-tray";
+        if (tray && !QSystemTrayIcon::isSystemTrayAvailable()) return 1;
+        if (!tray) window.show();
+        QTimer::singleShot(0, &window, [&app, &window, tray, acknowledgement = arguments[3]] {
+            if (window.isVisible() == tray || MsiHandoff::signalLabReady(acknowledgement))
+                app.exit(1);
+        });
+        return app.exec();
+    }
+#endif
     if (!autostarting || !QSystemTrayIcon::isSystemTrayAvailable()) window.show();
     return app.exec();
 }

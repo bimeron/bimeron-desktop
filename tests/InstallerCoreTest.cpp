@@ -4,6 +4,7 @@
 #ifdef Q_OS_WIN
 #include "../packaging/windows/installer-preflight-digest.h"
 #include "../packaging/windows/installer-preflight-process.h"
+#include "../packaging/windows/msi-handoff-lab-ack.h"
 #include <QDir>
 #include <QThread>
 #endif
@@ -106,6 +107,17 @@ int main(int argc, char **argv) {
     if (!delayed.waitForFinished(3000) ||
         select(MsiHandoff::observedExit(client.get()), false, true, false) != Outcome::LaunchNew)
         return 29;
+
+    const InstallerPreflight::FileHandle ready(CreateEventW(nullptr, FALSE, FALSE, nullptr));
+    HANDLE acknowledgement = nullptr;
+    if (!ready || WaitForSingleObject(ready.get(), 0) != WAIT_TIMEOUT
+        || !DuplicateHandle(GetCurrentProcess(), ready.get(), GetCurrentProcess(), &acknowledgement,
+                            0, FALSE, DUPLICATE_SAME_ACCESS))
+        return 31;
+    if (MsiHandoff::signalLabReady(QString::number(quintptr(acknowledgement))) != 0
+        || WaitForSingleObject(ready.get(), 0) != WAIT_OBJECT_0
+        || WaitForSingleObject(ready.get(), 0) != WAIT_TIMEOUT)
+        return 32;
 #endif
     const struct {const char *a,*b;bool want;} cases[]={
         {"0.2.0-beta.1","0.4.0-beta.1",true},

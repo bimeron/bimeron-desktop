@@ -1844,3 +1844,18 @@ signature covers the exact manifest bytes. The local test public key is
 independent of the Core update trust set. Signed metadata must agree with the
 local receipt, expected MSI bytes and database before the lab accepts it.
 Production Desktop trust and the Update entry remain disabled.
+
+The default handoff helper only verifies. `BIMERON_MSI_HANDOFF_LAB_EXECUTION`
+adds explicitly gated execution and GUI acknowledgement to a local update
+test build. It requires a compiled receipt that authorizes lab execution,
+an unelevated interactive Windows session, exact old installation identity,
+and protected helper and MSI paths outside the Desktop installation trees.
+The helper holds the verified MSI read handle while waiting on the specific
+system msiexec client it launched. It checks installed package and image
+identity again before selecting the old or new GUI. Both GUI images must be
+lab builds that support the private, one-use inherited event acknowledgement
+after acquiring the single-instance lock and restoring the requested display
+mode. The current lab expects the old GUI already closed. It does not yet
+authenticate or close a running GUI. An uncertain outcome requests recovery
+without selecting an image. A reboot result waits for manual revalidation.
+This path remains out of production packages and does not enable MSI hold.
