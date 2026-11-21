@@ -103,6 +103,22 @@ if(BIMERON_LOCAL_UPDATE_TESTING)
 endif()
 
 include(CTest)
+set(BIMERON_MSI_HANDOFF_TEST_RECEIPT "" CACHE FILEPATH "Fixed local MSI handoff lab receipt")
+if(BIMERON_MSI_HANDOFF_TEST_RECEIPT)
+    if(NOT WIN32 OR NOT BUILD_TESTING OR NOT BIMERON_LOCAL_UPDATE_TESTING
+        OR NOT IS_ABSOLUTE "${BIMERON_MSI_HANDOFF_TEST_RECEIPT}" OR NOT EXISTS "${BIMERON_MSI_HANDOFF_TEST_RECEIPT}")
+        message(FATAL_ERROR "MSI handoff receipt requires an existing absolute file in a Windows local test build")
+    endif()
+    add_executable(bimeron-msi-handoff-lab EXCLUDE_FROM_ALL packaging/windows/msi-handoff-lab.cpp)
+    target_link_libraries(bimeron-msi-handoff-lab PRIVATE Qt6::Core bcrypt msi)
+    set_target_properties(bimeron-msi-handoff-lab PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/handoff-lab-only")
+    configure_file("${BIMERON_MSI_HANDOFF_TEST_RECEIPT}" "${CMAKE_CURRENT_BINARY_DIR}/msi-handoff-lab-receipt.json" COPYONLY)
+    set_source_files_properties("${CMAKE_CURRENT_BINARY_DIR}/msi-handoff-lab-receipt.json"
+        PROPERTIES QT_RESOURCE_ALIAS receipt.json)
+    qt_add_resources(bimeron-msi-handoff-lab handoff PREFIX "/handoff"
+        FILES "${CMAKE_CURRENT_BINARY_DIR}/msi-handoff-lab-receipt.json")
+endif()
 if(BUILD_TESTING)
     if(WIN32)
         set(display_metadata_arch amd64)

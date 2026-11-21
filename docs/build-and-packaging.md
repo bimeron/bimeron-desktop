@@ -1820,3 +1820,16 @@ hold, administrative deferral for a verified compatible distinct Core, and
 session-bound Desktop relaunch and rollback require separate admission and
 native acceptance. Verify the compiled MSI sequence places the preflight
 before both InstallValidate and removal of the previous product.
+
+The optional Windows handoff lab target requires a local update test build
+and an absolute `BIMERON_MSI_HANDOFF_TEST_RECEIPT` input. It embeds the
+receipt at build time and has a separate output directory outside the
+Windows install tree. The receipt binds the local MSI path and SHA-256, its
+architecture, ProductCode and PackageCode, and the old and new GUI component
+IDs, installed paths and executable SHA-256 values. The helper accepts no
+runtime input. It verifies the MSI database read-only and independently
+checks machine-context installed identities. It does not run the MSI or
+start Desktop. Model tests cover waiting, verified success and rollback, a
+late validator failure with the new image still installed, and reboot.
+Production Update remains disabled pending signed Desktop metadata and
+native acceptance.
