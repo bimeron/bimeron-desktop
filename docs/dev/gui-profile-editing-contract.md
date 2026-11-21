@@ -137,6 +137,14 @@ embedded VCS identity. Verify the binaries by SHA-256.
 | Windows amd64 | `9562e2237e8c036a873c9850bea84a79bea5202a2b9f1a7c1f5dea0f62041d13` |
 | Linux amd64 | `d713e5a2a59c5dde44e671765c0aef1c50f57f63f709d6f08fe051d3bb5d74fb` |
 
+The same Core revision produced these packaged CLI hashes in
+[Core CI run 44844219660](https://github.com/bimeron/bimeron-core/actions/runs/44844219660).
+
+| Packaged CLI | SHA-256 |
+| --- | --- |
+| Windows amd64 | `cfeefd026f5e94688f2a3f5536b3cc33237a859d89e7c86140643f5db63e87d9` |
+| Linux amd64 | `0487fe0207ae7267d20d526c3dbea64178112e644ecfb4d40e260db07156ea37` |
+
 The shared vectors Git blob SHA-256 is
 `788b08b592c84f72421c810a15c2db884dd6b6bea33abb7da083b18f09736844`.
 Desktop CTest passed on Windows amd64 (13 tests) and Linux amd64 (12 tests)
