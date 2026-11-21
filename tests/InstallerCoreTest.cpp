@@ -1,5 +1,9 @@
 #include "InstallerCore.h"
 #include <QTemporaryDir>
+#ifdef Q_OS_WIN
+#include "../packaging/windows/installer-preflight-digest.h"
+#include <QDir>
+#endif
 int main(int argc, char **argv) {
     QCoreApplication app(argc,argv);
     if(app.arguments().contains("--fake-failure")) return 7;
@@ -35,6 +39,24 @@ int main(int argc, char **argv) {
     fixture.close();
     if(InstallerCore::digest(fixture.fileName())!="ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad" ||
        !InstallerCore::digest(dir.filePath("missing")).isEmpty()) return 16;
+#ifdef Q_OS_WIN
+    // Exercise the actual native preflight digest check without querying or
+    // changing any service registration on the test host.
+    constexpr auto pinned = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
+    const auto native = QDir::toNativeSeparators(fixture.fileName()).toStdWString();
+    if (!InstallerPreflight::matchesPinnedDigest(native, pinned)) return 17;
+    if (InstallerPreflight::matchesPinnedDigest(native, "") ||
+        InstallerPreflight::matchesPinnedDigest(native, "BA7816BF8F01CFEA414140DE5DAE2223B00361A396177A9CB410FF61F20015AD") ||
+        InstallerPreflight::matchesPinnedDigest(QDir::toNativeSeparators(dir.filePath("missing")).toStdWString(), pinned) ||
+        InstallerPreflight::matchesPinnedDigest(QDir::toNativeSeparators(dir.path()).toStdWString(), pinned))
+        return 18;
+    if (!fixture.open(QIODevice::Append) || fixture.write("d") != 1) return 19;
+    fixture.close();
+    if (InstallerPreflight::matchesPinnedDigest(native, pinned)) return 20;
+    if (!fixture.open(QIODevice::WriteOnly | QIODevice::Truncate)) return 21;
+    fixture.close();
+    if (InstallerPreflight::matchesPinnedDigest(native, pinned)) return 22;
+#endif
     const struct {const char *a,*b;bool want;} cases[]={
         {"0.2.0-beta.1","0.4.0-beta.1",true},
         {"0.4.0-beta.1","0.4.0",true},

@@ -228,3 +228,33 @@ Windows MSI acceptance remains open. Standalone MSI does not activate
 privileged deferred jobs from commit markers. Verify identical Core,
 interactive replacement and rollback, and administrative outcomes for
 silent maintenance on a working data-plane fixture before release.
+
+### Windows MSI application handoff
+
+Cooperating Desktop versions can use a same-user coordinator launched in the
+running Desktop session before MSI execution. The coordinator verifies the
+old process, its creation time, owner SID, session, and registered Desktop
+image before it accepts window or tray state. Desktop enters maintenance,
+flushes its UI state, and exits while leaving Core and VPN untouched. The
+coordinator waits on the old process handle before starting the installer.
+
+The coordinator starts the verified standalone MSI through the system
+installer, retains the client process handle, and observes its final exit.
+Before launching, it verifies the exact machine package and component
+registration and the expected installed Desktop image digest. Exit 3010
+requires a new check after reboot. An error requires revalidating the old
+registration and image before restoring the old Desktop. If neither image
+has a proven outcome, use an administrative recovery outcome. The launch
+uses the existing owner's user token and session, and a single-use handoff
+record plus a session-bound acknowledgement prevent duplicate launches.
+Keep Core hold disabled until this route and rollback are proven.
+
+A standalone MSI without a cooperating coordinator can preserve an identical
+Core. It cannot promise to restore a running legacy Desktop's window or tray
+state. Published Desktop 0.3.1 has no maintenance close or authenticated
+state handoff. A tray close can hide the app and the quit path can shut down
+the VPN. For a legacy upgrade, require Desktop to be closed before starting,
+or ask the user to disconnect and quit first. If automatic state restoration
+or retained-Core compatibility is required but cannot be established, defer
+the upgrade before mutations. Restart Manager and Finish do not prove a same-session restart
+or terminal MSI outcome.

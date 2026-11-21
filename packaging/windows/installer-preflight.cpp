@@ -1,14 +1,12 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
-#include <bcrypt.h>
+#include "installer-preflight-digest.h"
 #include <msi.h>
 #include <msiquery.h>
 #include <shlobj.h>
 
-#include <array>
 #include <memory>
 #include <string>
-#include <string_view>
 #include <type_traits>
 #include <vector>
 
@@ -17,21 +15,6 @@ struct CloseService {
     void operator()(SC_HANDLE handle) const { CloseServiceHandle(handle); }
 };
 using ServiceHandle = std::unique_ptr<std::remove_pointer_t<SC_HANDLE>, CloseService>;
-
-struct CloseFile {
-    void operator()(HANDLE handle) const { CloseHandle(handle); }
-};
-using FileHandle = std::unique_ptr<void, CloseFile>;
-
-struct CloseAlgorithm {
-    void operator()(BCRYPT_ALG_HANDLE handle) const { BCryptCloseAlgorithmProvider(handle, 0); }
-};
-using AlgorithmHandle = std::unique_ptr<void, CloseAlgorithm>;
-
-struct CloseHash {
-    void operator()(BCRYPT_HASH_HANDLE handle) const { BCryptDestroyHash(handle); }
-};
-using HashHandle = std::unique_ptr<void, CloseHash>;
 
 void log(MSIHANDLE session, INSTALLMESSAGE type, const wchar_t *message) {
     if (const MSIHANDLE record = MsiCreateRecord(0)) {
@@ -66,42 +49,7 @@ bool registeredImageMatches(SC_HANDLE service, const std::wstring &path) {
     return command.find_first_not_of(L"0123456789-", prefix.size()) == std::wstring::npos;
 }
 
-bool matchesBundledDigest(const std::wstring &path) {
-    constexpr std::string_view expected(BIMERON_INSTALLER_CORE_SHA256);
-    if (expected.size() != 64) return false;
-    const HANDLE raw = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr,
-                                   OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN, nullptr);
-    if (raw == INVALID_HANDLE_VALUE) return false;
-    const FileHandle file(raw);
-    std::array<wchar_t, 1024> resolved{};
-    const DWORD length = GetFinalPathNameByHandleW(file.get(), resolved.data(), static_cast<DWORD>(resolved.size()), 0);
-    if (!length || length >= resolved.size() || _wcsicmp(resolved.data(), (L"\\\\?\\" + path).c_str()) != 0)
-        return false;
-    LARGE_INTEGER size{};
-    if (!GetFileSizeEx(file.get(), &size) || size.QuadPart <= 0 || size.QuadPart > 64 * 1024 * 1024)
-        return false;
 
-    BCRYPT_ALG_HANDLE algorithm = nullptr;
-    if (BCryptOpenAlgorithmProvider(&algorithm, BCRYPT_SHA256_ALGORITHM, nullptr, 0) != 0) return false;
-    const AlgorithmHandle provider(algorithm);
-    BCRYPT_HASH_HANDLE hash = nullptr;
-    if (BCryptCreateHash(provider.get(), &hash, nullptr, 0, nullptr, 0, 0) != 0) return false;
-    const HashHandle reader(hash);
-    std::array<BYTE, 16384> buffer{};
-    DWORD count = 0;
-    do {
-        if (!ReadFile(file.get(), buffer.data(), static_cast<DWORD>(buffer.size()), &count, nullptr)
-            || (count && BCryptHashData(reader.get(), buffer.data(), count, 0) != 0))
-            return false;
-    } while (count);
-    std::array<BYTE, 32> digest{};
-    if (BCryptFinishHash(reader.get(), digest.data(), static_cast<ULONG>(digest.size()), 0) != 0) return false;
-    constexpr char hex[] = "0123456789abcdef";
-    for (size_t i = 0; i < digest.size(); ++i) {
-        if (expected[i * 2] != hex[digest[i] >> 4] || expected[i * 2 + 1] != hex[digest[i] & 15]) return false;
-    }
-    return true;
-}
 }
 
 extern "C" __declspec(dllexport) UINT __stdcall BimeronPreflight(MSIHANDLE session) {
@@ -121,7 +69,7 @@ extern "C" __declspec(dllexport) UINT __stdcall BimeronPreflight(MSIHANDLE sessi
                     ? L"Bimeron preflight: service stopped; VPN cleanup is unverified"
                     : L"Bimeron preflight: service present; VPN idle state is unverified");
                 const std::wstring path = standardServicePath();
-                if (!path.empty() && registeredImageMatches(service.get(), path) && matchesBundledDigest(path)) {
+                if (!path.empty() && registeredImageMatches(service.get(), path) && InstallerPreflight::matchesPinnedDigest(path, BIMERON_INSTALLER_CORE_SHA256)) {
                     log(session, INSTALLMESSAGE_INFO, L"Bimeron preflight: identical Core; retaining the service");
                     return ERROR_SUCCESS;
                 }
