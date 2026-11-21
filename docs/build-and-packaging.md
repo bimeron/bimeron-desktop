@@ -1787,3 +1787,49 @@ profiling applies to this explicit cold repair/import path. No package, dist,
 pin, frozen candidate, installed service or network changes were made. Builds
 omit optional embedded-resource fixtures; provisioning uses inert test bytes.
 ARM64 CI and real UAC/polkit package restoration remain separate evidence.
+
+The Windows in-app updater compares the protected bundled CLI with the
+architecture-specific executable SHA-256 pinned by the build before probing
+`service update-contract`. A matching signed archive alone does not enable
+hold. After the helper exits, Desktop obtains a new authenticated hello and
+status, and records a guarded resume attempt in the current Windows user's
+local, non-roaming application data before dispatch. A service restart cannot
+reset the attempt for the same residual profile and generation.
+
+### Windows MSI service preflight
+
+The Windows package embeds an architecture-matched, statically linked
+preflight DLL in the MSI Binary table. It runs in InstallExecuteSequence
+before InstallValidate for a locally installed product feature. Full UI
+and quiet installation use the same check. Full removal skips the check.
+A process snapshot taken before InstallValidate defers if Desktop is open in
+a window, in the tray, or in another session. An unreadable process list also
+defers. A same-name process whose identity is unknown counts as possibly
+running Desktop. The interactive error asks the user to disconnect the VPN,
+choose Quit from the tray, and retry. Quiet installation returns 1603 and
+records the named `upgrade_deferred` reason in the verbose MSI log. The
+snapshot is a refusal check, not a lock against a later concurrent launch.
+The preflight queries SCM and hashes the registered service image at the
+standard protected service location. An absent service or the exact pinned
+bundle is allowed. Distinct or unverified service evidence returns
+`upgrade_deferred` before package execution, including when SCM reports
+Stopped. SCM state alone does not establish clean VPN idle or compatibility.
+
+This conservative path does not initiate service replacement. Interactive
+hold, administrative deferral for a verified compatible distinct Core, and
+session-bound Desktop relaunch and rollback require separate admission and
+native acceptance. Verify the compiled MSI sequence places the preflight
+before both InstallValidate and removal of the previous product.
+
+The optional Windows handoff lab target requires a local update test build
+and an absolute `BIMERON_MSI_HANDOFF_TEST_RECEIPT` input. It embeds the
+receipt at build time and has a separate output directory outside the
+Windows install tree. The receipt binds the local MSI path and SHA-256, its
+architecture, ProductCode and PackageCode, and the old and new GUI component
+IDs, installed paths and executable SHA-256 values. The helper accepts no
+runtime input. It verifies the MSI database read-only and independently
+checks machine-context installed identities. It does not run the MSI or
+start Desktop. Model tests cover waiting, verified success and rollback, a
+late validator failure with the new image still installed, and reboot.
+Production Update remains disabled pending signed Desktop metadata and
+native acceptance.

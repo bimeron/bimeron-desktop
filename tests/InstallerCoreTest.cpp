@@ -1,11 +1,36 @@
 #include "InstallerCore.h"
+#include "../packaging/windows/msi-handoff-outcome.h"
 #include <QTemporaryDir>
+#ifdef Q_OS_WIN
+#include "../packaging/windows/installer-preflight-digest.h"
+#include "../packaging/windows/installer-preflight-process.h"
+#include <QDir>
+#include <QThread>
+#endif
 int main(int argc, char **argv) {
     QCoreApplication app(argc,argv);
+#ifdef Q_OS_WIN
+    if (app.arguments().contains("--fake-delayed-success"))
+        return std::getchar() == 'x' ? 0 : 1;
+    if (app.arguments().contains("--fake-desktop-process")) {
+        QThread::sleep(10);
+        return 0;
+    }
+#endif
     if(app.arguments().contains("--fake-failure")) return 7;
     if(app.arguments().contains("--fake-version")) {
         printf("{\"version\":\"0.2.0-beta.1\"}"); return 0;
     }
+    using MsiHandoff::Outcome;
+    using MsiHandoff::select;
+    if (select(std::nullopt, false, true, false) != Outcome::Waiting ||
+        select(0, false, true, false) != Outcome::LaunchNew ||
+        select(1603, true, false, false) != Outcome::LaunchOld ||
+        select(1603, false, true, false) != Outcome::Recovery ||
+        select(0, true, true, false) != Outcome::Recovery ||
+        select(0, false, true, true) != Outcome::Recovery ||
+        select(3010, false, true, false) != Outcome::WaitForReboot ||
+        select(1641, false, true, true) != Outcome::WaitForReboot) return 26;
     using InstallerCore::older;
     const QString h1(64, 'a'), h2(64, 'b'), r1(40, 'a'), r2(40, 'b');
     const struct {QString a,b,r,s; bool differs;} identities[]={
@@ -35,6 +60,49 @@ int main(int argc, char **argv) {
     fixture.close();
     if(InstallerCore::digest(fixture.fileName())!="ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad" ||
        !InstallerCore::digest(dir.filePath("missing")).isEmpty()) return 16;
+#ifdef Q_OS_WIN
+    // Exercise the actual native preflight digest check without querying or
+    // changing any service registration on the test host.
+    constexpr auto pinned = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
+    const auto native = QDir::toNativeSeparators(fixture.fileName()).toStdWString();
+    if (!InstallerPreflight::matchesPinnedDigest(native, pinned)) return 17;
+    if (InstallerPreflight::matchesPinnedDigest(native, "") ||
+        InstallerPreflight::matchesPinnedDigest(native, "BA7816BF8F01CFEA414140DE5DAE2223B00361A396177A9CB410FF61F20015AD") ||
+        InstallerPreflight::matchesPinnedDigest(QDir::toNativeSeparators(dir.filePath("missing")).toStdWString(), pinned) ||
+        InstallerPreflight::matchesPinnedDigest(QDir::toNativeSeparators(dir.path()).toStdWString(), pinned))
+        return 18;
+    if (!fixture.open(QIODevice::Append) || fixture.write("d") != 1) return 19;
+    fixture.close();
+    if (InstallerPreflight::matchesPinnedDigest(native, pinned)) return 20;
+    if (!fixture.open(QIODevice::WriteOnly | QIODevice::Truncate)) return 21;
+    fixture.close();
+    if (InstallerPreflight::matchesPinnedDigest(native, pinned)) return 22;
+    const QString fakeDesktop = dir.filePath("bimeron-desktop.exe");
+    if (!QFile::copy(app.applicationFilePath(), fakeDesktop)) return 23;
+    QProcess process;
+    process.start(fakeDesktop, {"--fake-desktop-process"});
+    if (!process.waitForStarted(3000)) return 24;
+    const bool refusedWhileRunning = !InstallerPreflight::desktopIsClosed()
+        && process.state() == QProcess::Running;
+    process.kill();
+    process.waitForFinished();
+    if (!refusedWhileRunning) return 25;
+
+    // A registration that looks ready during an installer invocation must not
+    // authorize a launch until the retained client process handle is signaled.
+    QProcess delayed;
+    delayed.start(app.applicationFilePath(), {"--fake-delayed-success"});
+    if (!delayed.waitForStarted(3000)) return 27;
+    const InstallerPreflight::FileHandle client(OpenProcess(
+        SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION, FALSE, DWORD(delayed.processId())));
+    if (!client || select(MsiHandoff::observedExit(client.get()), false, true, false) != Outcome::Waiting)
+        return 28;
+    if (delayed.write("x", 1) != 1) return 29;
+    delayed.closeWriteChannel();
+    if (!delayed.waitForFinished(3000) ||
+        select(MsiHandoff::observedExit(client.get()), false, true, false) != Outcome::LaunchNew)
+        return 29;
+#endif
     const struct {const char *a,*b;bool want;} cases[]={
         {"0.2.0-beta.1","0.4.0-beta.1",true},
         {"0.4.0-beta.1","0.4.0",true},

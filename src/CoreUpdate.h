@@ -10,6 +10,8 @@ struct CoreUpdateRelease {
     QString assetName;
     qint64 assetSize = 0;
     QByteArray assetSha256;
+    QByteArray executableSha256;
+    bool supportsUpdateHold = false;
 };
 
 class CoreUpdate final {

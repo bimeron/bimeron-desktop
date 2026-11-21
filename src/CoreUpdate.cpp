@@ -161,8 +161,16 @@ bool CoreUpdate::verifyManifest(const QByteArray &bytes, const QByteArray &signa
             !digestPattern.match(digest).hasMatch() || size < 1 || size > 100 * 1024 * 1024 || qint64(size) != size)
             return fail(error, QStringLiteral("Invalid or duplicate update target"));
         targets.insert(target);
-        if (targetOs == os && targetArch == arch)
-            selected = {releaseTag, version, name, qint64(size), QByteArray::fromHex(digest.toLatin1())};
+        const auto executableDigest = a.value("executable_sha256");
+        if (!executableDigest.isUndefined() && !digestPattern.match(executableDigest.toString()).hasMatch())
+            return fail(error, QStringLiteral("Invalid signed executable hash"));
+        const bool supportsHold = targetOs == "windows" &&
+            a.value("kill_switch_update_hold_contract").toDouble() == 1 &&
+            !executableDigest.isUndefined();
+        if (targetOs == os && targetArch == arch) {
+            selected = {releaseTag, version, name, qint64(size), QByteArray::fromHex(digest.toLatin1()),
+                        QByteArray::fromHex(executableDigest.toString().toLatin1()), supportsHold};
+        }
     }
     if (targets.size() != 4 || selected.assetName.isEmpty())
         return fail(error, QStringLiteral("No update for this platform"));
@@ -208,6 +216,9 @@ bool CoreUpdate::extractExecutable(const QByteArray &zip, const CoreUpdateReleas
     const bool ok = mz_zip_reader_extract_to_mem(&archive, mz_uint(found), data.data(), size_t(data.size()), 0);
     mz_zip_reader_end(&archive);
     if (!ok) return fail(error, QStringLiteral("Could not extract core executable"));
+    if (!release.executableSha256.isEmpty() &&
+        QCryptographicHash::hash(data, QCryptographicHash::Sha256) != release.executableSha256)
+        return fail(error, QStringLiteral("Signed executable hash mismatch"));
     if (executable) *executable = data;
     return true;
 }
