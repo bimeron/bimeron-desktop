@@ -65,7 +65,11 @@ int main(int argc, char **argv) {
     // changing any service registration on the test host.
     constexpr auto pinned = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
     const auto native = QDir::toNativeSeparators(fixture.fileName()).toStdWString();
-    if (!InstallerPreflight::matchesPinnedDigest(native, pinned)) return 17;
+    {
+        const auto pinnedFile = InstallerPreflight::openPinnedFile(native, pinned);
+        if (!pinnedFile || fixture.open(QIODevice::Append)) return 17;
+    }
+    if (!InstallerPreflight::matchesPinnedDigest(native, pinned)) return 30;
     if (InstallerPreflight::matchesPinnedDigest(native, "") ||
         InstallerPreflight::matchesPinnedDigest(native, "BA7816BF8F01CFEA414140DE5DAE2223B00361A396177A9CB410FF61F20015AD") ||
         InstallerPreflight::matchesPinnedDigest(QDir::toNativeSeparators(dir.filePath("missing")).toStdWString(), pinned) ||

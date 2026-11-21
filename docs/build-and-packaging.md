@@ -1833,3 +1833,14 @@ start Desktop. Model tests cover waiting, verified success and rollback, a
 late validator failure with the new image still installed, and reboot.
 Production Update remains disabled pending signed Desktop metadata and
 native acceptance.
+
+The isolated handoff verifier also requires the sibling files
+`.manifest`, `.signature`, and `.public-key` beside its configured
+receipt. The Desktop manifest is separate from the Core update manifest and
+has schema 1 and kind `desktop_msi`. It binds one release tag and Desktop
+version to a Windows MSI name, size, architecture, ProductCode, PackageCode,
+GUI ComponentId, MSI SHA-256 and GUI executable SHA-256. The detached Ed25519
+signature covers the exact manifest bytes. The local test public key is
+independent of the Core update trust set. Signed metadata must agree with the
+local receipt, expected MSI bytes and database before the lab accepts it.
+Production Desktop trust and the Update entry remain disabled.

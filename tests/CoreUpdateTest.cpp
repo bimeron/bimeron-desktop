@@ -1,4 +1,5 @@
 #include "CoreUpdate.h"
+#include "DesktopMsiManifest.h"
 #include "CoreUpdater.h"
 #include "TrustedCore.h"
 #include "RepairBootstrap.h"
@@ -232,6 +233,44 @@ int main(int argc, char **argv) {
         return std::pair(bytes, QByteArray(reinterpret_cast<char *>(signature), 64).toBase64() + '\n');
     };
     auto sign = [&](const QJsonObject &object) { return signWith(object, secret); };
+    {
+        QJsonObject msi{{"name", "bimeron-desktop-0.4.0-windows-amd64.msi"}, {"architecture", "amd64"},
+                        {"product_code", "{11111111-1111-1111-1111-111111111111}"},
+                        {"package_code", "{22222222-2222-2222-2222-222222222222}"},
+                        {"gui_component_code", "{33333333-3333-3333-3333-333333333333}"},
+                        {"sha256", QString(64, 'a')}, {"gui_sha256", QString(64, 'b')}, {"size", 1024}};
+        QJsonObject offer{{"schema", 1}, {"kind", "desktop_msi"}, {"tag", "v0.4.0"},
+                          {"desktop_version", "0.4.0"}, {"key_id", keyId}, {"msi", msi}};
+        const auto [body, sig] = sign(offer);
+        DesktopMsiManifest::Artifact selected;
+        QString error;
+        const auto verifyDesktop = [&](const QByteArray &json, const QByteArray &signatureBytes,
+                                       const QList<QByteArray> &keys, const QString &arch = "amd64") {
+            return DesktopMsiManifest::verify(json, signatureBytes, keys, "v0.4.0", "0.3.2", arch, &selected, &error);
+        };
+        require(verifyDesktop(body, sig, {publicKey}) && selected.packageCode == msi.value("package_code").toString()
+                && selected.msiSha256 == QString(64, 'a') && selected.guiSha256 == QString(64, 'b'),
+                "signed Desktop MSI identity rejected");
+        QByteArray tampered = body;
+        tampered.replace(QByteArray(64, 'b'), QByteArray(64, 'c'));
+        require(tampered != body && !verifyDesktop(tampered, sig, {publicKey}), "tampered GUI hash accepted");
+        require(!verifyDesktop(body, sig, {ephemeralKey().publicKey}), "unknown Desktop signing key accepted");
+        require(!verifyDesktop(body, sig, {publicKey}, "arm64"), "Desktop artifact matched the wrong architecture");
+        require(!verifyDesktop(body, sig, {publicKey}, "x64"), "noncanonical architecture accepted");
+        for (const auto *field : {"name", "sha256", "gui_sha256", "product_code", "package_code", "gui_component_code"}) {
+            auto wrong = msi;
+            wrong[field] = QStringLiteral("invalid");
+            offer["msi"] = wrong;
+            const auto [wrongBody, wrongSig] = sign(offer);
+            require(!verifyDesktop(wrongBody, wrongSig, {publicKey}), "wrong signed Desktop artifact field accepted");
+        }
+        msi["name"] = "bimeron-desktop-0.4.0-windows-arm64.msi";
+        msi["architecture"] = "arm64";
+        offer["msi"] = msi;
+        const auto [armBody, armSig] = sign(offer);
+        require(verifyDesktop(armBody, armSig, {publicKey}, "arm64"), "signed ARM64 Desktop artifact rejected");
+    }
+
     auto [bytes, signature] = sign(manifest);
     auto verify = [&](const QByteArray &body, const QByteArray &sig, const QList<QByteArray> &keys = {}) {
         CoreUpdateRelease selected;

@@ -1,5 +1,6 @@
 #define WIN32_LEAN_AND_MEAN
 #include "installer-preflight-digest.h"
+#include "DesktopMsiManifest.h"
 #include <msi.h>
 #include <msiquery.h>
 
@@ -73,28 +74,49 @@ QString summary(MSIHANDLE database, UINT property) {
     return QString::fromWCharArray(result, length);
 }
 
-bool verifiedOffer(const QJsonObject &receipt, const Identity &next) {
+QByteArray resource(const QString &name) {
+    QFile file(":/handoff/" + name);
+    return file.open(QIODevice::ReadOnly) ? file.readAll() : QByteArray{};
+}
+
+InstallerPreflight::FileHandle verifiedOffer(const QJsonObject &receipt, const Identity &next) {
     const QString path = receipt.value("msi_path").toString();
     const QString digest = receipt.value("msi_sha256").toString();
     const QString architecture = receipt.value("architecture").toString();
 #if defined(_M_ARM64)
-    if (architecture != "arm64") return false;
+    if (architecture != "arm64") return {};
     const QString platform = "Arm64";
 #elif defined(_M_X64)
-    if (architecture != "amd64") return false;
+    if (architecture != "amd64") return {};
     const QString platform = "x64";
 #else
-    return false;
+    return {};
 #endif
+    QList<QByteArray> keys;
+    DesktopMsiManifest::Artifact signedArtifact;
+    if (!CoreUpdate::parseTrustedKeys(resource("public-key").trimmed(), &keys)
+        || !DesktopMsiManifest::verify(resource("manifest"), resource("signature"), keys,
+                                      receipt.value("release_tag").toString(),
+                                      receipt.value("installed_version").toString(),
+                                      architecture, &signedArtifact, nullptr)
+        || signedArtifact.name != QFileInfo(path).fileName() || signedArtifact.size != QFileInfo(path).size()
+        || signedArtifact.msiSha256 != digest || signedArtifact.guiSha256 != next.digest
+        || signedArtifact.productCode != next.product || signedArtifact.packageCode != next.package
+        || signedArtifact.guiComponentCode != next.component)
+        return {};
+
+    if (!QFileInfo(path).isAbsolute()) return {};
+    auto verified = InstallerPreflight::openPinnedFile(QDir::toNativeSeparators(path).toStdWString(), digest.toStdString());
     InstallerHandle database;
-    if (!matchesFile(path, digest) ||
-        MsiOpenDatabaseW(reinterpret_cast<LPCWSTR>(path.utf16()), nullptr, &database.value) != ERROR_SUCCESS)
-        return false;
-    return query(database.value, L"SELECT `Value` FROM `Property` WHERE `Property` = 'ProductCode'") == next.product
-        && summary(database.value, 9) == next.package
-        && summary(database.value, 7).section(';', 0, 0).compare(platform, Qt::CaseInsensitive) == 0
-        && query(database.value, L"SELECT `ComponentId` FROM `Component` WHERE `KeyPath` = 'CM_FP_bimeron_desktop.exe'") == next.component
-        && matchesFile(path, digest);
+    if (!verified || MsiOpenDatabaseW(reinterpret_cast<LPCWSTR>(path.utf16()), nullptr, &database.value) != ERROR_SUCCESS)
+        return {};
+    if (query(database.value, L"SELECT `Value` FROM `Property` WHERE `Property` = 'ProductCode'") != next.product
+        || query(database.value, L"SELECT `Value` FROM `Property` WHERE `Property` = 'ProductVersion'") != receipt.value("release_tag").toString().mid(1)
+        || summary(database.value, 9) != next.package
+        || summary(database.value, 7).section(';', 0, 0).compare(platform, Qt::CaseInsensitive) != 0
+        || query(database.value, L"SELECT `ComponentId` FROM `Component` WHERE `KeyPath` = 'CM_FP_bimeron_desktop.exe'") != next.component)
+        return {};
+    return verified;
 }
 
 bool installedMatches(const Identity &expected) {
@@ -124,8 +146,9 @@ int main(int argc, char **argv) {
     const auto receipt = QJsonDocument::fromJson(file.readAll()).object();
     const auto old = identity(receipt.value("old_gui").toObject());
     const auto next = identity(receipt.value("new_gui").toObject());
-    if (!validIdentity(old) || !validIdentity(next) || old.product == next.product ||
-        old.package == next.package || !verifiedOffer(receipt, next)) {
+    const auto verifiedMsi = validIdentity(old) && validIdentity(next) && old.product != next.product
+        && old.package != next.package ? verifiedOffer(receipt, next) : InstallerPreflight::FileHandle{};
+    if (!verifiedMsi) {
         std::puts("lab_offer_refused");
         return 4;
     }

@@ -4,6 +4,8 @@
 #include <QList>
 #include <QString>
 
+class QJsonObject;
+
 struct CoreUpdateRelease {
     QString tag;
     QString version;
@@ -22,6 +24,8 @@ public:
     // Parses comma-separated canonical standard-base64 32-byte keys. An empty string is an
     // empty list. Malformed entries or duplicate keys or key IDs leave *keys empty and fail.
     static bool parseTrustedKeys(const QByteArray &encoded, QList<QByteArray> *keys);
+    static bool verifySignedJson(const QByteArray &bytes, const QByteArray &signature,
+                                 const QList<QByteArray> &trustedKeys, QJsonObject *result, QString *error);
     // Selects the trusted key whose key ID equals the manifest key_id and verifies the
     // signature under that key only.
     static bool verifyManifest(const QByteArray &bytes, const QByteArray &signature,
