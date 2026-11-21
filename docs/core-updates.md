@@ -208,3 +208,23 @@ continues installation. Test SemVer numeric prereleases, stable precedence and
 invalid versions on Windows/Linux through CTest. Native MSI/DEB upgrade, failure
 rollback and ARM64 runtime remain release acceptance gates. Preserve settings,
 Core pins and clean-install behavior. Performance benchmarking is inapplicable.
+
+### Windows service update hold acceptance
+
+An update can opt in only when both installed service capabilities are JSON
+true, the verified bundled updater reports contract 1, and the selected
+signed Windows archive entry reports contract 1 with an executable SHA-256
+that matches the extracted and staged bytes. Other contract revisions are
+ineligible for hold. Declining the prompt preserves verified staging under
+the existing rules, and changes to signed artifact metadata invalidate it.
+
+After the updater exits, fresh authenticated service status is authoritative
+for guarded resume and recovery. A matching update residual may be resumed
+once using the profile and generation reported by Core. A rejected or
+ambiguous start is resolved by reading status and presenting recovery when
+residual protection remains.
+
+Windows MSI acceptance remains open. Standalone MSI does not activate
+privileged deferred jobs from commit markers. Verify identical Core,
+interactive replacement and rollback, and administrative outcomes for
+silent maintenance on a working data-plane fixture before release.

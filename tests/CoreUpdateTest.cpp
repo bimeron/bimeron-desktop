@@ -240,6 +240,31 @@ int main(int argc, char **argv) {
                                           "0.1.1", 1, 1, "windows", "amd64", false, &selected, &error);
     };
     require(verify(bytes, signature), "valid signed manifest rejected");
+    {
+        auto signedHold = manifest;
+        auto entries = archives;
+        auto entry = entries.at(0).toObject();
+        entry["kill_switch_update_hold_contract"] = 1;
+        entry["executable_sha256"] = QString(64, 'b');
+        entries[0] = entry;
+        signedHold["archives"] = entries;
+        const auto [body, sig] = sign(signedHold);
+        CoreUpdateRelease selected;
+        QString error;
+        require(CoreUpdate::verifyManifest(body, sig, {publicKey}, "v1.2.0", "0.1.1", 1, 1,
+                                           "windows", "amd64", false, &selected, &error) &&
+                selected.supportsUpdateHold && selected.executableSha256 == QByteArray(32, char(0xbb)),
+                "signed hold contract not selected for its artifact");
+        require(CoreUpdate::verifyManifest(body, sig, {publicKey}, "v1.2.0", "0.1.1", 1, 1,
+                                           "windows", "arm64", false, &selected, &error) &&
+                !selected.supportsUpdateHold && selected.executableSha256.isEmpty(),
+                "hold contract leaked to another architecture");
+        entry["executable_sha256"] = QString(64, 'B');
+        entries[0] = entry;
+        signedHold["archives"] = entries;
+        const auto [invalidBody, invalidSignature] = sign(signedHold);
+        require(!verify(invalidBody, invalidSignature), "uppercase executable digest accepted");
+    }
     CoreUpdateRelease nextGuiSelected;
     QString nextGuiError;
     require(!CoreUpdate::verifyManifest(bytes, signature, {publicKey}, "v1.2.0", "0.1.2", 1, 1,
@@ -410,6 +435,13 @@ int main(int argc, char **argv) {
     CoreUpdateRelease release{"v1.2.0", "1.2.0", "fixture.zip", zip.size(), QCryptographicHash::hash(zip, QCryptographicHash::Sha256)};
     QByteArray extracted; QString error;
     require(CoreUpdate::extractExecutable(zip, release, "windows", "amd64", &extracted, &error) && extracted == payload, "valid ZIP rejected");
+    release.executableSha256 = QByteArray(32, 0);
+    require(!CoreUpdate::extractExecutable(zip, release, "windows", "amd64", &extracted, &error),
+            "wrong signed executable hash accepted");
+    release.executableSha256 = QCryptographicHash::hash(payload, QCryptographicHash::Sha256);
+    require(CoreUpdate::extractExecutable(zip, release, "windows", "amd64", &extracted, &error),
+            "correct signed executable hash rejected");
+    release.executableSha256.clear();
     release.assetSize++;
     require(!CoreUpdate::extractExecutable(zip, release, "windows", "amd64", &extracted, &error), "wrong ZIP size accepted");
     release.assetSize--;

@@ -254,7 +254,9 @@ void CoreUpdater::inspectNext() {
                 return;
             }
             if (stagedRelease && staged_ && selected.assetName == staged_->release.assetName &&
-                selected.assetSize == staged_->release.assetSize && selected.assetSha256 == staged_->release.assetSha256) {
+                selected.assetSize == staged_->release.assetSize && selected.assetSha256 == staged_->release.assetSha256 &&
+                selected.executableSha256 == staged_->release.executableSha256 &&
+                selected.supportsUpdateHold == staged_->release.supportsUpdateHold) {
                 // The postponed update is still the newest release: keep it, download nothing.
                 busy_ = false;
                 emit statusChanged(tr("Core %1 is ready to install").arg(staged_->release.version));
