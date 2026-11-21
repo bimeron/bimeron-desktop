@@ -17,6 +17,7 @@
 #include <QElapsedTimer>
 #include <QEventLoop>
 #include <QKeyEvent>
+#include "DnsAddressEdit.h"
 #include <QLabel>
 #include <QListWidget>
 #include <QTableWidget>
@@ -2415,6 +2416,127 @@ int main(int argc, char **argv) {
 
     if (!QtPlatformPreflight::requestedPlatformAvailable()) return 1;
     QApplication app(argc, argv);
+    {
+        DnsAddressEdit ordinary(true), bootstrap(false);
+        const auto paste = [](QLineEdit &edit) {
+            QKeyEvent key(QEvent::KeyPress, Qt::Key_V, Qt::ControlModifier);
+            QApplication::sendEvent(&edit, &key);
+        };
+        ordinary.setText("192.0.2.1, 192.0.2.2, 192.0.2.3");
+        ordinary.setSelection(11, 9);
+        QApplication::clipboard()->setText("192.0.2.4,\r\n192.0.2.5");
+        paste(ordinary);
+        require(ordinary.text() == "192.0.2.1, 192.0.2.4, 192.0.2.5, 192.0.2.3");
+        ordinary.setCursorPosition(ordinary.text().size());
+        QApplication::clipboard()->setText("\t192.0.2.6");
+        paste(ordinary);
+        require(ordinary.text() == "192.0.2.1, 192.0.2.4, 192.0.2.5, 192.0.2.3");
+        ordinary.undo();
+        require(ordinary.text() == "192.0.2.1, 192.0.2.2, 192.0.2.3");
+        require(!ordinary.error("2001:db8::1").isEmpty());
+        require(!bootstrap.error("2001:db8::1%eth0").isEmpty());
+        bootstrap.setText("192.0.2.1");
+        bootstrap.selectAll();
+        QApplication::clipboard()->setText("2001:db8::1\n\t192.0.2.2");
+        QTimer::singleShot(0, [&] {
+            auto *menu = qobject_cast<QMenu *>(QApplication::activePopupWidget());
+            require(menu);
+            for (auto *action : menu->actions())
+                if (action->text() == "Paste") action->trigger();
+            menu->close();
+        });
+        QContextMenuEvent menuEvent(QContextMenuEvent::Keyboard, QPoint(), QPoint());
+        QApplication::sendEvent(&bootstrap, &menuEvent);
+        require(bootstrap.text() == "2001:db8::1, 192.0.2.2");
+
+        ProfileEditorDialog editor({}, QJsonObject{{"vpn", true}, {"doh", true}}, nullptr, {}, {}, {}, true);
+        auto *configure = editor.findChild<QPushButton *>("configureDoh");
+        require(configure && configure->isEnabled());
+        QTimer::singleShot(0, [&] {
+            auto *dialog = QApplication::activeModalWidget();
+            require(dialog);
+            dialog->findChild<QComboBox *>("dohMode")->setCurrentIndex(1);
+            dialog->findChild<QPushButton *>("addDohResolver")->click();
+            dialog->findChild<QLineEdit *>("dohUrl")->setText("https://Resolver.example/dns%2Cquery");
+            dialog->findChild<QLineEdit *>("dohBootstrapIps")->setText("2001:db8::1, 192.0.2.2");
+            dialog->findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Ok)->click();
+        });
+        configure->click();
+        const QString encrypted = editor.configText();
+        require(encrypted.contains("DoH = https://Resolver.example/dns%2Cquery\n"));
+        require(encrypted.contains("DoHBootstrap = 2001:db8::1|192.0.2.2\n"));
+        ProfileEditorDialog older(encrypted, QJsonObject{{"vpn", true}});
+        require(!older.findChild<QPushButton *>("configureDoh")->isEnabled());
+        require(older.configText() == encrypted);
+        QTimer::singleShot(0, [&] {
+            auto *dialog = QApplication::activeModalWidget();
+            require(dialog);
+            dialog->findChild<QComboBox *>("dohMode")->setCurrentIndex(0);
+            dialog->findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Ok)->click();
+        });
+        configure->click();
+        require(!editor.configText().contains("DoH"));
+        require(!editor.configText().contains("DNS = "));
+
+        const QString dohCore = qEnvironmentVariable("BIMERON_DOH_CORE");
+        if (!dohCore.isEmpty()) {
+            const QString profile = "[Profile]\r\nVersion = 1\r\n[AccessKey]\r\n"
+                "SOCKS5 = socks5://192.0.2.1:1080\r\n[Interface]\r\nMode = vpn\r\n"
+                "# preserved\r\nIPv6 = disable\r\n"
+                "DoH = https://Resolver.example/dns%2Cquery, https://other.example/dns-query\r\n"
+                "DoHBootstrap = 2001:db8::1|192.0.2.2, 192.0.2.3\r\n";
+            QTemporaryDir files;
+            require(files.isValid());
+            const auto path = files.filePath("doh.conf");
+            check(profile, {"DoHBootstrap = 2001:db8::1|192.0.2.2, 192.0.2.3"}, dohCore, path);
+            const QString oldCore = qEnvironmentVariable("BIMERON_OLD_DOH_CORE");
+            if (!oldCore.isEmpty()) {
+                QProcess process;
+                process.start(oldCore, {"validate", path});
+                require(process.waitForFinished(15000) && process.exitStatus() == QProcess::NormalExit && process.exitCode() != 0);
+            }
+            ProfileEditorDialog imported(profile, QJsonObject{{"vpn", true}, {"doh", true}}, nullptr, {}, dohCore, path);
+            require(imported.configText() == profile);
+            auto *importedConfigure = imported.findChild<QPushButton *>("configureDoh");
+            QTimer::singleShot(0, [&] {
+                auto *dialog = QApplication::activeModalWidget();
+                require(dialog);
+                dialog->findChild<QListWidget *>("dohResolvers")->setCurrentRow(1);
+                dialog->findChild<QPushButton *>("moveDohResolverUp")->click();
+                dialog->findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Ok)->click();
+            });
+            importedConfigure->click();
+            const QString reordered = imported.configText();
+            require(reordered.contains("SOCKS5 = socks5://192.0.2.1:1080\r\n[Interface]\r\n"));
+            ProfileEditorDialog reopened(reordered, QJsonObject{{"vpn", true}, {"doh", true}}, nullptr, {}, dohCore, path);
+            require(reopened.configText() == reordered);
+            QTimer::singleShot(0, [&] {
+                auto *dialog = QApplication::activeModalWidget();
+                require(dialog);
+                auto *resolvers = dialog->findChild<QListWidget *>("dohResolvers");
+                require(resolvers && resolvers->count() == 2);
+                require(resolvers->item(0)->text() == "https://other.example/dns-query");
+                require(resolvers->item(1)->text() == "https://Resolver.example/dns%2Cquery");
+                auto *addresses = dialog->findChild<QLineEdit *>("dohBootstrapIps");
+                require(addresses && addresses->text() == "192.0.2.3");
+                resolvers->setCurrentRow(1);
+                require(addresses->text() == "2001:db8::1, 192.0.2.2");
+                dialog->findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Cancel)->click();
+            });
+            reopened.findChild<QPushButton *>("configureDoh")->click();
+            require(reopened.configText() == reordered);
+            require(!reordered.contains("DNS = "));
+            QTimer::singleShot(0, [&] {
+                auto *dialog = QApplication::activeModalWidget();
+                require(dialog);
+                dialog->findChild<QComboBox *>("dohMode")->setCurrentIndex(0);
+                dialog->findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Ok)->click();
+            });
+            importedConfigure->click();
+            require(!imported.configText().contains("DoH") && !imported.configText().contains("DNS = "));
+            require(imported.configText().contains("# preserved\r\nIPv6 = disable\r\n"));
+        }
+    }
     coreProblemPresentation();
     geoSiteClassificationTest();
     {
