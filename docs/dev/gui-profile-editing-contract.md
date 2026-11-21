@@ -127,8 +127,11 @@ platforms. Set `BIMERON_DOH_CORE` to a DoH-capable CLI to exercise the real
 document patch and validation. Set `BIMERON_OLD_DOH_CORE` to a pre-DoH CLI to
 check rejection of the same encrypted profile. Use a native profile file or
 the Raw config tab when transferring the full profile with its DNS settings.
-The provisional #246 integration candidate uses Core
-`bae03176322c35b8bb6c2e690fbb2a85d2729374` and its
+The #246 acceptance pin is Core
+`da8e169d4c31fc30d30b629d3dddd16f4898de58`. The only change from
+`bae03176322c35b8bb6c2e690fbb2a85d2729374` is `docs/WIREGUARD.MD`.
+Use the equivalent Windows and Linux test binaries from the earlier revision
+and its
 `internal/dnsconfig/testdata/doh-v1.json` vectors. The development CLIs omit
 embedded VCS identity. Verify the binaries by SHA-256.
 
@@ -137,7 +140,7 @@ embedded VCS identity. Verify the binaries by SHA-256.
 | Windows amd64 | `9562e2237e8c036a873c9850bea84a79bea5202a2b9f1a7c1f5dea0f62041d13` |
 | Linux amd64 | `d713e5a2a59c5dde44e671765c0aef1c50f57f63f709d6f08fe051d3bb5d74fb` |
 
-The same Core revision produced these packaged CLI hashes in
+Core `bae03176322c35b8bb6c2e690fbb2a85d2729374` produced these packaged CLI hashes in
 [Core CI run 44844219660](https://github.com/bimeron/bimeron-core/actions/runs/44844219660).
 
 | Packaged CLI | SHA-256 |
