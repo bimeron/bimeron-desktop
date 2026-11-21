@@ -1882,3 +1882,17 @@ boundary. Keep the old companion version available through terminal outcome,
 rollback and GUI acknowledgement, then retire it after reconciliation.
 Production trust, companion deployment and servicing, and active VPN update
 and rollback acceptance are prerequisites for exposing the update action.
+
+A Desktop MSI and any subsequent Core replacement have separate outcomes.
+After the GUI acknowledges its restart, the coordinator rechecks the live
+child process, owner session and image identity, both MSI registrations, and
+the pending-reboot state. Only a verified successful Desktop update is
+eligible for later Core replacement. A verified Desktop rollback restores
+the old GUI and ends the operation. Ambiguity enters recovery.
+
+A future Core replacement must use the existing authenticated in-app Core
+update flow from the relaunched Desktop. The offer requires a verified
+signed Core artifact, exact executable digest and a compatible trusted
+helper. Fresh service capability and session checks precede any hold.
+Keep hold disabled if any prerequisite fails. A Core rollback is a separate
+service transaction and needs independent active VPN evidence.

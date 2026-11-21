@@ -197,25 +197,25 @@ InstallerPreflight::FileHandle startInstaller(const QString &path) {
     return InstallerPreflight::FileHandle(call.hProcess);
 }
 
-bool launchDesktop(const Identity &gui, const QString &mode) {
+InstallerPreflight::FileHandle launchDesktop(const Identity &gui, const QString &mode) {
     if (!TrustedCore::protectedExecutable(gui.path) || !installedMatches(gui) || !InstallerPreflight::desktopIsClosed())
-        return false;
+        return {};
     const auto path = QDir::toNativeSeparators(gui.path).toStdWString();
     const auto image = InstallerPreflight::openPinnedFile(path, gui.digest.toStdString());
-    if (!image) return false;
+    if (!image) return {};
     SECURITY_ATTRIBUTES security{sizeof(SECURITY_ATTRIBUTES), nullptr, TRUE};
     const InstallerPreflight::FileHandle ready(CreateEventW(&security, FALSE, FALSE, nullptr));
-    if (!ready) return false;
+    if (!ready) return {};
     HANDLE inherited = ready.get();
     const auto command = QStringLiteral("\"%1\" --restart --msi-handoff-lab-%2 %3")
         .arg(QString::fromStdWString(path), mode, QString::number(quintptr(inherited))).toStdWString();
-    const auto child = MsiHandoff::startLabProcess(path, command, &inherited, 1);
+    auto child = MsiHandoff::startLabProcess(path, command, &inherited, 1);
     DWORD ownerSession = 0, childSession = 0;
     if (!child || !ProcessIdToSessionId(GetCurrentProcessId(), &ownerSession)
-        || !ProcessIdToSessionId(GetProcessId(child.get()), &childSession) || childSession != ownerSession) return false;
+        || !ProcessIdToSessionId(GetProcessId(child.get()), &childSession) || childSession != ownerSession) return {};
     const HANDLE waitFor[]{ready.get(), child.get()};
-    return WaitForMultipleObjects(std::size(waitFor), waitFor, FALSE, 10000) == WAIT_OBJECT_0
-        && WaitForSingleObject(child.get(), 0) == WAIT_TIMEOUT;
+    if (WaitForMultipleObjects(std::size(waitFor), waitFor, FALSE, 10000) != WAIT_OBJECT_0) return {};
+    return child;
 }
 
 std::vector<BYTE> tokenUser(HANDLE process) {
@@ -230,7 +230,7 @@ std::vector<BYTE> tokenUser(HANDLE process) {
     return info;
 }
 
-bool authenticatedOrigin(HANDLE process, const Identity &expected) {
+bool authenticatedDesktop(HANDLE process, const Identity &expected) {
     DWORD session = 0, ownSession = 0;
     if (!process || WaitForSingleObject(process, 0) != WAIT_TIMEOUT
         || !ProcessIdToSessionId(GetProcessId(process), &session)
@@ -274,7 +274,7 @@ int runLab(const QJsonObject &receipt, const Identity &old, const Identity &next
                         .filePath("bimeron-msi-handoff-lab.lock"));
     operation.setStaleLockTime(0);
     const auto origin = MsiHandoff::inheritedHandle(originValue);
-    if (!operation.tryLock(0) || !authenticatedOrigin(origin.get(), old)
+    if (!operation.tryLock(0) || !authenticatedDesktop(origin.get(), old)
         || !installedMatches(old) || installedMatches(next) || rebootPending()) return 5;
     static const QRegularExpression pipeName(QStringLiteral(R"(\ABimeronDesktopHandoffLab-[0-9a-f-]{36}\z)"));
     if (!pipeName.match(channel).hasMatch()) return 5;
@@ -315,10 +315,14 @@ int runLab(const QJsonObject &receipt, const Identity &old, const Identity &next
         return 7;
     }
     const bool launchNew = outcome == MsiHandoff::Outcome::LaunchNew;
-    if ((launchNew || outcome == MsiHandoff::Outcome::LaunchOld)
-        && launchDesktop(launchNew ? next : old, mode)) {
-        std::puts(launchNew ? "lab_new_gui_acknowledged" : "lab_old_gui_acknowledged");
-        return 0;
+    if (launchNew || outcome == MsiHandoff::Outcome::LaunchOld) {
+        const auto &expected = launchNew ? next : old;
+        const auto relaunched = launchDesktop(expected, mode);
+        if (relaunched && authenticatedDesktop(relaunched.get(), expected)
+            && MsiHandoff::select(result, installedMatches(old), installedMatches(next), rebootPending()) == outcome) {
+            std::puts(launchNew ? "lab_new_gui_acknowledged" : "lab_old_gui_acknowledged");
+            return 0;
+        }
     }
     return labRecoveryRequired();
 }
