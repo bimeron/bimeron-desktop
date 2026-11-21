@@ -111,7 +111,7 @@ operation. Only this English plan document changes; build/packaging flow is unch
 Desktop HEAD is `4edb869b644568e5cbdbe3f49fe94b1237cc30ec`, following D1
 `49263d5b273f9a3420cef27056a16f942739272b`. The worktree was clean before this
 update. T3 and Git both bind this work to `plan/ikev2-gui-integration` at
-`C:/Users/PC/.t3/worktrees/bimeron-desktop/plan-ikev2-gui-integration`;
+`<worktrees>/bimeron-desktop/plan-ikev2-gui-integration`;
 the planning selection is `codex_petr/gpt-6-astra`, MEDIUM.
 
 Core was inspected read-only in `feat/ikev2-auth-contract`, HEAD
@@ -882,9 +882,9 @@ of those contracts. This plan does not depend on lab restoration succeeding.
 
 ## Sources and boundaries
 
-Desktop branch `plan/ikev2-gui-integration`, base `38e020eb41bfb619f2a794e9628e3d0fc6002a40`. T3 binding and Git HEAD agree. Parent planning documents were inspected read-only in `C:/Users/PC/.t3/worktrees/bimeron-desktop/plan-ikev2-installation-contract/docs`: installation contract status/GUI boundaries, profiles GUI boundaries, and lab handoff. The historical handoff is not the current lab status. Consumer direction B supersedes mandatory managed-host proposals; installer service and runtime remain separate.
+Desktop branch `plan/ikev2-gui-integration`, base `38e020eb41bfb619f2a794e9628e3d0fc6002a40`. T3 binding and Git HEAD agree. Parent planning documents were inspected read-only in `<worktrees>/bimeron-desktop/plan-ikev2-installation-contract/docs`: installation contract status/GUI boundaries, profiles GUI boundaries, and lab handoff. The historical handoff is not the current lab status. Consumer direction B supersedes mandatory managed-host proposals; installer service and runtime remain separate.
 
-Core was inspected read-only at `C:/Users/PC/.t3/worktrees/bimeron-core/plan-ikev2-installation-contract`, HEAD `498596eabe4ec734cb0bda72059dd74a66c9dc49`. Its working tree contains uncommitted lifecycle, RAS, network/WFP and test changes. `internal/control/foreground.go` and `profile_control.go` are unchanged against HEAD; the working `core/capabilities.go` changes nested kill-switch/DNS-protection flags from true to false. Working protected start refuses `ikev2_safe_bootstrap_unavailable`. Do not attribute those working changes to the committed API or approved binaries. Bundled beta2/66d84 is not approval of a final artifact pair.
+Core was inspected read-only at `<worktrees>/bimeron-core/plan-ikev2-installation-contract`, HEAD `498596eabe4ec734cb0bda72059dd74a66c9dc49`. Its working tree contains uncommitted lifecycle, RAS, network/WFP and test changes. `internal/control/foreground.go` and `profile_control.go` are unchanged against HEAD; the working `core/capabilities.go` changes nested kill-switch/DNS-protection flags from true to false. Working protected start refuses `ikev2_safe_bootstrap_unavailable`. Do not attribute those working changes to the committed API or approved binaries. Bundled beta2/66d84 is not approval of a final artifact pair.
 
 ## Exact existing integration points
 

@@ -31,7 +31,7 @@ The local `0.1.4` build produced all four packages with `scripts/package-all.ps1
 
 The local `0.1.3` build produced all four packages with `scripts/package-all.ps1`. Windows amd64 and Linux amd64 tests passed; both ARM64 targets compiled and packaged without runtime testing. Both DEBs report Version `0.1.3` and their target architectures. Windows MSI upgrade and theme appearance on a Windows 11 device still require manual validation.
 
-The local `0.1.2` build produced all four packages. Windows amd64 and Linux amd64 tests passed; Windows and Linux ARM64 packages compiled without ARM64 runtime testing. MSI metadata reports ProductVersion `0.1.2` and the unchanged UpgradeCode `{E93DE42D-1F4F-4227-8056-1086581CCE51}`. Both DEBs report Version `0.1.2` and their target architecture. A live `0.1.1` → `0.1.2` MSI upgrade on Windows 10 STD replaced the GUI executable, preserved the installed core service executable and running service, and left VPN connected. The unattended install closed the GUI; reopen it for visual confirmation. DEB upgrade behavior and ARM64 runtime remain untested.
+The local `0.1.2` build produced all four packages. Windows amd64 and Linux amd64 tests passed; Windows and Linux ARM64 packages compiled without ARM64 runtime testing. MSI metadata reports ProductVersion `0.1.2` and the unchanged UpgradeCode `{E93DE42D-1F4F-4227-8056-1086581CCE51}`. Both DEBs report Version `0.1.2` and their target architecture. A live `0.1.1` → `0.1.2` MSI upgrade on the Windows test VM replaced the GUI executable, preserved the installed core service executable and running service, and left VPN connected. The unattended install closed the GUI; reopen it for visual confirmation. DEB upgrade behavior and ARM64 runtime remain untested.
 
 AppImage, `setup.exe`, WinGet manifests and APT repositories are not currently supported. They should not be considered part of the release process.
 
@@ -464,6 +464,10 @@ connection test executable also covers transient SSH challenge UI and private IP
 Protocol URI import tests use `BIMERON_PRESERVATION_CORE` targeting Core
 `v0.3.0-beta.1` revision `9f527efe0a4959786084675f1ff795edb8a0d910`.
 The current bundle pin is not evidence of support for these new protocols.
+WireGuard/AmneziaWG fixtures in `profile-vless-test` use a fake `bimeron wireguard`
+bridge; set `BIMERON_WIREGUARD_CORE` to a Core built from `feat/wireguard-awg` at
+`f902ecd375fea45ca5887a00eb6080250560cd33` to repeat them against the real bridge. This optional path does not change the
+bundled Core; see [WireGuard and AmneziaWG profiles](wireguard-profiles.md#verification).
 
 ## Foreground installer feasibility prototype (not enabled)
 

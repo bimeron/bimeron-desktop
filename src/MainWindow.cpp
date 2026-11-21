@@ -8,6 +8,8 @@
 #include "HiDpiCheckBox.h"
 #include "HiDpiComboBox.h"
 #include "ProfileEditorDialog.h"
+#include "ProfileTextEdit.h"
+#include "WireGuardCore.h"
 #include "GeoDataSelection.h"
 #include "GeoDataDialog.h"
 #include "GeoDataSelection.h"
@@ -27,6 +29,8 @@
 #include <QStandardItemModel>
 #include <QCoreApplication>
 #include <QDateTime>
+#include <QPointer>
+#include <QThreadPool>
 #include <QCloseEvent>
 #include <QDialog>
 #include <QDialogButtonBox>
@@ -606,6 +610,8 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), core_(this) {
     refreshProfiles();
     geoDataUpdater_ = new GeoDataUpdater([this] { return validationExecutable_; }, [this] { return profiles_; }, this);
     connect(geoDataUpdater_, &GeoDataUpdater::updated, this, [this] { offerGeoDataReconnect(); });
+    connect(GeoDataSelection::instance(), &GeoDataSelection::downloadedSelectionApplied,
+            this, &MainWindow::offerGeoDataReconnect);
     // Test harnesses disable network checks; the first check is a child timer they can stop.
     if (!qEnvironmentVariableIsSet("BIMERON_DISABLE_GEODATA_UPDATES")) geoDataUpdater_->start();
     connectionLabel_->setText(tr("Connecting to core…"));
@@ -1221,6 +1227,238 @@ bool MainWindow::activeProxyMode() const {
     return lastProxyMode_;
 }
 
+QString MainWindow::profileDetail(int row, const ProfileConnectionInfo &info) const {
+    const QString interfaceName = info.interfaceMode == "proxy" ? tr("Local SOCKS5") : tr("System VPN");
+    if (info.backend == ProfileConnectionInfo::Backend::NativeIKEv2) return tr("Native IKEv2 unavailable");
+    if (!info.connectable) return tr("Unknown protocol");
+    if (info.keyFile.isEmpty()) return QString("%1 → %2").arg(info.protocol, interfaceName);
+    const QString wireGuard = wireGuardLabel(row);
+    if (!wireGuard.isEmpty()) return QString("%1 → %2").arg(wireGuard, interfaceName);
+    return QString("%1%2").arg(profiles_[row].id == activeProfileId_ && state_ == "connected" && !activeFileProtocol_.isEmpty()
+        ? activeFileProtocol_ + QStringLiteral(" → ") : QString(), interfaceName);
+}
+
+// Reads the key file of a profile when Core identifies it as WireGuard/AmneziaWG.
+bool MainWindow::readWireGuard(const QString &profilePath, const QString &profileText, QByteArray *data, bool *definitive) const {
+    bool probed = true;
+    const bool result = probeWireGuard(validationExecutable_, profilePath, profileText, data, &probed);
+    if (definitive) *definitive = probed;
+    return result;
+}
+
+// Thread-safe: touches no MainWindow state.
+bool MainWindow::probeWireGuard(const QString &executable, const QString &profilePath, const QString &profileText,
+                                QByteArray *data, bool *definitive) {
+    *definitive = true;
+    const QString reference = ProfileStore::keyFileReference(profileText);
+    if (reference.isEmpty() || !ProfileStore::readKeyFile(profilePath, reference, data)) return false;
+    bool probed = true;
+    if (!WireGuardCore::cliSupported(executable, &probed)) {
+        *definitive = probed;
+        return false;
+    }
+    const auto detected = WireGuardCore::detect(executable, ProfileStore::keyFileText(*data));
+    *definitive = detected.definitive;
+    return detected.answered() && detected.format() == "wireguard";
+}
+
+void MainWindow::finishWireGuardProbe(const QString &identity, const QString &label, bool definitive) {
+    wireGuardProbes_.remove(identity);
+    // A transient bridge failure is not remembered as "not WireGuard"; retry later.
+    if (definitive) wireGuardLabels_.insert(identity, label);
+    else wireGuardRetryAt_.insert(identity, QDateTime::currentMSecsSinceEpoch() + 30000);
+    // Batch completions: one list refresh for any number of finished probes.
+    if (!profileList_ || wireGuardRefreshQueued_) return;
+    wireGuardRefreshQueued_ = true;
+    QTimer::singleShot(200, this, [this] {
+        wireGuardRefreshQueued_ = false;
+        updateProfileAppearance();
+    });
+}
+
+QString MainWindow::wireGuardLabel(int row) const {
+    if (row < 0 || row >= profiles_.size()) return {};
+    QFile profile(profiles_[row].path);
+    if (!profile.open(QIODevice::ReadOnly)) return {};
+    const QString text = QString::fromUtf8(profile.read(64 * 1024 + 1));
+    const QString reference = ProfileStore::keyFileReference(text);
+    if (reference.isEmpty()) return {};
+    const QString keyPath = ProfileStore::keyFilePath(profiles_[row].path, reference);
+    if (!ProfileStore::localRegularFile(keyPath)) return {};
+    const QFileInfo key(keyPath), core(validationExecutable_);
+    const QString identity = key.absoluteFilePath() + '\n' + QString::number(key.size()) + '\n'
+        + QString::number(key.lastModified().toMSecsSinceEpoch()) + '\n' + core.absoluteFilePath() + '\n'
+        + QString::number(core.size()) + '\n' + QString::number(core.lastModified().toMSecsSinceEpoch());
+    if (wireGuardLabels_.contains(identity)) return wireGuardLabels_.value(identity);
+    // Probing runs Core processes, which may stall; never block list rendering on it.
+    if (wireGuardProbes_.contains(identity) || wireGuardRetryAt_.value(identity) > QDateTime::currentMSecsSinceEpoch()) return {};
+    wireGuardProbes_.insert(identity);
+    QPointer<MainWindow> self(const_cast<MainWindow *>(this));
+    const QString executable = validationExecutable_, profilePath = profiles_[row].path;
+    QThreadPool::globalInstance()->start([self, identity, executable, profilePath, text] {
+        QByteArray data;
+        QString label;
+        bool definitive = true;
+        if (probeWireGuard(executable, profilePath, text, &data, &definitive)) {
+            const auto inspected = WireGuardCore::inspect(executable, ProfileStore::keyFileText(data));
+            label = inspected.answered() ? WireGuardCore::protocolLabel(inspected.object) : QStringLiteral("WireGuard");
+            definitive = definitive && inspected.answered();
+        }
+        QMetaObject::invokeMethod(QCoreApplication::instance(), [self, identity, label, definitive] {
+            if (self) self->finishWireGuardProbe(identity, label, definitive);
+        }, Qt::QueuedConnection);
+    });
+    return {};
+}
+
+QString MainWindow::describeProblems(const QList<CoreProblem> &problems) const {
+    const CoreErrorCatalog catalog = errorCatalog();
+    QStringList lines;
+    for (const auto &problem : problems) lines << describeCoreProblem(problem, catalog, coreFieldLabel(problem));
+    return lines.isEmpty() ? tr("Core rejected the configuration. Check the key and profile settings.") : lines.join('\n');
+}
+
+QString MainWindow::wireGuardTemplate(const QString &name) {
+    QString safeName = name.trimmed().left(128);
+    safeName.remove(QRegularExpression(QStringLiteral("[\\x00-\\x1f\\x7f]")));
+    // The File value is replaced with the stored key file name; Core reads the
+    // tunnel settings from that file. DNS and MTU are omitted on purpose: the
+    // WireGuard DNS applies while the profile sets none.
+    return QStringLiteral("[Profile]\nVersion = 1\nName = %1\n\n[AccessKey]\nFile = wireguard.conf\n\n[Interface]\nMode = vpn\n\n[Routing]\nDefault = proxy\n")
+        .arg(ProfileTextEdit::encode(safeName));
+}
+
+// Validates a pair as Core will read it: the profile references a protected
+// draft of the WG/AWG text beside it. Both drafts are removed afterwards.
+bool MainWindow::validatePair(const QString &profileText, const QString &wireGuardText, const QString &directory,
+                              const QString &profilePath, const QString &draftDirectory, CoreFailure *failure, QString *preparedProfile) const {
+    CoreFailure local;
+    if (!failure) failure = &local;
+    QString *error = &failure->text;
+    if (!draftDirectory.isEmpty()
+        && !ProfileStore::importReferencesSafe(ProfileTextEdit::field(profileText, "AccessKey", "File", {}).toUtf8(), error))
+        return false;
+    // Core accepts URI-backed File profiles too; a pair must hold a WireGuard file.
+    const auto detected = WireGuardCore::detect(validationExecutable_, wireGuardText);
+    if (!detected.answered()) { *error = detected.error; return false; }
+    if (detected.format() != "wireguard") {
+        *error = tr("The WG/AWG config is not a WireGuard or AmneziaWG configuration.");
+        failure->problems = detected.problems;
+        return false;
+    }
+    const QString id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    const QString keyName = QStringLiteral(".bimeron-validate-%1.wg.conf").arg(id);
+    const QString keyPath = QDir(directory).filePath(keyName);
+    const QString draftPath = QDir(directory).filePath(QStringLiteral(".bimeron-validate-%1.conf").arg(id));
+    if (!ProfileStore::writeConfig(keyPath, wireGuardText.toUtf8(), error)) return false;
+    QStringList skipped;
+    const QString prepared = GeoDataSelection::materialize(profileText, profilePath, validationExecutable_,
+        GeoDataSelection::instance()->paths(), error, draftDirectory, &skipped, keyName);
+    if (error->isEmpty()) *error = routingCompatibilityError(prepared, capabilities_);
+    bool valid = error->isEmpty();
+    if (valid) {
+        const QString draft = ProfileTextEdit::field(GeoDataSelection::withoutRules(prepared, skipped), "AccessKey", "File", keyName);
+        valid = ProfileStore::writeConfig(draftPath, draft.toUtf8(), error) && validateConfig(draftPath, failure);
+    }
+    // Remove both drafts independently: the key draft holds the private key.
+    const bool profileRemoved = !QFileInfo::exists(draftPath) || QFile::remove(draftPath);
+    const bool keyRemoved = !QFileInfo::exists(keyPath) || QFile::remove(keyPath);
+    const bool removed = profileRemoved && keyRemoved;
+    if (!removed) {
+        failure->problems.clear();
+        *error = tr("Cannot remove the protected validation draft; the original profile was retained.");
+        return false;
+    }
+    if (valid && preparedProfile) *preparedProfile = prepared;
+    return valid;
+}
+
+bool MainWindow::importWireGuard(const QString &profileText, const QString &wireGuardText, QWidget *parent) {
+    QTemporaryDir directory;
+    if (!directory.isValid()) { QMessageBox::warning(parent, tr("Import failed"), tr("Cannot create a protected import draft directory.")); return false; }
+    QString error;
+    QString profile = profileText, wireGuard = wireGuardText;
+    if (wireGuard.toUtf8().size() > 64 * 1024) {
+        QMessageBox::warning(parent, tr("Import failed"), tr("The WireGuard configuration must be valid UTF-8 and at most 64 KiB."));
+        return false;
+    }
+    // The key file reference is replaced; every other reference must stay valid after relocation.
+    if (!ProfileStore::importReferencesSafe(ProfileTextEdit::field(profile, "AccessKey", "File", {}).toUtf8(), &error)) {
+        QMessageBox::warning(parent, tr("Import failed"), error);
+        return false;
+    }
+    const QString draftPath = directory.filePath("draft.conf");
+    const auto validate = [this, &directory, draftPath](const QString &text, const QString &key, CoreFailure *failure) {
+        return validatePair(text, key, directory.path(), draftPath, directory.path(), failure);
+    };
+    CoreFailure failure;
+    if (!validate(profile, wireGuard, &failure)) {
+        const QString reason = failure.text.isEmpty() ? describeProblems(failure.problems) : failure.text;
+        QMessageBox::information(parent, tr("Import needs correction"),
+            reason + "\n\n" + tr("The original file is unchanged. Correct this draft before importing."));
+        ProfileEditorDialog draft(profile, capabilities_, parent, {}, validationExecutable_, draftPath, false, wireGuard);
+        draft.setPairValidator(validate);
+        draft.setDeveloperMode(developerMode_);
+        if (draft.exec() != QDialog::Accepted) return false;
+        profile = draft.configText();
+        wireGuard = draft.wireGuardText();
+    }
+    const QString path = store_.createPair(profile.toUtf8(), wireGuard.toUtf8(), &error);
+    if (path.isEmpty()) { QMessageBox::warning(parent, tr("Import failed"), error); return false; }
+    QStringList skipped;
+    if (!prepareSharedGeoData(path, &error, &skipped) || !validateWithout(path, skipped, &error)) {
+        ProfileStore::removeProfileFiles(path);
+        QMessageBox::warning(parent, tr("Import failed"), error);
+        return false;
+    }
+    profiles_.append({ProfileStore::identity(path), ProfileStore::displayName(path), path});
+    if (!store_.save(profiles_, &error)) {
+        profiles_.removeLast();
+        ProfileStore::removeProfileFiles(path);
+        QMessageBox::warning(parent, tr("Import failed"), error);
+        return false;
+    }
+    refreshProfiles();
+    profileList_->setCurrentRow(profiles_.size() - 1, QItemSelectionModel::ClearAndSelect);
+    return true;
+}
+
+bool MainWindow::importWireGuardLink(const QString &uri, const QString &name, QWidget *parent) {
+    if (!WireGuardCore::cliSupported(validationExecutable_)) {
+        QMessageBox::warning(parent, tr("Import failed"), tr("The selected Core cannot import WireGuard and AmneziaWG links. Start or update Core."));
+        return false;
+    }
+    if (uri.trimmed().toUtf8().size() > 64 * 1024) {
+        QMessageBox::warning(parent, tr("Import failed"), tr("The link exceeds the 64 KiB limit."));
+        return false;
+    }
+    const auto reply = WireGuardCore::importUri(validationExecutable_, uri.trimmed());
+    if (!reply.answered()) { QMessageBox::warning(parent, tr("Import failed"), reply.error); return false; }
+    if (!reply.object.value("text").isString()) {
+        QMessageBox box(QMessageBox::Warning, tr("Import failed"), describeProblems(reply.problems), QMessageBox::Ok, parent);
+        box.setObjectName("wireGuardLinkRejected");
+        box.setTextFormat(Qt::PlainText);
+        box.exec();
+        return false;
+    }
+    QString profileName = name.trimmed();
+    if (profileName.isEmpty()) profileName = reply.object.value("name").toString().trimmed();
+    if (profileName.isEmpty()) profileName = QStringLiteral("WireGuard");
+    return importWireGuard(wireGuardTemplate(profileName), reply.text(), parent);
+}
+
+bool MainWindow::importWireGuardText(const QString &text, QWidget *parent) {
+    const auto detected = WireGuardCore::cliSupported(validationExecutable_)
+        ? WireGuardCore::detect(validationExecutable_, text) : WireGuardCore::Reply{};
+    if (!detected.answered() || detected.format() != "wireguard") {
+        QMessageBox::warning(parent, tr("Import failed"), WireGuardCore::cliSupported(validationExecutable_)
+            ? tr("The clipboard does not contain a WireGuard or AmneziaWG configuration.")
+            : tr("The selected Core cannot import WireGuard and AmneziaWG configurations. Start or update Core."));
+        return false;
+    }
+    return importWireGuard(wireGuardTemplate(QStringLiteral("WireGuard")), text, parent);
+}
+
 void MainWindow::refreshProfiles() {
     QString error;
     profiles_ = store_.load(&error);
@@ -1228,12 +1466,7 @@ void MainWindow::refreshProfiles() {
     for (int row = 0; row < profiles_.size(); ++row) {
         const auto &profile = profiles_[row];
         const auto info = profileInfo(row);
-        const QString interfaceName = info.interfaceMode == "proxy" ? tr("Local SOCKS5") : tr("System VPN");
-        const QString detail = info.backend == ProfileConnectionInfo::Backend::NativeIKEv2 ? tr("Native IKEv2 unavailable")
-            : !info.connectable ? tr("Unknown protocol")
-            : info.keyFile.isEmpty() ? QString("%1 → %2").arg(info.protocol, interfaceName)
-            : QString("%1%2").arg(activeProfileId_ == profile.id && state_ == "connected" && !activeFileProtocol_.isEmpty()
-                ? activeFileProtocol_ + QStringLiteral(" → ") : QString(), interfaceName);
+        const QString detail = profileDetail(row, info);
         auto *item = new QListWidgetItem(statusDot(QColor("#94a3b8")), QString("%1\n%2").arg(profile.name, detail), profileList_);
         item->setData(Qt::UserRole + 1, !info.connectable && info.backend != ProfileConnectionInfo::Backend::NativeIKEv2);
         if (info.protocol.endsWith(QStringLiteral("⟳"))) item->setToolTip(tr("Dynamic profile"));
@@ -1377,28 +1610,76 @@ void MainWindow::editProfile(int row) {
         }
         return valid;
     };
-    ProfileEditorDialog dialog(QString::fromUtf8(originalData), capabilities_, this, validateDraft, validationExecutable_, profiles_[row].path);
+    QByteArray wireGuardData;
+    bool detected = true;
+    const QString originalReference = ProfileStore::keyFileReference(QString::fromUtf8(originalData));
+    const bool wireGuard = readWireGuard(profiles_[row].path, QString::fromUtf8(originalData), &wireGuardData, &detected);
+    // A managed pair that Core cannot positively identify, or a file Core could
+    // not classify, never opens as an ordinary profile: that would drop the guard
+    // for its managed File reference.
+    const bool managed = ProfileStore::managedKeyFile(profiles_[row].path, originalReference);
+    if (!wireGuard && (!detected || managed)) {
+        QByteArray unused;
+        QMessageBox::warning(this, tr("Profile could not be opened"), !detected
+            ? tr("Core could not identify the configuration file of this profile. Check that Core is available and try again.")
+            : !ProfileStore::readKeyFile(profiles_[row].path, originalReference, &unused)
+            ? tr("The WireGuard configuration file of this profile is unavailable.")
+            : tr("The selected Core cannot open WireGuard and AmneziaWG profiles. Start or update Core."));
+        return;
+    }
+    const QString profileDirectory = QFileInfo(profiles_[row].path).absolutePath();
+    ProfileEditorDialog dialog(QString::fromUtf8(originalData), capabilities_, this, validateDraft, validationExecutable_, profiles_[row].path,
+        false, wireGuard ? std::optional<QString>(ProfileStore::keyFileText(wireGuardData)) : std::nullopt);
+    const QString wireGuardReference = ProfileStore::keyFileReference(QString::fromUtf8(originalData));
+    if (wireGuard)
+        dialog.setPairValidator([this, row, profileDirectory, wireGuardReference](const QString &text, const QString &key, CoreFailure *failure) {
+            // Desktop owns the key file reference of a pair; validation substitutes a
+            // draft file, so a redirected reference would otherwise be saved unchecked.
+            if (ProfileStore::keyFileReference(text) != wireGuardReference) {
+                failure->text = tr("The WireGuard configuration file of this profile is managed by Bimeron. Keep File = %1 and edit the WG/AWG config tab instead.").arg(wireGuardReference);
+                return false;
+            }
+            return validatePair(text, key, profileDirectory, profiles_[row].path, {}, failure);
+        });
     dialog.setDeveloperMode(developerMode_);
     while (dialog.exec() == QDialog::Accepted) {
         QString error;
-        QStringList skipped;
-        const QString prepared = GeoDataSelection::materialize(dialog.configText(), profiles_[row].path,
-            validationExecutable_, GeoDataSelection::instance()->paths(), &error, {}, &skipped);
-        if (!error.isEmpty()) { QMessageBox::warning(&dialog, tr("Error"), error); continue; }
-        const QByteArray data = prepared.toUtf8();
-        if (data == originalData) break;
+        const QString draft = dialog.configText();
+        const QByteArray keyData = wireGuard ? dialog.wireGuardText().toUtf8() : QByteArray();
+        const bool keyChanged = wireGuard && keyData != wireGuardData;
         CoreFailure failure;
-        if (!validateDraft(prepared, &failure)) {
-            QMessageBox::warning(&dialog, tr("Error"), failure.text, QMessageBox::Ok);
-            continue;
+        QString prepared;
+        if (wireGuard) {
+            if (ProfileStore::keyFileReference(draft) != wireGuardReference) {
+                QMessageBox::warning(&dialog, tr("Error"), tr("The WireGuard configuration file of this profile is managed by Bimeron. Keep File = %1 and edit the WG/AWG config tab instead.").arg(wireGuardReference));
+                continue;
+            }
+            if (!validatePair(draft, ProfileStore::keyFileText(keyData), profileDirectory, profiles_[row].path, {}, &failure, &prepared)) {
+                QMessageBox::warning(&dialog, tr("Error"), failure.text.isEmpty() ? describeProblems(failure.problems) : failure.text);
+                continue;
+            }
+        } else {
+            QStringList skipped;
+            prepared = GeoDataSelection::materialize(draft, profiles_[row].path,
+                validationExecutable_, GeoDataSelection::instance()->paths(), &error, {}, &skipped);
+            if (!error.isEmpty()) { QMessageBox::warning(&dialog, tr("Error"), error); continue; }
+            if (prepared.toUtf8() == originalData) break;
+            if (!validateDraft(prepared, &failure)) {
+                QMessageBox::warning(&dialog, tr("Error"), failure.text.isEmpty() ? describeProblems(failure.problems) : failure.text);
+                continue;
+            }
         }
+        const QByteArray data = prepared.toUtf8();
+        if (data == originalData && !keyChanged) break;
         QFile current(profiles_[row].path);
-        if (!current.open(QIODevice::ReadOnly) || current.read(65537) != originalData) {
+        QByteArray currentKey;
+        if (!current.open(QIODevice::ReadOnly) || current.read(65537) != originalData
+            || (wireGuard && (!readWireGuard(profiles_[row].path, QString::fromUtf8(originalData), &currentKey) || currentKey != wireGuardData))) {
             QMessageBox::warning(&dialog, tr("Error"), tr("The profile changed during validation. Retry with the current file."));
             break;
         }
         current.close();
-        if (!ProfileStore::writeConfig(profiles_[row].path, data, &error)) {
+        if (!ProfileStore::writeProfilePair(profiles_[row].path, data, keyChanged ? &keyData : nullptr, &error)) {
             QMessageBox::warning(&dialog, tr("Error"), error, QMessageBox::Ok);
             continue;
         }
@@ -1433,12 +1714,16 @@ void MainWindow::addProfile() {
     uriHelp->setAccessibleName(tr("Supported protocol URIs"));
     connect(uriHelp, &QToolButton::clicked, &dialog, [uriHelp] {
         QToolTip::showText(uriHelp->mapToGlobal(QPoint(0, uriHelp->height())),
-            QStringLiteral("ss://, ssconf://, socks5://, vless://,\nhysteria2://, hy2://, vmess://, trojan://, tuic://,\nhttp://, https://, anytls://,\nnaive+https://, naive+quic://, masque://, ssh://") + "\n\n" + tr("Files: .conf. Choose a file or enter its absolute path."), uriHelp, uriHelp->rect());
+            QStringLiteral("ss://, ssconf://, socks5://, vless://,\nhysteria2://, hy2://, vmess://, trojan://, tuic://,\nhttp://, https://, anytls://,\nnaive+https://, naive+quic://, masque://, ssh://,\nvpn:// (AmneziaWG), wireguard://, wg://") + "\n\n"
+                + tr("Files: .conf, Bimeron or WireGuard/AmneziaWG. Choose a file or enter its absolute path.") + "\n"
+                + tr("A WireGuard or AmneziaWG configuration can also be pasted from the clipboard."), uriHelp, uriHelp->rect());
     });
     hintRow->addWidget(hint, 1);
     hintRow->addWidget(uriHelp);
     auto *key = new QLineEdit;
     key->setObjectName("profileUri");
+    // Links may be up to 64 KiB; the default 32767-character limit would cut them.
+    key->setMaxLength(64 * 1024 + 1);
     key->setPlaceholderText(tr("Connection link or file path"));
     key->setMinimumHeight(30);
     auto *paste = new QPushButton;
@@ -1486,7 +1771,7 @@ void MainWindow::addProfile() {
     inputRow->addWidget(browseConfig);
     layout->addLayout(inputRow);
     connect(browseConfig, &QPushButton::clicked, &dialog, [&] {
-        const QString path = QFileDialog::getOpenFileName(&dialog, tr("Import configuration"), {}, tr("Bimeron (*.conf);;All files (*)"));
+        const QString path = QFileDialog::getOpenFileName(&dialog, tr("Import configuration"), {}, tr("Configurations (*.conf);;All files (*)"));
         if (!path.isEmpty()) key->setText(QFileInfo(path).absoluteFilePath());
     });
     layout->addWidget(paste);
@@ -1535,6 +1820,7 @@ void MainWindow::addProfile() {
     auto isKey = [](const QString &value) {
         const QString trimmed = value.trimmed();
         if (trimmed.contains(QRegularExpression("\\s"))) return false;
+        if (WireGuardCore::linkScheme(trimmed)) return true;
         if (QStringList{"VMess", "Trojan", "TUIC", "HTTP", "AnyTLS", "Naive", "MASQUE"}.contains(ProfileStore::uriSourceField(trimmed))) return true;
         const QUrl url(trimmed);
         if (url.scheme() == "ssconf")
@@ -1593,7 +1879,9 @@ void MainWindow::addProfile() {
         const QString uriHosts = QUrlQuery(QUrl(key->text())).queryItemValue("known_hosts", QUrl::FullyDecoded);
         const bool sshHostsReady = QFileInfo(hosts->text()).isAbsolute()
             || (hosts->text().isEmpty() && QFileInfo(uriHosts).isAbsolute());
-        buttons.button(QDialogButtonBox::Save)->setEnabled(!filePath(key->text()).isEmpty() || (keyValid && !name->text().trimmed().isEmpty()
+        // A WireGuard link may carry its own name; the name field is optional for it.
+        const bool namedLink = !name->text().trimmed().isEmpty() || WireGuardCore::linkScheme(key->text());
+        buttons.button(QDialogButtonBox::Save)->setEnabled(!filePath(key->text()).isEmpty() || (keyValid && namedLink
             && (!key->text().startsWith("ssh://") || (sshHostsReady
                 && (identity->text().isEmpty() || QFileInfo(identity->text()).isAbsolute())))));
     };
@@ -1608,6 +1896,7 @@ void MainWindow::addProfile() {
         nameLabel->setVisible(keyValid);
         name->setVisible(keyValid);
         sshFiles->setVisible(keyValid && value.startsWith("ssh://"));
+        name->setPlaceholderText(WireGuardCore::linkScheme(value) ? tr("Optional: the name from the link is used") : QString());
         layout->invalidate();
         layout->activate();
         dialog.setFixedHeight(dialog.sizeHint().height());
@@ -1616,11 +1905,24 @@ void MainWindow::addProfile() {
             name->setText(suggested);
         updateSave();
     });
+    // A multi-line WireGuard configuration cannot enter the link field. This is
+    // a presentation hint only; Core decides the format when it is imported.
+    const auto clipboardConfig = [](const QString &text) {
+        return text.contains('\n') && text.contains('[') && text.toUtf8().size() <= 64 * 1024;
+    };
+    // One classification for the label and the click: a recognized link or path
+    // (after trimming) wins; otherwise multi-line text goes to Core detection.
+    const auto clipboardIsConfig = [&](const QString &original) {
+        const QString trimmed = original.trimmed();
+        return !isKey(trimmed) && filePath(trimmed).isEmpty() && clipboardConfig(original);
+    };
     auto updatePaste = [&] {
         const QString clipboardKey = QApplication::clipboard()->text().trimmed();
-        paste->setEnabled(isKey(clipboardKey) || !filePath(clipboardKey).isEmpty());
+        const bool config = clipboardIsConfig(QApplication::clipboard()->text());
+        paste->setEnabled(config || isKey(clipboardKey) || !filePath(clipboardKey).isEmpty());
         paste->setVisible(paste->isEnabled());
-        if (paste->isEnabled()) {
+        if (config) paste->setText(tr("Paste WireGuard configuration"));
+        else if (paste->isEnabled()) {
             const QString suggested = keyName(clipboardKey);
             paste->setText(!filePath(clipboardKey).isEmpty() ? tr("Paste file path") : suggested.isEmpty() ? tr("Paste key") : tr("Paste key #%1").arg(suggested));
         } else paste->setText(tr("Paste"));
@@ -1630,19 +1932,29 @@ void MainWindow::addProfile() {
     };
     connect(QApplication::clipboard(), &QClipboard::dataChanged, &dialog, updatePaste);
     connect(paste, &QPushButton::clicked, &dialog, [&] {
+        const QString clipboard = QApplication::clipboard()->text();
+        if (clipboardIsConfig(clipboard)) {
+            if (importWireGuardText(clipboard, &dialog)) dialog.done(2);
+            return;
+        }
         nameEdited = false;
         key->setText(QApplication::clipboard()->text().trimmed());
         key->setFocus();
     });
     updatePaste();
     connect(&buttons, &QDialogButtonBox::accepted, &dialog, [&] {
-        if (!filePath(key->text()).isEmpty() || (keyValid && !name->text().trimmed().isEmpty())) dialog.accept();
+        if (!filePath(key->text()).isEmpty() || (keyValid && (!name->text().trimmed().isEmpty() || WireGuardCore::linkScheme(key->text()))))
+            dialog.accept();
     });
     connect(&buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
     while (dialog.exec() == QDialog::Accepted) {
         const QString source = filePath(key->text());
         if (!source.isEmpty()) {
             if (importProfile(source)) break;
+            continue;
+        }
+        if (WireGuardCore::linkScheme(key->text())) {
+            if (importWireGuardLink(key->text(), name->text(), &dialog)) { key->clear(); break; }
             continue;
         }
         QString error;
@@ -1741,7 +2053,14 @@ bool MainWindow::createProfile() {
         return ProfileStore::importReferencesSafe(text.toUtf8(), error) && validateConfig(path, failure);
     };
     ProfileEditorDialog editor({}, capabilities_, this, validate, validationExecutable_, path, true);
+    editor.setPairValidator([this, &directory, path](const QString &text, const QString &key, CoreFailure *failure) {
+        return validatePair(text, key, directory.path(), path, directory.path(), failure);
+    });
     while (editor.exec() == QDialog::Accepted) {
+        if (editor.isWireGuard()) {
+            if (importWireGuard(editor.configText(), editor.wireGuardText(), &editor)) return true;
+            continue;
+        }
         QString error;
         if (!ProfileStore::writeConfig(path, editor.configText().toUtf8(), &error)) {
             QMessageBox::warning(&editor, tr("Error"), error);
@@ -1765,6 +2084,42 @@ bool MainWindow::importProfile(const QString &source) {
     const bool hadBom = imported.startsWith(QByteArray::fromHex("efbbbf"));
     input.close();
     if (imported.size() > 64 * 1024) { QMessageBox::warning(this, tr("Import failed"), tr("The profile exceeds the 64 KiB limit.")); return false; }
+    bool probed = true;
+    const bool bridge = WireGuardCore::cliSupported(validationExecutable_, &probed);
+    if (!bridge && !probed) {
+        QMessageBox::warning(this, tr("Import failed"), tr("Core could not identify the configuration file referenced by this profile. Check that Core is available and try again."));
+        return false;
+    }
+    if (bridge) {
+        const auto detected = WireGuardCore::detect(validationExecutable_, ProfileStore::keyFileText(imported));
+        if (detected.answered() && detected.format() == "wireguard") {
+            // The WireGuard file is stored byte for byte, including a BOM.
+            if (ProfileStore::keyFileText(imported).toUtf8() != imported) {
+                QMessageBox::warning(this, tr("Import failed"), tr("The WireGuard configuration must be valid UTF-8 and at most 64 KiB.")); return false;
+            }
+            return importWireGuard(wireGuardTemplate(QFileInfo(source).completeBaseName()), ProfileStore::keyFileText(imported), this);
+        }
+        for (const auto &problem : detected.problems)
+            if (problem.code == "document_format_ambiguous") {
+                QMessageBox::warning(this, tr("Import failed"), describeProblems(detected.problems)); return false;
+            }
+        if (!detected.answered()) { QMessageBox::warning(this, tr("Import failed"), detected.error); return false; }
+        // A Bimeron profile transferred with its WireGuard file imports as a pair.
+        QByteArray key;
+        bool keyDetected = true;
+        const bool pair = detected.format() == "bimeron" && readWireGuard(source, QString::fromUtf8(imported), &key, &keyDetected);
+        if (!keyDetected) {
+            QMessageBox::warning(this, tr("Import failed"), tr("Core could not identify the configuration file referenced by this profile. Check that Core is available and try again."));
+            return false;
+        }
+        if (pair) {
+            QByteArray profile = imported;
+            if (!ProfileStore::normalizeImport(profile)) {
+                QMessageBox::warning(this, tr("Import failed"), tr("The profile must be valid UTF-8 and at most 64 KiB.")); return false;
+            }
+            return importWireGuard(QString::fromUtf8(profile), ProfileStore::keyFileText(key), this);
+        }
+    }
     if (!ProfileStore::normalizeImport(imported)) {
         QMessageBox::warning(this, tr("Import failed"), tr("The profile must be valid UTF-8 and at most 64 KiB.")); return false;
     }
@@ -1856,9 +2211,12 @@ void MainWindow::removeProfile() {
     confirmation.addButton(tr("Cancel"), QMessageBox::RejectRole);
     confirmation.exec();
     if (confirmation.clickedButton() != confirm) return;
-    QFile::remove(profiles_[row].path);
-    profiles_.removeAt(row);
     QString error;
+    if (!ProfileStore::removeProfileFiles(profiles_[row].path, &error)) {
+        QMessageBox::warning(this, tr("Delete profile"), error);
+        if (QFileInfo::exists(profiles_[row].path)) return;
+    }
+    profiles_.removeAt(row);
     store_.save(profiles_, &error);
     refreshProfiles();
 }
@@ -1932,31 +2290,55 @@ void MainWindow::reportUnavailableProfile(int row, const QString &reason) {
 }
 
 void MainWindow::offerGeoDataReconnect() {
-    // Disconnected: the new databases simply apply to the next connection.
-    if (!sessionActive_ && state_ != "connected") return;
+    if (!sessionActive_ || nativeSession_ || activeProfileId_.isEmpty()
+        || sessionId_.isEmpty() || !geoDataReconnectProfileId_.isEmpty()) return;
+    const QString instance = instance_;
+    const QString sessionId = sessionId_;
+    const QString profileId = activeProfileId_;
     QMessageBox box(QMessageBox::Question, tr("Bimeron"), tr("New databases were downloaded. Reconnect now?"),
                     QMessageBox::NoButton, this);
     box.setObjectName("geoDataReconnect");
     auto *now = box.addButton(tr("Now"), QMessageBox::AcceptRole);
-    box.addButton(tr("Later"), QMessageBox::RejectRole);
-    box.setDefaultButton(now);
+    auto *later = box.addButton(tr("Later"), QMessageBox::RejectRole);
+    box.setDefaultButton(later);
+    box.setEscapeButton(later);
     box.exec();
-    if (box.clickedButton() == now) reconnectActiveProfile();
+    if (box.clickedButton() != now) return;
+    if (!sessionActive_ || instance_ != instance || sessionId_ != sessionId || activeProfileId_ != profileId) {
+        appendLog(tr("GeoData reconnection canceled because the VPN session changed"));
+        return;
+    }
+    reconnectActiveProfile(profileId);
 }
 
-void MainWindow::reconnectActiveProfile() {
-    if (controlBlocked() || !helloReady_ || statusNeeded_ || !operation_.isEmpty() || nativeSession_ || cleanupBlocked_) return;
+void MainWindow::reconnectActiveProfile(const QString &profileId) {
+    if (controlBlocked() || !helloReady_ || !operation_.isEmpty() || nativeSession_ || cleanupBlocked_ || state_ == "stopping") {
+        appendLog(tr("GeoData reconnection canceled before stopping the VPN because the connection is busy"));
+        return;
+    }
     QString path;
     for (int row = 0; row < profiles_.size(); ++row)
-        if (profiles_[row].id == activeProfileId_ && packetProfile(row)) { path = profiles_[row].path; break; }
-    if (path.isEmpty()) return;
+        if (profiles_[row].id == profileId && packetProfile(row)) { path = profiles_[row].path; break; }
+    if (path.isEmpty()) {
+        appendLog(tr("GeoData reconnection canceled because the active profile is unavailable"));
+        return;
+    }
     // The existing stop-then-start path prepares the profile again with the new databases.
     pendingStartPath_ = path;
+    geoDataReconnectProfileId_ = profileId;
+    geoDataStopSessionId_ = sessionId_;
     operation_ = "stop";
     clearSSHAuthentication();
     stopRequested_ = true;
     updateConnectionButton();
     poll();
+}
+
+void MainWindow::finishGeoDataReconnect(const QString &message) {
+    if (geoDataReconnectProfileId_.isEmpty()) return;
+    geoDataReconnectProfileId_.clear();
+    geoDataStopSessionId_.clear();
+    appendLog(message);
 }
 
 bool MainWindow::packetProfile(int row) const {
@@ -2120,6 +2502,7 @@ void MainWindow::resetMeasurements() {
 }
 
 void MainWindow::invalidateConnection(bool preserveServiceProbe) {
+    finishGeoDataReconnect(tr("GeoData reconnection interrupted while checking the Core connection"));
     connectionLabel_->setToolTip({});
     clearSSHAuthentication();
     sshSeen_.clear();
@@ -2170,8 +2553,10 @@ static QString untrustedServerGuidance(const CoreErrorCatalog &catalog) {
         "Could not verify the background VPN service. Update Bimeron Core to match this version of the application, then try again.");
 }
 
-void MainWindow::connectionFailure(const QString &, CoreClient::Failure reason, const QString &message) {
+void MainWindow::connectionFailure(const QString &command, CoreClient::Failure reason, const QString &message) {
     if (nativeOwnerBlocked_) return;
+    if (command == "stop") finishGeoDataReconnect(tr("GeoData reconnection failed while waiting for Core to stop the VPN"));
+    if (command == "start") finishGeoDataReconnect(tr("GeoData reconnection failed while waiting for Core to start the VPN"));
     ipcObservedAt_ = QDateTime::currentMSecsSinceEpoch();
     availabilityFailure_ = reason;
     startupIpcChecked_ = true;
@@ -2254,10 +2639,23 @@ bool MainWindow::startProfile(int row) {
         return false;
     }
     activeFileProtocol_.clear();
-    if (!info.keyFile.isEmpty()) {
-        QFile keyFile(QFileInfo(profiles_[row].path).dir().filePath(info.keyFile));
-        if (QFileInfo(info.keyFile).isAbsolute()) keyFile.setFileName(info.keyFile);
-        if (keyFile.open(QIODevice::ReadOnly)) {
+    QByteArray wireGuardData;
+    bool probed = true;
+    const bool wireGuardFile = readWireGuard(profiles_[row].path, profileText, &wireGuardData, &probed);
+    if (!wireGuardFile && !probed) {
+        QMessageBox::warning(this, tr("Profile unavailable"), tr("Core could not identify the configuration file of this profile. Check that Core is available and try again."));
+        return false;
+    }
+    const QString keyReference = ProfileStore::keyFileReference(profileText);
+    if ((wireGuardFile || ProfileStore::managedKeyFile(profiles_[row].path, keyReference)) && !WireGuardCore::serviceSupported(capabilities_)) {
+        QMessageBox::warning(this, tr("Feature not supported"), tr("The running Core does not support WireGuard and AmneziaWG. Start or update Core."));
+        return false;
+    }
+    const QString wireGuard = wireGuardLabel(row);
+    if (!wireGuard.isEmpty()) activeFileProtocol_ = wireGuard;
+    else if (!keyReference.isEmpty()) {
+        QFile keyFile(ProfileStore::keyFilePath(profiles_[row].path, keyReference));
+        if (ProfileStore::localRegularFile(keyFile.fileName()) && keyFile.open(QIODevice::ReadOnly)) {
             QString key = QString::fromUtf8(keyFile.read(64 * 1024)).trimmed();
             if (key.startsWith(QChar::ByteOrderMark)) key.remove(0, 1);
             activeFileProtocol_ = ProfileStore::connectionInfo("[AccessKey]\nKey = " + key).protocol;
@@ -2270,6 +2668,7 @@ bool MainWindow::startProfile(int row) {
         return false;
     }
     const QString mode = routingInterfaceValue(profileText, "Mode", "vpn");
+    const bool onlyAllowedIPs = routingAllowedIPsOnly(profileText);
     const QString routingConflict = routingCompatibilityError(profileText, capabilities_);
     if (!routingConflict.isEmpty()) {
         QMessageBox::warning(this, tr("Feature not supported"), routingConflict);
@@ -2278,8 +2677,10 @@ bool MainWindow::startProfile(int row) {
     QString unsupported;
     if (mode == "vpn" && !capabilities_.value("vpn").toBool()) unsupported = tr("system VPN");
     else if (mode == "proxy" && !capabilities_.value("proxy").toBool()) unsupported = tr("local SOCKS5");
-    else if (QRegularExpression(R"((?im)^\s*Domain\s*=)").match(profileText).hasMatch() && !capabilities_.value("domain_split").toBool()) unsupported = tr("domain rules");
-    else if (QRegularExpression(R"((?im)^\s*CIDR\s*=)").match(profileText).hasMatch() && !capabilities_.value("ip_split").toBool()) unsupported = tr("IP/CIDR rules");
+    else if (!onlyAllowedIPs
+             && QRegularExpression(R"((?im)^\s*Domain\s*=)").match(profileText).hasMatch() && !capabilities_.value("domain_split").toBool()) unsupported = tr("domain rules");
+    else if (!onlyAllowedIPs
+             && QRegularExpression(R"((?im)^\s*CIDR\s*=)").match(profileText).hasMatch() && !capabilities_.value("ip_split").toBool()) unsupported = tr("IP/CIDR rules");
     else if (mode == "vpn" && !capabilities_.value("ipv6").toBool()
              && routingInterfaceValue(profileText, "IPv6", "enable") != "disable") unsupported = tr("IPv6");
     else if (routingInterfaceValue(profileText, "KillSwitch", "false") == "true" && !capabilities_.value("kill_switch").toBool()) unsupported = tr("kill switch");
@@ -2295,7 +2696,7 @@ bool MainWindow::startProfile(int row) {
     auto *process = new QProcess(this);
     validationProcess_ = process;
     process->setProgram(executable);
-    const bool geoValidation = QRegularExpression(R"((?m)^\s*Geo(?:IP|Site)\s*=)").match(profileText).hasMatch();
+    const bool geoValidation = !GeoDataSelection::requiredKinds(profileText).isEmpty();
     process->setArguments(geoValidation ? QStringList{"validate", "--json", path} : QStringList{"validate", path});
     connect(process, &QProcess::readyReadStandardOutput, this, [process, geoValidation] {
         const QByteArray chunk = process->readAllStandardOutput();
@@ -2336,6 +2737,8 @@ bool MainWindow::startProfile(int row) {
             reconnectResultProfileId_.clear();
             reportCoreUpdateResult(tr("Core was updated, but reconnection was canceled"));
         }
+        if (startReadyPath_.isEmpty())
+            finishGeoDataReconnect(tr("GeoData reconnection failed during profile validation"));
         updateConnectionButton();
         poll();
     };
@@ -2366,9 +2769,26 @@ void MainWindow::poll() {
         return;
     }
     if (stopRequested_ && !nativeSession_) {
+        if (!geoDataStopSessionId_.isEmpty() && statusNeeded_) {
+            core_.request("status");
+            return;
+        }
         clearSSHAuthentication();
         stopRequested_ = false;
-        core_.request("stop", {}, 120000);
+        QJsonObject guard;
+        if (!geoDataStopSessionId_.isEmpty()) {
+            if (!sessionActive_ || sessionId_ != geoDataStopSessionId_ || activeProfileId_ != geoDataReconnectProfileId_) {
+                pendingStartPath_.clear();
+                operation_.clear();
+                finishGeoDataReconnect(tr("GeoData reconnection canceled because the VPN session changed"));
+                updateConnectionButton();
+                return;
+            }
+            if (capabilities_.value("daemon_session_guards").toBool())
+                guard = {{"instance", instance_}, {"session", geoDataStopSessionId_}};
+            geoDataStopSessionId_.clear();
+        }
+        core_.request("stop", guard, 120000);
         return;
     }
     if (retryNowRequested_) {
@@ -2400,6 +2820,7 @@ void MainWindow::poll() {
             core_.request("start", {{"config", path}}, 120000);
         } else {
             operation_.clear();
+            finishGeoDataReconnect(tr("GeoData reconnection canceled before starting the updated profile"));
             if (!reconnectResultProfileId_.isEmpty()) {
                 reconnectResultProfileId_.clear();
                 reportCoreUpdateResult(tr("Core was updated, but reconnection was canceled"));
@@ -2517,12 +2938,23 @@ void MainWindow::handleReply(const QString &command, const QJsonObject &response
     }
     if (!error.isEmpty()) {
         if (command == "start" || command == "stop") {
+            const bool geoDataReconnect = !geoDataReconnectProfileId_.isEmpty();
+            const bool staleGeoDataStop = geoDataReconnect && command == "stop"
+                && (error == "stale_session" || error == "stale_instance");
+            finishGeoDataReconnect(command == "stop" ? tr("GeoData reconnection failed while stopping the VPN")
+                                                       : tr("GeoData reconnection failed while starting the VPN"));
             operation_.clear();
             startReadyPath_.clear();
             pendingStartPath_.clear();
             if (!reconnectResultProfileId_.isEmpty())
                 reportCoreUpdateResult(tr("Core was updated, but reconnection failed"));
             reconnectResultProfileId_.clear();
+            if (staleGeoDataStop) {
+                statusNeeded_ = true;
+                updateConnectionButton();
+                QTimer::singleShot(0, this, &MainWindow::poll);
+                return;
+            }
         }
         if (command == "stop" || (command == "start" && error.endsWith("_run_recover"))) {
             cleanupBlocked_ = true;
@@ -2564,6 +2996,7 @@ void MainWindow::handleReply(const QString &command, const QJsonObject &response
     } else if (command == "start") {
         operation_.clear();
         statusNeeded_ = true;
+        finishGeoDataReconnect(tr("Core accepted the VPN start with the updated GeoData selection"));
     } else if (command == ReconnectPolicy::Ipc::reconnectNowCommand) {
         statusNeeded_ = true;
     } else if (command == "stop") {
@@ -2571,15 +3004,20 @@ void MainWindow::handleReply(const QString &command, const QJsonObject &response
         stopRequested_ = false;
         const QString path = pendingStartPath_;
         pendingStartPath_.clear();
+        bool starting = false;
         if (cleanDisconnected() && !path.isEmpty()) {
             for (int row = 0; row < profiles_.size(); ++row) {
-                if (profiles_[row].path == path) {
+                if (profiles_[row].path == path && (geoDataReconnectProfileId_.isEmpty()
+                    || profiles_[row].id == geoDataReconnectProfileId_)) {
                     profileList_->setCurrentRow(row);
-                    startProfile(row);
+                    starting = startProfile(row);
                     break;
                 }
             }
         }
+        if (!starting) finishGeoDataReconnect(cleanDisconnected()
+            ? tr("GeoData reconnection failed while preparing the updated profile")
+            : tr("GeoData reconnection canceled because VPN cleanup was not confirmed"));
     } else if (command == "stats" && state_ == "connected" && !nativeSession_) {
         if (sessionId_ != previousSession) { resetMeasurements(); return; }
         const auto stats = response.value("stats").toObject();
@@ -2873,12 +3311,7 @@ void MainWindow::updateProfileAppearance() {
     for (int row = 0; row < profileList_->count() && row < profiles_.size(); ++row) {
         auto *item = profileList_->item(row);
         const auto info = profileInfo(row);
-        const QString interfaceName = info.interfaceMode == "proxy" ? tr("Local SOCKS5") : tr("System VPN");
-        const QString detail = info.backend == ProfileConnectionInfo::Backend::NativeIKEv2 ? tr("Native IKEv2 unavailable")
-            : !info.connectable ? tr("Unknown protocol")
-            : info.keyFile.isEmpty() ? QString("%1 → %2").arg(info.protocol, interfaceName)
-            : QString("%1%2").arg(profiles_[row].id == activeProfileId_ && state_ == "connected" && !activeFileProtocol_.isEmpty()
-                ? activeFileProtocol_ + QStringLiteral(" → ") : QString(), interfaceName);
+        const QString detail = profileDetail(row, info);
         item->setText(QString("%1\n%2").arg(profiles_[row].name, detail));
         item->setBackground(QColor(appDarkMode() ? "#202937" : "#ffffff"));
         QString color = appDarkMode() ? "#e8edf5" : "#152238";
@@ -3016,7 +3449,7 @@ bool MainWindow::validateConfig(const QString &path, CoreFailure *failure, bool 
     // Cores that publish an error catalog return structured problems from
     // validate --json for every profile; older cores keep the previous flow.
     const CoreErrorCatalog catalog = errorCatalog();
-    const bool geoValidation = QRegularExpression(R"((?m)^\s*Geo(?:IP|Site)\s*=)").match(QString::fromUtf8(bytes)).hasMatch();
+    const bool geoValidation = !GeoDataSelection::requiredKinds(QString::fromUtf8(bytes)).isEmpty();
     const bool structured = catalog.available();
     process.setArguments(geoValidation || structured ? QStringList{"validate", "--json", QFileInfo(path).absoluteFilePath()}
                                                      : QStringList{"validate", QFileInfo(path).absoluteFilePath()});

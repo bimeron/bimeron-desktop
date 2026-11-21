@@ -196,7 +196,7 @@ remain outstanding and block publication. Previous VM results do not accept this
 
 ## New-candidate VM acceptance (2026-11-14, partial)
 
-Windows 10 STD: verified final MSI SHA-256
+Windows 10 test VM: verified final MSI SHA-256
 5e981ffecbbac323c9b13c101c907592b58dbd0f9f84256ec5ba173d64d88eb8
 before installation. Removed the prior local 0.3.0 package, installed the published
 0.2.0 MSI, then upgraded to this 0.3.0 package. All successful MSI operations
@@ -232,7 +232,7 @@ observed in this run. The existing interactive GUI process survived installation
 so its in-memory version is not accepted as the new GUI merely from the file hash.
 
 Linux: recovered the previously configured SSH access to the dedicated
-Bimeron Test Ubuntu 22.04 LTS VM and booted it. The copied DEB matched the final
+Linux test VM (Ubuntu 22.04 LTS) and booted it. The copied DEB matched the final
 SHA-256. dpkg unpacked it but could not configure it: libqt6widgets6 and
 libqt6network6 require >=6.4, whereas the VM's stock repositories offer 6.2.4;
 qt6-translations-l10n is also absent. Core/broker version commands reported the

@@ -144,3 +144,12 @@ five CTest executables passed without the unrelated recovery changes.
   connectivity remain separate checks before release. No packages were produced.
 - Existing uncommitted recovery work was retained; this feature does not modify
   build or packaging flow. Recovery changes are excluded from the feature commit.
+
+## WireGuard and AmneziaWG
+
+Add profile accepts Bimeron and WG/AWG `.conf` files in the same field; Core detects the
+format by content. Browse offers "Configurations (*.conf)". Create in editor lists
+"WireGuard / AmneziaWG" only when the running service advertises WG/AWG support and the
+selected CLI has the `bimeron wireguard` bridge, and otherwise explains that Core must be
+started or updated. Such a draft is saved as a Bimeron profile plus a WG/AWG key file. See
+[WireGuard and AmneziaWG profiles](wireguard-profiles.md).

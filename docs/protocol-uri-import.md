@@ -63,3 +63,10 @@ It also accepts configuration paths, provides Browse on the right, and hides
 the name for file input. Create in editor offers parameter-based protocol choices
 without URI sources; protocol-backed URIs are generated internally where required
 by Core. See [the creation specification](profile-creation.md).
+
+## WireGuard and AmneziaWG
+
+Add profile also accepts `vpn://` (Amnezia), `wireguard://` and `wg://` links, WG/AWG `.conf`
+files and a WG/AWG configuration pasted from the clipboard. Core's `bimeron wireguard` bridge
+converts links and detects file formats; the profile is stored as a pair. The name field is
+optional for these links. See [WireGuard and AmneziaWG profiles](wireguard-profiles.md).

@@ -605,6 +605,7 @@ void manageSharedGeoData(QWidget *parent, const QString &core, const QString &pr
         rows[kind].pendingProvenance = tr("Downloaded release: %1").arg(download->releaseTag(kind)) + "\nSHA-256: " + hash;
         inspect(kind, path, Purpose::Downloaded);
     });
+    GeoDataSelection::Paths downloadedPaths;
     QObject::connect(download, &GeoDataDownload::published, &dialog, [&](const QString &kind, const QString &path, const QString &tag) {
         if (!ownedDownloads.contains(kind) || !rows[kind].transfer) return;
         Row &row = rows[kind];
@@ -612,6 +613,7 @@ void manageSharedGeoData(QWidget *parent, const QString &core, const QString &pr
         row.path = path;
         row.source = Source::Loyalsoldier;
         row.tag = tag;
+        downloadedPaths[kind] = path;
         row.valid = true;
         row.status = GeoDataSelection::failureStatus(Failure::None);
         row.facts.clear();
@@ -646,12 +648,19 @@ void manageSharedGeoData(QWidget *parent, const QString &core, const QString &pr
         refresh();
     });
     QObject::connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    bool appliedDownload = false;
     QObject::connect(buttons->button(QDialogButtonBox::Apply), &QPushButton::clicked, &dialog, [&] {
         // A disabled database is allowed: profiles that need it are blocked when connecting.
         QString error;
         const auto profiles = ProfileStore().load(&error);
-        if (error.isEmpty() && selection->apply(draft(), core, profiles, &error)) dialog.accept();
-        else { applyError = error; refresh(); }
+        const auto choice = draft();
+        if (error.isEmpty() && selection->apply(choice, core, profiles, &error)) {
+            for (auto it = downloadedPaths.cbegin(); it != downloadedPaths.cend(); ++it)
+                appliedDownload |= choice.sources.value(it.key()) == Source::Loyalsoldier
+                    && choice.paths.value(it.key()) == it.value()
+                    && (original.paths.value(it.key()) != it.value() || original.tags.value(it.key()) != choice.tags.value(it.key()));
+            dialog.accept();
+        } else { applyError = error; refresh(); }
     });
     for (const QString &kind : kinds) if (!rows[kind].path.isEmpty()) inspect(kind, rows[kind].path, Purpose::Passive);
     refresh();
@@ -667,4 +676,5 @@ void manageSharedGeoData(QWidget *parent, const QString &core, const QString &pr
     for (auto *process : dialog.findChildren<QProcess *>()) {
         process->disconnect(&dialog); process->kill(); process->waitForFinished(1000);
     }
+    if (appliedDownload) emit selection->downloadedSelectionApplied();
 }

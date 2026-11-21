@@ -80,7 +80,8 @@ public:
     // validation ignores their rules; the kinds are reported through skipped.
     static QString materialize(const QString &text, const QString &profilePath,
                                const QString &core, const Paths &paths, QString *error = nullptr,
-                               const QString &validationDirectory = {}, QStringList *skipped = nullptr);
+                               const QString &validationDirectory = {}, QStringList *skipped = nullptr,
+                               const QString &pairKeyDraft = {});
     // path must be absolute; relative selections are resolved per profile by materialize.
     static QStringList inspect(const QString &core, const QString &kind, const QString &path,
                                QString *error = nullptr, CatalogFailure *failure = nullptr);
@@ -93,6 +94,7 @@ public:
     void cancelCatalog(const QString &key);
 signals:
     void changed();
+    void downloadedSelectionApplied();
     void catalogResult(QString key, QStringList groups, QString error, GeoDataSelection::CatalogFailure failure);
     void catalogInvalidated(QString key);
 private:

@@ -812,7 +812,7 @@ platform ownership/cleanup adapters, authenticated transport, payload verificati
 and focused fixtures. Package scope is protected broker delivery and discovery;
 release pins must not claim a new capability before reviewed artifacts contain it.
 
-Privileged validation must use an isolated guest. A running Windows 10 STD
+Privileged validation must use an isolated guest. A running Windows test
 Hyper-V guest is present, but its existence alone does not establish authorized
 guest credentials, a disposable checkpoint or completed UAC/runtime evidence.
 Other running lab guests are unrelated and must not be modified.

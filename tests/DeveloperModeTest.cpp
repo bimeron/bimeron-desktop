@@ -527,6 +527,11 @@ int main(int argc, char **argv) {
         return 0;
     }
 
+    // This fixture emulates a Core that validates profiles without a WG bridge.
+    if (argc == 2 && std::strcmp(argv[1], "wireguard") == 0) {
+        std::fputs("unknown command\n", stderr);
+        return 1;
+    }
     if (argc == 3 && std::strcmp(argv[1], "validate") == 0) {
         QFile file(QString::fromLocal8Bit(argv[2]));
         if (!file.open(QIODevice::ReadOnly)) return 1;
@@ -547,6 +552,34 @@ int main(int argc, char **argv) {
         std::puts(std::strcmp(argv[3], "geoip") == 0 ? R"({"version":1,"groups":["private","ru"]})"
                                                       : R"({"version":1,"groups":["github"]})");
         return 0;
+    }
+    if (qEnvironmentVariableIsSet("BIMERON_FAKE_GEODATA_RECONNECT")) {
+        if (argc == 2 && std::strcmp(argv[1], "document") == 0) {
+            QFile input;
+            if (!input.open(stdin, QIODevice::ReadOnly)) return 1;
+            const auto request = QJsonDocument::fromJson(input.readAll()).object();
+            QString profile = request.value("profile").toString();
+            QJsonArray rules;
+            if (profile.contains("\nGeoIP=ru\n"))
+                rules.append(QJsonObject{{"enabled", true}, {"matcher", "GeoIP"}, {"value", "ru"}});
+            if (profile.contains("\nGeoSite=github\n"))
+                rules.append(QJsonObject{{"enabled", true}, {"matcher", "GeoSite"}, {"value", "github"}});
+            for (const auto &item : request.value("operations").toArray()) {
+                const auto operation = item.toObject();
+                const QString key = operation.value("key").toString();
+                const QString field = key + "=" + operation.value("value").toString();
+                const QRegularExpression existing("(?m)^" + QRegularExpression::escape(key) + "=.*$");
+                if (profile.contains(existing)) profile.replace(existing, field);
+                else profile += "\n[" + operation.value("section").toString() + "]\n" + field + "\n";
+            }
+            const auto response = QJsonDocument(QJsonObject{{"version", 1}, {"profile", profile}, {"rules", rules}});
+            std::puts(response.toJson(QJsonDocument::Compact).constData());
+            return 0;
+        }
+        if (argc == 4 && std::strcmp(argv[1], "validate") == 0 && std::strcmp(argv[2], "--json") == 0) {
+            std::puts(R"({"version":1})");
+            return 0;
+        }
     }
     // The fixture CLI behaves like a Core without the error catalog
     // (`errors --json`), so the GUI keeps its legacy validation flow.
@@ -583,6 +616,14 @@ int main(int argc, char **argv) {
     // No network database checks, and no shipped databases unless a fixture provides them.
     qputenv("BIMERON_DISABLE_GEODATA_UPDATES", "1");
     qputenv("BIMERON_BUNDLED_GEODATA", temporary.filePath("no-bundled-geodata").toUtf8());
+    if (app.arguments().contains("--wireguard-routing")) {
+        ConnectionManagementTest::wireGuardRouting(qEnvironmentVariable("BIMERON_WIREGUARD_CORE"));
+        return 0;
+    }
+    if (app.arguments().contains("--geodata-reconnect")) {
+        ConnectionManagementTest::geoDataReconnect();
+        return 0;
+    }
     if (app.arguments().contains("--repair-quit-ownership")) {
         ConnectionManagementTest::repairQuitOwnership();
         return 0;
@@ -755,6 +796,7 @@ int main(int argc, char **argv) {
     NativeIKEv2SessionTest::run();
     ConnectionManagementTest::profileGeometry(app, temporary.filePath("profile-geometry.png"));
     ConnectionManagementTest::run();
+    ConnectionManagementTest::geoDataReconnect();
     ConnectionManagementTest::serviceDialogPlacement();
     ConnectionManagementTest::geoDataManagerStates();
     ConnectionManagementTest::autoConnectSelector();

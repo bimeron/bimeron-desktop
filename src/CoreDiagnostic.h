@@ -30,7 +30,9 @@ inline QString safeCoreCode(const QString &code) {
         "session_already_running", "session_start_failed", "session_stop_failed",
         "daemon_shutting_down", "access_key_unavailable", "invalid_auth_challenge",
         "invalid_auth_response", "unknown_command", "ikev2_requires_foreground_user_session", "state",
-        "invalid_cursor", "cleanup_failed_run_recover"
+        "invalid_cursor", "cleanup_failed_run_recover",
+        // WireGuard/AmneziaWG connection failures (Core docs/WIREGUARD.MD).
+        "wireguard_handshake_timeout", "wireguard_socket_failed", "wireguard_platform_limit", "invalid_wireguard_transport"
     };
     return known.contains(code) ? code : QStringLiteral("redacted_error");
 }

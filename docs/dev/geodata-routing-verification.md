@@ -230,7 +230,7 @@ Final checks after the correction:
   directory and `BIMERON_GEODATA_CORE` = sibling
   `build/desktop-bridge/bimeron.exe`.
 - WSL `cmake --build build/geodata-linux-amd64 -j 4` and
-  `QT_QPA_PLATFORM=offscreen BIMERON_GEODATA_CORE=/mnt/c/Users/PC/Documents/dev/bimeron/bimeron-core/build/desktop-bridge/bimeron-linux-amd64 ctest --test-dir build/geodata-linux-amd64 --output-on-failure`:
+  `QT_QPA_PLATFORM=offscreen BIMERON_GEODATA_CORE="${BIMERON_CORE_ROOT:?}/build/desktop-bridge/bimeron-linux-amd64" ctest --test-dir build/geodata-linux-amd64 --output-on-failure`:
   all five passed, 11.82 seconds; developer-mode-test 5.93 seconds.
 - `cmake --build build/geodata-arm64-buildtools --config Release`: passed;
   final changed fixture rebuilt with `--target bimeron-desktop developer-mode-test`.
@@ -563,7 +563,7 @@ reviewed development Core rather than the older pinned build payload.
 ## English GeoIP labels and special-group priority — 2026-11-02
 
 Added GeoIPLabels.h using existing QtCore territory names and explicit labels for
-the ten special IDs from the external Bimeron-GeoIP-Analysis verification. GeoIP
+the ten special IDs from the external GeoIP verification. GeoIP
 picker and summary show English names with uppercase codes; GeoSite labels and
 serialized IDs remain unchanged. A stable special-first partition follows the
 existing selected-first partition, retaining selected-first behavior inside each

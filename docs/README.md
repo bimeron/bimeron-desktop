@@ -22,7 +22,8 @@ Start with the [repository README](../README.md) for installation and an overvie
 - [Parameter forms and ShadowTLS](parameter-forms-and-shadowtls.md)
 - [Profile preservation and secret handling](profile-preservation.md)
 - Protocols: [Shadowsocks](shadowsocks-profiles.md), [VLESS](vless-profiles.md),
-  [Hysteria2](hysteria2-profiles.md), [remote SOCKS5](remote-socks5.md), [SSH](ssh-profiles.md)
+  [Hysteria2](hysteria2-profiles.md), [remote SOCKS5](remote-socks5.md), [SSH](ssh-profiles.md),
+  [WireGuard and AmneziaWG](wireguard-profiles.md)
 
 ## Connection and Core service
 

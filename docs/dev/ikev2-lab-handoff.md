@@ -53,7 +53,7 @@ terminate processes, restart the VM, remove tasks or delete/overwrite lab roots.
 These references are live-process state, not durable recovery across application
 exit or host reboot.
 
-The Windows 10 STD VM contains old and partial client/observation roots plus the
+The Windows test VM contains old and partial client/observation roots plus the
 new BoundaryXml roots. Preserve them. Native MSI/DLL/manifest hashes and protected
 ACK behavior were unchanged by the observation-host changes. The task has not
 been started, and the new observation runner/MSI has not been invoked.

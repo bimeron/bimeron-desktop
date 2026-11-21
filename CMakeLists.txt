@@ -41,6 +41,8 @@ set(BIMERON_DESKTOP_SOURCES
     src/GeoDataDownload.cpp src/GeoDataDownload.h
     src/GeoDataSelection.cpp src/GeoDataSelection.h
     src/GeoDataUpdater.cpp src/GeoDataUpdater.h
+    src/WireGuardCore.cpp src/WireGuardCore.h
+    src/WireGuardForm.cpp src/WireGuardForm.h
 )
 qt_add_executable(bimeron-desktop WIN32 src/main.cpp ${BIMERON_DESKTOP_SOURCES})
 file(GLOB_RECURSE BIMERON_ICON_FILES CONFIGURE_DEPENDS
@@ -190,7 +192,9 @@ if(BUILD_TESTING)
         src/GeoDataDialog.cpp src/GeoDataDialog.h
         src/GeoDataDownload.cpp src/GeoDataDownload.h
         src/GeoDataSelection.cpp src/GeoDataSelection.h
-        src/GeoDataUpdater.cpp src/GeoDataUpdater.h)
+        src/GeoDataUpdater.cpp src/GeoDataUpdater.h
+        src/WireGuardCore.cpp src/WireGuardCore.h
+        src/WireGuardForm.cpp src/WireGuardForm.h)
     foreach(translation_test IN ITEMS profile-vless-test developer-mode-test)
         qt_add_resources(${translation_test} "test-translations"
             PREFIX "/translations" BASE "${CMAKE_CURRENT_SOURCE_DIR}/assets/translations"
