@@ -1869,6 +1869,10 @@ the coordinator owns the restart. An isolated target package can use
 `BIMERON_MSI_HANDOFF_LAB_ROLLBACK=ON`, that target schedules a failing
 deferred action after InstallFiles to exercise Windows Installer rollback.
 Keep these packages separate from supported release artifacts.
+Execution fixtures explicitly author a per-machine Wix package. This keeps
+the installed product and GUI component in the machine context that the
+helper verifies with Windows Installer APIs. Legacy per-user registration
+requires separate migration design and validation before production use.
 For a same-Core lab using a different known baseline, pass its reviewed
 executable digest in `BIMERON_MSI_HANDOFF_LAB_RETAINED_CORE_SHA256` and
 provide the exact matching `BIMERON_CORE_ROOT`. Configure refuses an absent
