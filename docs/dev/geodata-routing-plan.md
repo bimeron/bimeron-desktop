@@ -17,7 +17,7 @@ Implement the approved Routing tab with lossless profile editing, local dataset 
 Core dependency: https://github.com/bimeron/bimeron-core/issues/67, local branch `feat/67-geodata-routing`, clean revision `0b9158edccc2d188a4cb889af92678b46cbf9f85` (not pushed). Read and use that revision's `docs/GEODATA.MD`, `docs/GUI_GEODATA_ROUTING.MD`, `docs/GUI_INTEGRATION.MD`, `docs/adr/0030-explicit-geodata-host-bindings.md`, and `core/config_document.go`. Local source is authoritative; remote fixed-revision links may be unavailable until Core publication.
 
 Approved visual reference, inspected with view_image:
-`<attachments>/f4d1de94-31ef-40d5-803c-51929bab1fcc-a40d8166-9a32-4de5-ad78-b467d0268a70.png`.
+`<attachments>/approved-routing-screenshot.png`.
 The attachment is an external local reference, not a tracked asset; its complete functional layout is specified below so this plan remains useful without that path.
 
 ### Actual desktop integration
