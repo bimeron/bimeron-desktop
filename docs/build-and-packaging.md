@@ -1868,7 +1868,12 @@ the coordinator owns the restart. An isolated target package can use
 `BIMERON_MSI_HANDOFF_LAB_VERSION=0.4.0`. With
 `BIMERON_MSI_HANDOFF_LAB_ROLLBACK=ON`, that target schedules a failing
 deferred action after InstallFiles to exercise Windows Installer rollback.
-Keep these packages separate from supported release artifacts. An uncertain outcome requests recovery
+Keep these packages separate from supported release artifacts.
+For a same-Core lab using a different known baseline, pass its reviewed
+executable digest in `BIMERON_MSI_HANDOFF_LAB_RETAINED_CORE_SHA256` and
+provide the exact matching `BIMERON_CORE_ROOT`. Configure refuses an absent
+or mismatched image. This changes only the lab installer's comparison pin.
+The protected running service must still match it at install time. An uncertain outcome requests recovery
 without selecting an image. A reboot result waits for manual revalidation.
 This path remains out of production packages and does not enable MSI hold.
 
