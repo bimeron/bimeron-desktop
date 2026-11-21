@@ -67,8 +67,10 @@
     <Binary Id="BimeronInstallerPreflight" SourceFile="@BIMERON_INSTALLER_PREFLIGHT_DLL@" />
     <CustomAction Id="VerifyInstallerCore" BinaryKey="BimeronInstallerPreflight" DllEntry="BimeronPreflight"
                   Execute="immediate" Return="check" />
+@BIMERON_LAB_ROLLBACK_ACTION@
     <InstallExecuteSequence>
       <Custom Action="VerifyInstallerCore" Before="InstallValidate">NOT (&amp;ProductFeature = 2)</Custom>
+@BIMERON_LAB_ROLLBACK_SEQUENCE@
     </InstallExecuteSequence>
     <UI Id="BimeronUI">
       <TextStyle Id="WixUI_Font_Normal" FaceName="Tahoma" Size="8" />

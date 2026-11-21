@@ -88,3 +88,9 @@ extern "C" __declspec(dllexport) UINT __stdcall BimeronPreflight(MSIHANDLE sessi
         L"Use the approved Core maintenance procedure before retrying this Desktop package.");
     return ERROR_INSTALL_FAILURE;
 }
+
+#ifdef BIMERON_MSI_HANDOFF_LAB_ROLLBACK
+extern "C" __declspec(dllexport) UINT __stdcall BimeronLabRollback(MSIHANDLE) {
+    return ERROR_INSTALL_FAILURE;
+}
+#endif

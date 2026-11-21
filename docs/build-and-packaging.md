@@ -1855,7 +1855,30 @@ system msiexec client it launched. It checks installed package and image
 identity again before selecting the old or new GUI. Both GUI images must be
 lab builds that support the private, one-use inherited event acknowledgement
 after acquiring the single-instance lock and restoring the requested display
-mode. The current lab expects the old GUI already closed. It does not yet
-authenticate or close a running GUI. An uncertain outcome requests recovery
+mode. The running Desktop starts the helper only after verifying the external
+`BIMERON_MSI_HANDOFF_LAB_DIRECTIVE` and its sibling `.sig` with the pinned
+`BIMERON_MSI_HANDOFF_LAB_DIRECTIVE_KEY`. Both files live in a protected
+directory. The directive binds the architecture, old GUI digest, absolute
+helper path and helper digest. An inherited old-process handle and a private
+pipe bind the handoff to the running GUI and helper PIDs. The helper checks
+the user SID, session and installed image before asking Desktop to exit.
+Desktop captures its window or tray mode and releases its own connections.
+The helper waits for process exit before starting MSI with basic UI so
+the coordinator owns the restart. An isolated target package can use
+`BIMERON_MSI_HANDOFF_LAB_VERSION=0.4.0`. With
+`BIMERON_MSI_HANDOFF_LAB_ROLLBACK=ON`, that target schedules a failing
+deferred action after InstallFiles to exercise Windows Installer rollback.
+Keep these packages separate from supported release artifacts. An uncertain outcome requests recovery
 without selecting an image. A reboot result waits for manual revalidation.
 This path remains out of production packages and does not enable MSI hold.
+
+For production, use a separately serviced, signed native companion under an
+administrator-writable machine directory outside both Desktop and Core
+installation roots. Pin the trusted publisher and bind each allowed companion
+version, architecture and image digest in signed Desktop update metadata.
+Keep the companion and its runtime dependencies protected with no user-writable
+lookup paths. Stage the signed directive and package under the same trust
+boundary. Keep the old companion version available through terminal outcome,
+rollback and GUI acknowledgement, then retire it after reconciliation.
+Production trust, companion deployment and servicing, and active VPN update
+and rollback acceptance are prerequisites for exposing the update action.

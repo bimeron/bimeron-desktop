@@ -1,3 +1,4 @@
+#include "../src/DesktopHandoffDirective.h"
 #include "CoreUpdate.h"
 #include "DesktopMsiManifest.h"
 #include "CoreUpdater.h"
@@ -233,6 +234,23 @@ int main(int argc, char **argv) {
         return std::pair(bytes, QByteArray(reinterpret_cast<char *>(signature), 64).toBase64() + '\n');
     };
     auto sign = [&](const QJsonObject &object) { return signWith(object, secret); };
+    {
+        QJsonObject directive{{"schema", 1}, {"kind", "desktop_handoff_directive"}, {"key_id", keyId},
+                              {"architecture", "amd64"}, {"helper_path", "C:/Program Files/Lab/helper.exe"},
+                              {"helper_sha256", QString(64, 'a')}, {"old_gui_sha256", QString(64, 'b')}};
+        const auto [body, signature] = sign(directive);
+        const QList<QByteArray> keys{publicKey};
+        require(DesktopHandoffDirective::verify(body, signature, keys, "amd64") == directive,
+                "valid lab handoff directive rejected");
+        require(DesktopHandoffDirective::verify(body, signature, keys, "arm64").isEmpty(),
+                "lab handoff directive used for the wrong architecture");
+        require(DesktopHandoffDirective::verify(body + ' ', signature, keys, "amd64").isEmpty(),
+                "tampered lab handoff directive accepted");
+        directive["helper_sha256"] = QString(64, 'A');
+        const auto [invalidBody, invalidSignature] = sign(directive);
+        require(DesktopHandoffDirective::verify(invalidBody, invalidSignature, keys, "amd64").isEmpty(),
+                "noncanonical lab helper digest accepted");
+    }
     {
         QJsonObject msi{{"name", "bimeron-desktop-0.4.0-windows-amd64.msi"}, {"architecture", "amd64"},
                         {"product_code", "{11111111-1111-1111-1111-111111111111}"},

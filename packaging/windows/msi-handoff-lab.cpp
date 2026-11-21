@@ -17,12 +17,14 @@
 #ifdef BIMERON_MSI_HANDOFF_LAB_EXECUTION
 #include "installer-preflight-process.h"
 #include "msi-handoff-outcome.h"
+#include "msi-handoff-lab-process.h"
 #include "TrustedCore.h"
 
 #include <shellapi.h>
 #include <QDateTime>
 #include <QElapsedTimer>
 #include <QLockFile>
+#include <QLocalSocket>
 #include <QStandardPaths>
 #include <vector>
 #endif
@@ -183,7 +185,7 @@ InstallerPreflight::FileHandle startInstaller(const QString &path) {
     const auto length = GetSystemDirectoryW(systemDirectory, std::size(systemDirectory));
     if (!length || length >= std::size(systemDirectory) || path.contains('"')) return {};
     const std::wstring executable = std::wstring(systemDirectory) + LR"(\msiexec.exe)";
-    const auto arguments = (QStringLiteral("/i \"%1\" /norestart").arg(QDir::toNativeSeparators(path))).toStdWString();
+    const auto arguments = (QStringLiteral("/i \"%1\" /qb! /norestart").arg(QDir::toNativeSeparators(path))).toStdWString();
     SHELLEXECUTEINFOW call{};
     call.cbSize = sizeof(call);
     call.fMask = SEE_MASK_NOCLOSEPROCESS | SEE_MASK_NOASYNC;
@@ -204,36 +206,59 @@ bool launchDesktop(const Identity &gui, const QString &mode) {
     SECURITY_ATTRIBUTES security{sizeof(SECURITY_ATTRIBUTES), nullptr, TRUE};
     const InstallerPreflight::FileHandle ready(CreateEventW(&security, FALSE, FALSE, nullptr));
     if (!ready) return false;
-    SIZE_T size = 0;
-    InitializeProcThreadAttributeList(nullptr, 1, 0, &size);
-    if (!size) return false;
-    std::vector<BYTE> buffer(size);
-    const auto list = reinterpret_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(buffer.data());
-    if (!InitializeProcThreadAttributeList(list, 1, 0, &size)) return false;
-    const std::unique_ptr<std::remove_pointer_t<LPPROC_THREAD_ATTRIBUTE_LIST>, decltype(&DeleteProcThreadAttributeList)>
-        attributes(list, DeleteProcThreadAttributeList);
     HANDLE inherited = ready.get();
-    if (!UpdateProcThreadAttribute(list, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
-                                   &inherited, sizeof(inherited), nullptr, nullptr)) return false;
-
-    STARTUPINFOEXW startup{};
-    startup.StartupInfo.cb = sizeof(startup);
-    startup.lpAttributeList = list;
-    PROCESS_INFORMATION process{};
-    auto command = QStringLiteral("\"%1\" --restart --msi-handoff-lab-%2 %3")
+    const auto command = QStringLiteral("\"%1\" --restart --msi-handoff-lab-%2 %3")
         .arg(QString::fromStdWString(path), mode, QString::number(quintptr(inherited))).toStdWString();
-    if (!CreateProcessW(path.c_str(), command.data(), nullptr, nullptr, TRUE,
-                        EXTENDED_STARTUPINFO_PRESENT, nullptr, nullptr, &startup.StartupInfo, &process)) return false;
-    const InstallerPreflight::FileHandle child(process.hProcess), thread(process.hThread);
+    const auto child = MsiHandoff::startLabProcess(path, command, &inherited, 1);
     DWORD ownerSession = 0, childSession = 0;
-    if (!ProcessIdToSessionId(GetCurrentProcessId(), &ownerSession)
-        || !ProcessIdToSessionId(process.dwProcessId, &childSession) || childSession != ownerSession) return false;
+    if (!child || !ProcessIdToSessionId(GetCurrentProcessId(), &ownerSession)
+        || !ProcessIdToSessionId(GetProcessId(child.get()), &childSession) || childSession != ownerSession) return false;
     const HANDLE waitFor[]{ready.get(), child.get()};
     return WaitForMultipleObjects(std::size(waitFor), waitFor, FALSE, 10000) == WAIT_OBJECT_0
         && WaitForSingleObject(child.get(), 0) == WAIT_TIMEOUT;
 }
 
-int runLab(const QJsonObject &receipt, const Identity &old, const Identity &next, const QString &mode) {
+std::vector<BYTE> tokenUser(HANDLE process) {
+    HANDLE raw = nullptr;
+    if (!OpenProcessToken(process, TOKEN_QUERY, &raw)) return {};
+    const InstallerPreflight::FileHandle token(raw);
+    DWORD bytes = 0;
+    GetTokenInformation(token.get(), TokenUser, nullptr, 0, &bytes);
+    if (bytes < sizeof(TOKEN_USER) || bytes > 4096) return {};
+    std::vector<BYTE> info(bytes);
+    if (!GetTokenInformation(token.get(), TokenUser, info.data(), bytes, &bytes)) return {};
+    return info;
+}
+
+bool authenticatedOrigin(HANDLE process, const Identity &expected) {
+    DWORD session = 0, ownSession = 0;
+    if (!process || WaitForSingleObject(process, 0) != WAIT_TIMEOUT
+        || !ProcessIdToSessionId(GetProcessId(process), &session)
+        || !ProcessIdToSessionId(GetCurrentProcessId(), &ownSession) || session != ownSession)
+        return false;
+    const auto peer = tokenUser(process);
+    const auto own = tokenUser(GetCurrentProcess());
+    if (peer.empty() || own.empty()
+        || !EqualSid(reinterpret_cast<const TOKEN_USER *>(peer.data())->User.Sid,
+                     reinterpret_cast<const TOKEN_USER *>(own.data())->User.Sid)) return false;
+    wchar_t path[1024]{};
+    DWORD length = std::size(path);
+    if (!QueryFullProcessImageNameW(process, 0, path, &length)) return false;
+    const QString image = QDir::fromNativeSeparators(QString::fromWCharArray(path, length));
+    return image.compare(QDir::fromNativeSeparators(expected.path), Qt::CaseInsensitive) == 0
+        && TrustedCore::protectedExecutable(image) && matchesFile(image, expected.digest);
+}
+
+int labRecoveryRequired() {
+    std::puts("lab_recovery_required");
+    MessageBoxW(nullptr, L"The Desktop update outcome or restart could not be verified. "
+                          L"Check the installer outcome before restarting Desktop.",
+                L"Bimeron Desktop update lab", MB_OK | MB_ICONWARNING);
+    return 6;
+}
+
+int runLab(const QJsonObject &receipt, const Identity &old, const Identity &next, const QString &mode,
+           const QString &originValue, const QString &channel) {
     // Execution fixtures must be installed by the lab operator under a
     // protected path outside the product directory. The default verifier
     // accepts workspace fixtures for read-only inventory only.
@@ -248,15 +273,31 @@ int runLab(const QJsonObject &receipt, const Identity &old, const Identity &next
     QLockFile operation(QDir(QStandardPaths::writableLocation(QStandardPaths::TempLocation))
                         .filePath("bimeron-msi-handoff-lab.lock"));
     operation.setStaleLockTime(0);
-    if (!operation.tryLock(0) || !InstallerPreflight::desktopIsClosed()
+    const auto origin = MsiHandoff::inheritedHandle(originValue);
+    if (!operation.tryLock(0) || !authenticatedOrigin(origin.get(), old)
         || !installedMatches(old) || installedMatches(next) || rebootPending()) return 5;
+    static const QRegularExpression pipeName(QStringLiteral(R"(\ABimeronDesktopHandoffLab-[0-9a-f-]{36}\z)"));
+    if (!pipeName.match(channel).hasMatch()) return 5;
+    QLocalSocket socket;
+    socket.connectToServer(channel);
+    ULONG issuer = 0;
+    if (!socket.waitForConnected(3000)
+        || !GetNamedPipeServerProcessId(reinterpret_cast<HANDLE>(socket.socketDescriptor()), &issuer)
+        || issuer != GetProcessId(origin.get()) || socket.write("R", 1) != 1
+        || (socket.bytesToWrite() && !socket.waitForBytesWritten(1000))
+        || (socket.bytesAvailable() == 0 && !socket.waitForReadyRead(10000))
+        || socket.read(1) != "C") return 5;
+    socket.disconnectFromServer();
+    if (WaitForSingleObject(origin.get(), 15000) != WAIT_OBJECT_0 || !InstallerPreflight::desktopIsClosed()
+        || !installedMatches(old) || installedMatches(next) || rebootPending()) {
+        return labRecoveryRequired();
+    }
     QElapsedTimer elapsed;
     elapsed.start();
     const auto startedUtc = QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs).toLatin1();
     const auto installer = startInstaller(msi);
     if (!installer || WaitForSingleObject(installer.get(), INFINITE) != WAIT_OBJECT_0) {
-        std::puts("lab_recovery_required");
-        return 6;
+        return labRecoveryRequired();
     }
     const auto result = MsiHandoff::observedExit(installer.get());
     const bool oldVerified = installedMatches(old);
@@ -279,8 +320,7 @@ int runLab(const QJsonObject &receipt, const Identity &old, const Identity &next
         std::puts(launchNew ? "lab_new_gui_acknowledged" : "lab_old_gui_acknowledged");
         return 0;
     }
-    std::puts("lab_recovery_required");
-    return 6;
+    return labRecoveryRequired();
 }
 #endif
 }
@@ -289,8 +329,8 @@ int main(int argc, char **argv) {
     QCoreApplication app(argc, argv);
     const auto arguments = app.arguments();
 #ifdef BIMERON_MSI_HANDOFF_LAB_EXECUTION
-    const QString mode = arguments.size() == 2 && arguments[1] == "--execute-window" ? "window"
-        : arguments.size() == 2 && arguments[1] == "--execute-tray" ? "tray" : QString{};
+    const QString mode = arguments.size() == 4 && arguments[1] == "--from-desktop-window" ? "window"
+        : arguments.size() == 4 && arguments[1] == "--from-desktop-tray" ? "tray" : QString{};
     if (arguments.size() != 1 && mode.isEmpty()) return 2;
 #else
     if (arguments.size() != 1) return 2;
@@ -307,7 +347,7 @@ int main(int argc, char **argv) {
         return 4;
     }
 #ifdef BIMERON_MSI_HANDOFF_LAB_EXECUTION
-    if (!mode.isEmpty()) return runLab(receipt, old, next, mode);
+    if (!mode.isEmpty()) return runLab(receipt, old, next, mode, arguments[2], arguments[3]);
 #endif
     std::puts("lab_offer_verified");
     std::puts(installedMatches(old) ? "old_registered_image_verified" : "old_registered_image_unverified");

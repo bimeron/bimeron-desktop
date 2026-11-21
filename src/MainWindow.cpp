@@ -3614,6 +3614,10 @@ void MainWindow::initTray() {
     tray_->show();
 }
 
+#ifdef BIMERON_MSI_HANDOFF_LAB_DIRECTIVE
+bool beginDesktopHandoffLab(bool tray);
+#endif
+
 void MainWindow::rebuildTrayMenu() {
     trayMenu_->clear();
     const QHash<QString, QString> labels{{"disconnected", tr("Disconnected")}, {"connecting", tr("Connecting…")}, {"connected", tr("Connected")}, {"reconnecting", tr("Reconnecting…")}, {"stopping", tr("Disconnecting…")}, {"failed", tr("Connection failed")}};
@@ -3638,6 +3642,19 @@ void MainWindow::rebuildTrayMenu() {
     trayMenu_->addSeparator();
     auto *open = trayMenu_->addAction(tr("Open Bimeron"));
     connect(open, &QAction::triggered, this, &MainWindow::showWindow);
+#ifdef BIMERON_MSI_HANDOFF_LAB_DIRECTIVE
+    auto *labUpdate = trayMenu_->addAction(tr("Update Desktop (lab)"));
+    connect(labUpdate, &QAction::triggered, this, [this] {
+        if (!controlBlocked() && !development_->local() && !nativeSession_
+            && helloReady_ && !statusNeeded_ && operation_.isEmpty() && !cleanupBlocked_
+            && beginDesktopHandoffLab(!isVisible())) {
+            core_.cancel();
+            QCoreApplication::exit(0); // The service owns the VPN session.
+        } else {
+            QMessageBox::warning(this, tr("Desktop update"), tr("The verified lab handoff is unavailable."));
+        }
+    });
+#endif
     auto *quit = trayMenu_->addAction(tr("Quit Bimeron"));
     connect(quit, &QAction::triggered, this, &MainWindow::requestShutdown);
 }
