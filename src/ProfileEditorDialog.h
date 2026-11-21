@@ -14,6 +14,7 @@ class QComboBox;
 class QLabel;
 class QLineEdit;
 class QPlainTextEdit;
+class QPushButton;
 class QSpinBox;
 class QTableWidget;
 class QTabWidget;
@@ -140,6 +141,10 @@ private:
     QLineEdit *interfaceName_ = nullptr;
     QSpinBox *mtu_ = nullptr;
     QLineEdit *dns_ = nullptr;
+    QPushButton *configureDoh_ = nullptr;
+    QString dohEndpoints_, dohBootstrap_;
+    void editDoh();
+    void refreshDohSummary();
     QComboBox *ipv6_ = nullptr;
     QCheckBox *killSwitch_ = nullptr;
     QCheckBox *ignoreLocalNetwork_ = nullptr;

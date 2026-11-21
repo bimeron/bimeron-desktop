@@ -163,7 +163,7 @@ inline QString field(QString text, const QString &section, const QString &key, c
     return source.join("");
 }
 // WG/AWG network settings belong to the sibling document. Keep all other lines verbatim.
-inline QString withoutWireGuardNetworkOverrides(const QString &profile) {
+inline QString withoutWireGuardNetworkOverrides(const QString &profile, bool preserveDns = false) {
     QString result;
     bool inInterface = false;
     for (const QString &line : lines(profile)) {
@@ -174,7 +174,7 @@ inline QString withoutWireGuardNetworkOverrides(const QString &profile) {
             const int equal = content.indexOf('=');
             if (inInterface && equal > 0) {
                 const QString key = content.left(equal).trimmed();
-                if (key == "DNS" || key == "MTU") continue;
+                if ((!preserveDns && key == "DNS") || key == "MTU") continue;
             }
         }
         result += line;
