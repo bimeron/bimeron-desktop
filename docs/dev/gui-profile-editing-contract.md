@@ -127,8 +127,8 @@ platforms. Set `BIMERON_DOH_CORE` to a DoH-capable CLI to exercise the real
 document patch and validation. Set `BIMERON_OLD_DOH_CORE` to a pre-DoH CLI to
 check rejection of the same encrypted profile. Use a native profile file or
 the Raw config tab when transferring the full profile with its DNS settings.
-The #246 integration candidate uses Core
-`9292ae17d2c746ff6294f77926432959a2283732` and its
+The provisional #246 integration candidate uses Core
+`bae03176322c35b8bb6c2e690fbb2a85d2729374` and its
 `internal/dnsconfig/testdata/doh-v1.json` vectors. The development CLIs omit
 embedded VCS identity. Verify the binaries by SHA-256.
 
