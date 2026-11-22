@@ -1787,3 +1787,121 @@ profiling applies to this explicit cold repair/import path. No package, dist,
 pin, frozen candidate, installed service or network changes were made. Builds
 omit optional embedded-resource fixtures; provisioning uses inert test bytes.
 ARM64 CI and real UAC/polkit package restoration remain separate evidence.
+
+The Windows in-app updater compares the protected bundled CLI with the
+architecture-specific executable SHA-256 pinned by the build before probing
+`service update-contract`. A matching signed archive alone does not enable
+hold. After the helper exits, Desktop obtains a new authenticated hello and
+status, and records a guarded resume attempt in the current Windows user's
+local, non-roaming application data before dispatch. A service restart cannot
+reset the attempt for the same residual profile and generation.
+
+### Windows MSI service preflight
+
+The Windows package embeds an architecture-matched, statically linked
+preflight DLL in the MSI Binary table. It runs in InstallExecuteSequence
+before InstallValidate for a locally installed product feature. Full UI
+and quiet installation use the same check. Full removal skips the check.
+A process snapshot taken before InstallValidate defers if Desktop is open in
+a window, in the tray, or in another session. An unreadable process list also
+defers. A same-name process whose identity is unknown counts as possibly
+running Desktop. The interactive error asks the user to disconnect the VPN,
+choose Quit from the tray, and retry. Quiet installation returns 1603 and
+records the named `upgrade_deferred` reason in the verbose MSI log. The
+snapshot is a refusal check, not a lock against a later concurrent launch.
+The preflight queries SCM and hashes the registered service image at the
+standard protected service location. An absent service or the exact pinned
+bundle is allowed. Distinct or unverified service evidence returns
+`upgrade_deferred` before package execution, including when SCM reports
+Stopped. SCM state alone does not establish clean VPN idle or compatibility.
+
+This conservative path does not initiate service replacement. Interactive
+hold, administrative deferral for a verified compatible distinct Core, and
+session-bound Desktop relaunch and rollback require separate admission and
+native acceptance. Verify the compiled MSI sequence places the preflight
+before both InstallValidate and removal of the previous product.
+
+The optional Windows handoff lab target requires a local update test build
+and an absolute `BIMERON_MSI_HANDOFF_TEST_RECEIPT` input. It embeds the
+receipt at build time and has a separate output directory outside the
+Windows install tree. The receipt binds the local MSI path and SHA-256, its
+architecture, ProductCode and PackageCode, and the old and new GUI component
+IDs, installed paths and executable SHA-256 values. The helper accepts no
+runtime input. It verifies the MSI database read-only and independently
+checks machine-context installed identities. It does not run the MSI or
+start Desktop. Model tests cover waiting, verified success and rollback, a
+late validator failure with the new image still installed, and reboot.
+Production Update remains disabled pending signed Desktop metadata and
+native acceptance.
+
+The isolated handoff verifier also requires the sibling files
+`.manifest`, `.signature`, and `.public-key` beside its configured
+receipt. The Desktop manifest is separate from the Core update manifest and
+has schema 1 and kind `desktop_msi`. It binds one release tag and Desktop
+version to a Windows MSI name, size, architecture, ProductCode, PackageCode,
+GUI ComponentId, MSI SHA-256 and GUI executable SHA-256. The detached Ed25519
+signature covers the exact manifest bytes. The local test public key is
+independent of the Core update trust set. Signed metadata must agree with the
+local receipt, expected MSI bytes and database before the lab accepts it.
+Production Desktop trust and the Update entry remain disabled.
+
+The default handoff helper only verifies. `BIMERON_MSI_HANDOFF_LAB_EXECUTION`
+adds explicitly gated execution and GUI acknowledgement to a local update
+test build. It requires a compiled receipt that authorizes lab execution,
+an unelevated interactive Windows session, exact old installation identity,
+and protected helper and MSI paths outside the Desktop installation trees.
+The helper holds the verified MSI read handle while waiting on the specific
+system msiexec client it launched. It checks installed package and image
+identity again before selecting the old or new GUI. Both GUI images must be
+lab builds that support the private, one-use inherited event acknowledgement
+after acquiring the single-instance lock and restoring the requested display
+mode. The running Desktop starts the helper only after verifying the external
+`BIMERON_MSI_HANDOFF_LAB_DIRECTIVE` and its sibling `.sig` with the pinned
+`BIMERON_MSI_HANDOFF_LAB_DIRECTIVE_KEY`. Both files live in a protected
+directory. The directive binds the architecture, old GUI digest, absolute
+helper path and helper digest. An inherited old-process handle and a private
+pipe bind the handoff to the running GUI and helper PIDs. The helper checks
+the user SID, session and installed image before asking Desktop to exit.
+Desktop captures its window or tray mode and releases its own connections.
+The helper waits for process exit before starting MSI with basic UI so
+the coordinator owns the restart. An isolated target package can use
+`BIMERON_MSI_HANDOFF_LAB_VERSION=0.4.0`. With
+`BIMERON_MSI_HANDOFF_LAB_ROLLBACK=ON`, that target schedules a failing
+deferred action after InstallFiles to exercise Windows Installer rollback.
+Keep these packages separate from supported release artifacts.
+Execution fixtures explicitly author a per-machine Wix package. This keeps
+the installed product and GUI component in the machine context that the
+helper verifies with Windows Installer APIs. Legacy per-user registration
+requires separate migration design and validation before production use.
+For a same-Core lab using a different known baseline, pass its reviewed
+executable digest in `BIMERON_MSI_HANDOFF_LAB_RETAINED_CORE_SHA256` and
+provide the exact matching `BIMERON_CORE_ROOT`. Configure refuses an absent
+or mismatched image. This changes only the lab installer's comparison pin.
+The protected running service must still match it at install time. An uncertain outcome requests recovery
+without selecting an image. A reboot result waits for manual revalidation.
+This path remains out of production packages and does not enable MSI hold.
+
+For production, use a separately serviced, signed native companion under an
+administrator-writable machine directory outside both Desktop and Core
+installation roots. Pin the trusted publisher and bind each allowed companion
+version, architecture and image digest in signed Desktop update metadata.
+Keep the companion and its runtime dependencies protected with no user-writable
+lookup paths. Stage the signed directive and package under the same trust
+boundary. Keep the old companion version available through terminal outcome,
+rollback and GUI acknowledgement, then retire it after reconciliation.
+Production trust, companion deployment and servicing, and active VPN update
+and rollback acceptance are prerequisites for exposing the update action.
+
+A Desktop MSI and any subsequent Core replacement have separate outcomes.
+After the GUI acknowledges its restart, the coordinator rechecks the live
+child process, owner session and image identity, both MSI registrations, and
+the pending-reboot state. Only a verified successful Desktop update is
+eligible for later Core replacement. A verified Desktop rollback restores
+the old GUI and ends the operation. Ambiguity enters recovery.
+
+A future Core replacement must use the existing authenticated in-app Core
+update flow from the relaunched Desktop. The offer requires a verified
+signed Core artifact, exact executable digest and a compatible trusted
+helper. Fresh service capability and session checks precede any hold.
+Keep hold disabled if any prerequisite fails. A Core rollback is a separate
+service transaction and needs independent active VPN evidence.

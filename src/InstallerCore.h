@@ -100,6 +100,14 @@ inline int update() {
 #endif
         ;
     if(service.isEmpty() || !TrustedCore::protectedExecutable(service) || !TrustedCore::protectedExecutable(bundle)) { log("absent or untrusted service/payload; skipped"); return 0; }
+#ifdef Q_OS_WIN
+    const QString installedHash = digest(service);
+    const QString bundleHash = digest(bundle);
+    if (!bundleHash.isEmpty() && installedHash == bundleHash) {
+        log("identical service executable; skipped");
+        return 0;
+    }
+#endif
     QByteArray a,b;
     if(!run(service,{"version"},a) || !run(bundle,{"version"},b)) {log("version query failed; skipped");return 0;}
     const auto current=QJsonDocument::fromJson(a).object();
@@ -109,9 +117,12 @@ inline int update() {
     QStringList ap,bp;
     if(!parse(av,ap) || !parse(bv,bp)) {log("unknown version; skipped");return 0;}
     if(older(bv,av)) {log("newer installed version; skipped");return 0;}
-    const QString bundleHash=digest(bundle);
+#ifndef Q_OS_WIN
+    const QString installedHash = digest(service);
+    const QString bundleHash = digest(bundle);
+#endif
     if(bundleHash.isEmpty()) {log("payload hash unavailable; skipped");return 0;}
-    const bool changed= differentBuild(digest(service),bundleHash,
+    const bool changed= differentBuild(installedHash,bundleHash,
         current.value("revision").toString(),payload.value("revision").toString());
     if(!shouldUpdate(av,bv,changed)) {log("equal version, identical or unknown build; skipped");return 0;}
     return serviceDecision(true,av,bv,[&] {

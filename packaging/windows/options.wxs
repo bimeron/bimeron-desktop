@@ -64,13 +64,13 @@
                   Impersonate="yes"
                   Return="asyncNoWait" />
 
-    <CustomAction Id="SetInstallerCoreUpdate" Property="InstallerCoreUpdate"
-                  Value="&quot;[INSTALL_ROOT]bimeron-desktop.exe&quot; --installer-update-core" />
-    <CustomAction Id="InstallerCoreUpdate" BinaryKey="WixCA" DllEntry="WixQuietExec64"
-                  Execute="deferred" Impersonate="no" Return="ignore" />
+    <Binary Id="BimeronInstallerPreflight" SourceFile="@BIMERON_INSTALLER_PREFLIGHT_DLL@" />
+    <CustomAction Id="VerifyInstallerCore" BinaryKey="BimeronInstallerPreflight" DllEntry="BimeronPreflight"
+                  Execute="immediate" Return="check" />
+@BIMERON_LAB_ROLLBACK_ACTION@
     <InstallExecuteSequence>
-      <Custom Action="SetInstallerCoreUpdate" After="InstallFiles">NOT REMOVE</Custom>
-      <Custom Action="InstallerCoreUpdate" After="SetInstallerCoreUpdate">NOT REMOVE</Custom>
+      <Custom Action="VerifyInstallerCore" Before="InstallValidate">NOT (&amp;ProductFeature = 2)</Custom>
+@BIMERON_LAB_ROLLBACK_SEQUENCE@
     </InstallExecuteSequence>
     <UI Id="BimeronUI">
       <TextStyle Id="WixUI_Font_Normal" FaceName="Tahoma" Size="8" />
@@ -133,7 +133,7 @@
       <Publish Dialog="MaintenanceTypeDlg" Control="RemoveButton" Event="NewDialog" Value="VerifyReadyDlg">1</Publish>
       <Publish Dialog="MaintenanceTypeDlg" Control="Back" Event="NewDialog" Value="MaintenanceWelcomeDlg">1</Publish>
       <Publish Dialog="ExitDialog" Control="Finish" Event="DoAction" Value="LaunchBimeron" Order="1">
-        LAUNCH_AFTER_INSTALL = 1 AND NOT Installed
+        LAUNCH_AFTER_INSTALL = 1 AND NOT Installed AND NOT WIX_UPGRADE_DETECTED
       </Publish>
       <Publish Dialog="ExitDialog" Control="Finish" Event="EndDialog" Value="Return" Order="2">1</Publish>
     </UI>

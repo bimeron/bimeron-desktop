@@ -1,5 +1,7 @@
 #pragma once
 #include "CoreUpdatePrompt.h"
+#include "CoreUpdateResume.h"
+#include <QTemporaryDir>
 
 #include <QCoreApplication>
 #include <QFile>
@@ -44,6 +46,32 @@ inline CoreUpdatePrompt::Prompt promptFor(const QJsonObject &status, bool proxy 
 }
 
 inline void cases(bool russian) {
+    if (!russian) {
+        const QJsonObject capabilities{{"kill_switch_update_hold", true}, {"kill_switch_update_resume", true}};
+        QJsonObject residual{{"State", "failed"}, {"LastError", "cleanup_failed_run_recover"},
+                             {"KillSwitch", "residual"}, {"ResidualReason", "update"},
+                             {"ResidualProfile", QString(64, 'a')}, {"ResidualGeneration", QString(64, 'b')}};
+        const auto first = CoreUpdateResume::guard(residual, capabilities, "before");
+        const auto restarted = CoreUpdateResume::guard(residual, capabilities, "after");
+#ifdef Q_OS_WIN
+        expect(CoreUpdateResume::windowsProfileIdentity(QString::fromUtf8(u8"C:/Users/Test/İ/tmp/../𐐀.conf"))
+                   == "e7a170612fef698a4033d37557cf52d1a179f74a48dc7ce6f1e2f36ca3d8783c", "match Core Windows clean path and simple Unicode lowercase");
+#endif
+        QTemporaryDir local;
+        expect(local.isValid() && first.value("instance") == QJsonValue("before")
+                   && CoreUpdateResume::claim(local.path(), first), "record first update resume attempt");
+        expect(restarted.value("instance") == QJsonValue("after")
+                   && !CoreUpdateResume::claim(local.path(), restarted), "suppress previous generation after restart");
+        residual["ResidualGeneration"] = QString(64, 'c');
+        expect(CoreUpdateResume::claim(local.path(), CoreUpdateResume::guard(residual, capabilities, "after")),
+               "allow new residual generation");
+        residual["ResidualGeneration"] = QString(64, 'A');
+        expect(CoreUpdateResume::guard(residual, capabilities, "after").isEmpty(), "reject uppercase generation");
+        residual["ResidualGeneration"] = QString(64, 'b');
+        expect(CoreUpdateResume::guard(residual, {{"kill_switch_update_hold", true}}, "after").isEmpty(),
+               "require both explicit installed capabilities");
+    }
+
     const auto pick = [russian](const char *en, const char *ru) { return QString::fromUtf8(russian ? ru : en); };
     const QString protectedText = pick(
         "Installing Core 0.4.1 will interrupt the active VPN. Leak protection will be removed during the update, and internet traffic will bypass the VPN. Bimeron will reconnect the same profile after a successful update. Update now?",

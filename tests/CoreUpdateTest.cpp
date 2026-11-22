@@ -1,4 +1,6 @@
+#include "../src/DesktopHandoffDirective.h"
 #include "CoreUpdate.h"
+#include "DesktopMsiManifest.h"
 #include "CoreUpdater.h"
 #include "TrustedCore.h"
 #include "RepairBootstrap.h"
@@ -232,6 +234,61 @@ int main(int argc, char **argv) {
         return std::pair(bytes, QByteArray(reinterpret_cast<char *>(signature), 64).toBase64() + '\n');
     };
     auto sign = [&](const QJsonObject &object) { return signWith(object, secret); };
+    {
+        QJsonObject directive{{"schema", 1}, {"kind", "desktop_handoff_directive"}, {"key_id", keyId},
+                              {"architecture", "amd64"}, {"helper_path", "C:/Program Files/Lab/helper.exe"},
+                              {"helper_sha256", QString(64, 'a')}, {"old_gui_sha256", QString(64, 'b')}};
+        const auto [body, signature] = sign(directive);
+        const QList<QByteArray> keys{publicKey};
+        require(DesktopHandoffDirective::verify(body, signature, keys, "amd64") == directive,
+                "valid lab handoff directive rejected");
+        require(DesktopHandoffDirective::verify(body, signature, keys, "arm64").isEmpty(),
+                "lab handoff directive used for the wrong architecture");
+        require(DesktopHandoffDirective::verify(body + ' ', signature, keys, "amd64").isEmpty(),
+                "tampered lab handoff directive accepted");
+        directive["helper_sha256"] = QString(64, 'A');
+        const auto [invalidBody, invalidSignature] = sign(directive);
+        require(DesktopHandoffDirective::verify(invalidBody, invalidSignature, keys, "amd64").isEmpty(),
+                "noncanonical lab helper digest accepted");
+    }
+    {
+        QJsonObject msi{{"name", "bimeron-desktop-0.4.0-windows-amd64.msi"}, {"architecture", "amd64"},
+                        {"product_code", "{11111111-1111-1111-1111-111111111111}"},
+                        {"package_code", "{22222222-2222-2222-2222-222222222222}"},
+                        {"gui_component_code", "{33333333-3333-3333-3333-333333333333}"},
+                        {"sha256", QString(64, 'a')}, {"gui_sha256", QString(64, 'b')}, {"size", 1024}};
+        QJsonObject offer{{"schema", 1}, {"kind", "desktop_msi"}, {"tag", "v0.4.0"},
+                          {"desktop_version", "0.4.0"}, {"key_id", keyId}, {"msi", msi}};
+        const auto [body, sig] = sign(offer);
+        DesktopMsiManifest::Artifact selected;
+        QString error;
+        const auto verifyDesktop = [&](const QByteArray &json, const QByteArray &signatureBytes,
+                                       const QList<QByteArray> &keys, const QString &arch = "amd64") {
+            return DesktopMsiManifest::verify(json, signatureBytes, keys, "v0.4.0", "0.3.2", arch, &selected, &error);
+        };
+        require(verifyDesktop(body, sig, {publicKey}) && selected.packageCode == msi.value("package_code").toString()
+                && selected.msiSha256 == QString(64, 'a') && selected.guiSha256 == QString(64, 'b'),
+                "signed Desktop MSI identity rejected");
+        QByteArray tampered = body;
+        tampered.replace(QByteArray(64, 'b'), QByteArray(64, 'c'));
+        require(tampered != body && !verifyDesktop(tampered, sig, {publicKey}), "tampered GUI hash accepted");
+        require(!verifyDesktop(body, sig, {ephemeralKey().publicKey}), "unknown Desktop signing key accepted");
+        require(!verifyDesktop(body, sig, {publicKey}, "arm64"), "Desktop artifact matched the wrong architecture");
+        require(!verifyDesktop(body, sig, {publicKey}, "x64"), "noncanonical architecture accepted");
+        for (const auto *field : {"name", "sha256", "gui_sha256", "product_code", "package_code", "gui_component_code"}) {
+            auto wrong = msi;
+            wrong[field] = QStringLiteral("invalid");
+            offer["msi"] = wrong;
+            const auto [wrongBody, wrongSig] = sign(offer);
+            require(!verifyDesktop(wrongBody, wrongSig, {publicKey}), "wrong signed Desktop artifact field accepted");
+        }
+        msi["name"] = "bimeron-desktop-0.4.0-windows-arm64.msi";
+        msi["architecture"] = "arm64";
+        offer["msi"] = msi;
+        const auto [armBody, armSig] = sign(offer);
+        require(verifyDesktop(armBody, armSig, {publicKey}, "arm64"), "signed ARM64 Desktop artifact rejected");
+    }
+
     auto [bytes, signature] = sign(manifest);
     auto verify = [&](const QByteArray &body, const QByteArray &sig, const QList<QByteArray> &keys = {}) {
         CoreUpdateRelease selected;
@@ -240,6 +297,31 @@ int main(int argc, char **argv) {
                                           "0.1.1", 1, 1, "windows", "amd64", false, &selected, &error);
     };
     require(verify(bytes, signature), "valid signed manifest rejected");
+    {
+        auto signedHold = manifest;
+        auto entries = archives;
+        auto entry = entries.at(0).toObject();
+        entry["kill_switch_update_hold_contract"] = 1;
+        entry["executable_sha256"] = QString(64, 'b');
+        entries[0] = entry;
+        signedHold["archives"] = entries;
+        const auto [body, sig] = sign(signedHold);
+        CoreUpdateRelease selected;
+        QString error;
+        require(CoreUpdate::verifyManifest(body, sig, {publicKey}, "v1.2.0", "0.1.1", 1, 1,
+                                           "windows", "amd64", false, &selected, &error) &&
+                selected.supportsUpdateHold && selected.executableSha256 == QByteArray(32, char(0xbb)),
+                "signed hold contract not selected for its artifact");
+        require(CoreUpdate::verifyManifest(body, sig, {publicKey}, "v1.2.0", "0.1.1", 1, 1,
+                                           "windows", "arm64", false, &selected, &error) &&
+                !selected.supportsUpdateHold && selected.executableSha256.isEmpty(),
+                "hold contract leaked to another architecture");
+        entry["executable_sha256"] = QString(64, 'B');
+        entries[0] = entry;
+        signedHold["archives"] = entries;
+        const auto [invalidBody, invalidSignature] = sign(signedHold);
+        require(!verify(invalidBody, invalidSignature), "uppercase executable digest accepted");
+    }
     CoreUpdateRelease nextGuiSelected;
     QString nextGuiError;
     require(!CoreUpdate::verifyManifest(bytes, signature, {publicKey}, "v1.2.0", "0.1.2", 1, 1,
@@ -410,6 +492,13 @@ int main(int argc, char **argv) {
     CoreUpdateRelease release{"v1.2.0", "1.2.0", "fixture.zip", zip.size(), QCryptographicHash::hash(zip, QCryptographicHash::Sha256)};
     QByteArray extracted; QString error;
     require(CoreUpdate::extractExecutable(zip, release, "windows", "amd64", &extracted, &error) && extracted == payload, "valid ZIP rejected");
+    release.executableSha256 = QByteArray(32, 0);
+    require(!CoreUpdate::extractExecutable(zip, release, "windows", "amd64", &extracted, &error),
+            "wrong signed executable hash accepted");
+    release.executableSha256 = QCryptographicHash::hash(payload, QCryptographicHash::Sha256);
+    require(CoreUpdate::extractExecutable(zip, release, "windows", "amd64", &extracted, &error),
+            "correct signed executable hash rejected");
+    release.executableSha256.clear();
     release.assetSize++;
     require(!CoreUpdate::extractExecutable(zip, release, "windows", "amd64", &extracted, &error), "wrong ZIP size accepted");
     release.assetSize--;

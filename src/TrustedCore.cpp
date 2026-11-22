@@ -2,6 +2,9 @@
 #include "RepairBootstrap.h"
 
 #include <QDir>
+#include <QCryptographicHash>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QFile>
 #include <QFileInfo>
 #include <QProcess>
@@ -133,6 +136,30 @@ bool TrustedCore::supportsSourceUpdate(const QString &path) {
     }
     const QByteArray usage = process.readAllStandardError() + process.readAllStandardOutput();
     return usage.contains("update -source <absolute-path> -version <version> -sha256 <executable-sha256>");
+}
+
+bool TrustedCore::supportsUpdateHold(const QString &path, const QByteArray &pinnedDigest) {
+#ifdef Q_OS_WIN
+    if (pinnedDigest.size() != 64 || !protectedExecutable(path)) return false;
+    QFile file(path);
+    QCryptographicHash hash(QCryptographicHash::Sha256);
+    if (!file.open(QIODevice::ReadOnly) || !hash.addData(&file) || hash.result().toHex() != pinnedDigest)
+        return false;
+    QProcess process;
+    process.start(path, {"service", "update-contract"});
+    if (!process.waitForStarted(2000) || !process.waitForFinished(3000)) {
+        process.kill();
+        process.waitForFinished();
+        return false;
+    }
+    const auto contract = QJsonDocument::fromJson(process.readAllStandardOutput()).object();
+    return process.exitStatus() == QProcess::NormalExit && process.exitCode() == 0
+        && contract.value("kill_switch_update_hold_contract") == QJsonValue(1);
+#else
+    Q_UNUSED(path);
+    Q_UNUSED(pinnedDigest);
+    return false;
+#endif
 }
 
 QStringList TrustedCore::updateArguments(const QString &source, const QString &version, const QString &sha256) {

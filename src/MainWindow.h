@@ -107,7 +107,7 @@ private:
     void updateConnectionButton();
     void initTray();
     void rebuildTrayMenu();
-    bool startProfile(int row);
+    bool startProfile(int row, QJsonObject resume = {});
     // Explains why a profile cannot use its country/site rules now; empty when it can.
     QString geoDataBlocker(int row) const;
     // Validates path, ignoring rules of kinds whose shared database is unavailable.
@@ -128,6 +128,7 @@ private:
     void resetMeasurements();
     void connectionFailure(const QString &command, CoreClient::Failure reason, const QString &message);
     void completeSynchronization();
+    void refreshCoreAfterUpdate();
     void probeValidationCli();
     void updateCoreIdentity();
     void requestShutdown();
@@ -227,7 +228,6 @@ private:
     QPushButton *interruptedRecoveryButton_ = nullptr;
     qint64 nextServiceInspection_ = 0;
     qint64 serviceTransitionSince_ = -1;
-    void refreshCoreAfterUpdate();
     void reportCoreUpdateResult(const QString &message);
     void recoverNetwork();
     void applyStartupSetting(bool enabled);
@@ -309,6 +309,9 @@ private:
     class GeoDataUpdater *geoDataUpdater_ = nullptr;
     bool automaticStart_ = false;
     QString instance_;
+    QJsonObject updateResidual_;
+    QJsonObject startReadyResume_;
+    QString attemptedResumeProfile_;
     QString sessionId_;
     QJsonObject capabilities_;
     bool autoConnectAttempted_ = false;

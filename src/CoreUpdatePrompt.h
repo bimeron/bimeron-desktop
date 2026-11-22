@@ -27,11 +27,14 @@ inline bool sessionActive(const QString &coreState, const ReconnectPolicy::State
 }
 
 inline Prompt prompt(const QString &version, const QString &coreState,
-                     const ReconnectPolicy::State &reconnect, bool proxy) {
+                     const ReconnectPolicy::State &reconnect, bool proxy, bool keepProtection = false) {
     Prompt result;
     result.reconnect = sessionActive(coreState, reconnect);
     if (!result.reconnect) {
         result.text = text("Core %1 is downloaded and verified. Update the service now?").arg(version);
+    } else if (reconnect.sessionProtected && keepProtection) {
+        result.text = text("Installing Core %1 will interrupt the VPN while keeping leak protection in place. "
+                           "Bimeron will try to resume the protected profile. Update now?").arg(version);
     } else if (reconnect.sessionProtected) {
         // The service restart releases the protection that this session owns.
         result.text = text("Installing Core %1 will interrupt the active VPN. Leak protection will be removed during "
