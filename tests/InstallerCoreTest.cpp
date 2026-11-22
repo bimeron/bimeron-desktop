@@ -70,6 +70,14 @@ int main(int argc, char **argv) {
         const auto pinnedFile = InstallerPreflight::openPinnedFile(native, pinned);
         if (!pinnedFile || fixture.open(QIODevice::Append)) return 17;
     }
+    using InstallerPreflight::canRetainDistinctCore;
+    if (!canRetainDistinctCore(native, pinned, SERVICE_RUNNING, L"2") ||
+        canRetainDistinctCore(native, pinned, SERVICE_STOPPED, L"2") ||
+        canRetainDistinctCore(native, pinned, SERVICE_STOP_PENDING, L"2") ||
+        canRetainDistinctCore(native, pinned, SERVICE_RUNNING, L"") ||
+        canRetainDistinctCore(native, pinned, SERVICE_RUNNING, L"5") ||
+        canRetainDistinctCore(native, "", SERVICE_RUNNING, L"2") ||
+        canRetainDistinctCore(native, std::string(64, '0'), SERVICE_RUNNING, L"2")) return 36;
     if (!InstallerPreflight::matchesPinnedDigest(native, pinned)) return 30;
     if (InstallerPreflight::matchesPinnedDigest(native, "") ||
         InstallerPreflight::matchesPinnedDigest(native, "BA7816BF8F01CFEA414140DE5DAE2223B00361A396177A9CB410FF61F20015AD") ||

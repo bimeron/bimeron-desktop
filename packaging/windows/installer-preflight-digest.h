@@ -64,4 +64,10 @@ inline bool matchesPinnedDigest(const std::wstring &path, std::string_view expec
     return bool(openPinnedFile(path, expected));
 }
 
+inline bool canRetainDistinctCore(const std::wstring &path, std::string_view compatibleDigest,
+                                  DWORD serviceState, std::wstring_view uiLevel) {
+    // Windows Installer UILevel 2 is INSTALLUILEVEL_NONE (/qn).
+    return uiLevel == L"2" && serviceState == SERVICE_RUNNING && matchesPinnedDigest(path, compatibleDigest);
+}
+
 }

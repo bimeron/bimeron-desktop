@@ -1,6 +1,9 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include "installer-preflight-digest.h"
+#ifdef BIMERON_HAS_RETAINED_CORE_INVENTORY
+#include "retained-core-pin.h"
+#endif
 #include <msi.h>
 #include <msiquery.h>
 #include <shlobj.h>
@@ -76,10 +79,23 @@ extern "C" __declspec(dllexport) UINT __stdcall BimeronPreflight(MSIHANDLE sessi
                     ? L"Bimeron preflight: service stopped; VPN cleanup is unverified"
                     : L"Bimeron preflight: service present; VPN idle state is unverified");
                 const std::wstring path = standardServicePath();
-                if (!path.empty() && registeredImageMatches(service.get(), path) && InstallerPreflight::matchesPinnedDigest(path, BIMERON_INSTALLER_CORE_SHA256)) {
+                const bool registered = !path.empty() && registeredImageMatches(service.get(), path);
+                if (registered && InstallerPreflight::matchesPinnedDigest(path, BIMERON_INSTALLER_CORE_SHA256)) {
                     log(session, INSTALLMESSAGE_INFO, L"Bimeron preflight: identical Core; retaining the service");
                     return ERROR_SUCCESS;
                 }
+#ifdef BIMERON_HAS_RETAINED_CORE_INVENTORY
+                wchar_t level[2]{};
+                DWORD length = ARRAYSIZE(level);
+                if (registered && MsiGetPropertyW(session, L"UILevel", level, &length) == ERROR_SUCCESS
+                    && InstallerPreflight::canRetainDistinctCore(path, BIMERON_COMPATIBLE_RETAINED_CORE_SHA256,
+                                                               status.dwCurrentState, {level, length})) {
+                    log(session, INSTALLMESSAGE_INFO,
+                        L"Bimeron core_deferred_admin_required: compatible Core retained; "
+                        L"complete Core maintenance separately after the Desktop installation succeeds.");
+                    return ERROR_SUCCESS;
+                }
+#endif
             }
         }
     }
