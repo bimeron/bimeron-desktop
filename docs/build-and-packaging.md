@@ -1926,3 +1926,5 @@ signed Core artifact, exact executable digest and a compatible trusted
 helper. Fresh service capability and session checks precede any hold.
 Keep hold disabled if any prerequisite fails. A Core rollback is a separate
 service transaction and needs independent active VPN evidence.
+
+Quiet distinct-Core admission requires a running SCM process and a locked, hashed executable whose kernel file object matches the process image. The preflight rechecks SCM state, PID and process liveness before admission. Unavailable evidence defers installation.

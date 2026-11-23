@@ -24,9 +24,9 @@ struct CloseHash {
 };
 using HashHandle = std::unique_ptr<void, CloseHash>;
 
-inline FileHandle openPinnedFile(const std::wstring &path, std::string_view expected) {
+inline FileHandle openPinnedFile(const std::wstring &path, std::string_view expected, DWORD access = GENERIC_READ) {
     if (expected.size() != 64) return {};
-    const HANDLE raw = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr,
+    const HANDLE raw = CreateFileW(path.c_str(), access, FILE_SHARE_READ, nullptr,
                                    OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN, nullptr);
     if (raw == INVALID_HANDLE_VALUE) return {};
     FileHandle file(raw);
@@ -64,10 +64,27 @@ inline bool matchesPinnedDigest(const std::wstring &path, std::string_view expec
     return bool(openPinnedFile(path, expected));
 }
 
-inline bool canRetainDistinctCore(const std::wstring &path, std::string_view compatibleDigest,
-                                  DWORD serviceState, std::wstring_view uiLevel) {
-    // Windows Installer UILevel 2 is INSTALLUILEVEL_NONE (/qn).
-    return uiLevel == L"2" && serviceState == SERVICE_RUNNING && matchesPinnedDigest(path, compatibleDigest);
+// ProcessImageFileMapping compares the kernel image file object with the
+// supplied file handle. Reopening a process image path cannot prove this.
+inline bool processMapsFile(HANDLE process, HANDLE file) {
+    using Query = LONG (NTAPI *)(HANDLE, ULONG, void *, ULONG, ULONG *);
+    const auto query = reinterpret_cast<Query>(GetProcAddress(GetModuleHandleW(L"ntdll.dll"),
+                                                               "NtQueryInformationProcess"));
+    constexpr ULONG processImageFileMapping = 44;
+    return query && query(process, processImageFileMapping, &file, sizeof(file), nullptr) == 0;
 }
 
+template<class ReadStatus>
+bool canRetainDistinctCore(const std::wstring &path, std::string_view digest,
+                           const SERVICE_STATUS_PROCESS &initial, std::wstring_view uiLevel,
+                           ReadStatus readStatus) {
+    if (uiLevel != L"2" || initial.dwCurrentState != SERVICE_RUNNING || !initial.dwProcessId) return false;
+    FileHandle process(OpenProcess(PROCESS_QUERY_INFORMATION | SYNCHRONIZE, FALSE, initial.dwProcessId));
+    if (!process) return false;
+    const auto image = openPinnedFile(path, digest, GENERIC_READ | FILE_EXECUTE);
+    if (!image || !processMapsFile(process.get(), image.get())) return false;
+    SERVICE_STATUS_PROCESS current{};
+    return readStatus(current) && current.dwCurrentState == SERVICE_RUNNING
+        && current.dwProcessId == initial.dwProcessId && WaitForSingleObject(process.get(), 0) == WAIT_TIMEOUT;
+}
 }

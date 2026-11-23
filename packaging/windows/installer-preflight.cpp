@@ -89,7 +89,10 @@ extern "C" __declspec(dllexport) UINT __stdcall BimeronPreflight(MSIHANDLE sessi
                 DWORD length = ARRAYSIZE(level);
                 if (registered && MsiGetPropertyW(session, L"UILevel", level, &length) == ERROR_SUCCESS
                     && InstallerPreflight::canRetainDistinctCore(path, BIMERON_COMPATIBLE_RETAINED_CORE_SHA256,
-                                                               status.dwCurrentState, {level, length})) {
+                                                               status, {level, length}, [&](SERVICE_STATUS_PROCESS &live) {
+                            return QueryServiceStatusEx(service.get(), SC_STATUS_PROCESS_INFO,
+                                reinterpret_cast<BYTE *>(&live), sizeof(live), &bytes);
+                        })) {
                     log(session, INSTALLMESSAGE_INFO,
                         L"Bimeron core_deferred_admin_required: compatible Core retained; "
                         L"complete Core maintenance separately after the Desktop installation succeeds.");

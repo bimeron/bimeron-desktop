@@ -71,13 +71,40 @@ int main(int argc, char **argv) {
         if (!pinnedFile || fixture.open(QIODevice::Append)) return 17;
     }
     using InstallerPreflight::canRetainDistinctCore;
-    if (!canRetainDistinctCore(native, pinned, SERVICE_RUNNING, L"2") ||
-        canRetainDistinctCore(native, pinned, SERVICE_STOPPED, L"2") ||
-        canRetainDistinctCore(native, pinned, SERVICE_STOP_PENDING, L"2") ||
-        canRetainDistinctCore(native, pinned, SERVICE_RUNNING, L"") ||
-        canRetainDistinctCore(native, pinned, SERVICE_RUNNING, L"5") ||
-        canRetainDistinctCore(native, "", SERVICE_RUNNING, L"2") ||
-        canRetainDistinctCore(native, std::string(64, '0'), SERVICE_RUNNING, L"2")) return 36;
+    SERVICE_STATUS_PROCESS live{};
+    live.dwProcessId = GetCurrentProcessId();
+    live.dwCurrentState = SERVICE_RUNNING;
+    const auto self = app.applicationFilePath();
+    const auto selfPath = QDir::toNativeSeparators(self).toStdWString();
+    const auto selfHash = InstallerCore::digest(self).toStdString();
+    const auto stable = [&](SERVICE_STATUS_PROCESS &result) { result = live; return true; };
+    const auto changed = [&](SERVICE_STATUS_PROCESS &result) { result = live; ++result.dwProcessId; return true; };
+    if (!canRetainDistinctCore(selfPath, selfHash, live, L"2", stable)
+        || canRetainDistinctCore(native, pinned, live, L"2", stable)
+        || canRetainDistinctCore(selfPath, selfHash, live, L"2", changed)
+        || canRetainDistinctCore(selfPath, selfHash, live, L"2", [](auto &) { return false; })
+        || canRetainDistinctCore(selfPath, selfHash, live, L"5", stable)) return 36;
+    for (const DWORD state : {SERVICE_STOPPED, SERVICE_STOP_PENDING}) {
+        live.dwCurrentState = state;
+        if (canRetainDistinctCore(selfPath, selfHash, live, L"2", stable)) return 45;
+    }
+    live.dwCurrentState = SERVICE_RUNNING;
+    // Replace the name of a hard link to the running image with a byte-identical
+    // copy. The configured path and digest stay constant; the file object changes.
+    QTemporaryDir links(QFileInfo(self).absolutePath() + "/retained-image-XXXXXX");
+    if (!links.isValid() || !QDir(links.path()).mkdir("slot")) return 41;
+    const QString replacement = links.filePath("slot/replacement.exe");
+    const auto alias = QDir::toNativeSeparators(replacement).toStdWString();
+    if (!CreateHardLinkW(alias.c_str(), selfPath.c_str(), nullptr)) return 42;
+    if (!canRetainDistinctCore(alias, selfHash, live, L"2", stable)) return 43;
+    if (!QDir(links.path()).rename("slot", "previous") || !QDir(links.path()).mkdir("slot")) return 44;
+    if (!QFile::copy(self, replacement) || canRetainDistinctCore(alias, selfHash, live, L"2", stable)) return 37;
+    HANDLE restricted = nullptr;
+    if (!DuplicateHandle(GetCurrentProcess(), GetCurrentProcess(), GetCurrentProcess(), &restricted,
+                         SYNCHRONIZE, FALSE, 0)) return 38;
+    InstallerPreflight::FileHandle limited(restricted);
+    const auto ownImage = InstallerPreflight::openPinnedFile(selfPath, selfHash, GENERIC_READ | FILE_EXECUTE);
+    if (!ownImage || InstallerPreflight::processMapsFile(limited.get(), ownImage.get())) return 39;
     if (!InstallerPreflight::matchesPinnedDigest(native, pinned)) return 30;
     if (InstallerPreflight::matchesPinnedDigest(native, "") ||
         InstallerPreflight::matchesPinnedDigest(native, "BA7816BF8F01CFEA414140DE5DAE2223B00361A396177A9CB410FF61F20015AD") ||
@@ -97,8 +124,16 @@ int main(int argc, char **argv) {
     if (!process.waitForStarted(3000)) return 24;
     const bool refusedWhileRunning = !InstallerPreflight::desktopIsClosed()
         && process.state() == QProcess::Running;
-    process.kill();
-    process.waitForFinished();
+    live.dwProcessId = static_cast<DWORD>(process.processId());
+    const auto childPath = QDir::toNativeSeparators(fakeDesktop).toStdWString();
+    if (canRetainDistinctCore(childPath, selfHash, live, L"2", [&](SERVICE_STATUS_PROCESS &result) {
+            result = live;
+            process.kill();
+            process.waitForFinished();
+            // Even a stale/recycled matching numeric PID cannot revive the original handle.
+            return true;
+        })) return 40;
+
     if (!refusedWhileRunning) return 25;
 
     // A registration that looks ready during an installer invocation must not
