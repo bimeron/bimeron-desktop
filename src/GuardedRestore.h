@@ -6,6 +6,9 @@
 #include <QRandomGenerator>
 #include <QLockFile>
 #include <QSettings>
+#include <QSaveFile>
+#include <QJsonDocument>
+#include <QRegularExpression>
 
 namespace GuardedRestore {
 inline QJsonObject request(const QJsonObject &guard, const QString &version, const QString &digest,
@@ -38,6 +41,27 @@ inline bool rejectedBeforeIntent(const QJsonObject &event, const QString &dispat
     return pinnedPeer && !dispatchedId.isEmpty() && event == QJsonObject{
         {"version", 2}, {"operation_id", dispatchedId}, {"stage", "inspect"}, {"done", true},
         {"outcome", "unknown"}, {"current_state", "unavailable"}, {"code", "proof_unavailable"}};
+}
+
+inline QString refusalPath(const QString &journal, const QString &id) {
+    static const QRegularExpression valid(QStringLiteral(R"(\A[0-9a-f]{32}\z)"));
+    return valid.match(id).hasMatch() ? journal + "." + id + ".refusal" : QString{};
+}
+
+inline bool saveRefusal(const QString &journal, const QJsonObject &event, const QString &id, bool pinnedPeer) {
+    const QString path = refusalPath(journal, id);
+    if (path.isEmpty() || !rejectedBeforeIntent(event, id, pinnedPeer)) return false;
+    QSaveFile file(path);
+    const auto bytes = QJsonDocument(event).toJson(QJsonDocument::Compact);
+    return file.open(QIODevice::WriteOnly) && file.write(bytes) == bytes.size() && file.commit();
+}
+
+inline bool hasRefusal(const QString &journal, const QString &id) {
+    const QString path = refusalPath(journal, id);
+    if (path.isEmpty()) return false;
+    QFile file(path);
+    return file.open(QIODevice::ReadOnly) && file.size() <= 1024
+        && rejectedBeforeIntent(QJsonDocument::fromJson(file.readAll()).object(), id, true);
 }
 
 inline QString outcome(const QJsonObject &proof, const QString &id) {

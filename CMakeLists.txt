@@ -411,7 +411,6 @@ if(BIMERON_RESTORE_TARGET OR BIMERON_RESTORE_TARGET_SHA256 OR BIMERON_RESTORE_TA
     endif()
     install(PROGRAMS "${BIMERON_RESTORE_TARGET}" DESTINATION repair/target RENAME bimeron.exe)
     target_compile_definitions(bimeron-desktop PRIVATE
-        BIMERON_GUARDED_BROKER_SHA256="${BIMERON_REPAIR_BROKER_SHA256}"
         BIMERON_RESTORE_TARGET_SHA256="${restore_digest}"
         BIMERON_RESTORE_TARGET_VERSION="${BIMERON_RESTORE_TARGET_VERSION}")
 endif()
@@ -472,6 +471,9 @@ if(BIMERON_REPAIR_BROKER)
         add_executable(repair-resource-test tests/RepairResourceTest.cpp)
         target_link_libraries(repair-resource-test PRIVATE Qt6::Core)
         add_test(NAME repair-resource-test COMMAND repair-resource-test "${repair_broker_digest}")
+    endif()
+    if(WIN32)
+        target_compile_definitions(bimeron-desktop PRIVATE BIMERON_GUARDED_BROKER_SHA256="${repair_broker_expected}")
     endif()
     # Core release archives use a fixed file time, so a replaced payload can keep
     # the old mtime and rcc would not rebuild. Embed configure-time copies whose

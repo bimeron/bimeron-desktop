@@ -1,5 +1,6 @@
 #pragma once
 #include <QStandardPaths>
+#include "GuardedRestore.h"
 #include "GeoSitePicker.h"
 
 #include <QListWidget>
@@ -2789,6 +2790,146 @@ struct ConnectionManagementTest {
         wrong["stage"] = "replace";
         exercise(wrong, true, false, false, false);
     }
+    static void contendedRepairRefusal() {
+        const QString id(32, 'd'), newer(32, 'e');
+        const auto path = QDir(QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation))
+                              .filePath("restore-operation.ini");
+        const QJsonObject refusal{{"version", 2}, {"operation_id", id}, {"stage", "inspect"}, {"done", true},
+                                 {"outcome", "unknown"}, {"current_state", "unavailable"}, {"code", "proof_unavailable"}};
+        QSettings journal(path, QSettings::IniFormat);
+        for (bool supersede : {false, true}) {
+            MainWindow first;
+            journal.setValue("operation", id);
+            journal.sync();
+            QLockFile busy(path + ".claim");
+            require(busy.tryLock(), "hold repair journal lock");
+            require(GuardedRestore::saveRefusal(path, refusal, id, true) && first.reconcileSavedRefusal(id),
+                    "refusal survives contended cleanup");
+            require(journal.value("operation") == id, "contended pending stays on disk");
+            MainWindow restarted;
+            if (supersede) { journal.setValue("operation", newer); journal.sync(); }
+            busy.unlock();
+            require(waitFor([&] {
+                journal.sync();
+                return !GuardedRestore::hasRefusal(path, id)
+                    && journal.value("operation").toString() == (supersede ? newer : QString{});
+            }) && !restarted.repairMutationWrites_ && !first.repairMutationWrites_,
+                    "cleanup after restart is conditional and never dispatches");
+            journal.remove("operation");
+            journal.sync();
+        }
+    }
+    static void conditionalRepairPipe() {
+        const QString instance(32, 'a');
+        const QString generation(64, 'b');
+        const QJsonObject identity{{"owner", "system"}, {"instance", instance}, {"generation", generation}};
+        const auto image = QCoreApplication::applicationFilePath();
+        QFile self(image);
+        require(self.open(QIODevice::ReadOnly), "read broker fixture executable");
+        QCryptographicHash sha(QCryptographicHash::Sha256);
+        require(sha.addData(&self), "hash broker fixture");
+        self.close();
+        QTemporaryDir directory;
+        const auto copy = directory.filePath("same-bytes.exe");
+        require(QFile::copy(image, copy), "copy fixture image");
+        const auto digest = sha.result().toHex();
+        for (const QString mode : {"verified", "changed", "foreign", "extra", "malformed", "ambiguous", "pending", "different-file", "lost"}) {
+            MainWindow window;
+            window.core_.cancel();
+            for (auto *timer : window.findChildren<QTimer *>()) timer->stop();
+            window.repairNonce_ = QUuid::createUuid().toString(QUuid::Id128);
+            QLocalServer pipe;
+            require(pipe.listen("Bimeron.Repair." + window.repairNonce_), "private broker pipe");
+            window.repairSession_ = true;
+            window.approvedRepairIdentity_ = {{"instance", instance}, {"recovery_identity", identity}};
+            window.pinnedRepairImage_ = PinnedRepairImage::open(mode == "different-file" ? copy : image, digest);
+            require(bool(window.pinnedRepairImage_), "retain exact file handle");
+            QFile replacement(mode == "different-file" ? copy : image);
+            require(!replacement.open(QIODevice::ReadWrite), "held broker excludes writable replacement");
+            window.serviceCommandProcess_ = reinterpret_cast<quintptr>(GetCurrentProcess());
+            window.repairHelloTest_ = [&] {
+                auto observed = identity;
+                if (mode == "changed") observed["generation"] = QString(64, 'c');
+                if (mode == "foreign") observed["owner"] = "developer";
+                if (mode == "extra") observed["unrecognized"] = true;
+                if (mode == "malformed") observed["generation"] = "short";
+                QJsonObject hello{{"instance", instance}, {"capabilities", QJsonObject{{"conditional_recovery_contract", 1}}}};
+                if (mode != "ambiguous") hello["recovery_identity"] = observed;
+                return hello;
+            };
+            QSettings journal(QDir(QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation))
+                .filePath("restore-operation.ini"), QSettings::IniFormat);
+            if (mode == "pending") { journal.setValue("operation", QString(32, 'c')); journal.sync(); }
+            window.connectRepairSession();
+            require(waitFor([&] { return pipe.hasPendingConnections(); }), "real pipe peer connected");
+            auto *peer = pipe.nextPendingConnection();
+            if (mode == "verified" || mode == "lost") {
+                require(waitFor([&] { return peer->canReadLine(); }), "broker received the approved request");
+                const auto wire = QJsonDocument::fromJson(peer->readLine()).object();
+                require(wire == QJsonObject{{"version", 3}, {"command", "conditional_recovery"}, {"recovery_identity", identity}}
+                    && window.repairMutationWrites_ == 1, "one exact conditional recovery send");
+                if (mode == "verified") {
+                    peer->write("{\"version\":3,\"done\":true,\"ok\":true,\"disposition\":\"recovered\"}\n");
+                    peer->flush();
+                    require(waitFor([&] { return window.repairSessionDone_ && window.repairSessionOK_; }), "verified terminal");
+                } else {
+                    peer->abort();
+                    window.finishServiceCommand(1);
+                    require(window.repairFailure_.contains("unknown"), "lost terminal stays unknown");
+                }
+            } else {
+                require(waitFor([&] { return !window.repairFailure_.isEmpty(); }) && !peer->bytesAvailable()
+                        && !window.repairMutationWrites_, "unproven peer or changed identity sends nothing");
+            }
+            if (mode == "pending") { journal.remove("operation"); journal.sync(); }
+            window.serviceCommandProcess_ = 0;
+        }
+    }
+    static void pendingRepairTransport() {
+        QLocalServer server;
+        const auto endpoint = "restore-query-" + QUuid::createUuid().toString(QUuid::Id128);
+        const QString id(32, 'b');
+        const QString path = QDir(QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation))
+                                 .filePath("restore-operation.ini");
+        QSettings journal(path, QSettings::IniFormat);
+        journal.setValue("operation", id);
+        journal.sync();
+        qputenv("BIMERON_TEST_RESTORE_ENDPOINT", endpoint.toUtf8());
+        {
+            MainWindow offline;
+            require(offline.guardedRestoreRequest_.isEmpty() && journal.value("operation").toString() == id,
+                    "synchronous missing endpoint preserves pending");
+        }
+        require(server.listen(endpoint), "restore query private transport");
+        QStringList commands;
+        QObject::connect(&server, &QLocalServer::newConnection, &server, [&] {
+            auto *socket = server.nextPendingConnection();
+            QObject::connect(socket, &QLocalSocket::readyRead, socket, [&, socket] {
+                if (!socket->canReadLine()) return;
+                const auto request = QJsonDocument::fromJson(socket->readLine()).object();
+                const auto command = request.value("command").toString();
+                commands.append(command);
+                QJsonObject reply{{"version", 1}, {"id", request.value("id")}, {"instance", "fixture"}};
+                if (command == "hello") reply["capabilities"] = QJsonObject{{"guarded_restore_contract", 1}};
+                else {
+                    require(command == "query_restore" && request.value("operation_id") == id, "only query exact pending ID");
+                    reply["error"] = "unknown";
+                }
+                socket->write(QJsonDocument(reply).toJson(QJsonDocument::Compact) + '\n');
+            });
+        });
+        {
+            MainWindow restarted;
+            require(waitFor([&] { return commands.size() == 2 && restarted.guardedRestoreRequest_.isEmpty(); }),
+                    "asynchronous unknown finished");
+            journal.sync();
+            require(commands == QStringList{"hello", "query_restore"} && journal.value("operation").toString() == id,
+                    "restart reconciles without mutation");
+        }
+        journal.remove("operation");
+        journal.sync();
+        qunsetenv("BIMERON_TEST_RESTORE_ENDPOINT");
+    }
     static void guardedRepairRouting() {
         const QString digest(64, 'a');
         const QJsonObject ordinary{{"State", "failed"}, {"Session", QJsonObject{{"active", false}}},
@@ -2802,27 +2943,28 @@ struct ConnectionManagementTest {
         auto incomplete = update;
         incomplete.remove("ResidualProfile");
         const QJsonObject caps{{"kill_switch_update_hold", true}, {"kill_switch_update_resume", true}};
-        const auto exercise = [&](QJsonObject before, QJsonObject after, int version, bool pending = false) {
+        const auto exercise = [&](QJsonObject before, QJsonObject after, int version, bool legacy = false) {
             MainWindow window;
             window.core_.cancel();
             for (auto *timer : window.findChildren<QTimer *>()) timer->stop();
             window.startupPreparationPending_ = false;
             window.helloReady_ = true;
             window.statusNeeded_ = false;
-            window.instance_ = "test-service";
+            window.instance_ = QString(32, 'a');
             window.cleanupBlocked_ = true;
             int reads = 0;
             window.repairHelloTest_ = [&] {
                 const auto status = ++reads == 1 ? before : after;
                 if (status.isEmpty()) return QJsonObject{};
-                return QJsonObject{{"instance", window.instance_}, {"capabilities", caps}, {"status", status}};
+                auto capabilities = caps;
+                if (!legacy) capabilities["conditional_recovery_contract"] = 1;
+                QJsonObject reply{{"instance", window.instance_}, {"capabilities", capabilities}, {"status", status}};
+                if (!legacy && !status.contains("ResidualReason"))
+                    reply["recovery_identity"] = QJsonObject{{"owner", "system"}, {"instance", window.instance_}, {"generation", digest}};
+                return reply;
             };
             QJsonObject sent;
             window.repairCommandTest_ = [&](const QStringList &) { sent = window.repairRequest(); };
-            const QString id(32, 'a');
-            QSettings journal(QDir(QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation))
-                .filePath("restore-operation.ini"), QSettings::IniFormat);
-            if (pending) { journal.setValue("operation", id); journal.sync(); }
             QTimer::singleShot(0, &window, [] {
                 if (auto *box = qobject_cast<QMessageBox *>(QApplication::activeModalWidget()))
                     box->button(QMessageBox::Yes)->click();
@@ -2830,15 +2972,12 @@ struct ConnectionManagementTest {
             window.startRepairSession();
             require(sent.value("version").toInt() == version, "Restore selects the expected wire request");
             if (version == 2) require(sent.value("filter_generation") == digest, "guard binds accepted generation");
-            if (version == 1) require(sent.value("networkRecovery").toBool(), "ordinary residual uses v1 cleanup");
-            if (pending) {
-                require(!reads && window.guardedRestoreRequest_.value("operation_id") == id,
-                        "pending Restore only reconciles its saved operation");
-                journal.remove("operation");
-                journal.sync();
-            }
+            if (version == 3) require(sent.size() == 3 && sent.value("command") == QJsonValue("conditional_recovery")
+                && sent.value("recovery_identity").toObject().value("generation") == digest, "conditional recovery token");
+
         };
-        exercise(ordinary, ordinary, 1);
+        exercise(ordinary, ordinary, 3);
+        exercise(ordinary, ordinary, 0, true);
         exercise(update, update, 2);
         auto withoutSession = update;
         withoutSession.remove("Session");
@@ -2852,11 +2991,14 @@ struct ConnectionManagementTest {
         exercise(orphan, orphan, 0);
         exercise({}, ordinary, 0);
         exercise(update, {}, 0);
-        exercise(update, update, 0, true);
+
     }
 #endif
     static void run() {
 #ifdef BIMERON_RESTORE_TARGET_SHA256
+        contendedRepairRefusal();
+        conditionalRepairPipe();
+        pendingRepairTransport();
         guardedRepairRouting();
         guardedRepairTerminal();
 #endif
@@ -2984,6 +3126,15 @@ struct ConnectionManagementTest {
                 consentPeer->flush();
                 require(waitFor([&] { return window.repairSocket_->bytesAvailable() > 0; }), "consent event arrives");
                 window.readRepairSession();
+#ifdef Q_OS_WIN
+                if (kind == "network-recovery") {
+                    require(!window.repairConsentDialog_ && waitFor([&] { return consentPeer->canReadLine(); }),
+                            "legacy Windows cleanup challenge denied without consent prompt");
+                    const auto denial = QJsonDocument::fromJson(consentPeer->readLine()).object();
+                    require(denial == QJsonObject{{"consent", kind}, {"approved", false}}, "no v1 fallback");
+                    continue;
+                }
+#endif
                 require(window.repairConsentDialog_ && window.repairSession_ && launches == consentLaunches,
                     "fresh consent stays inside the original elevated session");
                 require(!window.requestRepairConsent(kind), "duplicate or overlapping challenge rejected");

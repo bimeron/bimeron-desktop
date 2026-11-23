@@ -1,6 +1,9 @@
 #pragma once
 
 #include <QHash>
+#ifdef Q_OS_WIN
+#include "PinnedRepairImage.h"
+#endif
 
 #include "CoreClient.h"
 #include "CoreProblems.h"
@@ -150,8 +153,13 @@ private:
     void openCoreManagement();
     void startRepairSession();
     QJsonObject repairRequest() const;
-#ifdef BIMERON_RESTORE_TARGET_SHA256
-    QJsonObject readRepairIdentity();
+#ifdef Q_OS_WIN
+    QJsonObject readRepairIdentity(const QString &expectedInstance);
+    QJsonObject approvedRepairIdentity_;
+    int repairMutationWrites_ = 0;
+    bool reconcileSavedRefusal(const QString &id);
+    QString refusalRetryId_;
+    PinnedRepairImage::Handle pinnedRepairImage_;
     bool repairConsentPending_ = false;
 #ifdef BIMERON_CONTROL_FIXTURE_ENDPOINTS
     std::function<QJsonObject()> repairHelloTest_;
