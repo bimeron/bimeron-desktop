@@ -19,7 +19,7 @@ inline QJsonObject guard(const QJsonObject &status, const QJsonObject &capabilit
     const QString profile = status.value("ResidualProfile").toString();
     const QString generation = status.value("ResidualGeneration").toString();
     if (!supported(capabilities) || instance.isEmpty() || status.value("State") != QJsonValue("failed")
-        || status.value("Session").toObject().value("active").toBool()
+        || (status.contains("Session") && status.value("Session").toObject().value("active") != QJsonValue(false))
         || status.value("LastError") != QJsonValue("cleanup_failed_run_recover")
         || status.value("KillSwitch") != QJsonValue("residual")
         || status.value("ResidualReason") != QJsonValue("update")

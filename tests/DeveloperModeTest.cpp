@@ -624,6 +624,12 @@ int main(int argc, char **argv) {
         ConnectionManagementTest::geoDataReconnect();
         return 0;
     }
+#ifdef BIMERON_RESTORE_TARGET_SHA256
+    if (app.arguments().contains("--pending-restore-startup")) {
+        ConnectionManagementTest::pendingRepairTransport();
+        return 0;
+    }
+#endif
     if (app.arguments().contains("--repair-quit-ownership")) {
         ConnectionManagementTest::repairQuitOwnership();
         return 0;

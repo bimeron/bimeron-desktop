@@ -1930,3 +1930,20 @@ service transaction and needs independent active VPN evidence.
 Quiet admission of a running bundled or signed-compatible retained Core requires a running SCM process and a locked, hashed executable whose kernel file object matches the process image. The preflight rechecks SCM state, PID and process liveness before admission. Unavailable evidence defers installation.
 
 For quiet bundled admission a stopped service must still be stopped with PID zero after hashing. Transitional states defer. Before WiX runs, CPack verifies the final staged Core against the effective digest compiled into the preflight DLL, including a lab override.
+
+### Guarded Restore lab payload
+
+Windows amd64 local-update builds can stage a separately approved service image at `repair/target/bimeron.exe` with `BIMERON_RESTORE_TARGET`, `BIMERON_RESTORE_TARGET_VERSION` and `BIMERON_RESTORE_TARGET_SHA256`. Supply the protected repair broker and its independent pin as usual. Packaging checks the target PE machine and digest. Record both executable versions and digests from the extracted MSI before acceptance.
+
+Windows residual cleanup requires a fresh installed-service hello advertising
+`conditional_recovery_contract = 1` and the exact system owner, instance and
+WFP generation. Desktop repeats the check after UAC and verifies the repair
+pipe peer against the launched process and the locked, hash-pinned image.
+It sends one version 3 conditional recovery request. Missing ownership,
+a pending Restore or an unsupported broker keeps recovery pending. Local and
+inherited resources have no system recovery identity. A lost reply after
+dispatch produces an unknown outcome. The separate lab version 2 update-hold
+operation can reconcile an authenticated pre-intent refusal after restart
+by clearing only its own pending ID.
+
+An unresolved Restore ID blocks automatic service and profile startup across restarts. Windows refuses generic disruptive repair of a running backend. An interrupted developer session without independent clean-exit evidence remains available for read-only diagnosis.
