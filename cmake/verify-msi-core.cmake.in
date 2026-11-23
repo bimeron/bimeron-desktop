@@ -1,0 +1,5 @@
+# CPack has finished staging the install tree and has not yet invoked WiX.
+file(SHA256 "${CPACK_TEMPORARY_DIRECTORY}/bimeron-core.exe" staged_digest)
+if(NOT staged_digest STREQUAL "@core_preflight_digest@")
+    message(FATAL_ERROR "Staged Core does not match the bundled image digest compiled into MSI preflight")
+endif()

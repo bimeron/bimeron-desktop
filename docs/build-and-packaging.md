@@ -1811,15 +1811,36 @@ records the named `upgrade_deferred` reason in the verbose MSI log. The
 snapshot is a refusal check, not a lock against a later concurrent launch.
 The preflight queries SCM and hashes the registered service image at the
 standard protected service location. An absent service or the exact pinned
-bundle is allowed. Distinct or unverified service evidence returns
+bundle is allowed. Without a retained-Core inventory, distinct or unverified service evidence returns
 `upgrade_deferred` before package execution, including when SCM reports
 Stopped. SCM state alone does not establish clean VPN idle or compatibility.
 
 This conservative path does not initiate service replacement. Interactive
-hold, administrative deferral for a verified compatible distinct Core, and
+hold and
 session-bound Desktop relaunch and rollback require separate admission and
 native acceptance. Verify the compiled MSI sequence places the preflight
 before both InstallValidate and removal of the previous product.
+
+For a quiet GUI upgrade, a package builder can set
+`BIMERON_RETAINED_CORE_ARCHIVE` to one reviewed Windows Core release ZIP beside
+its exact `update-manifest.json` and detached `.sig`. The build-only inventory
+tool uses the GUI's verifier and trust set to check the signature, channel,
+reviewed GUI range, IPC 1, profile format 1 and target OS/architecture. It
+checks the signed ZIP name, size and hash, extracts the expected executable,
+and checks its signed hash when present. The preflight DLL embeds the SHA-256
+of those exact extracted bytes. The tool runs on the build host; opt-in builds
+require a host that can execute the target-architecture verifier. Normal builds
+require the pinned production keys and a stable release. Isolated local builds
+can use their own keys and prereleases. An invalid configured input fails the
+build. Omitting it leaves the additional admission path disabled.
+
+With Desktop closed and the expected service registration, a quiet install
+(`/qn`) can retain a running, distinct Core whose protected image matches this
+digest. The preflight log records `core_deferred_admin_required`. Core stays
+in place; the caller checks the terminal MSI result for the GUI transaction.
+Interactive installs, transitional/stopped services and unknown distinct
+images still defer before InstallValidate. This record authorizes no service
+operations or postcommit dispatch.
 
 The optional Windows handoff lab target requires a local update test build
 and an absolute `BIMERON_MSI_HANDOFF_TEST_RECEIPT` input. It embeds the
@@ -1905,3 +1926,7 @@ signed Core artifact, exact executable digest and a compatible trusted
 helper. Fresh service capability and session checks precede any hold.
 Keep hold disabled if any prerequisite fails. A Core rollback is a separate
 service transaction and needs independent active VPN evidence.
+
+Quiet admission of a running bundled or signed-compatible retained Core requires a running SCM process and a locked, hashed executable whose kernel file object matches the process image. The preflight rechecks SCM state, PID and process liveness before admission. Unavailable evidence defers installation.
+
+For quiet bundled admission a stopped service must still be stopped with PID zero after hashing. Transitional states defer. Before WiX runs, CPack verifies the final staged Core against the effective digest compiled into the preflight DLL, including a lab override.
