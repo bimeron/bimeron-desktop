@@ -190,6 +190,11 @@ if(BUILD_TESTING)
         BIMERON_GUI_VERSION="${PROJECT_VERSION}"
         BIMERON_CORE_UPDATE_PUBLIC_KEYS="")
     if(WIN32)
+        # Guarded request routing is exercised with inert fixture identities.
+        target_compile_definitions(developer-mode-test PRIVATE
+            BIMERON_RESTORE_TARGET_SHA256="fixture-target"
+            BIMERON_RESTORE_TARGET_VERSION="0.0.0-test"
+            BIMERON_GUARDED_BROKER_SHA256="fixture-broker")
         target_link_libraries(developer-mode-test PRIVATE advapi32 shell32 ole32)
     endif()
     add_test(NAME developer-mode-test COMMAND developer-mode-test --visual-check)

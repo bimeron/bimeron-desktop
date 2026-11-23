@@ -4,6 +4,8 @@
 #include "CoreUpdatePrompt.h"
 #include "CoreUpdateResume.h"
 #include "GuardedRestore.h"
+#include <QEventLoop>
+#include <QScopedValueRollback>
 #include "CoreUpdateStaging.h"
 #include "ElevationOwner.h"
 #include "WindowsTheme.h"
@@ -3961,8 +3963,53 @@ void MainWindow::offerCoreUpdate() {
     }
 }
 
+#ifdef BIMERON_RESTORE_TARGET_SHA256
+QJsonObject MainWindow::readRepairIdentity() {
+    if (!helloReady_ || statusNeeded_ || instance_.isEmpty() || development_->local()) return {};
+    QJsonObject reply;
+#ifdef BIMERON_CONTROL_FIXTURE_ENDPOINTS
+    if (repairHelloTest_) reply = repairHelloTest_();
+    else
+#endif
+    {
+        CoreClient client;
+        QEventLoop wait;
+        connect(&client, &CoreClient::replied, &wait, [&](const QString &, const QJsonObject &result) {
+            reply = result;
+            wait.quit();
+        });
+        connect(&client, &CoreClient::failed, &wait, &QEventLoop::quit);
+        if (client.request("hello", {}, 2000) && client.busy()) wait.exec(QEventLoop::ExcludeUserInputEvents);
+    }
+    const auto status = reply.value("status").toObject();
+    if (!helloReady_ || statusNeeded_ || development_->local() || !reply.value("error").toString().isEmpty()
+        || reply.value("instance") != instance_
+        || (status.value("State") != QJsonValue("failed") && status.value("State") != QJsonValue("disconnected"))
+        || (status.contains("Session") && status.value("Session").toObject().value("active") != QJsonValue(false))
+        || !ReconnectPolicy::fromIpc(status, reply.value("capabilities").toObject()).recoveryRequired) return {};
+    const auto reason = status.value("ResidualReason");
+    if (!reason.isUndefined() && !reason.isString()) return {};
+    if (reason != QJsonValue("update") && (!reason.toString().isEmpty()
+        || status.contains("ResidualProfile") || status.contains("ResidualGeneration"))) return {};
+    const auto guard = CoreUpdateResume::guard(status, reply.value("capabilities").toObject(), instance_);
+    if (reason == QJsonValue("update") && guard.isEmpty()) return {};
+    return {{"instance", instance_}, {"reason", reason}, {"profile", status.value("ResidualProfile")},
+            {"generation", status.value("ResidualGeneration")}, {"kill_switch", status.value("KillSwitch")},
+            {"error", status.value("LastError")}, {"guard", guard}};
+}
+#endif
+
+QJsonObject MainWindow::repairRequest() const {
+    if (!guardedRestoreRequest_.isEmpty()) return guardedRestoreRequest_;
+    return {{"version", 1}, {"disruption", repairDisruption_}, {"networkRecovery", repairNetworkRecovery_}};
+}
+
 void MainWindow::startRepairSession() {
     if (nativeSession_ || nativeOwnerBlocked_) return;
+#ifdef BIMERON_RESTORE_TARGET_SHA256
+    if (repairConsentPending_) return;
+    QScopedValueRollback<bool> preparing(repairConsentPending_, true);
+#endif
     if (QCoreApplication::arguments().contains("--visual-check") && !repairCommandTest_) return;
     updateCoreAvailability();
     if (!settingsRetry_->isEnabled() || repairSession_ || !guardedRestoreRequest_.isEmpty()) return;
@@ -3972,7 +4019,13 @@ void MainWindow::startRepairSession() {
 #endif
     repairNetworkRecovery_ = repairSnapshot_.cleanup;
 #ifdef BIMERON_RESTORE_TARGET_SHA256
-    const auto requestedGuard = updateResidual_;
+    const bool checkIdentity = repairNetworkRecovery_ || !updateResidual_.isEmpty() || reconnect_.residualProtection;
+    const auto requested = checkIdentity ? readRepairIdentity() : QJsonObject{};
+    if (checkIdentity && requested.isEmpty()) {
+        repairFailure_ = tr("Restore requires a verified service and the current protection identity.");
+        appendLog(repairFailure_);
+        return;
+    }
 #endif
     repairDisruption_ = repairNetworkRecovery_ || repairSnapshot_.interrupted || repairSnapshot_.localFailed
         || repairSnapshot_.service == ServiceObservation::Running;
@@ -3983,15 +4036,16 @@ void MainWindow::startRepairSession() {
         QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes) return;
     guardedRestoreRequest_ = {};
 #ifdef BIMERON_RESTORE_TARGET_SHA256
-    if (!requestedGuard.isEmpty() || (repairNetworkRecovery_ && reconnect_.residualProtection)) {
-        if (!repairNetworkRecovery_ || requestedGuard != updateResidual_ || !helloReady_ || statusNeeded_ || development_->local() || updateResidual_.isEmpty()
-            || updateResidual_.value("instance") != instance_) {
+    if (checkIdentity || cleanupBlocked_ || !updateResidual_.isEmpty() || reconnect_.residualProtection) {
+        if (!repairNetworkRecovery_ || requested.isEmpty() || readRepairIdentity() != requested) {
             repairFailure_ = tr("Restore requires a verified service and the current protection identity.");
             appendLog(repairFailure_);
             return;
         }
-        guardedRestoreRequest_ = GuardedRestore::request(updateResidual_, BIMERON_RESTORE_TARGET_VERSION,
-            BIMERON_RESTORE_TARGET_SHA256, repairDisruption_, repairNetworkRecovery_);
+        const auto guard = requested.value("guard").toObject();
+        if (!guard.isEmpty())
+            guardedRestoreRequest_ = GuardedRestore::request(guard, BIMERON_RESTORE_TARGET_VERSION,
+                BIMERON_RESTORE_TARGET_SHA256, repairDisruption_, repairNetworkRecovery_);
     }
 #endif
     repairSession_ = true;
@@ -4032,7 +4086,7 @@ void MainWindow::connectRepairSession() {
         if (serviceCommandProcess_ && WaitForSingleObject(reinterpret_cast<HANDLE>(serviceCommandProcess_), 0) == WAIT_TIMEOUT
             && GetNamedPipeServerProcessId(reinterpret_cast<HANDLE>(socket->socketDescriptor()), &peer)) {
             authenticated = peer == GetProcessId(reinterpret_cast<HANDLE>(serviceCommandProcess_));
-            if (!authenticated) {
+            if (!authenticated && guardedRestoreRequest_.isEmpty()) {
                 const quintptr child = RepairBootstrap::authenticatedChild(serviceCommandProcess_, peer);
                 authenticated = child != 0;
                 RepairBootstrap::bindOwnedChild(socket, child);
@@ -4055,18 +4109,16 @@ void MainWindow::connectRepairSession() {
         socket->setProperty("authenticated", true);
 #ifdef BIMERON_RESTORE_TARGET_SHA256
         if (!guardedRestoreRequest_.isEmpty()) {
-            QSettings journal(restoreJournalPath(), QSettings::IniFormat);
-            journal.setValue("operation", guardedRestoreRequest_.value("operation_id").toString());
-            journal.sync();
-            if (journal.status() != QSettings::NoError) {
+            const auto id = guardedRestoreRequest_.value("operation_id").toString();
+            if (id.isEmpty() || !GuardedRestore::changePending(restoreJournalPath(), {}, id)) {
                 repairFailure_ = tr("The Restore operation could not be recorded.");
                 socket->abort();
                 return;
             }
+            socket->setProperty("dispatchedId", id);
         }
 #endif
-        socket->write(QJsonDocument(!guardedRestoreRequest_.isEmpty() ? guardedRestoreRequest_ : QJsonObject{{"version", 1}, {"disruption", repairDisruption_},
-            {"networkRecovery", repairNetworkRecovery_}}).toJson(QJsonDocument::Compact) + '\n');
+        socket->write(QJsonDocument(repairRequest()).toJson(QJsonDocument::Compact) + '\n');
     });
     connect(socket, &QLocalSocket::readyRead, this, &MainWindow::readRepairSession);
     connect(socket, &QLocalSocket::errorOccurred, this, [this, socket, nonce](QLocalSocket::LocalSocketError) {
@@ -4144,6 +4196,17 @@ void MainWindow::readRepairSession() {
             if (event.value("operation_id") != guardedRestoreRequest_.value("operation_id")
                 || event.value("version") != QJsonValue(2) || !event.value("done").isBool()
                 || !event.value("stage").isString()) { invalid = true; break; }
+#ifdef BIMERON_RESTORE_TARGET_SHA256
+            const auto dispatched = repairSocket_->property("dispatchedId").toString();
+            if (repairEventCount_ == 1 && GuardedRestore::rejectedBeforeIntent(event, dispatched,
+                    repairSocket_->property("authenticated").toBool())
+                && GuardedRestore::changePending(restoreJournalPath(), dispatched, {})) {
+                guardedRestoreRequest_ = {};
+                repairSessionDone_ = true;
+                repairFailure_ = tr("The broker declined Restore before changing the service.");
+                continue;
+            }
+#endif
             if (event.value("done").toBool()) repairSessionDone_ = true;
             else if (stages.contains(event.value("stage").toString()))
                 serviceCommandDescription_ = stages.value(event.value("stage").toString());
@@ -4372,9 +4435,7 @@ void MainWindow::queryGuardedRestore(const QString &operationId) {
     auto *client = new CoreClient(this);
     auto finish = [this, client, operationId](const QString &outcome) {
 #ifdef BIMERON_RESTORE_TARGET_SHA256
-        QSettings journal(restoreJournalPath(), QSettings::IniFormat);
-        if (outcome != "unknown" && journal.value("operation").toString() == operationId)
-            journal.remove("operation");
+        if (outcome != "unknown") GuardedRestore::changePending(restoreJournalPath(), operationId, {});
 #endif
         client->deleteLater();
         guardedRestoreRequest_ = {};

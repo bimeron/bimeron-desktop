@@ -149,6 +149,14 @@ private:
     void updateCoreAvailability();
     void openCoreManagement();
     void startRepairSession();
+    QJsonObject repairRequest() const;
+#ifdef BIMERON_RESTORE_TARGET_SHA256
+    QJsonObject readRepairIdentity();
+    bool repairConsentPending_ = false;
+#ifdef BIMERON_CONTROL_FIXTURE_ENDPOINTS
+    std::function<QJsonObject()> repairHelloTest_;
+#endif
+#endif
     void connectRepairSession();
     void readRepairSession();
     bool requestRepairConsent(const QString &kind);

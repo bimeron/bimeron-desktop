@@ -1,4 +1,5 @@
 #pragma once
+#include <QStandardPaths>
 #include "GeoSitePicker.h"
 
 #include <QListWidget>
@@ -2731,7 +2732,134 @@ struct ConnectionManagementTest {
         require(!window.importProfile(source) && dialogs == 1 && window.profiles_.size() == 1,
             "GUI rejects invalid UTF-8 before validation/storage");
     }
+#ifdef BIMERON_RESTORE_TARGET_SHA256
+    static void guardedRepairTerminal() {
+        const QString id(32, 'a');
+        const QString newer(32, 'b');
+        const QString path = QDir(QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation))
+                                 .filePath("restore-operation.ini");
+        const QJsonObject refusal{{"version", 2}, {"operation_id", id}, {"done", true}, {"stage", "inspect"},
+                                 {"outcome", "unknown"}, {"current_state", "unavailable"}, {"code", "proof_unavailable"}};
+        const auto exercise = [&](QJsonObject event, bool peerVerified, bool published, bool superseded, bool clear) {
+            MainWindow window;
+            for (auto *timer : window.findChildren<QTimer *>()) timer->stop();
+            window.core_.cancel();
+            QSettings journal(path, QSettings::IniFormat);
+            const QString expected = superseded ? newer : id;
+            journal.setValue("operation", expected);
+            journal.sync();
+            QLocalServer server;
+            const QString endpoint = "repair-terminal-" + QUuid::createUuid().toString(QUuid::Id128);
+            require(server.listen(endpoint), "private guarded repair fixture");
+            window.repairSocket_ = new QLocalSocket(&window);
+            window.repairSocket_->connectToServer(endpoint);
+            require(waitFor([&] { return server.hasPendingConnections(); }), "guarded repair socket connected");
+            auto *writer = server.nextPendingConnection();
+            window.guardedRestoreRequest_ = {{"operation_id", id}};
+            window.repairSocket_->setProperty("authenticated", peerVerified);
+            window.repairSocket_->setProperty("dispatchedId", id);
+            const auto deliver = [&](const QJsonObject &message) {
+                const auto bytes = QJsonDocument(message).toJson(QJsonDocument::Compact) + '\n';
+                writer->write(bytes);
+                writer->flush();
+                require(waitFor([&] { return window.repairSocket_->bytesAvailable() >= bytes.size(); }),
+                        "guarded repair event delivered");
+                window.readRepairSession();
+            };
+            if (published) deliver({{"version", 2}, {"operation_id", id}, {"done", false}, {"stage", "replace"}});
+            if (!event.isEmpty()) deliver(event);
+            writer->disconnectFromServer();
+            window.readRepairSession();
+            journal.sync();
+            require(journal.value("operation").toString() == (clear ? QString{} : expected),
+                    "only a fresh authenticated pre-intent refusal releases the matching disk record");
+            journal.remove("operation");
+            journal.sync();
+        };
+        exercise(refusal, true, false, false, true);
+        exercise(refusal, false, false, false, false);
+        exercise({}, true, false, false, false);
+        exercise({}, true, true, false, false);
+        exercise(refusal, true, true, false, false);
+        exercise(refusal, true, false, true, false);
+        auto wrong = refusal;
+        wrong["operation_id"] = newer;
+        exercise(wrong, true, false, false, false);
+        wrong = refusal;
+        wrong["stage"] = "replace";
+        exercise(wrong, true, false, false, false);
+    }
+    static void guardedRepairRouting() {
+        const QString digest(64, 'a');
+        const QJsonObject ordinary{{"State", "failed"}, {"Session", QJsonObject{{"active", false}}},
+            {"LastError", "cleanup_failed_run_recover"}, {"KillSwitch", "residual"}};
+        auto update = ordinary;
+        update["ResidualReason"] = "update";
+        update["ResidualProfile"] = digest;
+        update["ResidualGeneration"] = digest;
+        auto changed = update;
+        changed["ResidualGeneration"] = QString(64, 'b');
+        auto incomplete = update;
+        incomplete.remove("ResidualProfile");
+        const QJsonObject caps{{"kill_switch_update_hold", true}, {"kill_switch_update_resume", true}};
+        const auto exercise = [&](QJsonObject before, QJsonObject after, int version, bool pending = false) {
+            MainWindow window;
+            window.core_.cancel();
+            for (auto *timer : window.findChildren<QTimer *>()) timer->stop();
+            window.startupPreparationPending_ = false;
+            window.helloReady_ = true;
+            window.statusNeeded_ = false;
+            window.instance_ = "test-service";
+            window.cleanupBlocked_ = true;
+            int reads = 0;
+            window.repairHelloTest_ = [&] {
+                const auto status = ++reads == 1 ? before : after;
+                if (status.isEmpty()) return QJsonObject{};
+                return QJsonObject{{"instance", window.instance_}, {"capabilities", caps}, {"status", status}};
+            };
+            QJsonObject sent;
+            window.repairCommandTest_ = [&](const QStringList &) { sent = window.repairRequest(); };
+            const QString id(32, 'a');
+            QSettings journal(QDir(QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation))
+                .filePath("restore-operation.ini"), QSettings::IniFormat);
+            if (pending) { journal.setValue("operation", id); journal.sync(); }
+            QTimer::singleShot(0, &window, [] {
+                if (auto *box = qobject_cast<QMessageBox *>(QApplication::activeModalWidget()))
+                    box->button(QMessageBox::Yes)->click();
+            });
+            window.startRepairSession();
+            require(sent.value("version").toInt() == version, "Restore selects the expected wire request");
+            if (version == 2) require(sent.value("filter_generation") == digest, "guard binds accepted generation");
+            if (version == 1) require(sent.value("networkRecovery").toBool(), "ordinary residual uses v1 cleanup");
+            if (pending) {
+                require(!reads && window.guardedRestoreRequest_.value("operation_id") == id,
+                        "pending Restore only reconciles its saved operation");
+                journal.remove("operation");
+                journal.sync();
+            }
+        };
+        exercise(ordinary, ordinary, 1);
+        exercise(update, update, 2);
+        auto withoutSession = update;
+        withoutSession.remove("Session");
+        exercise(withoutSession, withoutSession, 2);
+        exercise(update, changed, 0);
+        exercise(ordinary, update, 0);
+        exercise(update, ordinary, 0);
+        exercise(incomplete, incomplete, 0);
+        auto orphan = update;
+        orphan.remove("ResidualReason");
+        exercise(orphan, orphan, 0);
+        exercise({}, ordinary, 0);
+        exercise(update, {}, 0);
+        exercise(update, update, 0, true);
+    }
+#endif
     static void run() {
+#ifdef BIMERON_RESTORE_TARGET_SHA256
+        guardedRepairRouting();
+        guardedRepairTerminal();
+#endif
         const QString wireGuardCore = qEnvironmentVariable("BIMERON_WIREGUARD_CORE");
         if (!wireGuardCore.isEmpty()) wireGuardRouting(wireGuardCore);
         bomImport();
