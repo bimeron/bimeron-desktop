@@ -2,6 +2,7 @@
 #include "WireGuardCore.h"
 #include <QApplication>
 #include <QClipboard>
+#include <QPainter>
 #include <QTimer>
 #include "FormRowVisibility.h"
 #include "HiDpiComboBox.h"
@@ -250,9 +251,10 @@ WireGuardForm::WireGuardForm(QFormLayout *networkForm, const QString &coreExecut
     amneziaToggle_->setObjectName("amneziaToggle");
     amneziaToggle_->setCheckable(true);
     amneziaToggle_->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
-    amneziaToggle_->setArrowType(Qt::RightArrow);
+    amneziaToggle_->setFocusPolicy(Qt::StrongFocus);
+    amneziaToggle_->setIconSize(QSize(16, 16));
     amneziaToggle_->setAutoRaise(true);
-    layout->addWidget(amneziaToggle_);
+    layout->addWidget(amneziaToggle_, 0, Qt::AlignLeft);
     amneziaBody_ = new QWidget;
     amneziaBody_->setObjectName("amneziaParameters");
     amneziaForm_ = new QFormLayout(amneziaBody_);
@@ -299,7 +301,7 @@ WireGuardForm::WireGuardForm(QFormLayout *networkForm, const QString &coreExecut
         amneziaForm_->addRow(label, row);
     }
     layout->addWidget(amneziaBody_);
-    amneziaBody_->hide();
+    setAmneziaExpanded(false);
     connect(amneziaToggle_, &QToolButton::toggled, this, [this](bool expanded) { setAmneziaExpanded(expanded); });
     connect(version_, &QComboBox::currentIndexChanged, this, [this](int index) { changeVersion(index); });
 
@@ -473,7 +475,19 @@ void WireGuardForm::clearFieldProblems() {
 void WireGuardForm::setAmneziaExpanded(bool expanded) {
     const QSignalBlocker blocker(amneziaToggle_);
     amneziaToggle_->setChecked(expanded);
-    amneziaToggle_->setArrowType(expanded ? Qt::DownArrow : Qt::RightArrow);
+    const qreal scale = amneziaToggle_->devicePixelRatioF();
+    QPixmap icon(qRound(16 * scale), qRound(16 * scale));
+    icon.setDevicePixelRatio(scale);
+    icon.fill(Qt::transparent);
+    QPainter painter(&icon);
+    painter.setRenderHint(QPainter::Antialiasing);
+    painter.setPen(QPen(amneziaToggle_->palette().buttonText().color(), 1.6, Qt::SolidLine,
+                        Qt::RoundCap, Qt::RoundJoin));
+    painter.translate(8, 8);
+    if (expanded) painter.rotate(90);
+    painter.drawPolyline(QPolygonF{{-2, -4}, {2, 0}, {-2, 4}});
+    painter.end();
+    amneziaToggle_->setIcon(QIcon(icon));
     amneziaBody_->setVisible(expanded);
 }
 

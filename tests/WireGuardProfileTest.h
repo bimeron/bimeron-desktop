@@ -354,6 +354,54 @@ static void wireGuardEditor(const QString &directory) {
         + "\r\nAddress = 10.0.0.2/32\r\nJc = 4\r\n\r\n[Peer]\r\nPublicKey = PUBLIC\r\nPresharedKey = PSK_SENTINEL\r\nEndpoint = vpn.example:51820\r\nAllowedIPs = 0.0.0.0/0\r\n";
     const QString path = QDir(directory).filePath("tunnel.conf");
     {
+        QStringList networks;
+        for (int i = 0; i < 64; ++i)
+            networks << QString("10.0.%1.0/24").arg(i) << QString("2001:db8:%1::/48").arg(i, 0, 16);
+        QString longKey = key;
+        longKey.replace("0.0.0.0/0", networks.join(", "));
+        ProfileEditorDialog editor(profile, caps, nullptr, accepted, "fake-core", path, false, longKey);
+        auto *tabWidget = tabs(editor);
+        tabWidget->setCurrentIndex(tabIndex(editor, "Routing"));
+        editor.resize(620, 460);
+        editor.show();
+        QApplication::processEvents();
+        auto *summary = editor.findChild<QLabel *>("allowedIpsList");
+        require(summary->text().contains("128"));
+        auto *showAll = summary->parentWidget()->findChild<QPushButton *>();
+        require(showAll && showAll->isVisible());
+        QTimer::singleShot(0, [&] {
+            auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+            require(dialog);
+            auto *list = dialog->findChild<QPlainTextEdit *>();
+            require(list && list->isReadOnly() && list->toPlainText() == networks.join('\n'));
+            dialog->reject();
+        });
+        showAll->click();
+        QApplication::processEvents();
+        require(editor.focusWidget() == showAll);
+        tabWidget->setCurrentIndex(tabIndex(editor, "AmneziaWG"));
+        auto *toggle = editor.findChild<QToolButton *>("amneziaToggle");
+        require(!toggle->icon().isNull());
+        require(toggle->focusPolicy() & Qt::TabFocus);
+        QKeyEvent press(QEvent::KeyPress, Qt::Key_Space, Qt::NoModifier);
+        QKeyEvent release(QEvent::KeyRelease, Qt::Key_Space, Qt::NoModifier);
+        QApplication::sendEvent(toggle, &press);
+        QApplication::sendEvent(toggle, &release);
+        require(toggle->isChecked());
+
+        // Choose a list that wraps onto exactly two lines at this editor width.
+        tabWidget->setCurrentIndex(tabIndex(editor, "Routing"));
+        QStringList shortList;
+        const QFontMetrics metrics(summary->font());
+        const int width = summary->parentWidget()->width();
+        while (metrics.horizontalAdvance("AllowedIPs: " + shortList.join(", ")) <= width)
+            shortList << networks.at(shortList.size());
+        editor.findChild<QLineEdit *>("wireGuardPeer_AllowedIPs")->setText(shortList.join(", "));
+        QElapsedTimer timer; timer.start();
+        while (showAll->isVisible() && timer.elapsed() < 3000) QApplication::processEvents(QEventLoop::AllEvents, 50);
+        require(summary->text() == "AllowedIPs: " + shortList.join(", ") && !showAll->isVisible());
+    }
+    {
         ProfileEditorDialog editor(profile, caps, nullptr, accepted, "fake-core", path, false, key);
         auto *tabWidget = tabs(editor);
         const int form = tabIndex(editor, "AmneziaWG"), raw = tabIndex(editor, "WG/AWG config");
