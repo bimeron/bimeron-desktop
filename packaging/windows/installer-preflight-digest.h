@@ -75,7 +75,7 @@ inline bool processMapsFile(HANDLE process, HANDLE file) {
 }
 
 template<class ReadStatus>
-bool canRetainDistinctCore(const std::wstring &path, std::string_view digest,
+bool canRetainRunningCore(const std::wstring &path, std::string_view digest,
                            const SERVICE_STATUS_PROCESS &initial, std::wstring_view uiLevel,
                            ReadStatus readStatus) {
     if (uiLevel != L"2" || initial.dwCurrentState != SERVICE_RUNNING || !initial.dwProcessId) return false;
@@ -86,5 +86,16 @@ bool canRetainDistinctCore(const std::wstring &path, std::string_view digest,
     SERVICE_STATUS_PROCESS current{};
     return readStatus(current) && current.dwCurrentState == SERVICE_RUNNING
         && current.dwProcessId == initial.dwProcessId && WaitForSingleObject(process.get(), 0) == WAIT_TIMEOUT;
+}
+
+template<class ReadStatus>
+bool canRetainBundledCore(const std::wstring &path, std::string_view bundledDigest,
+                          const SERVICE_STATUS_PROCESS &initial, std::wstring_view uiLevel,
+                          ReadStatus readStatus) {
+    if (initial.dwCurrentState == SERVICE_RUNNING) {
+        if (uiLevel == L"2") return canRetainRunningCore(path, bundledDigest, initial, uiLevel, readStatus);
+        if (uiLevel != L"3" && uiLevel != L"4" && uiLevel != L"5") return false;
+    }
+    return matchesPinnedDigest(path, bundledDigest);
 }
 }

@@ -70,7 +70,7 @@ int main(int argc, char **argv) {
         const auto pinnedFile = InstallerPreflight::openPinnedFile(native, pinned);
         if (!pinnedFile || fixture.open(QIODevice::Append)) return 17;
     }
-    using InstallerPreflight::canRetainDistinctCore;
+    using InstallerPreflight::canRetainRunningCore;
     SERVICE_STATUS_PROCESS live{};
     live.dwProcessId = GetCurrentProcessId();
     live.dwCurrentState = SERVICE_RUNNING;
@@ -79,14 +79,19 @@ int main(int argc, char **argv) {
     const auto selfHash = InstallerCore::digest(self).toStdString();
     const auto stable = [&](SERVICE_STATUS_PROCESS &result) { result = live; return true; };
     const auto changed = [&](SERVICE_STATUS_PROCESS &result) { result = live; ++result.dwProcessId; return true; };
-    if (!canRetainDistinctCore(selfPath, selfHash, live, L"2", stable)
-        || canRetainDistinctCore(native, pinned, live, L"2", stable)
-        || canRetainDistinctCore(selfPath, selfHash, live, L"2", changed)
-        || canRetainDistinctCore(selfPath, selfHash, live, L"2", [](auto &) { return false; })
-        || canRetainDistinctCore(selfPath, selfHash, live, L"5", stable)) return 36;
+    if (!canRetainRunningCore(selfPath, selfHash, live, L"2", stable)
+        || canRetainRunningCore(native, pinned, live, L"2", stable)
+        || canRetainRunningCore(selfPath, selfHash, live, L"2", changed)
+        || canRetainRunningCore(selfPath, selfHash, live, L"2", [](auto &) { return false; })
+        || canRetainRunningCore(selfPath, selfHash, live, L"5", stable)) return 36;
+    using InstallerPreflight::canRetainBundledCore;
+    if (!canRetainBundledCore(selfPath, selfHash, live, L"2", stable)
+        || canRetainBundledCore(native, pinned, live, L"2", stable)
+        || canRetainBundledCore(selfPath, selfHash, live, L"", stable)
+        || canRetainBundledCore(selfPath, selfHash, live, L"2", changed)) return 46;
     for (const DWORD state : {SERVICE_STOPPED, SERVICE_STOP_PENDING}) {
         live.dwCurrentState = state;
-        if (canRetainDistinctCore(selfPath, selfHash, live, L"2", stable)) return 45;
+        if (canRetainRunningCore(selfPath, selfHash, live, L"2", stable)) return 45;
     }
     live.dwCurrentState = SERVICE_RUNNING;
     // Replace the name of a hard link to the running image with a byte-identical
@@ -96,9 +101,10 @@ int main(int argc, char **argv) {
     const QString replacement = links.filePath("slot/replacement.exe");
     const auto alias = QDir::toNativeSeparators(replacement).toStdWString();
     if (!CreateHardLinkW(alias.c_str(), selfPath.c_str(), nullptr)) return 42;
-    if (!canRetainDistinctCore(alias, selfHash, live, L"2", stable)) return 43;
+    if (!canRetainRunningCore(alias, selfHash, live, L"2", stable)) return 43;
     if (!QDir(links.path()).rename("slot", "previous") || !QDir(links.path()).mkdir("slot")) return 44;
-    if (!QFile::copy(self, replacement) || canRetainDistinctCore(alias, selfHash, live, L"2", stable)) return 37;
+    if (!QFile::copy(self, replacement) || canRetainRunningCore(alias, selfHash, live, L"2", stable)
+        || canRetainBundledCore(alias, selfHash, live, L"2", stable)) return 37;
     HANDLE restricted = nullptr;
     if (!DuplicateHandle(GetCurrentProcess(), GetCurrentProcess(), GetCurrentProcess(), &restricted,
                          SYNCHRONIZE, FALSE, 0)) return 38;
@@ -126,7 +132,7 @@ int main(int argc, char **argv) {
         && process.state() == QProcess::Running;
     live.dwProcessId = static_cast<DWORD>(process.processId());
     const auto childPath = QDir::toNativeSeparators(fakeDesktop).toStdWString();
-    if (canRetainDistinctCore(childPath, selfHash, live, L"2", [&](SERVICE_STATUS_PROCESS &result) {
+    if (canRetainRunningCore(childPath, selfHash, live, L"2", [&](SERVICE_STATUS_PROCESS &result) {
             result = live;
             process.kill();
             process.waitForFinished();
