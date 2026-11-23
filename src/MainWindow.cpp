@@ -648,6 +648,11 @@ QWidget *MainWindow::profilesPage() {
     reconnectDetailLabel_->setWordWrap(true);
     reconnectDetailLabel_->hide();
     layout->addWidget(reconnectDetailLabel_);
+    networkHintLabel_ = new QLabel(tr("Disconnect the VPN, sign in to Wi-Fi in your browser, then connect the VPN again."));
+    networkHintLabel_->setTextFormat(Qt::PlainText);
+    networkHintLabel_->setWordWrap(true);
+    networkHintLabel_->hide();
+    layout->addWidget(networkHintLabel_);
     reconnectCountdown_ = new QTimer(this);
     reconnectCountdown_->setInterval(1000);
     connect(reconnectCountdown_, &QTimer::timeout, this, &MainWindow::renderReconnectView);
@@ -2409,6 +2414,7 @@ void MainWindow::bindNativeController(NativeIKEv2Session *controller) {
 void MainWindow::showNativeSnapshot(const NativeIKEv2Session::Snapshot &snapshot) {
     // A snapshot never grants launch approval or absence.
     nativeOwnerBlocked_ = true;
+    networkHintLabel_->hide();
     const auto protection = [this](const QString &value) {
         if (value == "active") return tr("Active");
         if (value == "retained") return tr("Retained");
@@ -2534,6 +2540,7 @@ void MainWindow::resetMeasurements() {
 void MainWindow::invalidateConnection(bool preserveServiceProbe) {
     finishGeoDataReconnect(tr("GeoData reconnection interrupted while checking the Core connection"));
     connectionLabel_->setToolTip({});
+    networkHintLabel_->hide();
     clearSSHAuthentication();
     sshSeen_.clear();
     sshAuthSupported_ = true;
@@ -3141,6 +3148,7 @@ void MainWindow::completeSynchronization() {
 
 void MainWindow::handleStatus(const QJsonObject &status) {
     if (nativeOwnerBlocked_) return;
+    networkHintLabel_->setVisible(status.value("NetworkHint").toString() == "captive_portal");
     const QString previousState = state_;
     const QString previousProfileId = activeProfileId_;
     lastProxyMode_ = activeProxyMode();

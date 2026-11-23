@@ -44,6 +44,63 @@
 // Uses only temporary profiles/settings, a private pipe/socket and this test's
 // validate subcommand. Never reaches a system endpoint or privileged helper.
 struct ConnectionManagementTest {
+    static void captivePortalHint() {
+        const QVariant previousNotifications = QSettings().value("app/notifications");
+        QSettings().setValue("app/notifications", false);
+        MainWindow window;
+        window.core_.cancel();
+        window.helloReady_ = true;
+        window.startupPreparationPending_ = false;
+        window.autoConnectAttempted_ = true;
+        const auto reply = [&](const QString &command, const QJsonObject &status, const QJsonArray &events = {}) {
+            const QJsonDocument response(QJsonObject{
+                {"version", 1}, {"id", "fixture"}, {"instance", "fixture"}, {"status", status}, {"events", events}});
+            window.handleReply(command, QJsonDocument::fromJson(response.toJson(QJsonDocument::Compact)).object());
+        };
+
+        require(window.networkHintLabel_->isHidden(), "portal guidance starts hidden");
+        for (const auto &state : QStringList{"disconnected", "connecting", "reconnecting", "failed", "stopping", "connected"}) {
+            reply("status", {{"State", state}});
+            const QString title = window.connectionLabel_->text();
+            const QString button = window.connectButton_->text();
+            const bool enabled = window.connectButton_->isEnabled();
+            reply("status", {{"State", state}, {"NetworkHint", "captive_portal"}});
+            require(window.state_ == state && window.connectionLabel_->text() == title
+                    && window.connectButton_->text() == button && window.connectButton_->isEnabled() == enabled,
+                    "portal guidance preserves existing connection state and controls");
+            require(!window.networkHintLabel_->isHidden(), "recognized portal value shows guidance");
+            require(window.networkHintLabel_->text() ==
+                    "Disconnect the VPN, sign in to Wi-Fi in your browser, then connect the VPN again.",
+                    "portal guidance describes manual recovery");
+            reply("events", {{"State", state}});
+            require(window.networkHintLabel_->isHidden(), "a subsequent status without the field clears guidance");
+        }
+
+        for (const auto &hint : {QJsonValue(QString("future_hint")), QJsonValue(true), QJsonValue(QJsonValue::Null)}) {
+            reply("events", {{"State", "reconnecting"}, {"NetworkHint", "captive_portal"}});
+            require(!window.networkHintLabel_->isHidden(), "embedded status can show portal guidance");
+            reply("status", {{"State", "reconnecting"}, {"NetworkHint", hint}});
+            require(window.networkHintLabel_->isHidden() && window.helloReady_,
+                    "unknown or malformed hints are ignored without invalidating the response");
+        }
+        reply("status", {{"State", "reconnecting"}, {"NetworkHint", "captive_portal"}});
+        reply("status", {{"State", "connected"}});
+        require(window.networkHintLabel_->isHidden(), "connection with no portal signal clears guidance");
+        reply("status", {{"State", "reconnecting"}, {"NetworkHint", "captive_portal"}});
+        reply("events", {{"State", "reconnecting"}},
+              {QJsonObject{{"event", QJsonObject{{"Code", "captive_portal_suspected"}, {"Message", "Portal suspected"}}}}});
+        require(window.networkHintLabel_->isHidden() && window.log_->toPlainText().contains("Portal suspected"),
+                "a diagnostic event cannot restore guidance when the snapshot has cleared the signal");
+        reply("status", {{"State", "reconnecting"}, {"NetworkHint", "captive_portal"}});
+        require(window.operation_.isEmpty() && !window.stopRequested_ && !window.core_.busy()
+                && window.pendingStartPath_.isEmpty() && window.startReadyPath_.isEmpty(),
+                "portal guidance needs user action");
+        window.invalidateConnection();
+        require(window.networkHintLabel_->isHidden(), "invalidated Core connection clears portal guidance");
+        if (previousNotifications.isValid()) QSettings().setValue("app/notifications", previousNotifications);
+        else QSettings().remove("app/notifications");
+    }
+
     static void reconnectProgress() {
         const QVariant previousLanguage = QSettings().value("app/language");
         const QVariant previousNotifications = QSettings().value("app/notifications");

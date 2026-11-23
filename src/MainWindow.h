@@ -244,6 +244,7 @@ private:
     QListWidget *profileList_ = nullptr;
     QLabel *connectionLabel_ = nullptr;
     QLabel *reconnectDetailLabel_ = nullptr;
+    QLabel *networkHintLabel_ = nullptr;
     QPushButton *retryNowButton_ = nullptr;
     QTimer *reconnectCountdown_ = nullptr;
     ReconnectPolicy::State reconnect_;

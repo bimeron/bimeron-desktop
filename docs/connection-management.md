@@ -36,6 +36,24 @@ shown even when it contains credentials, as explicitly requested by the user.
 It remains bounded and is rendered as plain text or escaped Journal content.
 Structured diagnostic report schemas retain their separate field filtering.
 
+### Captive portal guidance
+
+On Windows and Linux, Desktop reads the optional `NetworkHint` string from the
+existing IPC 1 `status` object, including when that object comes with another
+control reply. An exact `captive_portal` value shows guidance below the
+connection status: disconnect the VPN, sign in to Wi-Fi in a browser, then
+connect the VPN again. The user performs each step.
+
+The hint is independent of the six existing VPN states and their controls.
+Each accepted status replaces the previous hint. Omitted, unknown, or non-string
+values hide it, as does losing the authoritative Core connection. A Core that
+does not emit the field continues to display the usual connection status.
+Core reports the hint while it sees signs of a captive portal on the current
+network and clears the signal on connection or a network change. The
+`captive_portal_suspected` event is diagnostic; the status snapshot determines
+whether the guidance is visible.
+Desktop consumes the signal described in [Core ADR 0042, Q3](https://github.com/bimeron/bimeron-core/blob/master/docs/adr/0042-always-on-vpn-at-boot.md#decisions).
+
 ## Scheduling and lifecycle
 
 Keep one IPC request in flight. Prioritize user actions and resynchronization;
