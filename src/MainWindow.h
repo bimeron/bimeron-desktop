@@ -156,6 +156,8 @@ private:
     QSet<QString> repairConsentRequests_;
     QLocalSocket *repairSocket_ = nullptr;
     QString repairNonce_;
+    QJsonObject guardedRestoreRequest_;
+    void queryGuardedRestore(const QString &operationId);
     QByteArray repairInput_;
     bool repairSession_ = false;
     bool repairSessionDone_ = false;
