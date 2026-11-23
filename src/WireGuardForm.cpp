@@ -174,6 +174,11 @@ QString WireGuardForm::reservedEditError() const {
     return tr("Enter all three Reserved bytes (0–255), or clear all three.");
 }
 
+void WireGuardForm::setReservedSupported(bool supported) {
+    reservedSupported_ = supported;
+    refreshVersionRows();
+}
+
 const QStringList &WireGuardForm::amneziaFields() {
     static const QStringList fields = [] {
         QStringList result;
@@ -608,7 +613,7 @@ void WireGuardForm::changeVersion(int index) {
 }
 
 void WireGuardForm::refreshVersionRows() {
-    setFormRowVisible(mainForm_, rows_.value(reservedField()), versionIndex_ == 0);
+    setFormRowVisible(mainForm_, rows_.value(reservedField()), reservedSupported_ && versionIndex_ == 0);
     for (auto it = rows_.cbegin(); it != rows_.cend(); ++it) {
         const QString version = fieldVersion(it.key());
         if (!version.isEmpty()) setFormRowVisible(amneziaForm_, it.value(), versions().indexOf(version) <= versionIndex_);

@@ -620,6 +620,12 @@ int main(int argc, char **argv) {
         ConnectionManagementTest::wireGuardRouting(qEnvironmentVariable("BIMERON_WIREGUARD_CORE"));
         return 0;
     }
+    if (app.arguments().contains("--wireguard-reserved")) {
+        ConnectionManagementTest::wireGuardReservedRuntime();
+        ConnectionManagementTest::wireGuardReservedReal(qEnvironmentVariable("BIMERON_WIREGUARD_RESERVED_CORE"),
+            qEnvironmentVariable("BIMERON_WIREGUARD_LEGACY_CORE"));
+        return 0;
+    }
     if (app.arguments().contains("--geodata-reconnect")) {
         ConnectionManagementTest::geoDataReconnect();
         return 0;
@@ -806,6 +812,7 @@ int main(int argc, char **argv) {
     ConnectionManagementTest::settingsGeoDataChecking();
     ConnectionManagementTest::reconnectProgress();
     ConnectionManagementTest::captivePortalHint();
+    ConnectionManagementTest::wireGuardReservedRuntime();
     ReconnectPolicyTest::run();
     require(ReconnectPolicyTest::failures == 0, "reconnect policy model");
     CoreUpdatePromptTest::run();

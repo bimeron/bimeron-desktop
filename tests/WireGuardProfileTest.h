@@ -124,7 +124,7 @@ QString setField(const QString &text, const QString &section, const QString &key
 struct Bridge {
     QMutex mutex;
     QStringList operations;
-    QJsonObject capabilities{{"supported", true}, {"document_api", 1}};
+    QJsonObject capabilities{{"supported", true}, {"document_api", 1}, {"reserved", true}};
     QJsonObject handle(const QByteArray &input) {
         QMutexLocker lock(&mutex);
         const QJsonObject request = QJsonDocument::fromJson(input).object();
@@ -439,6 +439,31 @@ static void wireGuardEditor(const QString &directory) {
         require(hiddenInput->parentWidget()->parentWidget()->isHidden() && hidden.wireGuardText() == awg);
         hidden.findChild<QLineEdit *>("wireGuardPeer_Endpoint")->setText("other.example:51820");
         require(hidden.wireGuardText().contains("Reserved = 0, 2, 255\r\n"));
+        for (const auto &advertisement : {QJsonValue(QJsonValue::Undefined), QJsonValue(false)}) {
+            if (advertisement.isUndefined()) bridge.capabilities.remove("reserved");
+            else bridge.capabilities.insert("reserved", advertisement);
+            ProfileEditorDialog legacy(profile, caps, nullptr, accepted, "fake-core", path, false, withReserved);
+            require(!tabs(legacy)->isTabEnabled(tabIndex(legacy, "WireGuard")));
+            require(legacy.findChild<QPlainTextEdit *>("wireGuardRawConfig")->isReadOnly());
+            require(legacy.wireGuardText() == withReserved);
+        }
+        {
+            ProfileEditorDialog legacy(profile, caps, nullptr, accepted, "fake-core", path, false, plain);
+            auto *legacyTabs = tabs(legacy);
+            const int rawIndex = tabIndex(legacy, "WG/AWG config"), formIndex = tabIndex(legacy, "WireGuard");
+            legacyTabs->setCurrentIndex(rawIndex);
+            auto *rawConfig = legacy.findChild<QPlainTextEdit *>("wireGuardRawConfig");
+            rawConfig->setPlainText(withReserved);
+            QTimer::singleShot(0, [] {
+                if (auto *box = qobject_cast<QMessageBox *>(QApplication::activeModalWidget())) box->reject();
+            });
+            legacyTabs->setCurrentIndex(formIndex);
+            require(legacyTabs->currentIndex() == rawIndex && !rawConfig->isReadOnly());
+            rawConfig->setPlainText(plain);
+            legacyTabs->setCurrentIndex(formIndex);
+            require(legacyTabs->currentIndex() == formIndex && legacy.wireGuardText() == plain);
+        }
+        bridge.capabilities.insert("reserved", true);
     }
     {
         ProfileEditorDialog editor(profile, caps, nullptr, accepted, "fake-core", path, false, key);
@@ -708,7 +733,7 @@ static void wireGuardEditor(const QString &directory) {
     }
     {
         // A WireGuard creation draft stays WireGuard after a Bimeron config edit.
-        bridge.capabilities = {{"supported", true}, {"document_api", 1}};
+        bridge.capabilities = {{"supported", true}, {"document_api", 1}, {"reserved", true}};
         ProfileEditorDialog draft({}, caps, nullptr, accepted, "fake-core", {}, true);
         auto *sources = draft.findChild<QComboBox *>("keySource");
         sources->setCurrentIndex(sources->findData("WireGuard"));

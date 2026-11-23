@@ -183,6 +183,8 @@ private:
     bool showWireGuardFieldProblems(const QList<CoreProblem> &problems);
     bool wireGuard_ = false;
     bool wireGuardCreatable_ = false;
+    bool wgReservedSupported_ = false;
+    bool wgReservedReadOnly_ = false;
     QString wgOriginal_, wgLoaded_;
     QJsonObject wgInspection_;
     bool wgRawDirty_ = false, wgRawOnly_ = false;

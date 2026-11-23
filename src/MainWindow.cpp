@@ -30,6 +30,7 @@
 #include <QDateTime>
 #include <QPointer>
 #include <QThreadPool>
+#include <utility>
 #include <QCloseEvent>
 #include <QDialog>
 #include <QDialogButtonBox>
@@ -2558,6 +2559,7 @@ void MainWindow::invalidateConnection(bool preserveServiceProbe) {
     operation_.clear();
     pendingStartPath_.clear();
     startReadyPath_.clear();
+    startWireGuardData_.clear();
     stopRequested_ = false;
     retryNowRequested_ = false;
     reconnect_ = {};
@@ -2567,6 +2569,7 @@ void MainWindow::invalidateConnection(bool preserveServiceProbe) {
     helloReady_ = false;
     statusNeeded_ = true;
     capabilities_ = {};
+    daemonSessionGuards_ = false;
     runtimeIdentity_ = {};
     runningCoreVersion_.clear();
     updateCoreIdentity();
@@ -2684,9 +2687,33 @@ bool MainWindow::startProfile(int row) {
         return false;
     }
     const QString keyReference = ProfileStore::keyFileReference(profileText);
-    if ((wireGuardFile || ProfileStore::managedKeyFile(profiles_[row].path, keyReference)) && !WireGuardCore::serviceSupported(capabilities_)) {
+    const bool managedWireGuard = ProfileStore::managedKeyFile(profiles_[row].path, keyReference);
+    if ((wireGuardFile || managedWireGuard) && !WireGuardCore::serviceSupported(capabilities_)) {
         QMessageBox::warning(this, tr("Feature not supported"), tr("The running Core does not support WireGuard and AmneziaWG. Start or update Core."));
         return false;
+    }
+    if (managedWireGuard && !wireGuardFile) {
+        QMessageBox::warning(this, tr("Profile unavailable"), tr("The selected Core cannot open this WireGuard configuration. Check the profile file or update Core."));
+        return false;
+    }
+    if (wireGuardFile && !WireGuardCore::serviceSupportsReserved(capabilities_)) {
+        const auto inspection = WireGuardCore::inspect(validationExecutable_, ProfileStore::keyFileText(wireGuardData));
+        const bool requiresReserved = WireGuardCore::hasReserved(inspection.object);
+        if (!inspection.answered() || inspection.format() != "wireguard"
+            || (!inspection.fieldsError().isEmpty() && !requiresReserved)) {
+            QMessageBox::warning(this, tr("Profile unavailable"), tr("Core could not identify the configuration file of this profile. Check that Core is available and try again."));
+            return false;
+        }
+        if (requiresReserved) {
+            QMessageBox prompt(QMessageBox::Information, tr("Feature not supported"),
+                tr("The running Core does not support WireGuard Reserved. Update Core before connecting."),
+                QMessageBox::Cancel, this);
+            prompt.setObjectName("wireGuardReservedUpdate");
+            auto *update = prompt.addButton(tr("Manage Core"), QMessageBox::ActionRole);
+            prompt.exec();
+            if (prompt.clickedButton() == update) openCoreManagement();
+            return false;
+        }
     }
     const QString wireGuard = wireGuardLabel(row);
     if (!wireGuard.isEmpty()) activeFileProtocol_ = wireGuard;
@@ -2744,13 +2771,16 @@ bool MainWindow::startProfile(int row) {
     });
     connect(process, &QProcess::readyReadStandardError, this, [process] { process->readAllStandardError(); });
     const auto sharedPaths = GeoDataSelection::instance()->paths();
-    const auto finished = [this, process, path, generation, profileBytes, geoValidation, sharedPaths](int code, QProcess::ExitStatus status) {
+    const auto finished = [this, process, path, generation, profileBytes, geoValidation, sharedPaths,
+                           wireGuardFile, wireGuardData, keyReference](int code, QProcess::ExitStatus status) {
         if (validationProcess_ != process || generation != connectionGeneration_) return;
         validationProcess_ = nullptr;
         process->deleteLater();
         operation_.clear();
         QFile current(path);
-        const bool unchanged = current.open(QIODevice::ReadOnly) && current.read(64 * 1024 + 1) == profileBytes;
+        QByteArray currentKey;
+        const bool unchanged = current.open(QIODevice::ReadOnly) && current.read(64 * 1024 + 1) == profileBytes
+            && (!wireGuardFile || (ProfileStore::readKeyFile(path, keyReference, &currentKey) && currentKey == wireGuardData));
         const QString geoError = geoValidation && sharedPaths != GeoDataSelection::instance()->paths()
             ? tr("Shared databases changed during validation. Start the connection again.")
             : geoValidation ? geoDataValidationError(process->property("validationOutput").toByteArray() + process->readAllStandardOutput()) : QString();
@@ -2764,6 +2794,7 @@ bool MainWindow::startProfile(int row) {
             for (const auto &profile : profiles_) {
                 if (QFileInfo(profile.path).absoluteFilePath() == path && QFileInfo::exists(path)) {
                     startReadyPath_ = path;
+                    startWireGuardData_ = wireGuardFile ? wireGuardData : QByteArray();
                     startUsesGeoData_ = geoValidation; startSharedPaths_ = sharedPaths;
                     operation_ = "start";
                     break;
@@ -2845,16 +2876,24 @@ void MainWindow::poll() {
         const QString path = startReadyPath_;
         startReadyPath_.clear();
         QFile file(path);
-        const auto info = file.open(QIODevice::ReadOnly)
-            ? ProfileStore::connectionInfo(QString::fromUtf8(file.read(64 * 1024 + 1))) : ProfileConnectionInfo{};
+        const QString profileText = file.open(QIODevice::ReadOnly) ? QString::fromUtf8(file.read(64 * 1024 + 1)) : QString();
+        const auto info = ProfileStore::connectionInfo(profileText);
+        QByteArray currentKey;
+        const auto wireGuardData = std::exchange(startWireGuardData_, QByteArray());
+        const bool sameKey = wireGuardData.isEmpty()
+            || (ProfileStore::readKeyFile(path, ProfileStore::keyFileReference(profileText), &currentKey) && currentKey == wireGuardData);
         if (!controlBlocked() && !cleanupBlocked_ && !sessionActive_ && !nativeSession_
+            && sameKey
             && (!startUsesGeoData_ || startSharedPaths_ == GeoDataSelection::instance()->paths())
             && (state_ == "disconnected" || state_ == "failed")
             && QFileInfo::exists(path) && info.backend == ProfileConnectionInfo::Backend::Packet && info.connectable) {
             if (!QSettings().value("logs/keepPrevious", true).toBool()) log_->clear();
             // With the kill switch, start returns after protection is installed and a
             // handover waits for the previous cleanup; Core recommends 2 minutes.
-            core_.request("start", {{"config", path}}, 120000);
+            QJsonObject request{{"config", path}};
+            if (!wireGuardData.isEmpty() && daemonSessionGuards_ && !instance_.isEmpty())
+                request.insert("instance", instance_);
+            core_.request("start", request, 120000);
         } else {
             operation_.clear();
             finishGeoDataReconnect(tr("GeoData reconnection canceled before starting the updated profile"));
@@ -2933,6 +2972,7 @@ void MainWindow::handleReply(const QString &command, const QJsonObject &response
         statusNeeded_ = true;
         retryCount_ = 0;
         capabilities_ = response.value("capabilities").toObject();
+        daemonSessionGuards_ = response.value("daemon_session_guards").toBool();
         runtimeIdentity_ = coreIdentity(response.value("core").toObject());
         ipcObservedAt_ = QDateTime::currentMSecsSinceEpoch();
         runningCoreVersion_ = runtimeIdentity_.value("version").toString();
@@ -2979,6 +3019,7 @@ void MainWindow::handleReply(const QString &command, const QJsonObject &response
                                                        : tr("GeoData reconnection failed while starting the VPN"));
             operation_.clear();
             startReadyPath_.clear();
+            startWireGuardData_.clear();
             pendingStartPath_.clear();
             if (!reconnectResultProfileId_.isEmpty())
                 reportCoreUpdateResult(tr("Core was updated, but reconnection failed"));
@@ -3165,6 +3206,7 @@ void MainWindow::handleStatus(const QJsonObject &status) {
     nativeSession_ = session.value("backend").toString() == "ikev2";
     if (sessionActive_ && !startReadyPath_.isEmpty()) {
         startReadyPath_.clear();
+        startWireGuardData_.clear();
         operation_.clear();
     }
     // Any *_run_recover code and leftover protection route to emergency network recovery.

@@ -168,8 +168,9 @@ QJsonObject setField(const QString &section, const QString &key, const QString &
     return {{"op", "set_field"}, {"section", section}, {"key", key}, {"value", value}};
 }
 
-bool cliSupported(const QString &executable, bool *definitive, QJsonArray *keyOperations) {
+bool cliSupported(const QString &executable, bool *definitive, QJsonArray *keyOperations, bool *reserved) {
     if (keyOperations) *keyOperations = {};
+    if (reserved) *reserved = false;
     if (definitive) *definitive = true;
     if (executable.isEmpty() && !customRunner()) return false;
     const QString key = identity(executable);
@@ -180,6 +181,7 @@ bool cliSupported(const QString &executable, bool *definitive, QJsonArray *keyOp
         if (cache.contains(key)) {
             const auto caps = cache.value(key);
             if (keyOperations) *keyOperations = caps.value("key_operations").toArray();
+            if (reserved) *reserved = caps.value("reserved").toBool();
             return !caps.isEmpty();
         }
     }
@@ -190,6 +192,7 @@ bool cliSupported(const QString &executable, bool *definitive, QJsonArray *keyOp
     const bool supported = reply.answered() && reply.problems.isEmpty()
         && capabilities.value("supported").toBool() && capabilities.value("document_api").toInt() >= 1;
     if (supported && keyOperations) *keyOperations = capabilities.value("key_operations").toArray();
+    if (supported && reserved) *reserved = capabilities.value("reserved").toBool();
     if (!customRunner() && reply.definitive) {
         QMutexLocker lock(&mutex);
         cache.insert(key, supported ? capabilities : QJsonObject());
@@ -199,6 +202,17 @@ bool cliSupported(const QString &executable, bool *definitive, QJsonArray *keyOp
 
 bool serviceSupported(const QJsonObject &capabilities) {
     return capabilities.value("wireguard").toObject().value("supported").toBool();
+}
+
+bool serviceSupportsReserved(const QJsonObject &capabilities) {
+    return serviceSupported(capabilities) && capabilities.value("wireguard").toObject().value("reserved").toBool();
+}
+
+bool hasReserved(const QJsonObject &inspection) {
+    if (inspection.value("fields").toObject().contains("Peer/Reserved")) return true;
+    for (const auto &problem : parseCoreProblems(inspection.value("problems")))
+        if (problem.section == "Peer" && problem.field == "Reserved") return true;
+    return false;
 }
 
 QString protocolLabel(const QJsonObject &inspection) {

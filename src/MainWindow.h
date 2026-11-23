@@ -325,6 +325,8 @@ private:
     bool cleanupBlocked_ = false;
     QString operation_;
     QString startReadyPath_;
+    QByteArray startWireGuardData_;
+    bool daemonSessionGuards_ = false;
     QMap<QString, QString> startSharedPaths_;
     bool startUsesGeoData_ = false;
     quint64 connectionGeneration_ = 0;

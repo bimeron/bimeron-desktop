@@ -35,6 +35,13 @@ Problems about the reference itself (`file_unreadable`, `file_not_regular`,
 
 The running service advertises support with `hello.capabilities.wireguard.supported`.
 A selected CLI with the bridge does not imply that the service supports WG/AWG.
+Reserved editing requires CLI `capabilities.reserved: true` and `document_api >= 1`.
+If an older CLI identifies Reserved in a stored configuration, Desktop presents its
+WireGuard document read-only. A compatible CLI can save the pair with an older service.
+Connecting a profile with Reserved requires `hello.capabilities.wireguard.reserved: true`
+from the responding service. A missing or false flag offers Core management so the
+user can use the existing signed update flow. If the service advertises daemon
+session guards, Desktop sends the WireGuard start with the instance from hello.
 
 ## Import
 
@@ -52,6 +59,10 @@ Add profile accepts:
 - A Bimeron profile whose `[AccessKey] File` references a WG/AWG file, relative or absolute.
   Both files are copied into the profile store, which supports moving a pair to another
   computer. Other references keep the existing relocation rules.
+
+A Core-valid Bimeron profile with explicit `[AccessKey] Type = wireguard` and no
+separate WireGuard file can be stored by the generic importer. Desktop's packet
+connection selector supports the WireGuard file pair.
 
 Desktop reads `[AccessKey] File` as Core does: a quoted value is decoded with Go
 `strconv.Unquote` rules (a decoded leading U+FEFF stays part of the name); a name that is
@@ -244,6 +255,11 @@ the saved profile pair. It also times repeated draft reads and checks that they
 reuse the cached edit response.
 Set `BIMERON_WIREGUARD_RESERVED_CORE` to a build of Core's `feat/wireguard-reserved-208`
 branch to run the document smoke test (import, inspect, edit, reopen and remove).
-The Reserved capability and service admission rules are tracked in
-[Core #208](https://github.com/bimeron/bimeron-core/issues/208).
+The supported test fixture for this change uses Core commit
+`8f2313d58fc5c7abe5fabb4f65eeb3e8907d0f06`.
+The desktop integration fixture `developer-mode-test --wireguard-reserved` checks
+real Desktop import, Save and reopen with that executable and synthetic service
+capabilities. Set `BIMERON_WIREGUARD_LEGACY_CORE` to a document bridge build without
+the Reserved capability to also check read-only handling for the saved pair.
+[Core #208](https://github.com/bimeron/bimeron-core/issues/208) tracks runtime support.
 Successful document editing verifies the CLI path. Transport requires a separate check.

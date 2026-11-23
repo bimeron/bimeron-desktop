@@ -33,6 +33,7 @@
 #include <QToolTip>
 #include <QTableWidget>
 #include <QAction>
+#include <QThreadPool>
 #include <QScreen>
 #include <QProgressBar>
 #include <QStyleOptionProgressBar>
@@ -40,6 +41,7 @@
 #include "GeoDataDownload.h"
 #include "GeoDataDownloadFixtures.h"
 #include "GeoDataUpdater.h"
+#include "WireGuardCore.h"
 
 // Uses only temporary profiles/settings, a private pipe/socket and this test's
 // validate subcommand. Never reaches a system endpoint or privileged helper.
@@ -2674,6 +2676,227 @@ struct ConnectionManagementTest {
             window.development_->restoreService_ = false;
         }
     }
+    static void wireGuardReservedRuntime() {
+        QTemporaryDir directory;
+        require(directory.isValid(), "Reserved test directory");
+        QLocalServer server;
+        require(server.listen("wg-reserved-" + QUuid::createUuid().toString()), "Reserved fixture endpoint");
+        MainWindow window;
+        window.core_.cancel();
+        window.core_.setEndpoint(server.serverName());
+        for (auto *timer : window.findChildren<QTimer *>()) timer->stop();
+        window.validationExecutable_ = QCoreApplication::applicationFilePath();
+        window.store_ = ProfileStore(directory.path());
+        window.profiles_.clear();
+        window.startupPreparationPending_ = false;
+        window.autoConnectAttempted_ = true;
+        window.nextServiceInspection_ = window.pollClock_.elapsed() + 30000;
+        WireGuardCore::setRunner([](const QString &, const QByteArray &input, QString *) {
+            const auto request = QJsonDocument::fromJson(input).object();
+            const QString op = request.value("op").toString();
+            QJsonObject reply{{"version", 1}};
+            if (op == "capabilities") reply.insert("capabilities", QJsonObject{{"supported", true}, {"document_api", 1}, {"reserved", true}});
+            else if (op == "detect" || op == "inspect") {
+                reply.insert("format", "wireguard");
+                QJsonObject fields;
+                if (request.value("text").toString().contains("Reserved = "))
+                    fields.insert("Peer/Reserved", "0, 2, 255");
+                reply.insert("fields", fields);
+            }
+            return reply;
+        });
+        QString error;
+        const QByteArray wrapper = window.wireGuardTemplate("Reserved runtime").toUtf8();
+        const QByteArray key = "[Interface]\nPrivateKey = TEST\n[Peer]\nEndpoint = 203.0.113.1:51820\n";
+        const QString plain = window.store_.createPair(wrapper, key, &error);
+        const QString reserved = window.store_.createPair(wrapper, key + "Reserved = 0, 2, 255\n", &error);
+        require(!plain.isEmpty() && !reserved.isEmpty(), "create both WireGuard pairs");
+        window.profiles_ = {Profile{"reserved", "Reserved", reserved}, Profile{"plain", "Plain", plain}};
+        QJsonObject wireGuard{{"supported", true}};
+        QString instance;
+        int starts = 0;
+        bool holdStatus = false;
+        QPointer<QLocalSocket> heldSocket;
+        QJsonValue heldId;
+        QObject::connect(&server, &QLocalServer::newConnection, &server, [&] {
+            auto *socket = server.nextPendingConnection();
+            QObject::connect(socket, &QLocalSocket::disconnected, socket, &QObject::deleteLater);
+            QObject::connect(socket, &QLocalSocket::readyRead, socket, [&, socket] {
+                if (!socket->canReadLine()) return;
+                const auto request = QJsonDocument::fromJson(socket->readLine()).object();
+                const QString command = request.value("command").toString();
+                if (command == "status" && holdStatus) {
+                    heldSocket = socket;
+                    heldId = request.value("id");
+                    return;
+                }
+                QJsonObject reply{{"version", 1}, {"id", request.value("id")}, {"instance", instance},
+                    {"status", QJsonObject{{"State", "disconnected"}}}};
+                if (command == "hello") {
+                    reply.insert("capabilities", QJsonObject{{"vpn", true}, {"ipv6", true}, {"wireguard", wireGuard}});
+                    reply.insert("daemon_session_guards", true);
+                } else if (command == "start") {
+                    require(request.value("instance").toString() == instance, "WireGuard start is bound to the hello instance");
+                    ++starts;
+                }
+                socket->write(QJsonDocument(reply).toJson(QJsonDocument::Compact) + '\n');
+                socket->flush();
+            });
+        });
+        const auto attempt = [&](bool expected, int row) {
+            const int before = starts;
+            QString notice;
+            QTimer dismiss;
+            QObject::connect(&dismiss, &QTimer::timeout, [&] {
+                if (auto *box = qobject_cast<QMessageBox *>(QApplication::activeModalWidget())) {
+                    notice = box->objectName();
+                    box->reject();
+                }
+            });
+            dismiss.start(1);
+            const bool started = window.startProfile(row);
+            require(started == expected && bool(window.validationProcess_) == expected, "selected pair and responding service gate Start");
+            require(expected || notice == "wireGuardReservedUpdate", "unsupported runtime offers Core management");
+            if (expected)
+                require(waitFor([&] { return starts == before + 1 && window.operation_.isEmpty() && !window.statusNeeded_ && !window.core_.busy(); }),
+                    "supported selected pair sends one guarded Start");
+            else
+                require(starts == before, "unsupported selected pair sends no Start");
+        };
+        for (const auto &advertisement : {QJsonValue(QJsonValue::Undefined), QJsonValue(false), QJsonValue(true)}) {
+            window.invalidateConnection();
+            instance = QUuid::createUuid().toString();
+            if (advertisement.isUndefined()) wireGuard.remove("reserved");
+            else wireGuard.insert("reserved", advertisement);
+            require(window.core_.request("hello") && waitFor([&] { return window.helloReady_ && !window.statusNeeded_ && !window.core_.busy(); }),
+                "synchronize to the responding service");
+            attempt(advertisement.toBool(), 0);
+            attempt(true, 1);
+        }
+        for (const bool replaceInstance : {true, false}) {
+            const int before = starts;
+            holdStatus = true;
+            require(window.startProfile(0) && window.core_.request("status"), "validate while a status reply is pending");
+            require(waitFor([&] { return heldSocket && window.startReadyPath_ == reserved; }), "validation queues Start behind the status reply");
+            holdStatus = false;
+            if (replaceInstance) instance = QUuid::createUuid().toString();
+            const QJsonObject status = replaceInstance ? QJsonObject{{"State", "disconnected"}}
+                : QJsonObject{{"State", "connected"}, {"Session", QJsonObject{{"active", true}, {"id", "new-session"}, {"mode", "vpn"}}}};
+            const QJsonObject reply{{"version", 1}, {"id", heldId}, {"instance", instance}, {"status", status}};
+            heldSocket->write(QJsonDocument(reply).toJson(QJsonDocument::Compact) + '\n');
+            heldSocket->flush();
+            heldSocket.clear();
+            require(waitFor([&] { return window.startReadyPath_.isEmpty() && window.operation_.isEmpty()
+                && !window.core_.busy() && window.helloReady_ && !window.statusNeeded_; }), "discard queued Start after the service state changes");
+            require(starts == before && (replaceInstance ? window.instance_ == instance : window.sessionActive_),
+                "replacement instance or a newly active session prevents Start");
+        }
+        QThreadPool::globalInstance()->waitForDone();
+        WireGuardCore::setRunner({});
+        std::fprintf(stdout, "Reserved: hello missing/false blocks Reserved, true allows it; plain WireGuard and instance guards passed.\n");
+    }
+
+    static void wireGuardReservedReal(const QString &core, const QString &legacy) {
+        QTemporaryDir directory;
+        bool reserved = false;
+        require(directory.isValid() && WireGuardCore::cliSupported(core, nullptr, nullptr, &reserved) && reserved,
+            "real Reserved CLI fixture");
+        MainWindow window;
+        window.core_.cancel();
+        window.core_.setEndpoint("wg-reserved-real-" + QUuid::createUuid().toString());
+        for (auto *timer : window.findChildren<QTimer *>()) timer->stop();
+        window.validationExecutable_ = core;
+        window.store_ = ProfileStore(directory.filePath("profiles"));
+        window.profiles_.clear();
+        window.capabilities_ = {{"vpn", true}, {"ipv6", true}, {"wireguard", QJsonObject{{"supported", true}}}};
+        const QString authority = "yAnz5TF%2BlXXJte14tji3zlMNq%2Bhd2rYUIgJBgB3fBmk%3D@203.0.113.1:51820"
+            "?publickey=xTIBA5rboUvnH4htodjb6e697QjLERt1NAB4mZqp8Dg%3D&address=10.0.0.2%2F32&allowedips=0.0.0.0%2F0";
+        const auto readPair = [](const QString &path) {
+            QFile profile(path);
+            require(profile.open(QIODevice::ReadOnly), "read saved wrapper");
+            QByteArray data;
+            require(ProfileStore::readKeyFile(path, ProfileStore::keyFileReference(QString::fromUtf8(profile.readAll())), &data),
+                "read saved WireGuard file");
+            return data;
+        };
+        QString error;
+        const QString source = directory.filePath("provider.conf");
+        const auto conf = WireGuardCore::importUri(core, "wg://" + authority + "&reserved=0-2-255");
+        require(conf.answered() && !conf.text().isEmpty() && ProfileStore::writeConfig(source, conf.text().toUtf8(), &error), "write provider .conf");
+        QString unexpected;
+        std::function<void(ProfileEditorDialog *)> edit;
+        QTimer modal;
+        QObject::connect(&modal, &QTimer::timeout, [&] {
+            if (auto *box = qobject_cast<QMessageBox *>(QApplication::activeModalWidget())) {
+                unexpected = box->objectName().isEmpty() ? box->windowTitle() : box->objectName();
+                box->reject();
+            } else if (auto *editor = qobject_cast<ProfileEditorDialog *>(QApplication::activeModalWidget())) {
+                if (edit) edit(editor);
+                else editor->reject();
+            }
+        });
+        modal.start(10);
+        require(window.importWireGuardLink("wg://" + authority + "&reserved=0%2C2%2C255", "WG", &window), "real wg:// import");
+        require(window.importWireGuardLink("wireguard://" + authority + "&reserved=0-2-255", "WireGuard", &window), "real wireguard:// import");
+        require(window.importProfile(source) && window.profiles_.size() == 3, "real .conf import");
+        const auto lastByte = [](ProfileEditorDialog *editor) { return editor->findChild<QLineEdit *>("wireGuardReservedByte3"); };
+        for (int row = 0; row < window.profiles_.size(); ++row) {
+            const QString path = window.profiles_.at(row).path;
+            bool visited = false;
+            edit = [&](ProfileEditorDialog *editor) {
+                require(lastByte(editor)->text() == "255", "real import populates Reserved");
+                visited = true;
+                lastByte(editor)->setText("42");
+                editor->findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Save)->click();
+                if (editor->result() != QDialog::Accepted) editor->reject();
+            };
+            window.editProfile(row);
+            const QByteArray saved = readPair(path);
+            require(visited && unexpected.isEmpty() && saved.contains("Reserved = 0, 2, 42"),
+                "save Reserved through real CLI with old-service capabilities");
+            visited = false;
+            edit = [&](ProfileEditorDialog *editor) {
+                require(lastByte(editor)->text() == "42", "reopen saved real profile");
+                visited = true;
+                editor->reject();
+            };
+            window.editProfile(row);
+            require(visited && unexpected.isEmpty(), "real profile reopens");
+            if (!legacy.isEmpty()) {
+                bool legacyReserved = true;
+                require(WireGuardCore::cliSupported(legacy, nullptr, nullptr, &legacyReserved) && !legacyReserved, "legacy CLI lacks Reserved");
+                window.validationExecutable_ = legacy;
+                visited = false;
+                edit = [&](ProfileEditorDialog *editor) {
+                    require(editor->findChild<QPlainTextEdit *>("wireGuardRawConfig")->isReadOnly(), "legacy CLI keeps the Reserved document read-only");
+                    visited = true;
+                    editor->reject();
+                };
+                window.editProfile(row);
+                require(visited && unexpected.isEmpty() && readPair(path) == saved, "legacy CLI preserves saved bytes");
+                window.validationExecutable_ = core;
+            }
+        }
+        const QString explicitPath = directory.filePath("explicit-wireguard.conf");
+        const QByteArray explicitConfig = "[Profile]\nVersion = 1\n[AccessKey]\nType = wireguard\n"
+            "PrivateKey = yAnz5TF+lXXJte14tji3zlMNq+hd2rYUIgJBgB3fBmk=\n"
+            "Address = 10.0.0.2/32\nPublicKey = xTIBA5rboUvnH4htodjb6e697QjLERt1NAB4mZqp8Dg=\n"
+            "Endpoint = 203.0.113.1:51820\nAllowedIPs = 0.0.0.0/0\nReserved = 0, 2, 255\n";
+        edit = {};
+        require(ProfileStore::writeConfig(explicitPath, explicitConfig, &error) && window.importProfile(explicitPath)
+            && window.profiles_.size() == 4 && unexpected.isEmpty(), "Core accepts import of standalone explicit WireGuard");
+        const int explicitRow = window.profiles_.size() - 1;
+        require(!window.packetProfile(explicitRow), "Desktop does not offer packet Start for standalone Type=wireguard");
+        window.startupPreparationPending_ = false;
+        window.helloReady_ = true;
+        window.statusNeeded_ = false;
+        window.state_ = "disconnected";
+        require(!window.startProfile(explicitRow) && !window.validationProcess_, "standalone Type=wireguard cannot bypass the Start gate");
+        std::fprintf(stdout, "Reserved: standalone Type=wireguard imports with real Core but has no Desktop Start path.\n");
+        std::fprintf(stdout, "Reserved: real wg://, wireguard:// and .conf import, Save and reopen passed; legacy CLI check %s.\n",
+            legacy.isEmpty() ? "skipped" : "passed");
+    }
+
     // Exercises import/validation and the local Start gates with a real document CLI.
     // The control client has a private, unserved endpoint throughout the test.
     static void wireGuardRouting(const QString &core) {

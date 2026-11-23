@@ -33,6 +33,7 @@ public:
     static const QStringList &amneziaFields();
     static const QString &reservedField();
     QString reservedEditError() const;
+    void setReservedSupported(bool supported);
     static bool secretField(const QString &id);
     // AmneziaWG 3.1 booleans use a Not set / On / Off choice instead of free text.
     static bool choiceField(const QString &id);
@@ -85,6 +86,7 @@ private:
     QMap<QString, QLineEdit *> edits_;
     std::array<QLineEdit *, 3> reservedBytes_{};
     QString loadedReserved_;
+    bool reservedSupported_ = true;
     QFormLayout *mainForm_ = nullptr;
     QMap<QString, QComboBox *> choices_;
     QMap<QString, QWidget *> rows_;          // Field containers, including the problem label.
