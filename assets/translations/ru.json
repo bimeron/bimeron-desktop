@@ -9,6 +9,7 @@
   "Server unavailable · retrying in %1": "Сервер недоступен · повтор через %1",
   "Server unavailable": "Сервер недоступен",
   "Internet access is paused until the VPN connects.": "Интернет приостановлен до подключения VPN.",
+  "Disconnect the VPN, sign in to Wi-Fi in your browser, then connect the VPN again.": "Отключите VPN, войдите в сеть Wi-Fi через браузер и снова подключите VPN.",
   "Couldn't connect. Check your internet connection and access key. Internet access stays paused until you select Disconnect VPN.": "Не удалось подключиться. Проверьте подключение к интернету и ключ доступа. Интернет остаётся приостановленным, пока вы не нажмёте «Отключить VPN».",
   "Retry now": "Повторить сейчас",
   "Disconnect VPN": "Отключить VPN",

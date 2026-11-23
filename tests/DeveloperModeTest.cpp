@@ -805,6 +805,7 @@ int main(int argc, char **argv) {
     ConnectionManagementTest::sharedGeoDataPreparation();
     ConnectionManagementTest::settingsGeoDataChecking();
     ConnectionManagementTest::reconnectProgress();
+    ConnectionManagementTest::captivePortalHint();
     ReconnectPolicyTest::run();
     require(ReconnectPolicyTest::failures == 0, "reconnect policy model");
     CoreUpdatePromptTest::run();
