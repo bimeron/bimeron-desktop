@@ -92,10 +92,14 @@ template<class ReadStatus>
 bool canRetainBundledCore(const std::wstring &path, std::string_view bundledDigest,
                           const SERVICE_STATUS_PROCESS &initial, std::wstring_view uiLevel,
                           ReadStatus readStatus) {
-    if (initial.dwCurrentState == SERVICE_RUNNING) {
-        if (uiLevel == L"2") return canRetainRunningCore(path, bundledDigest, initial, uiLevel, readStatus);
-        if (uiLevel != L"3" && uiLevel != L"4" && uiLevel != L"5") return false;
-    }
-    return matchesPinnedDigest(path, bundledDigest);
+    if (uiLevel == L"3" || uiLevel == L"4" || uiLevel == L"5")
+        return matchesPinnedDigest(path, bundledDigest);
+    if (uiLevel != L"2") return false;
+    if (initial.dwCurrentState == SERVICE_RUNNING)
+        return canRetainRunningCore(path, bundledDigest, initial, uiLevel, readStatus);
+    if (initial.dwCurrentState != SERVICE_STOPPED || initial.dwProcessId) return false;
+    const auto image = openPinnedFile(path, bundledDigest);
+    SERVICE_STATUS_PROCESS current{};
+    return image && readStatus(current) && current.dwCurrentState == SERVICE_STOPPED && !current.dwProcessId;
 }
 }

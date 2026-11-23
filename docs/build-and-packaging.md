@@ -1928,3 +1928,5 @@ Keep hold disabled if any prerequisite fails. A Core rollback is a separate
 service transaction and needs independent active VPN evidence.
 
 Quiet admission of a running bundled or signed-compatible retained Core requires a running SCM process and a locked, hashed executable whose kernel file object matches the process image. The preflight rechecks SCM state, PID and process liveness before admission. Unavailable evidence defers installation.
+
+For quiet bundled admission a stopped service must still be stopped with PID zero after hashing. Transitional states defer. Before WiX runs, CPack verifies the final staged Core against the effective digest compiled into the preflight DLL, including a lab override.

@@ -94,6 +94,18 @@ int main(int argc, char **argv) {
         if (canRetainRunningCore(selfPath, selfHash, live, L"2", stable)) return 45;
     }
     live.dwCurrentState = SERVICE_RUNNING;
+    SERVICE_STATUS_PROCESS stopped{};
+    stopped.dwCurrentState = SERVICE_STOPPED;
+    const auto staysStopped = [&](SERVICE_STATUS_PROCESS &result) { result = stopped; return true; };
+    if (!canRetainBundledCore(selfPath, selfHash, stopped, L"2", staysStopped)
+        || canRetainBundledCore(selfPath, selfHash, stopped, L"2", stable)
+        || canRetainBundledCore(selfPath, selfHash, live, L"2", staysStopped)) return 47;
+    for (const DWORD state : {SERVICE_START_PENDING, SERVICE_STOP_PENDING, SERVICE_PAUSED,
+                              SERVICE_PAUSE_PENDING, SERVICE_CONTINUE_PENDING}) {
+        auto transitional = stopped;
+        transitional.dwCurrentState = state;
+        if (canRetainBundledCore(selfPath, selfHash, transitional, L"2", stable)) return 48;
+    }
     // Replace the name of a hard link to the running image with a byte-identical
     // copy. The configured path and digest stay constant; the file object changes.
     QTemporaryDir links(QFileInfo(self).absolutePath() + "/retained-image-XXXXXX");
