@@ -258,3 +258,7 @@ or ask the user to disconnect and quit first. If automatic state restoration
 or retained-Core compatibility is required but cannot be established, defer
 the upgrade before mutations. Restart Manager and Finish do not prove a same-session restart
 or terminal MSI outcome.
+
+### Windows repair identity deadline
+
+Restore reads a fresh authenticated service hello before consent, after consent, and after verifying the elevated pipe peer. Each read has its own six-second deadline. An incomplete or late proof before elevation stops the repair. After peer verification it prevents the mutating request from being sent. User consent and UAC are outside the hello deadlines. Ordinary status polling keeps its existing timeout.

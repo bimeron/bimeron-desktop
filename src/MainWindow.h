@@ -14,6 +14,7 @@
 #include "NativeIKEv2Actions.h"
 #include "ReconnectPolicy.h"
 
+#include <QDeadlineTimer>
 #include <QElapsedTimer>
 #include <QJsonObject>
 #include <QMainWindow>
@@ -163,7 +164,7 @@ private:
     PinnedRepairImage::Handle pinnedRepairImage_;
     bool repairConsentPending_ = false;
 #ifdef BIMERON_CONTROL_FIXTURE_ENDPOINTS
-    std::function<QJsonObject()> repairHelloTest_;
+    std::function<QJsonObject(QDeadlineTimer &)> repairHelloTest_;
 #endif
 #endif
     void connectRepairSession();

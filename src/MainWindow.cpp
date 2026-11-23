@@ -4005,9 +4005,11 @@ bool MainWindow::reconcileSavedRefusal(const QString &id) {
 
 QJsonObject MainWindow::readRepairIdentity(const QString &expectedInstance) {
     if (expectedInstance.isEmpty() || development_->local() || development_->interruptedCleanupRequired()) return {};
+    constexpr int repairHelloTimeoutMs = 6000;
+    QDeadlineTimer deadline(repairHelloTimeoutMs, Qt::PreciseTimer);
     QJsonObject reply;
 #ifdef BIMERON_CONTROL_FIXTURE_ENDPOINTS
-    if (repairHelloTest_) reply = repairHelloTest_();
+    if (repairHelloTest_) reply = repairHelloTest_(deadline);
     else
 #endif
     {
@@ -4018,8 +4020,9 @@ QJsonObject MainWindow::readRepairIdentity(const QString &expectedInstance) {
             wait.quit();
         });
         connect(&client, &CoreClient::failed, &wait, &QEventLoop::quit);
-        if (client.request("hello", {}, 2000) && client.busy()) wait.exec(QEventLoop::ExcludeUserInputEvents);
+        if (client.request("hello", {}, repairHelloTimeoutMs, Qt::PreciseTimer) && client.busy()) wait.exec(QEventLoop::ExcludeUserInputEvents);
     }
+    if (deadline.hasExpired()) return {};
     const auto status = reply.value("status").toObject();
     if (development_->local() || development_->interruptedCleanupRequired() || !reply.value("error").toString().isEmpty()
         || reply.value("instance") != expectedInstance) return {};

@@ -2833,7 +2833,7 @@ struct ConnectionManagementTest {
         const auto copy = directory.filePath("same-bytes.exe");
         require(QFile::copy(image, copy), "copy fixture image");
         const auto digest = sha.result().toHex();
-        for (const QString mode : {"verified", "changed", "foreign", "extra", "malformed", "ambiguous", "pending", "different-file", "late-running", "late-disruption", "lost"}) {
+        for (const QString mode : {"verified", "changed", "foreign", "extra", "malformed", "ambiguous", "pending", "different-file", "late-running", "late-disruption", "expired-hello", "lost"}) {
             MainWindow window;
             window.core_.cancel();
             for (auto *timer : window.findChildren<QTimer *>()) timer->stop();
@@ -2852,7 +2852,8 @@ struct ConnectionManagementTest {
             QFile replacement(mode == "different-file" ? copy : image);
             require(!replacement.open(QIODevice::ReadWrite), "held broker excludes writable replacement");
             window.serviceCommandProcess_ = reinterpret_cast<quintptr>(GetCurrentProcess());
-            window.repairHelloTest_ = [&] {
+            window.repairHelloTest_ = [&](QDeadlineTimer &deadline) {
+                if (mode == "expired-hello") deadline.setRemainingTime(0);
                 auto observed = identity;
                 if (mode == "changed") observed["generation"] = QString(64, 'c');
                 if (mode == "foreign") observed["owner"] = "developer";
@@ -3029,7 +3030,7 @@ struct ConnectionManagementTest {
         auto incomplete = update;
         incomplete.remove("ResidualProfile");
         const QJsonObject caps{{"kill_switch_update_hold", true}, {"kill_switch_update_resume", true}};
-        const auto exercise = [&](QJsonObject before, QJsonObject after, int version, bool legacy = false) {
+        const auto exercise = [&](QJsonObject before, QJsonObject after, int version, bool legacy = false, int expireRead = 0) {
             MainWindow window;
             window.core_.cancel();
             for (auto *timer : window.findChildren<QTimer *>()) timer->stop();
@@ -3039,8 +3040,10 @@ struct ConnectionManagementTest {
             window.instance_ = QString(32, 'a');
             window.cleanupBlocked_ = true;
             int reads = 0;
-            window.repairHelloTest_ = [&] {
+            window.repairHelloTest_ = [&](QDeadlineTimer &deadline) {
+                require(deadline.remainingTime() > 5000 && deadline.remainingTime() <= 6000, "fresh repair hello has an independent six-second budget");
                 const auto status = ++reads == 1 ? before : after;
+                if (reads == expireRead) deadline.setRemainingTime(0);
                 if (status.isEmpty()) return QJsonObject{};
                 auto capabilities = caps;
                 if (!legacy) capabilities["conditional_recovery_contract"] = 1;
@@ -3063,6 +3066,8 @@ struct ConnectionManagementTest {
 
         };
         exercise(ordinary, ordinary, 3);
+        exercise(ordinary, ordinary, 0, false, 1);
+        exercise(ordinary, ordinary, 0, false, 2);
         exercise(ordinary, ordinary, 0, true);
         exercise(update, update, 2);
         auto withoutSession = update;
