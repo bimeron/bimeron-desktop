@@ -24,9 +24,9 @@ struct CloseHash {
 };
 using HashHandle = std::unique_ptr<void, CloseHash>;
 
-inline FileHandle openPinnedFile(const std::wstring &path, std::string_view expected) {
+inline FileHandle openPinnedFile(const std::wstring &path, std::string_view expected, DWORD access = GENERIC_READ) {
     if (expected.size() != 64) return {};
-    const HANDLE raw = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr,
+    const HANDLE raw = CreateFileW(path.c_str(), access, FILE_SHARE_READ, nullptr,
                                    OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN, nullptr);
     if (raw == INVALID_HANDLE_VALUE) return {};
     FileHandle file(raw);
@@ -64,4 +64,42 @@ inline bool matchesPinnedDigest(const std::wstring &path, std::string_view expec
     return bool(openPinnedFile(path, expected));
 }
 
+// ProcessImageFileMapping compares the kernel image file object with the
+// supplied file handle. Reopening a process image path cannot prove this.
+inline bool processMapsFile(HANDLE process, HANDLE file) {
+    using Query = LONG (NTAPI *)(HANDLE, ULONG, void *, ULONG, ULONG *);
+    const auto query = reinterpret_cast<Query>(GetProcAddress(GetModuleHandleW(L"ntdll.dll"),
+                                                               "NtQueryInformationProcess"));
+    constexpr ULONG processImageFileMapping = 44;
+    return query && query(process, processImageFileMapping, &file, sizeof(file), nullptr) == 0;
+}
+
+template<class ReadStatus>
+bool canRetainRunningCore(const std::wstring &path, std::string_view digest,
+                           const SERVICE_STATUS_PROCESS &initial, std::wstring_view uiLevel,
+                           ReadStatus readStatus) {
+    if (uiLevel != L"2" || initial.dwCurrentState != SERVICE_RUNNING || !initial.dwProcessId) return false;
+    FileHandle process(OpenProcess(PROCESS_QUERY_INFORMATION | SYNCHRONIZE, FALSE, initial.dwProcessId));
+    if (!process) return false;
+    const auto image = openPinnedFile(path, digest, GENERIC_READ | FILE_EXECUTE);
+    if (!image || !processMapsFile(process.get(), image.get())) return false;
+    SERVICE_STATUS_PROCESS current{};
+    return readStatus(current) && current.dwCurrentState == SERVICE_RUNNING
+        && current.dwProcessId == initial.dwProcessId && WaitForSingleObject(process.get(), 0) == WAIT_TIMEOUT;
+}
+
+template<class ReadStatus>
+bool canRetainBundledCore(const std::wstring &path, std::string_view bundledDigest,
+                          const SERVICE_STATUS_PROCESS &initial, std::wstring_view uiLevel,
+                          ReadStatus readStatus) {
+    if (uiLevel == L"3" || uiLevel == L"4" || uiLevel == L"5")
+        return matchesPinnedDigest(path, bundledDigest);
+    if (uiLevel != L"2") return false;
+    if (initial.dwCurrentState == SERVICE_RUNNING)
+        return canRetainRunningCore(path, bundledDigest, initial, uiLevel, readStatus);
+    if (initial.dwCurrentState != SERVICE_STOPPED || initial.dwProcessId) return false;
+    const auto image = openPinnedFile(path, bundledDigest);
+    SERVICE_STATUS_PROCESS current{};
+    return image && readStatus(current) && current.dwCurrentState == SERVICE_STOPPED && !current.dwProcessId;
+}
 }

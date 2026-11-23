@@ -688,8 +688,38 @@ if(WIN32)
     if(BIMERON_MSI_HANDOFF_LAB_RETAINED_CORE_SHA256 AND NOT core_preflight_digest)
         message(FATAL_ERROR "The existing Core lab payload does not match the explicit retained image pin")
     endif()
+    if(core_preflight_digest)
+        configure_file(cmake/verify-msi-core.cmake.in verify-msi-core.cmake @ONLY)
+        list(APPEND CPACK_PRE_BUILD_SCRIPTS "${CMAKE_CURRENT_BINARY_DIR}/verify-msi-core.cmake")
+    endif()
     target_compile_definitions(bimeron-installer-preflight PRIVATE
         BIMERON_INSTALLER_CORE_SHA256="${core_preflight_digest}")
+    set(BIMERON_RETAINED_CORE_ARCHIVE "" CACHE FILEPATH "Reviewed retained Core ZIP beside its signed update manifest")
+    if(BIMERON_RETAINED_CORE_ARCHIVE)
+        if(NOT core_preflight_digest OR NOT BIMERON_CORE_UPDATE_TRUSTED_KEYS
+           OR (NOT BIMERON_CORE_UPDATE_KEYS_PINNED AND NOT BIMERON_LOCAL_UPDATE_TESTING))
+            message(FATAL_ERROR "Retained Core inventory requires a verified bundle and trusted Core release keys")
+        endif()
+        add_executable(retained-core-inventory packaging/windows/retained-core-inventory.cpp)
+        set_target_properties(retained-core-inventory PROPERTIES
+            RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/installer-tools")
+        target_include_directories(retained-core-inventory PRIVATE src)
+        target_link_libraries(retained-core-inventory PRIVATE core-update)
+        target_compile_definitions(retained-core-inventory PRIVATE
+            BIMERON_GUI_VERSION="${PROJECT_VERSION}" BIMERON_INVENTORY_ARCH="${BIMERON_PACKAGE_ARCH}"
+            BIMERON_CORE_UPDATE_PUBLIC_KEYS="${BIMERON_CORE_UPDATE_KEYS_DEFINE}"
+            BIMERON_INVENTORY_ALLOW_BETA=$<BOOL:${BIMERON_LOCAL_UPDATE_TESTING}>)
+        set(inventory_dir "${CMAKE_CURRENT_BINARY_DIR}/installer-inventory/$<CONFIG>")
+        add_custom_target(verify-retained-core
+            COMMAND "${CMAKE_COMMAND}" -E make_directory "${inventory_dir}"
+            COMMAND "${CMAKE_COMMAND}" -E env "PATH=$<TARGET_FILE_DIR:Qt6::Core>"
+                "$<TARGET_FILE:retained-core-inventory>" "${BIMERON_RETAINED_CORE_ARCHIVE}"
+                "${inventory_dir}/retained-core-pin.h"
+            DEPENDS retained-core-inventory VERBATIM)
+        add_dependencies(bimeron-installer-preflight verify-retained-core)
+        target_include_directories(bimeron-installer-preflight PRIVATE "${inventory_dir}")
+        target_compile_definitions(bimeron-installer-preflight PRIVATE BIMERON_HAS_RETAINED_CORE_INVENTORY)
+    endif()
     set_target_properties(bimeron-installer-preflight PROPERTIES
         MSVC_RUNTIME_LIBRARY "MultiThreaded"
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/installer-ca")
