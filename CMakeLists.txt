@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.21)
 set(BIMERON_MSI_HANDOFF_LAB_VERSION "" CACHE STRING "Version for an isolated MSI handoff fixture")
-set(desktop_version 0.3.2)
+set(desktop_version 0.4.0)
 if(BIMERON_MSI_HANDOFF_LAB_VERSION)
     if(NOT BIMERON_LOCAL_UPDATE_TESTING OR NOT BIMERON_MSI_HANDOFF_LAB_EXECUTION
        OR NOT BIMERON_MSI_HANDOFF_LAB_VERSION STREQUAL "0.4.0")
