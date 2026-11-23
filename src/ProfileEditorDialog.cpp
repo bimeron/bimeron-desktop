@@ -1408,7 +1408,9 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
                 tabs_->setCurrentIndex(tabs_->indexOf(wgPage_));
                 previousTab_ = tabs_->indexOf(wgPage_);
                 QMessageBox box(QMessageBox::Information, tr("WG/AWG config"),
-                    tr("Correct the WireGuard fields first: Core could not apply them, so the WG/AWG config cannot show them yet."), QMessageBox::Ok, this);
+                    wgForm_->reservedEditError().isEmpty()
+                        ? tr("Correct the WireGuard fields first: Core could not apply them, so the WG/AWG config cannot show them yet.")
+                        : wgBridgeError_, QMessageBox::Ok, this);
                 box.setObjectName("wireGuardFieldsPending");
                 box.exec();
                 return;
@@ -2760,7 +2762,9 @@ bool shownInEditor(QTabWidget *tabs, QWidget *widget) {
 QWidget *ProfileEditorDialog::problemWidget(const CoreProblem &problem) const {
     if (problem.document == "wireguard") {
         // Collapsed AmneziaWG rows still count: focusProblem expands them.
-        QWidget *widget = wgForm_ ? wgForm_->widget(problem.section + '/' + problem.field) : nullptr;
+        const QString id = problem.section + '/' + problem.field;
+        if (wgForm_ && id == WireGuardForm::reservedField() && !wgForm_->amneziaVersion().isEmpty()) return nullptr;
+        QWidget *widget = wgForm_ ? wgForm_->widget(id) : nullptr;
         const int tab = tabOf(tabs_, widget);
         return widget && tab >= 0 && tabs_->isTabVisible(tab) && tabs_->isTabEnabled(tab) && widget->isEnabled() ? widget : nullptr;
     }
@@ -3108,6 +3112,8 @@ QString ProfileEditorDialog::wireGuardText() const {
         return text;
     }
     if (wgRawOnly_) return wgLoaded_;
+    wgBridgeError_ = wgForm_->reservedEditError();
+    if (!wgBridgeError_.isEmpty()) return wgLoaded_;
     QJsonArray operations;
     const QJsonObject fields = wgInspection_.value("fields").toObject();
     const auto values = wgForm_->values();

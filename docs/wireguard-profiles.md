@@ -139,11 +139,17 @@ A WG/AWG profile shows:
   `H1`-`H4` (values or `lo-hi` ranges), `I1`-`I5`, `S3`, `S4`, `HeaderProtectionKey`,
   `ContentPaddingAddition`, `RekeyAfterTime`, `RekeyTimeout`, `RejectAfterTime`,
   `KeepaliveTimeout`, `MaxHandshakeAttempts`, `RandomTrailers` and `DisableCookies`. Its
-  header shows how many parameters are set. Every field is plain text, so an absent key stays
-  absent; the 3.1 booleans `RandomTrailers` and `DisableCookies` are Not set / On / Off choices
+  header shows how many parameters are set. An absent key stays absent; the 3.1 booleans
+  `RandomTrailers` and `DisableCookies` are Not set / On / Off choices
   (Not set removes the key, On and Off write `1` and `0`; any spelling Core accepts loads, and a
   value Core rejects shows Not set with the problem on the field). A status line below the fields shows Core's validation of the current draft a
   moment after each change.
+- **Reserved** appears below **Keepalive, seconds** and above **AmneziaWG** for plain
+  WireGuard. Tab moves through the three byte inputs in order. Enter three decimal
+  values from 0 to 255, or clear all three inputs to remove `[Peer] Reserved`.
+  Three zeros are a value. Partial input stays in the form and blocks Save and transfer
+  to **WG/AWG config** until completed or cleared. Complete or clear the row before
+  selecting an AmneziaWG version, which hides the row and preserves its contents.
 - **WG/AWG config**: the WG/AWG text, editable.
 - **Bimeron config**: the Bimeron profile (the former Raw config tab; other profiles keep
   the Raw config title and show no WireGuard tabs).
@@ -230,3 +236,14 @@ and set `BIMERON_WIREGUARD_CORE` to the resulting executable. The packaged Core
 has a separate release archive pin in `cmake/core-release.cmake`.
 
 Live connection checks run only on the test VMs. Ordinary Desktop CI does not download Core.
+
+[Desktop #99](https://github.com/bimeron/bimeron-desktop/issues/99) tests Reserved
+with a fake API v1 bridge that returns `Peer/Reserved` in its decoded fields. The test
+covers import, keyboard traversal, partial input, form and raw synchronization, and
+the saved profile pair. It also times repeated draft reads and checks that they
+reuse the cached edit response.
+Set `BIMERON_WIREGUARD_RESERVED_CORE` to a build of Core's `feat/wireguard-reserved-208`
+branch to run the document smoke test (import, inspect, edit, reopen and remove).
+The Reserved capability and service admission rules are tracked in
+[Core #208](https://github.com/bimeron/bimeron-core/issues/208).
+Successful document editing verifies the CLI path. Transport requires a separate check.

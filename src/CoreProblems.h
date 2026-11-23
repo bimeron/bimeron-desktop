@@ -212,6 +212,7 @@ inline QString coreFieldLabel(const CoreProblem &problem) {
         {"WireGuard.Peer.Endpoint", QT_TRANSLATE_NOOP("CoreProblems", "Endpoint")},
         {"WireGuard.Peer.AllowedIPs", QT_TRANSLATE_NOOP("CoreProblems", "AllowedIPs")},
         {"WireGuard.Peer.PersistentKeepalive", QT_TRANSLATE_NOOP("CoreProblems", "Keepalive, seconds")},
+        {"WireGuard.Peer.Reserved", QT_TRANSLATE_NOOP("CoreProblems", "Reserved")},
     };
     const auto label = labels.find(problem.fieldKey());
     if (label != labels.end()) return QCoreApplication::translate("CoreProblems", label.value());
