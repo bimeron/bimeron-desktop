@@ -92,8 +92,8 @@ void elevate(QObject *owner, const QString &file, const QStringList &arguments,
 #endif
 }
 
-DevelopmentCore::DevelopmentCore(QString helper, QObject *parent)
-    : QObject(parent), helper_(std::move(helper)) {
+DevelopmentCore::DevelopmentCore(QString helper, QObject *parent, std::function<bool()> restorePending)
+    : QObject(parent), restorePending_(std::move(restorePending)), helper_(std::move(helper)) {
     readJournal();
     timer_.setInterval(200);
     connect(&timer_, &QTimer::timeout, this, &DevelopmentCore::tick);
@@ -122,6 +122,7 @@ DevelopmentCore::DevelopmentCore(QString helper, QObject *parent)
             }
             stopConfirmed_ = true;
             shutdownSent_ = true;
+            if (blockPendingSwitch()) return;
             control_.request("shutdown", {}, 120000);
         } else if (phase_ == Phase::Stopping && command == "shutdown" &&
                    (response.contains("error") || response.value("status").toObject().value("State").toString() != "disconnected")) {
@@ -143,6 +144,7 @@ DevelopmentCore::~DevelopmentCore() {
 
 void DevelopmentCore::command(const QString &file, const QStringList &arguments, bool elevated, Result result) {
 #ifdef Q_OS_WIN
+    if (elevated && blockPendingSwitch()) return;
     if (elevated && !elevatedProcess()) {
         elevate(this, file, arguments, [this, result](HANDLE handle) {
             if (!handle) { result(-1, tr("Elevation was canceled or failed")); return; }
@@ -203,7 +205,14 @@ void DevelopmentCore::command(const QString &file, const QStringList &arguments,
     });
 }
 
+bool DevelopmentCore::blockPendingSwitch() {
+    if (!restorePending_ || !restorePending_()) return false;
+    finish(false, tr("A pending Restore must be resolved before switching cores."));
+    return true;
+}
+
 void DevelopmentCore::select(const QString &path) {
+    if (blockPendingSwitch()) return;
     if (busy_) return;
     if (interruptedRecovery_) {
         if (path.isEmpty()) recoverInterrupted();
@@ -240,7 +249,9 @@ void DevelopmentCore::select(const QString &path) {
 }
 
 void DevelopmentCore::prepare() {
+    if (blockPendingSwitch()) return;
     command(helper_, {"service", "status"}, false, [this](int code, const QString &output) {
+        if (blockPendingSwitch()) return;
         const QString state = output.section(':', 1).trimmed();
         if (code != 0 && !output.contains("not installed", Qt::CaseInsensitive)) {
             finish(false, tr("Cannot determine the system service state"));
@@ -275,6 +286,7 @@ void DevelopmentCore::prepare() {
 }
 
 void DevelopmentCore::launch() {
+    if (blockPendingSwitch()) return;
     if (!writeJournal("launching")) { finish(false, recoveryDiagnostic_); return; }
     path_ = requestedPath_;
     const auto started = [this] {
@@ -351,6 +363,7 @@ void DevelopmentCore::releaseProcess() {
 }
 
 void DevelopmentCore::stopOrphan(bool force) {
+    if (blockPendingSwitch()) return;
 #ifdef Q_OS_WIN
     if (busy_ || !orphanAvailable_ || endpoint_.isEmpty() || path_.isEmpty()) return;
     busy_ = true;
@@ -378,6 +391,7 @@ void DevelopmentCore::stopOrphan(bool force) {
             if (handle) CloseHandle(handle);
             fail(); return;
         }
+        if (blockPendingSwitch()) { CloseHandle(handle); socket->deleteLater(); return; }
         if (force) {
             const bool stopped = TerminateProcess(handle, 1);
             CloseHandle(handle);
@@ -407,6 +421,7 @@ void DevelopmentCore::stopOrphan(bool force) {
 }
 
 void DevelopmentCore::shutdown() {
+    if (blockPendingSwitch()) return;
     if (path_.isEmpty() && !restoreService_) { finish(true, tr("System service")); return; }
     if (!processRunning()) { verifyExit(); return; }
     if (endpoint_.isEmpty() || processId_ <= 0) {
@@ -438,6 +453,7 @@ void DevelopmentCore::tick() {
         if (deadline_.elapsed() > 120000) {
             finish(false, tr("Local core cleanup timed out; retry returning to the system service"));
         } else if (!shutdownSent_ && !control_.busy()) {
+            if (blockPendingSwitch()) return;
             control_.request("stop", {}, 120000);
         }
     }
@@ -528,6 +544,7 @@ void DevelopmentCore::confirmServiceStarted(int attempts) {
 }
 
 void DevelopmentCore::completeRestore() {
+    if (blockPendingSwitch()) return;
     if (!clearJournal()) { finish(false, recoveryDiagnostic_); return; }
     restoreService_ = false;
     if (!requestedPath_.isEmpty()) prepare();
@@ -617,6 +634,10 @@ bool DevelopmentCore::clearJournal() {
 
 void DevelopmentCore::recoverInterrupted() {
     if (!interruptedRecovery_ || busy_) return;
+#ifdef Q_OS_WIN
+    finish(false, tr("Recovery required. The interrupted developer backend has no verified clean exit."));
+    return;
+#endif
     busy_ = true;
     failed_ = false;
     requestedPath_.clear();
@@ -728,6 +749,10 @@ void DevelopmentCore::reconcileLinuxService(qint64 pid, const QString &endpoint,
 
 void DevelopmentCore::recoverInterruptedNetwork() {
     if (!interruptedRecovery_ || busy_) return;
+#ifdef Q_OS_WIN
+    finish(false, tr("Recovery required. The interrupted developer backend has no verified clean exit."));
+    return;
+#endif
     busy_ = true;
     status_ = tr("Emergency network recovery");
     emit changed();

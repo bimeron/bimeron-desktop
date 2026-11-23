@@ -1,4 +1,6 @@
 #pragma once
+#include <QStandardPaths>
+#include "GuardedRestore.h"
 #include "GeoSitePicker.h"
 
 #include <QListWidget>
@@ -2731,7 +2733,373 @@ struct ConnectionManagementTest {
         require(!window.importProfile(source) && dialogs == 1 && window.profiles_.size() == 1,
             "GUI rejects invalid UTF-8 before validation/storage");
     }
+#ifdef BIMERON_RESTORE_TARGET_SHA256
+    static void guardedRepairTerminal() {
+        const QString id(32, 'a');
+        const QString newer(32, 'b');
+        const QString path = QDir(QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation))
+                                 .filePath("restore-operation.ini");
+        const QJsonObject refusal{{"version", 2}, {"operation_id", id}, {"done", true}, {"stage", "inspect"},
+                                 {"outcome", "unknown"}, {"current_state", "unavailable"}, {"code", "proof_unavailable"}};
+        const auto exercise = [&](QJsonObject event, bool peerVerified, bool published, bool superseded, bool clear) {
+            MainWindow window;
+            for (auto *timer : window.findChildren<QTimer *>()) timer->stop();
+            window.core_.cancel();
+            QSettings journal(path, QSettings::IniFormat);
+            const QString expected = superseded ? newer : id;
+            journal.setValue("operation", expected);
+            journal.sync();
+            QLocalServer server;
+            const QString endpoint = "repair-terminal-" + QUuid::createUuid().toString(QUuid::Id128);
+            require(server.listen(endpoint), "private guarded repair fixture");
+            window.repairSocket_ = new QLocalSocket(&window);
+            window.repairSocket_->connectToServer(endpoint);
+            require(waitFor([&] { return server.hasPendingConnections(); }), "guarded repair socket connected");
+            auto *writer = server.nextPendingConnection();
+            window.guardedRestoreRequest_ = {{"operation_id", id}};
+            window.repairSocket_->setProperty("authenticated", peerVerified);
+            window.repairSocket_->setProperty("dispatchedId", id);
+            const auto deliver = [&](const QJsonObject &message) {
+                const auto bytes = QJsonDocument(message).toJson(QJsonDocument::Compact) + '\n';
+                writer->write(bytes);
+                writer->flush();
+                require(waitFor([&] { return window.repairSocket_->bytesAvailable() >= bytes.size(); }),
+                        "guarded repair event delivered");
+                window.readRepairSession();
+            };
+            if (published) deliver({{"version", 2}, {"operation_id", id}, {"done", false}, {"stage", "replace"}});
+            if (!event.isEmpty()) deliver(event);
+            writer->disconnectFromServer();
+            window.readRepairSession();
+            journal.sync();
+            require(journal.value("operation").toString() == (clear ? QString{} : expected),
+                    "only a fresh authenticated pre-intent refusal releases the matching disk record");
+            journal.remove("operation");
+            journal.sync();
+        };
+        exercise(refusal, true, false, false, true);
+        exercise(refusal, false, false, false, false);
+        exercise({}, true, false, false, false);
+        exercise({}, true, true, false, false);
+        exercise(refusal, true, true, false, false);
+        exercise(refusal, true, false, true, false);
+        auto wrong = refusal;
+        wrong["operation_id"] = newer;
+        exercise(wrong, true, false, false, false);
+        wrong = refusal;
+        wrong["stage"] = "replace";
+        exercise(wrong, true, false, false, false);
+    }
+    static void contendedRepairRefusal() {
+        const QString id(32, 'd'), newer(32, 'e');
+        const auto path = QDir(QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation))
+                              .filePath("restore-operation.ini");
+        const QJsonObject refusal{{"version", 2}, {"operation_id", id}, {"stage", "inspect"}, {"done", true},
+                                 {"outcome", "unknown"}, {"current_state", "unavailable"}, {"code", "proof_unavailable"}};
+        QSettings journal(path, QSettings::IniFormat);
+        for (bool supersede : {false, true}) {
+            MainWindow first;
+            journal.setValue("operation", id);
+            journal.sync();
+            QLockFile busy(path + ".claim");
+            require(busy.tryLock(), "hold repair journal lock");
+            require(GuardedRestore::saveRefusal(path, refusal, id, true) && first.reconcileSavedRefusal(id),
+                    "refusal survives contended cleanup");
+            require(journal.value("operation") == id, "contended pending stays on disk");
+            MainWindow restarted;
+            if (supersede) { journal.setValue("operation", newer); journal.sync(); }
+            busy.unlock();
+            require(waitFor([&] {
+                journal.sync();
+                return !GuardedRestore::hasRefusal(path, id)
+                    && journal.value("operation").toString() == (supersede ? newer : QString{});
+            }) && !restarted.repairMutationWrites_ && !first.repairMutationWrites_,
+                    "cleanup after restart is conditional and never dispatches");
+            journal.remove("operation");
+            journal.sync();
+        }
+    }
+    static void conditionalRepairPipe() {
+        const QString instance(32, 'a');
+        const QString generation(64, 'b');
+        const QJsonObject identity{{"owner", "system"}, {"instance", instance}, {"generation", generation}};
+        const auto image = QCoreApplication::applicationFilePath();
+        QFile self(image);
+        require(self.open(QIODevice::ReadOnly), "read broker fixture executable");
+        QCryptographicHash sha(QCryptographicHash::Sha256);
+        require(sha.addData(&self), "hash broker fixture");
+        self.close();
+        QTemporaryDir directory;
+        const auto copy = directory.filePath("same-bytes.exe");
+        require(QFile::copy(image, copy), "copy fixture image");
+        const auto digest = sha.result().toHex();
+        for (const QString mode : {"verified", "changed", "foreign", "extra", "malformed", "ambiguous", "pending", "different-file", "late-running", "late-disruption", "expired-hello", "lost"}) {
+            MainWindow window;
+            window.core_.cancel();
+            for (auto *timer : window.findChildren<QTimer *>()) timer->stop();
+            window.repairNonce_ = QUuid::createUuid().toString(QUuid::Id128);
+            QLocalServer pipe;
+            require(pipe.listen("Bimeron.Repair." + window.repairNonce_), "private broker pipe");
+            window.repairSession_ = true;
+            window.approvedRepairIdentity_ = {{"instance", instance}, {"recovery_identity", identity}};
+            if (mode == "late-running" || mode == "late-disruption") {
+                window.approvedRepairIdentity_ = {};
+                window.repairDisruption_ = mode == "late-disruption";
+                window.serviceObservation_ = MainWindow::ServiceObservation::Running;
+            }
+            window.pinnedRepairImage_ = PinnedRepairImage::open(mode == "different-file" ? copy : image, digest);
+            require(bool(window.pinnedRepairImage_), "retain exact file handle");
+            QFile replacement(mode == "different-file" ? copy : image);
+            require(!replacement.open(QIODevice::ReadWrite), "held broker excludes writable replacement");
+            window.serviceCommandProcess_ = reinterpret_cast<quintptr>(GetCurrentProcess());
+            window.repairHelloTest_ = [&](QDeadlineTimer &deadline) {
+                if (mode == "expired-hello") deadline.setRemainingTime(0);
+                auto observed = identity;
+                if (mode == "changed") observed["generation"] = QString(64, 'c');
+                if (mode == "foreign") observed["owner"] = "developer";
+                if (mode == "extra") observed["unrecognized"] = true;
+                if (mode == "malformed") observed["generation"] = "short";
+                QJsonObject hello{{"instance", instance}, {"capabilities", QJsonObject{{"conditional_recovery_contract", 1}}}};
+                if (mode != "ambiguous") hello["recovery_identity"] = observed;
+                return hello;
+            };
+            QSettings journal(QDir(QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation))
+                .filePath("restore-operation.ini"), QSettings::IniFormat);
+            if (mode == "pending") { journal.setValue("operation", QString(32, 'c')); journal.sync(); }
+            window.connectRepairSession();
+            require(waitFor([&] { return pipe.hasPendingConnections(); }), "real pipe peer connected");
+            auto *peer = pipe.nextPendingConnection();
+            if (mode == "verified" || mode == "lost") {
+                require(waitFor([&] { return peer->canReadLine(); }), "broker received the approved request");
+                const auto wire = QJsonDocument::fromJson(peer->readLine()).object();
+                require(wire == QJsonObject{{"version", 3}, {"command", "conditional_recovery"}, {"recovery_identity", identity}}
+                    && window.repairMutationWrites_ == 1, "one exact conditional recovery send");
+                if (mode == "verified") {
+                    peer->write("{\"version\":3,\"done\":true,\"ok\":true,\"disposition\":\"recovered\"}\n");
+                    peer->flush();
+                    require(waitFor([&] { return window.repairSessionDone_ && window.repairSessionOK_; }), "verified terminal");
+                } else {
+                    peer->abort();
+                    window.finishServiceCommand(1);
+                    require(window.repairFailure_.contains("unknown"), "lost terminal stays unknown");
+                }
+            } else {
+                require(waitFor([&] { return !window.repairFailure_.isEmpty(); }) && !peer->bytesAvailable()
+                        && !window.repairMutationWrites_, "unproven peer or changed identity sends nothing");
+            }
+            if (mode == "pending") { journal.remove("operation"); journal.sync(); }
+            window.serviceCommandProcess_ = 0;
+        }
+    }
+    static void pendingRepairTransport() {
+        QLocalServer server;
+        const auto endpoint = "restore-query-" + QUuid::createUuid().toString(QUuid::Id128);
+        const QString id(32, 'b');
+        const QString path = QDir(QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation))
+                                 .filePath("restore-operation.ini");
+        QSettings journal(path, QSettings::IniFormat);
+        journal.setValue("operation", id);
+        journal.sync();
+        qputenv("BIMERON_TEST_RESTORE_ENDPOINT", endpoint.toUtf8());
+        const auto checkStartup = [&](MainWindow &window) {
+            if (!window.developmentApply_) window.pages_->addWidget(window.developmentPage());
+            window.developmentBackend_->setCurrentIndex(1);
+            window.developmentPath_->setText("pending-selection");
+            window.developmentApply_->click();
+            require(window.development_->requestedPath_.isEmpty() && !window.development_->busy(),
+                    "Development Apply preserves query-only after unknown");
+            int starts = 0;
+            window.startupPreparationPending_ = true;
+            window.startupIpcChecked_ = true;
+            window.serviceObservation_ = MainWindow::ServiceObservation::Stopped;
+            window.availabilityFailure_ = CoreClient::Failure::Transport;
+            window.advanceStartupPreparation([&] { ++starts; });
+            window.poll();
+            window.startupPreparationPending_ = false;
+            window.helloReady_ = true;
+            window.statusNeeded_ = false;
+            window.autoConnectAttempted_ = false;
+            window.handleReply("status", {{"instance", "fixture"}, {"status", QJsonObject{{"State", "disconnected"}}}});
+            require(!window.autoConnectAttempted_ && !starts && !window.startupStartAttempted_ && window.controlBlocked()
+                && !window.startProfile(0) && window.pendingRestoreId_ == id,
+                "pending outcome fences normal service and profile startup after reconciliation");
+        };
+        {
+            MainWindow offline;
+            checkStartup(offline);
+            require(offline.guardedRestoreRequest_.isEmpty() && journal.value("operation").toString() == id,
+                    "synchronous missing endpoint preserves pending");
+        }
+        require(server.listen(endpoint), "restore query private transport");
+        QStringList commands;
+        QObject::connect(&server, &QLocalServer::newConnection, &server, [&] {
+            auto *socket = server.nextPendingConnection();
+            QObject::connect(socket, &QLocalSocket::readyRead, socket, [&, socket] {
+                if (!socket->canReadLine()) return;
+                const auto request = QJsonDocument::fromJson(socket->readLine()).object();
+                const auto command = request.value("command").toString();
+                commands.append(command);
+                QJsonObject reply{{"version", 1}, {"id", request.value("id")}, {"instance", "fixture"}};
+                if (command == "hello") reply["capabilities"] = QJsonObject{{"guarded_restore_contract", 1}};
+                else {
+                    require(command == "query_restore" && request.value("operation_id") == id, "only query exact pending ID");
+                    reply["error"] = "unknown";
+                }
+                socket->write(QJsonDocument(reply).toJson(QJsonDocument::Compact) + '\n');
+            });
+        });
+        {
+            MainWindow restarted;
+            require(waitFor([&] { return commands.size() == 2 && restarted.guardedRestoreRequest_.isEmpty(); }),
+                    "asynchronous unknown finished");
+            checkStartup(restarted);
+            journal.sync();
+            require(commands == QStringList{"hello", "query_restore"} && journal.value("operation").toString() == id,
+                    "restart reconciles without mutation");
+        }
+        journal.remove("operation");
+        journal.sync();
+        {
+            MainWindow window;
+            if (!window.developmentApply_) window.pages_->addWidget(window.developmentPage());
+            window.developmentBackend_->setCurrentIndex(1);
+            window.developmentPath_->setText("after-consent");
+            QTimer::singleShot(0, &window, [&] {
+                auto *box = qobject_cast<QMessageBox *>(QApplication::activeModalWidget());
+                require(box != nullptr, "Development Apply opened confirmation");
+                journal.setValue("operation", id);
+                journal.sync();
+                box->button(QMessageBox::Yes)->click();
+            });
+            window.developmentApply_->click();
+            require(window.development_->requestedPath_.isEmpty() && window.pendingRestoreId_ == id
+                    && window.development_->status().contains("pending Restore"),
+                    "pending recorded during consent blocks actual selection");
+            journal.remove("operation");
+            journal.sync();
+        }
+        {
+            const QByteArray record = R"({"version":1,"transition":"fc012213-cbd7-484c-9677-593967bce143","stage":"cleanup-confirmed","originalServiceState":"running"})";
+            QFile file(DevelopmentCore::recoveryJournalPath());
+            require(file.open(QIODevice::WriteOnly | QIODevice::NewOnly) && file.write(record) == record.size(),
+                    "create interrupted developer fixture");
+            file.close();
+            MainWindow window;
+            if (!window.developmentApply_) window.pages_->addWidget(window.developmentPage());
+            window.developmentBackend_->setCurrentIndex(0);
+            window.developmentApply_->click();
+            require(window.development_->interruptedRecovery() && !window.development_->busy()
+                    && !window.development_->restoreService_ && window.development_->status().contains("no verified clean exit")
+                    && file.open(QIODevice::ReadOnly) && file.readAll() == record,
+                    "System service Apply preserves untrusted cleanup record and cannot start service");
+            file.close();
+            require(file.remove(), "remove test recovery record");
+        }
+        qunsetenv("BIMERON_TEST_RESTORE_ENDPOINT");
+    }
+    static void unsuitableDisruptiveRepair() {
+        for (bool interrupted : {false, true}) {
+            MainWindow window;
+            window.core_.cancel();
+            for (auto *timer : window.findChildren<QTimer *>()) timer->stop();
+            window.startupPreparationPending_ = false;
+            window.serviceObservation_ = MainWindow::ServiceObservation::Running;
+            window.development_->interruptedRecovery_ = interrupted;
+            window.development_->interruptedCleanupNeeded_ = interrupted;
+            int launches = 0;
+            window.repairCommandTest_ = [&](const QStringList &) { ++launches; };
+            window.updateCoreAvailability();
+            window.settingsRetry_->click();
+            require(!launches && !window.repairSession_ && !window.repairFailure_.isEmpty(),
+                    "visible Restore refuses unguarded disruption");
+            if (interrupted) require(window.development_->interruptedRecovery()
+                && window.repairFindings_->text().contains("no verified clean exit"),
+                "developer diagnostic preserves unknown ownership");
+        }
+    }
+    static void guardedRepairRouting() {
+        const QString digest(64, 'a');
+        const QJsonObject ordinary{{"State", "failed"}, {"Session", QJsonObject{{"active", false}}},
+            {"LastError", "cleanup_failed_run_recover"}, {"KillSwitch", "residual"}};
+        auto update = ordinary;
+        update["ResidualReason"] = "update";
+        update["ResidualProfile"] = digest;
+        update["ResidualGeneration"] = digest;
+        auto changed = update;
+        changed["ResidualGeneration"] = QString(64, 'b');
+        auto incomplete = update;
+        incomplete.remove("ResidualProfile");
+        const QJsonObject caps{{"kill_switch_update_hold", true}, {"kill_switch_update_resume", true}};
+        const auto exercise = [&](QJsonObject before, QJsonObject after, int version, bool legacy = false, int expireRead = 0) {
+            MainWindow window;
+            window.core_.cancel();
+            for (auto *timer : window.findChildren<QTimer *>()) timer->stop();
+            window.startupPreparationPending_ = false;
+            window.helloReady_ = true;
+            window.statusNeeded_ = false;
+            window.instance_ = QString(32, 'a');
+            window.cleanupBlocked_ = true;
+            int reads = 0;
+            window.repairHelloTest_ = [&](QDeadlineTimer &deadline) {
+                require(deadline.remainingTime() > 5000 && deadline.remainingTime() <= 6000, "fresh repair hello has an independent six-second budget");
+                const auto status = ++reads == 1 ? before : after;
+                if (reads == expireRead) deadline.setRemainingTime(0);
+                if (status.isEmpty()) return QJsonObject{};
+                auto capabilities = caps;
+                if (!legacy) capabilities["conditional_recovery_contract"] = 1;
+                QJsonObject reply{{"instance", window.instance_}, {"capabilities", capabilities}, {"status", status}};
+                if (!legacy && !status.contains("ResidualReason"))
+                    reply["recovery_identity"] = QJsonObject{{"owner", "system"}, {"instance", window.instance_}, {"generation", digest}};
+                return reply;
+            };
+            QJsonObject sent;
+            window.repairCommandTest_ = [&](const QStringList &) { sent = window.repairRequest(); };
+            QTimer::singleShot(0, &window, [] {
+                if (auto *box = qobject_cast<QMessageBox *>(QApplication::activeModalWidget()))
+                    box->button(QMessageBox::Yes)->click();
+            });
+            window.startRepairSession();
+            require(sent.value("version").toInt() == version, "Restore selects the expected wire request");
+            if (version == 2) require(sent.value("filter_generation") == digest, "guard binds accepted generation");
+            if (version == 3) require(sent.size() == 3 && sent.value("command") == QJsonValue("conditional_recovery")
+                && sent.value("recovery_identity").toObject().value("generation") == digest, "conditional recovery token");
+
+        };
+        exercise(ordinary, ordinary, 3);
+        exercise(ordinary, ordinary, 0, false, 1);
+        exercise(ordinary, ordinary, 0, false, 2);
+        exercise(ordinary, ordinary, 0, true);
+        exercise(update, update, 2);
+        auto withoutSession = update;
+        withoutSession.remove("Session");
+        exercise(withoutSession, withoutSession, 2);
+        for (const QJsonValue bad : {QJsonValue(QJsonObject{}), QJsonValue(QJsonObject{{"active", "false"}}),
+                                     QJsonValue(QJsonObject{{"active", true}}), QJsonValue("invalid")}) {
+            auto malformed = update;
+            malformed["Session"] = bad;
+            exercise(malformed, malformed, 0);
+        }
+        exercise(update, changed, 0);
+        exercise(ordinary, update, 0);
+        exercise(update, ordinary, 0);
+        exercise(incomplete, incomplete, 0);
+        auto orphan = update;
+        orphan.remove("ResidualReason");
+        exercise(orphan, orphan, 0);
+        exercise({}, ordinary, 0);
+        exercise(update, {}, 0);
+
+    }
+#endif
     static void run() {
+#ifdef BIMERON_RESTORE_TARGET_SHA256
+        contendedRepairRefusal();
+        conditionalRepairPipe();
+        pendingRepairTransport();
+        unsuitableDisruptiveRepair();
+        guardedRepairRouting();
+        guardedRepairTerminal();
+#endif
         const QString wireGuardCore = qEnvironmentVariable("BIMERON_WIREGUARD_CORE");
         if (!wireGuardCore.isEmpty()) wireGuardRouting(wireGuardCore);
         bomImport();
@@ -2856,6 +3224,15 @@ struct ConnectionManagementTest {
                 consentPeer->flush();
                 require(waitFor([&] { return window.repairSocket_->bytesAvailable() > 0; }), "consent event arrives");
                 window.readRepairSession();
+#ifdef Q_OS_WIN
+                if (kind == "network-recovery" || kind == "disruption") {
+                    require(!window.repairConsentDialog_ && waitFor([&] { return consentPeer->canReadLine(); }),
+                            "legacy Windows cleanup challenge denied without consent prompt");
+                    const auto denial = QJsonDocument::fromJson(consentPeer->readLine()).object();
+                    require(denial == QJsonObject{{"consent", kind}, {"approved", false}}, "no v1 fallback");
+                    continue;
+                }
+#endif
                 require(window.repairConsentDialog_ && window.repairSession_ && launches == consentLaunches,
                     "fresh consent stays inside the original elevated session");
                 require(!window.requestRepairConsent(kind), "duplicate or overlapping challenge rejected");

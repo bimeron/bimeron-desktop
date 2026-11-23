@@ -10,7 +10,8 @@
 class DevelopmentCore final : public QObject {
     Q_OBJECT
 public:
-    explicit DevelopmentCore(QString helper, QObject *parent = nullptr);
+    explicit DevelopmentCore(QString helper, QObject *parent = nullptr,
+        std::function<bool()> restorePending = {});
     ~DevelopmentCore() override;
     bool busy() const { return busy_; }
     bool local() const { return !path_.isEmpty(); }
@@ -74,6 +75,8 @@ private:
     void reconcileLinuxService(qint64 pid, const QString &endpoint = CoreClient::systemEndpoint(),
         std::function<void(std::function<void(qint64)>)> query = {});
     void queryLinuxService(std::function<void(qint64)> result);
+    bool blockPendingSwitch();
+    std::function<bool()> restorePending_;
     QString helper_;
     QString path_;
     QString requestedPath_;

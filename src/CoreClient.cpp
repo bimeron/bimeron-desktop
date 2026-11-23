@@ -51,7 +51,7 @@ void CoreClient::setEndpoint(const QString &endpoint, qint64 expectedProcess) {
     expectedProcess_ = expectedProcess;
 }
 
-bool CoreClient::request(const QString &command, const QJsonObject &arguments, int timeoutMs) {
+bool CoreClient::request(const QString &command, const QJsonObject &arguments, int timeoutMs, std::optional<Qt::TimerType> timerType) {
     if (socket_)
         return false;
     command_ = command;
@@ -108,10 +108,12 @@ bool CoreClient::request(const QString &command, const QJsonObject &arguments, i
                         error == QLocalSocket::SocketAccessError ? Failure::AccessDenied : Failure::Transport);
     });
     const QString requestId = requestId_;
-    QTimer::singleShot(timeoutMs, this, [this, current, requestId] {
+    const auto timeout = [this, current, requestId] {
         if (socket_ == current && requestId_ == requestId)
             finishError(tr("Core did not respond in time"), Failure::Timeout);
-    });
+    };
+    if (timerType) QTimer::singleShot(timeoutMs, *timerType, this, timeout);
+    else QTimer::singleShot(timeoutMs, this, timeout);
     connectVerified(current, payload, timeoutMs);
     return true;
 }

@@ -5,6 +5,7 @@
 #include <QJsonObject>
 #include <QLocalSocket>
 #include <QObject>
+#include <optional>
 
 class CoreClient final : public QObject {
     Q_OBJECT
@@ -21,7 +22,8 @@ public:
     static QString systemEndpoint();
     void setEndpoint(const QString &endpoint = {}, qint64 expectedProcess = 0);
     void cancel() { setEndpoint(endpoint_, expectedProcess_); }
-    bool request(const QString &command, const QJsonObject &arguments = {}, int timeoutMs = 5000);
+    bool request(const QString &command, const QJsonObject &arguments = {}, int timeoutMs = 5000,
+                 std::optional<Qt::TimerType> timerType = std::nullopt);
 #ifdef BIMERON_CONTROL_FIXTURE_ENDPOINTS
     // Applies a production identity policy to a fixture endpoint.
     void setIdentityPolicyForTesting(ControlServerIdentity::Endpoint policy) { testPolicy_ = policy; }

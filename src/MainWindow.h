@@ -1,6 +1,9 @@
 #pragma once
 
 #include <QHash>
+#ifdef Q_OS_WIN
+#include "PinnedRepairImage.h"
+#endif
 
 #include "CoreClient.h"
 #include "CoreProblems.h"
@@ -11,6 +14,7 @@
 #include "NativeIKEv2Actions.h"
 #include "ReconnectPolicy.h"
 
+#include <QDeadlineTimer>
 #include <QElapsedTimer>
 #include <QJsonObject>
 #include <QMainWindow>
@@ -149,6 +153,20 @@ private:
     void updateCoreAvailability();
     void openCoreManagement();
     void startRepairSession();
+    QJsonObject repairRequest() const;
+#ifdef Q_OS_WIN
+    QJsonObject readRepairIdentity(const QString &expectedInstance);
+    QJsonObject approvedRepairIdentity_;
+    int repairMutationWrites_ = 0;
+    bool reconcileSavedRefusal(const QString &id);
+    QString refusalRetryId_;
+    void reloadPendingRestore();
+    PinnedRepairImage::Handle pinnedRepairImage_;
+    bool repairConsentPending_ = false;
+#ifdef BIMERON_CONTROL_FIXTURE_ENDPOINTS
+    std::function<QJsonObject(QDeadlineTimer &)> repairHelloTest_;
+#endif
+#endif
     void connectRepairSession();
     void readRepairSession();
     bool requestRepairConsent(const QString &kind);
@@ -156,6 +174,9 @@ private:
     QSet<QString> repairConsentRequests_;
     QLocalSocket *repairSocket_ = nullptr;
     QString repairNonce_;
+    QString pendingRestoreId_;
+    QJsonObject guardedRestoreRequest_;
+    void queryGuardedRestore(const QString &operationId);
     QByteArray repairInput_;
     bool repairSession_ = false;
     bool repairSessionDone_ = false;
