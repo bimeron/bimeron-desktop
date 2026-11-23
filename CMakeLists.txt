@@ -190,6 +190,7 @@ if(BUILD_TESTING)
         BIMERON_GUI_VERSION="${PROJECT_VERSION}"
         BIMERON_CORE_UPDATE_PUBLIC_KEYS="")
     if(WIN32)
+        add_test(NAME pending-restore-startup-test COMMAND developer-mode-test --pending-restore-startup)
         # Guarded request routing is exercised with inert fixture identities.
         target_compile_definitions(developer-mode-test PRIVATE
             BIMERON_RESTORE_TARGET_SHA256="fixture-target"

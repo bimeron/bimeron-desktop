@@ -408,6 +408,9 @@ MainWindow::~MainWindow() {
 }
 
 MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), core_(this) {
+#ifdef Q_OS_WIN
+    reloadPendingRestore();
+#endif
     developerMode_ = QCoreApplication::arguments().contains("--development")
         && QCoreApplication::arguments().contains("--restart")
         && !QCoreApplication::arguments().contains("--autostart");
@@ -561,7 +564,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), core_(this) {
     connect(&core_, &CoreClient::replied, this, &MainWindow::handleReply);
     connect(&core_, &CoreClient::failed, this, &MainWindow::connectionFailure);
     pollClock_.start();
-    startupPreparationPending_ = !developerMode_ && !QCoreApplication::arguments().contains("--visual-check");
+    startupPreparationPending_ = pendingRestoreId_.isEmpty() && !developerMode_ && !QCoreApplication::arguments().contains("--visual-check");
     startupDeadline_ = 30000;
     auto *pollTimer = new QTimer(this);
     pollTimer->setInterval(250);
@@ -2445,7 +2448,7 @@ void MainWindow::showNativeSnapshot(const NativeIKEv2Session::Snapshot &snapshot
 }
 
 bool MainWindow::controlBlocked() const {
-    return nativeOwnerBlocked_ || startupPreparationPending_ || manualStartInspection_ || development_->busy() || development_->failed() || coreUpdateCommand_
+    return !pendingRestoreId_.isEmpty() || nativeOwnerBlocked_ || startupPreparationPending_ || manualStartInspection_ || development_->busy() || development_->failed() || coreUpdateCommand_
         || coreUpdateAwaitingResult_ || serviceCommandProcess_ || linuxServiceProcess_ || repairSession_ || quitRequested_;
 }
 
@@ -2776,6 +2779,7 @@ bool MainWindow::startProfile(int row, QJsonObject resume) {
 }
 
 void MainWindow::poll() {
+    if (!pendingRestoreId_.isEmpty()) return;
     advanceStartupPreparation();
     updateCoreAvailability();
     if (!helloReady_ && pollClock_.elapsed() >= nextServiceInspection_) {
@@ -2887,7 +2891,7 @@ void MainWindow::poll() {
 }
 
 void MainWindow::handleReply(const QString &command, const QJsonObject &response) {
-    if (nativeOwnerBlocked_) return;
+    if (nativeOwnerBlocked_ || !pendingRestoreId_.isEmpty()) return;
     const bool wasReady = helloReady_ && !statusNeeded_ && operation_.isEmpty();
     const QString previousSession = sessionId_;
     const QString newInstance = response.value("instance").toString();
@@ -3965,12 +3969,19 @@ void MainWindow::offerCoreUpdate() {
 }
 
 #ifdef Q_OS_WIN
+void MainWindow::reloadPendingRestore() {
+    QSettings journal(restoreJournalPath(), QSettings::IniFormat);
+    pendingRestoreId_ = journal.value("operation").toString();
+    if (journal.status() != QSettings::NoError) pendingRestoreId_ = "unreadable";
+}
+
 bool MainWindow::reconcileSavedRefusal(const QString &id) {
     const QString path = restoreJournalPath();
     if (!GuardedRestore::hasRefusal(path, id)) return false;
     QSettings journal(path, QSettings::IniFormat);
     const auto current = journal.value("operation").toString();
     if (GuardedRestore::changePending(path, id, {}) || (journal.status() == QSettings::NoError && current != id)) {
+        reloadPendingRestore();
         QFile::remove(GuardedRestore::refusalPath(path, id));
         return true;
     }
@@ -4043,7 +4054,7 @@ void MainWindow::startRepairSession() {
 #endif
     if (QCoreApplication::arguments().contains("--visual-check") && !repairCommandTest_) return;
     updateCoreAvailability();
-    if (!settingsRetry_->isEnabled() || repairSession_ || !guardedRestoreRequest_.isEmpty()) return;
+    if (repairSession_ || !guardedRestoreRequest_.isEmpty()) return;
 #ifdef Q_OS_WIN
     const QString pending = QSettings(restoreJournalPath(), QSettings::IniFormat).value("operation").toString();
     if (!pending.isEmpty()) {
@@ -4051,6 +4062,17 @@ void MainWindow::startRepairSession() {
         return;
     }
 #endif
+#ifdef Q_OS_WIN
+    if (development_->interruptedRecovery()) {
+        repairFailure_ = tr("Recovery required. The interrupted developer backend has no verified clean exit.");
+        repairHistory_.append(repairFailure_);
+        appendLog(repairFailure_);
+        updateCoreAvailability();
+        if (repairFindings_) repairFindings_->setText(repairFailure_);
+        return;
+    }
+#endif
+    if (!settingsRetry_->isEnabled()) return;
     repairNetworkRecovery_ = repairSnapshot_.cleanup;
 #ifdef Q_OS_WIN
     const bool checkIdentity = repairNetworkRecovery_ || !updateResidual_.isEmpty() || reconnect_.residualProtection;
@@ -4065,6 +4087,13 @@ void MainWindow::startRepairSession() {
 #endif
     repairDisruption_ = repairNetworkRecovery_ || repairSnapshot_.interrupted || repairSnapshot_.localFailed
         || repairSnapshot_.service == ServiceObservation::Running;
+#ifdef Q_OS_WIN
+    if (repairDisruption_ && requested.isEmpty()) {
+        repairFailure_ = tr("Disruptive repair requires a verified recovery identity.");
+        appendLog(repairFailure_);
+        return;
+    }
+#endif
     QString consentText = repairNetworkRecovery_
         ? tr("Recovery removes leftover routes, DNS settings, and the kill switch. Direct network access may be restored. Continue?")
         : tr("Repair may stop the owned service and interrupt VPN or proxy traffic. Continue?");
@@ -4163,6 +4192,13 @@ void MainWindow::connectRepairSession() {
         }
         socket->setProperty("authenticated", true);
 #ifdef Q_OS_WIN
+        if (approvedRepairIdentity_.isEmpty()
+            && (repairDisruption_ || repairNetworkRecovery_ || serviceObservation_ == ServiceObservation::Running
+                || cleanupBlocked_ || development_->interruptedRecovery())) {
+            repairFailure_ = tr("Disruptive repair requires a verified recovery identity.");
+            socket->abort();
+            return;
+        }
         const auto approved = approvedRepairIdentity_;
         const auto nonce = repairNonce_;
         if (!approved.isEmpty()) {
@@ -4193,6 +4229,7 @@ void MainWindow::connectRepairSession() {
                 socket->abort();
                 return;
             }
+            pendingRestoreId_ = id;
             socket->setProperty("dispatchedId", id);
         }
 #endif
@@ -4239,7 +4276,7 @@ bool MainWindow::requestRepairConsent(const QString &kind) {
 #ifdef Q_OS_WIN
     // A legacy broker may discover residual protection after its initial
     // inspection. Only the conditional protocol may authorize that cleanup.
-    if (kind == "network-recovery") {
+    if (kind == "network-recovery" || kind == "disruption") {
         const auto denial = QJsonDocument(QJsonObject{{"consent", kind}, {"approved", false}}).toJson(QJsonDocument::Compact) + '\n';
         repairFailure_ = tr("Recovery requires a verified protection identity.");
         return repairSocket_->write(denial) == denial.size();
@@ -4361,7 +4398,7 @@ void MainWindow::readRepairSession() {
 }
 
 bool MainWindow::runServiceCommand(const QStringList &arguments, const QString &description, bool startup) {
-    if (nativeSession_ || nativeOwnerBlocked_) return false;
+    if (nativeSession_ || nativeOwnerBlocked_ || !pendingRestoreId_.isEmpty()) return false;
     if (!startup && startupPreparationPending_) finishStartupPreparation(false);
 
     const bool session = repairSession_ && arguments.size() == 3 && arguments[0] == "repair-session";
@@ -4545,6 +4582,7 @@ bool MainWindow::runServiceCommand(const QStringList &arguments, const QString &
 }
 
 void MainWindow::queryGuardedRestore(const QString &operationId) {
+    pendingRestoreId_ = operationId;
     guardedRestoreRequest_.insert("operation_id", operationId);
     auto *client = new CoreClient(this);
 #if defined(BIMERON_CONTROL_FIXTURE_ENDPOINTS) && defined(Q_OS_WIN)
@@ -4554,6 +4592,7 @@ void MainWindow::queryGuardedRestore(const QString &operationId) {
     auto finish = [this, client, operationId](const QString &outcome) {
 #ifdef Q_OS_WIN
         if (outcome != "unknown") GuardedRestore::changePending(restoreJournalPath(), operationId, {});
+        reloadPendingRestore();
 #endif
         client->deleteLater();
         guardedRestoreRequest_ = {};
@@ -4793,7 +4832,7 @@ void MainWindow::finishStartupPreparation(bool success, const QString &diagnosti
 }
 
 void MainWindow::advanceStartupPreparation(std::function<void()> start) {
-    if (!startupPreparationPending_) return;
+    if (!startupPreparationPending_ || !pendingRestoreId_.isEmpty()) return;
     if (developerMode_ || development_->local() || development_->busy() || development_->failed()
         || development_->interruptedRecovery() || cleanupBlocked_ || quitRequested_) {
         finishStartupPreparation(false);
@@ -4917,7 +4956,7 @@ void MainWindow::updateCoreAvailability() {
         repairHistory_.append(repairFailure_);
     }
     if (!connectionLabel_) return;
-    const bool ready = !repairSession_ && helloReady_ && !statusNeeded_ && !cleanupBlocked_
+    const bool ready = pendingRestoreId_.isEmpty() && !repairSession_ && helloReady_ && !statusNeeded_ && !cleanupBlocked_
         && !development_->failed() && !development_->busy();
     if (ready) { serviceStartBlock_ = DevelopmentCore::StartBlock::None; repairStopFailed_ = false; }
     const bool busy = development_->busy() || serviceCommandProcess_ || linuxServiceProcess_
@@ -5203,11 +5242,15 @@ void MainWindow::refreshServiceStatus() {
 }
 
 void MainWindow::recoverNetwork() {
+#ifdef Q_OS_WIN
+    startRepairSession();
+#else
     if (QMessageBox::warning(this, tr("Emergency recovery"),
         tr("Recovery removes leftover routes, DNS settings, and the kill switch. Direct network access may be restored. Use this only after a cleanup failure. Continue?"),
         QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes) { startAfterRecovery_ = false; return; }
     if (development_->interruptedRecovery()) development_->recoverInterruptedNetwork();
     else runServiceCommand({"recover"}, tr("Emergency network recovery"));
+#endif
 }
 
 void MainWindow::applyStartupSetting(bool enabled) {

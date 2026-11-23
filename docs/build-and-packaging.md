@@ -1920,3 +1920,5 @@ inherited resources have no system recovery identity. A lost reply after
 dispatch produces an unknown outcome. The separate lab version 2 update-hold
 operation can reconcile an authenticated pre-intent refusal after restart
 by clearing only its own pending ID.
+
+An unresolved Restore ID blocks automatic service and profile startup across restarts. Windows refuses generic disruptive repair of a running backend. An interrupted developer session without independent clean-exit evidence remains available for read-only diagnosis.

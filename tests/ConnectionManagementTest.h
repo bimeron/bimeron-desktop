@@ -2833,7 +2833,7 @@ struct ConnectionManagementTest {
         const auto copy = directory.filePath("same-bytes.exe");
         require(QFile::copy(image, copy), "copy fixture image");
         const auto digest = sha.result().toHex();
-        for (const QString mode : {"verified", "changed", "foreign", "extra", "malformed", "ambiguous", "pending", "different-file", "lost"}) {
+        for (const QString mode : {"verified", "changed", "foreign", "extra", "malformed", "ambiguous", "pending", "different-file", "late-running", "late-disruption", "lost"}) {
             MainWindow window;
             window.core_.cancel();
             for (auto *timer : window.findChildren<QTimer *>()) timer->stop();
@@ -2842,6 +2842,11 @@ struct ConnectionManagementTest {
             require(pipe.listen("Bimeron.Repair." + window.repairNonce_), "private broker pipe");
             window.repairSession_ = true;
             window.approvedRepairIdentity_ = {{"instance", instance}, {"recovery_identity", identity}};
+            if (mode == "late-running" || mode == "late-disruption") {
+                window.approvedRepairIdentity_ = {};
+                window.repairDisruption_ = mode == "late-disruption";
+                window.serviceObservation_ = MainWindow::ServiceObservation::Running;
+            }
             window.pinnedRepairImage_ = PinnedRepairImage::open(mode == "different-file" ? copy : image, digest);
             require(bool(window.pinnedRepairImage_), "retain exact file handle");
             QFile replacement(mode == "different-file" ? copy : image);
@@ -2895,8 +2900,26 @@ struct ConnectionManagementTest {
         journal.setValue("operation", id);
         journal.sync();
         qputenv("BIMERON_TEST_RESTORE_ENDPOINT", endpoint.toUtf8());
+        const auto checkStartup = [&](MainWindow &window) {
+            int starts = 0;
+            window.startupPreparationPending_ = true;
+            window.startupIpcChecked_ = true;
+            window.serviceObservation_ = MainWindow::ServiceObservation::Stopped;
+            window.availabilityFailure_ = CoreClient::Failure::Transport;
+            window.advanceStartupPreparation([&] { ++starts; });
+            window.poll();
+            window.startupPreparationPending_ = false;
+            window.helloReady_ = true;
+            window.statusNeeded_ = false;
+            window.autoConnectAttempted_ = false;
+            window.handleReply("status", {{"instance", "fixture"}, {"status", QJsonObject{{"State", "disconnected"}}}});
+            require(!window.autoConnectAttempted_ && !starts && !window.startupStartAttempted_ && window.controlBlocked()
+                && !window.startProfile(0) && window.pendingRestoreId_ == id,
+                "pending outcome fences normal service and profile startup after reconciliation");
+        };
         {
             MainWindow offline;
+            checkStartup(offline);
             require(offline.guardedRestoreRequest_.isEmpty() && journal.value("operation").toString() == id,
                     "synchronous missing endpoint preserves pending");
         }
@@ -2922,6 +2945,7 @@ struct ConnectionManagementTest {
             MainWindow restarted;
             require(waitFor([&] { return commands.size() == 2 && restarted.guardedRestoreRequest_.isEmpty(); }),
                     "asynchronous unknown finished");
+            checkStartup(restarted);
             journal.sync();
             require(commands == QStringList{"hello", "query_restore"} && journal.value("operation").toString() == id,
                     "restart reconciles without mutation");
@@ -2929,6 +2953,26 @@ struct ConnectionManagementTest {
         journal.remove("operation");
         journal.sync();
         qunsetenv("BIMERON_TEST_RESTORE_ENDPOINT");
+    }
+    static void unsuitableDisruptiveRepair() {
+        for (bool interrupted : {false, true}) {
+            MainWindow window;
+            window.core_.cancel();
+            for (auto *timer : window.findChildren<QTimer *>()) timer->stop();
+            window.startupPreparationPending_ = false;
+            window.serviceObservation_ = MainWindow::ServiceObservation::Running;
+            window.development_->interruptedRecovery_ = interrupted;
+            window.development_->interruptedCleanupNeeded_ = interrupted;
+            int launches = 0;
+            window.repairCommandTest_ = [&](const QStringList &) { ++launches; };
+            window.updateCoreAvailability();
+            window.settingsRetry_->click();
+            require(!launches && !window.repairSession_ && !window.repairFailure_.isEmpty(),
+                    "visible Restore refuses unguarded disruption");
+            if (interrupted) require(window.development_->interruptedRecovery()
+                && window.repairFindings_->text().contains("no verified clean exit"),
+                "developer diagnostic preserves unknown ownership");
+        }
     }
     static void guardedRepairRouting() {
         const QString digest(64, 'a');
@@ -2982,6 +3026,12 @@ struct ConnectionManagementTest {
         auto withoutSession = update;
         withoutSession.remove("Session");
         exercise(withoutSession, withoutSession, 2);
+        for (const QJsonValue bad : {QJsonValue(QJsonObject{}), QJsonValue(QJsonObject{{"active", "false"}}),
+                                     QJsonValue(QJsonObject{{"active", true}}), QJsonValue("invalid")}) {
+            auto malformed = update;
+            malformed["Session"] = bad;
+            exercise(malformed, malformed, 0);
+        }
         exercise(update, changed, 0);
         exercise(ordinary, update, 0);
         exercise(update, ordinary, 0);
@@ -2999,6 +3049,7 @@ struct ConnectionManagementTest {
         contendedRepairRefusal();
         conditionalRepairPipe();
         pendingRepairTransport();
+        unsuitableDisruptiveRepair();
         guardedRepairRouting();
         guardedRepairTerminal();
 #endif
@@ -3127,7 +3178,7 @@ struct ConnectionManagementTest {
                 require(waitFor([&] { return window.repairSocket_->bytesAvailable() > 0; }), "consent event arrives");
                 window.readRepairSession();
 #ifdef Q_OS_WIN
-                if (kind == "network-recovery") {
+                if (kind == "network-recovery" || kind == "disruption") {
                     require(!window.repairConsentDialog_ && waitFor([&] { return consentPeer->canReadLine(); }),
                             "legacy Windows cleanup challenge denied without consent prompt");
                     const auto denial = QJsonDocument::fromJson(consentPeer->readLine()).object();

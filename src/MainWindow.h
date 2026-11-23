@@ -159,6 +159,7 @@ private:
     int repairMutationWrites_ = 0;
     bool reconcileSavedRefusal(const QString &id);
     QString refusalRetryId_;
+    void reloadPendingRestore();
     PinnedRepairImage::Handle pinnedRepairImage_;
     bool repairConsentPending_ = false;
 #ifdef BIMERON_CONTROL_FIXTURE_ENDPOINTS
@@ -172,6 +173,7 @@ private:
     QSet<QString> repairConsentRequests_;
     QLocalSocket *repairSocket_ = nullptr;
     QString repairNonce_;
+    QString pendingRestoreId_;
     QJsonObject guardedRestoreRequest_;
     void queryGuardedRestore(const QString &operationId);
     QByteArray repairInput_;
