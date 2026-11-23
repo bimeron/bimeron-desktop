@@ -196,7 +196,8 @@ private:
     QLabel *wgServiceNotice_ = nullptr;
     QPlainTextEdit *wgRaw_ = nullptr;
     QComboBox *allowedIpsMode_ = nullptr;
-    QLabel *allowedIpsHint_ = nullptr, *allowedIpsList_ = nullptr, *allowedIpsNote_ = nullptr;
+    class AllowedIpsSummary *allowedIpsList_ = nullptr;
+    QLabel *allowedIpsHint_ = nullptr, *allowedIpsNote_ = nullptr;
     QList<QWidget *> ruleControls_;
     QTimer *wgCheck_ = nullptr;
     int previousTab_ = 0;

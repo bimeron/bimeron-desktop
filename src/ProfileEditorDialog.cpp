@@ -54,6 +54,7 @@
 #include <QSignalBlocker>
 #include <QSet>
 #include <QScrollArea>
+#include <QScreen>
 #include <QStandardItemModel>
 #include <QStyledItemDelegate>
 #include <QPainter>
@@ -67,6 +68,72 @@
 #include <QUrl>
 #include <QUrlQuery>
 #include <QVBoxLayout>
+
+class AllowedIpsSummary : public QWidget {
+public:
+    AllowedIpsSummary() {
+        auto *layout = new QHBoxLayout(this);
+        layout->setContentsMargins(0, 0, 0, 0);
+        label_ = new QLabel;
+        label_->setObjectName("allowedIpsList");
+        label_->setTextFormat(Qt::PlainText);
+        label_->setWordWrap(true);
+        label_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+        label_->setTextInteractionFlags(Qt::TextSelectableByMouse);
+        layout->addWidget(label_, 1);
+        button_ = new QPushButton(ProfileEditorDialog::tr("Show all"));
+        layout->addWidget(button_);
+        connect(button_, &QPushButton::clicked, this, [this] {
+            QDialog dialog(this);
+            dialog.setWindowTitle(QStringLiteral("AllowedIPs"));
+            auto *layout = new QVBoxLayout(&dialog);
+            auto *list = new QPlainTextEdit;
+            list->setReadOnly(true);
+            list->setLineWrapMode(QPlainTextEdit::NoWrap);
+            list->setPlainText(networks_.join('\n'));
+            layout->addWidget(list);
+            auto *close = new QPushButton(ProfileEditorDialog::tr("Close"));
+            layout->addWidget(close, 0, Qt::AlignRight);
+            connect(close, &QPushButton::clicked, &dialog, &QDialog::accept);
+            dialog.resize(QSize(520, 420).boundedTo(screen()->availableGeometry().size() * 0.8));
+            dialog.exec();
+            button_->setFocus(Qt::OtherFocusReason);
+        });
+    }
+
+    void setNetworks(const QString &value) {
+        networks_ = value.split(',', Qt::SkipEmptyParts);
+        for (QString &network : networks_) network = network.trimmed();
+        networks_.removeAll(QString());
+        full_ = ProfileEditorDialog::tr("AllowedIPs: %1").arg(networks_.isEmpty()
+            ? ProfileEditorDialog::tr("not set") : networks_.join(", "));
+        refresh();
+    }
+
+protected:
+    void resizeEvent(QResizeEvent *event) override {
+        QWidget::resizeEvent(event);
+        refresh();
+    }
+    void changeEvent(QEvent *event) override {
+        QWidget::changeEvent(event);
+        if (event->type() == QEvent::FontChange) refresh();
+    }
+
+private:
+    void refresh() {
+        const QFontMetrics metrics(label_->font());
+        const auto bounds = metrics.boundingRect(QRect(0, 0, width(), 0), Qt::TextWordWrap, full_);
+        const bool compact = bounds.height() > metrics.height() + metrics.lineSpacing() || bounds.width() > width();
+        button_->setVisible(compact);
+        label_->setText(compact ? ProfileEditorDialog::tr("AllowedIPs networks: %1").arg(networks_.size()) : full_);
+    }
+
+    QLabel *label_;
+    QPushButton *button_;
+    QStringList networks_;
+    QString full_;
+};
 
 namespace {
 // Profile contents travel only through stdin/stdout, never process arguments or diagnostics.
@@ -315,7 +382,7 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
         && WireGuardCore::cliSupported(coreExecutable, nullptr, &keyOperations);
     wireGuardCreatable_ = create && bridge;
     setWindowTitle(create ? tr("Create profile") : tr("Profile settings"));
-    resize(680, 520);
+    resize(680, wireGuard_ ? qBound(460, screen()->availableGeometry().height() - 80, 720) : 520);
     setMinimumSize(620, 460);
     auto *layout = new QVBoxLayout(this);
     tabs_ = new QTabWidget;
@@ -728,15 +795,15 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
     allowedRow->addWidget(allowedIpsMode_);
     allowedRow->addStretch();
     allowedLayout->addLayout(allowedRow);
-    for (QLabel **label : {&allowedIpsHint_, &allowedIpsList_, &allowedIpsNote_}) {
+    for (QLabel **label : {&allowedIpsHint_, &allowedIpsNote_}) {
         *label = new QLabel;
         (*label)->setWordWrap(true);
         (*label)->setTextFormat(Qt::PlainText);
         allowedLayout->addWidget(*label);
     }
     allowedIpsHint_->setObjectName("allowedIpsHint");
-    allowedIpsList_->setObjectName("allowedIpsList");
-    allowedIpsList_->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    allowedIpsList_ = new AllowedIpsSummary;
+    allowedLayout->insertWidget(2, allowedIpsList_);
     allowedIpsNote_->setObjectName("allowedIpsNote");
     allowedIpsGroup_->hide();
     routingLayout->addWidget(allowedIpsGroup_);
@@ -809,13 +876,18 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
     routingLayout->addWidget(rulesArea, 1);
     auto *firstMatch = new QLabel(tr("Rules run top to bottom; the first match wins. New local-network bypass rules are inserted first; imported rules keep their positions. Edited IP literals use /32 or /128."));
     firstMatch->setWordWrap(true);
+    auto *guidance = new QPushButton(tr("How rules are applied"));
+    guidance->setCheckable(true);
+    firstMatch->hide();
+    connect(guidance, &QPushButton::toggled, firstMatch, &QWidget::setVisible);
+    routingLayout->addWidget(guidance, 0, Qt::AlignLeft);
     routingLayout->addWidget(firstMatch);
     auto *limitations = new QPushButton(tr("Routing limitations"));
     connect(limitations, &QPushButton::clicked, this, [this] {
         QMessageBox::information(this, tr("Routing limitations"),
             tr("GeoSite VPN routing uses DNS metadata (TTL, shared IPs and caches); DoH/DoT and bare IPs may not match. SOCKS GeoIP uses known IPs only, without local DNS lookup. IPv6 disable remains dominant."));
     });
-    routingLayout->addWidget(limitations);
+
     routingStatus_ = new QLabel;
     routingStatus_->setObjectName("routingStatus");
     routingStatus_->setWordWrap(true);
@@ -837,7 +909,10 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
     manage->setObjectName("manageGeodata");
     manage->setObjectName("manageDatabases");
     connect(manage, &QPushButton::clicked, this, &ProfileEditorDialog::manageDatabases);
-    routingLayout->addWidget(manage);
+    auto *secondary = new QHBoxLayout;
+    secondary->addWidget(limitations);
+    secondary->addWidget(manage);
+    routingLayout->addLayout(secondary);
     add->setShortcut(QKeySequence("Alt+Insert"));
     remove->setShortcut(QKeySequence("Alt+Delete"));
     up->setShortcut(QKeySequence("Alt+Up"));
@@ -3232,7 +3307,7 @@ void ProfileEditorDialog::refreshWireGuard() {
     allowedIpsHint_->setText(allowedIpsMode_->currentData(Qt::ToolTipRole).toString());
     const QString allowed = wgRawDirty_ || wgRawOnly_ ? wgInspection_.value("fields").toObject().value("Peer/AllowedIPs").toString()
                                                       : wgForm_->values().value("Peer/AllowedIPs");
-    allowedIpsList_->setText(tr("AllowedIPs: %1").arg(allowed.isEmpty() ? tr("not set") : allowed));
+    allowedIpsList_->setNetworks(allowed);
     // Never ask Core from a refresh: a stalled bridge would block the GUI again.
     const QJsonObject inspection = wgRawDirty_ || wgRawOnly_ || wgCacheKey_.isEmpty() || !wgCacheError_.isEmpty()
         ? wgInspection_ : wgCacheInspection_;

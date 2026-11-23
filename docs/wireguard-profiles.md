@@ -230,3 +230,8 @@ and set `BIMERON_WIREGUARD_CORE` to the resulting executable. The packaged Core
 has a separate release archive pin in `cmake/core-release.cmake`.
 
 Live connection checks run only on the test VMs. Ordinary Desktop CI does not download Core.
+
+## Routing layout acceptance criteria
+
+Show the complete AllowedIPs value when it fits within two wrapped lines at the current width. For longer lists, show the network count and a Show all button. Its screen-bounded dialog lists one selectable, copyable CIDR per line and returns focus to Show all when closed. The network list must leave the rules and Save controls accessible. The AmneziaWG disclosure uses a compact, vertically centered chevron with a gap before its label and visible keyboard focus in both states.
+The routing table takes the remaining height and scrolls its rows independently of the header and action buttons. Start WG editors within the available screen height. Keep rule guidance collapsed initially and place routing limitations and database management together.
