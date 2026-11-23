@@ -1,10 +1,10 @@
 cmake_minimum_required(VERSION 3.21)
 set(BIMERON_MSI_HANDOFF_LAB_VERSION "" CACHE STRING "Version for an isolated MSI handoff fixture")
-set(desktop_version 0.4.0)
+set(desktop_version 0.4.1)
 if(BIMERON_MSI_HANDOFF_LAB_VERSION)
     if(NOT BIMERON_LOCAL_UPDATE_TESTING OR NOT BIMERON_MSI_HANDOFF_LAB_EXECUTION
-       OR NOT BIMERON_MSI_HANDOFF_LAB_VERSION STREQUAL "0.4.0")
-        message(FATAL_ERROR "The 0.4.0 override is only available to the Windows MSI handoff lab")
+       OR NOT BIMERON_MSI_HANDOFF_LAB_VERSION MATCHES "^0[.]4[.][01]$")
+        message(FATAL_ERROR "The 0.4.0 and 0.4.1 overrides are only available to the Windows MSI handoff lab")
     endif()
     set(desktop_version "${BIMERON_MSI_HANDOFF_LAB_VERSION}")
 endif()

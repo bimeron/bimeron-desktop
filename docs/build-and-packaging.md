@@ -1864,8 +1864,8 @@ pipe bind the handoff to the running GUI and helper PIDs. The helper checks
 the user SID, session and installed image before asking Desktop to exit.
 Desktop captures its window or tray mode and releases its own connections.
 The helper waits for process exit before starting MSI with basic UI so
-the coordinator owns the restart. An isolated target package can use
-`BIMERON_MSI_HANDOFF_LAB_VERSION=0.4.0`. With
+the coordinator owns the restart. An isolated 0.4.1 target package can use
+`BIMERON_MSI_HANDOFF_LAB_VERSION=0.4.1`. Historical 0.4.0 fixtures retain their explicit 0.4.0 override. With
 `BIMERON_MSI_HANDOFF_LAB_ROLLBACK=ON`, that target schedules a failing
 deferred action after InstallFiles to exercise Windows Installer rollback.
 Keep these packages separate from supported release artifacts.
