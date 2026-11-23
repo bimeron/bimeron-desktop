@@ -414,7 +414,14 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), core_(this) {
     developerMode_ = QCoreApplication::arguments().contains("--development")
         && QCoreApplication::arguments().contains("--restart")
         && !QCoreApplication::arguments().contains("--autostart");
+#ifdef Q_OS_WIN
+    development_ = new DevelopmentCore(coreExecutablePath(), this, [this] {
+        reloadPendingRestore();
+        return !pendingRestoreId_.isEmpty();
+    });
+#else
     development_ = new DevelopmentCore(coreExecutablePath(), this);
+#endif
     validationExecutable_ = coreExecutablePath();
     setWindowTitle(tr("Bimeron"));
 #ifdef Q_OS_LINUX
@@ -5375,6 +5382,14 @@ QWidget *MainWindow::developmentPage() {
     layout->addStretch();
     connect(developmentApply_, &QPushButton::clicked, this, [this] {
         if (nativeSession_ || nativeOwnerBlocked_ || development_->busy()) return;
+#ifdef Q_OS_WIN
+        reloadPendingRestore();
+        if (!pendingRestoreId_.isEmpty()) return;
+        if (development_->interruptedRecovery()) {
+            development_->recoverInterrupted();
+            return;
+        }
+#endif
         if (coreUpdateCommand_ || coreUpdateAwaitingResult_ || serviceCommandProcess_ || linuxServiceProcess_) {
             QMessageBox::information(this, tr("Development"), tr("Wait for the current service operation to finish"));
             return;

@@ -2901,6 +2901,12 @@ struct ConnectionManagementTest {
         journal.sync();
         qputenv("BIMERON_TEST_RESTORE_ENDPOINT", endpoint.toUtf8());
         const auto checkStartup = [&](MainWindow &window) {
+            if (!window.developmentApply_) window.pages_->addWidget(window.developmentPage());
+            window.developmentBackend_->setCurrentIndex(1);
+            window.developmentPath_->setText("pending-selection");
+            window.developmentApply_->click();
+            require(window.development_->requestedPath_.isEmpty() && !window.development_->busy(),
+                    "Development Apply preserves query-only after unknown");
             int starts = 0;
             window.startupPreparationPending_ = true;
             window.startupIpcChecked_ = true;
@@ -2952,6 +2958,42 @@ struct ConnectionManagementTest {
         }
         journal.remove("operation");
         journal.sync();
+        {
+            MainWindow window;
+            if (!window.developmentApply_) window.pages_->addWidget(window.developmentPage());
+            window.developmentBackend_->setCurrentIndex(1);
+            window.developmentPath_->setText("after-consent");
+            QTimer::singleShot(0, &window, [&] {
+                auto *box = qobject_cast<QMessageBox *>(QApplication::activeModalWidget());
+                require(box != nullptr, "Development Apply opened confirmation");
+                journal.setValue("operation", id);
+                journal.sync();
+                box->button(QMessageBox::Yes)->click();
+            });
+            window.developmentApply_->click();
+            require(window.development_->requestedPath_.isEmpty() && window.pendingRestoreId_ == id
+                    && window.development_->status().contains("pending Restore"),
+                    "pending recorded during consent blocks actual selection");
+            journal.remove("operation");
+            journal.sync();
+        }
+        {
+            const QByteArray record = R"({"version":1,"transition":"fc012213-cbd7-484c-9677-593967bce143","stage":"cleanup-confirmed","originalServiceState":"running"})";
+            QFile file(DevelopmentCore::recoveryJournalPath());
+            require(file.open(QIODevice::WriteOnly | QIODevice::NewOnly) && file.write(record) == record.size(),
+                    "create interrupted developer fixture");
+            file.close();
+            MainWindow window;
+            if (!window.developmentApply_) window.pages_->addWidget(window.developmentPage());
+            window.developmentBackend_->setCurrentIndex(0);
+            window.developmentApply_->click();
+            require(window.development_->interruptedRecovery() && !window.development_->busy()
+                    && !window.development_->restoreService_ && window.development_->status().contains("no verified clean exit")
+                    && file.open(QIODevice::ReadOnly) && file.readAll() == record,
+                    "System service Apply preserves untrusted cleanup record and cannot start service");
+            file.close();
+            require(file.remove(), "remove test recovery record");
+        }
         qunsetenv("BIMERON_TEST_RESTORE_ENDPOINT");
     }
     static void unsuitableDisruptiveRepair() {

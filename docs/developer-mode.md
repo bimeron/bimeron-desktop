@@ -174,3 +174,10 @@ not claim network cleanup or restore/start the service automatically.
 GeoIP/GeoSite routing and the Core document CLI boundary are described in
 [GeoData routing](geodata-routing.md). The running endpoint capabilities and
 selected validator identity remain separate; no bundle pin changes are implied.
+
+On Windows, an unresolved Restore operation also blocks Development backend
+switches. Apply checks the operation journal before showing consent and the
+backend checks again when selection resumes and before service or daemon
+changes. After an interrupted developer switch, Apply displays a recovery
+diagnostic and preserves the record. A user journal claiming cleanup completed
+and a previously running service cannot authorize a service start.
