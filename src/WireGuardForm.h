@@ -7,6 +7,7 @@
 #include <QSet>
 #include <QStringList>
 #include <QWidget>
+#include <array>
 
 class QComboBox;
 class QFormLayout;
@@ -15,9 +16,9 @@ class QLineEdit;
 class QToolButton;
 
 // Fields of one WireGuard/AmneziaWG document. Values are Core-decoded strings
-// keyed by "Section/Key" (Core `bimeron wireguard` fields); the form neither
-// parses nor validates them. Text fields stay plain so an absent key stays
-// absent instead of acquiring a displayed default.
+// keyed by "Section/Key" (Core `bimeron wireguard` fields). Core validates the
+// document; the Reserved inputs constrain individual bytes and retain partial
+// input in the form. Absent keys stay empty instead of acquiring defaults.
 class WireGuardForm final : public QWidget {
     Q_OBJECT
 public:
@@ -30,6 +31,9 @@ public:
     // Main WireGuard keys and AmneziaWG keys, in display order.
     static const QStringList &mainFields();
     static const QStringList &amneziaFields();
+    static const QString &reservedField();
+    QString reservedEditError() const;
+    void setReservedSupported(bool supported);
     static bool secretField(const QString &id);
     // AmneziaWG 3.1 booleans use a Not set / On / Off choice instead of free text.
     static bool choiceField(const QString &id);
@@ -80,6 +84,10 @@ private:
     bool fieldSet(const QString &id) const;
     void clearField(const QString &id);
     QMap<QString, QLineEdit *> edits_;
+    std::array<QLineEdit *, 3> reservedBytes_{};
+    QString loadedReserved_;
+    bool reservedSupported_ = true;
+    QFormLayout *mainForm_ = nullptr;
     QMap<QString, QComboBox *> choices_;
     QMap<QString, QWidget *> rows_;          // Field containers, including the problem label.
     QMap<QString, QLabel *> problems_;

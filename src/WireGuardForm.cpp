@@ -13,9 +13,11 @@
 #include <QLineEdit>
 #include <QMessageBox>
 #include <QPushButton>
+#include <QRegularExpressionValidator>
 #include <QSignalBlocker>
 #include <QToolButton>
 #include <QVBoxLayout>
+#include <algorithm>
 
 namespace {
 struct FieldText {
@@ -153,9 +155,28 @@ const QStringList &WireGuardForm::mainFields() {
     static const QStringList fields = [] {
         QStringList result;
         for (const auto &text : mainTexts()) result << text.id;
+        result << reservedField();
         return result;
     }();
     return fields;
+}
+
+const QString &WireGuardForm::reservedField() {
+    static const QString id = QStringLiteral("Peer/Reserved");
+    return id;
+}
+
+QString WireGuardForm::reservedEditError() const {
+    if (!changed_.contains(reservedField())) return {};
+    if (std::all_of(reservedBytes_.begin(), reservedBytes_.end(), [](const auto *byte) { return byte->text().isEmpty(); })
+        || std::all_of(reservedBytes_.begin(), reservedBytes_.end(), [](const auto *byte) { return byte->hasAcceptableInput(); }))
+        return {};
+    return tr("Enter all three Reserved bytes (0–255), or clear all three.");
+}
+
+void WireGuardForm::setReservedSupported(bool supported) {
+    reservedSupported_ = supported;
+    refreshVersionRows();
 }
 
 const QStringList &WireGuardForm::amneziaFields() {
@@ -178,6 +199,7 @@ bool WireGuardForm::choiceField(const QString &id) {
 }
 
 QWidget *WireGuardForm::widget(const QString &id) const {
+    if (id == reservedField()) return reservedBytes_.front();
     if (QWidget *field = edits_.value(id)) return field;
     return choices_.value(id);
 }
@@ -194,6 +216,7 @@ WireGuardForm::WireGuardForm(QFormLayout *networkForm, const QString &coreExecut
     // Problem labels are found through the QFormLayout of the field's parent widget.
     auto *mainFields = new QWidget;
     auto *main = new QFormLayout(mainFields);
+    mainForm_ = main;
     main->setContentsMargins(0, 0, 0, 0);
     for (const auto &text : mainTexts()) {
         auto *edit = makeEdit(text.id);
@@ -244,6 +267,38 @@ WireGuardForm::WireGuardForm(QFormLayout *networkForm, const QString &coreExecut
             connect(generate, &QPushButton::clicked, this, [this] { generateKey(false); });
         }
     }
+    auto *reserved = new QWidget;
+    reserved->setObjectName("wireGuardPeer_Reserved");
+    auto *bytes = new QHBoxLayout(reserved);
+    bytes->setContentsMargins(0, 0, 0, 0);
+    const QString byteHint = tr("Optional (0–255)");
+    auto *validator = new QRegularExpressionValidator(
+        QRegularExpression(QStringLiteral("[01]?[0-9]?[0-9]|2[0-4][0-9]|25[0-5]")), reserved);
+    for (size_t i = 0; i < reservedBytes_.size(); ++i) {
+        auto *byte = new QLineEdit;
+        reservedBytes_[i] = byte;
+        byte->setObjectName(QStringLiteral("wireGuardReservedByte%1").arg(i + 1));
+        byte->setAccessibleName(tr("Reserved byte %1").arg(i + 1));
+        byte->setPlaceholderText(byteHint);
+        byte->setValidator(validator);
+        byte->setInputMethodHints(Qt::ImhDigitsOnly);
+        bytes->addWidget(byte);
+        connect(byte, &QLineEdit::textChanged, this, [this] {
+            changed_.insert(reservedField());
+            setFieldProblem(reservedField(), reservedEditError());
+            emit edited();
+        });
+    }
+    setTabOrder(edits_.value("Peer/PersistentKeepalive"), reservedBytes_.front());
+    setTabOrder(reservedBytes_[0], reservedBytes_[1]);
+    setTabOrder(reservedBytes_[1], reservedBytes_[2]);
+    QLabel *reservedProblem = nullptr;
+    auto *reservedRow = problemRow(reserved, &reservedProblem);
+    rows_.insert(reservedField(), reservedRow);
+    problems_.insert(reservedField(), reservedProblem);
+    auto *reservedLabel = new QLabel(tr("Reserved"));
+    reservedLabel->setBuddy(reservedBytes_.front());
+    main->addRow(reservedLabel, reservedRow);
     layout->addWidget(mainFields);
 
     amneziaToggle_ = new QToolButton;
@@ -253,6 +308,7 @@ WireGuardForm::WireGuardForm(QFormLayout *networkForm, const QString &coreExecut
     amneziaToggle_->setArrowType(Qt::RightArrow);
     amneziaToggle_->setAutoRaise(true);
     layout->addWidget(amneziaToggle_);
+    setTabOrder(reservedBytes_.back(), amneziaToggle_);
     amneziaBody_ = new QWidget;
     amneziaBody_->setObjectName("amneziaParameters");
     amneziaForm_ = new QFormLayout(amneziaBody_);
@@ -410,6 +466,13 @@ void WireGuardForm::setValues(const QJsonObject &fields) {
     invalidateKeyGeneration();
     changed_.clear();
     loadedChoices_.clear();
+    loadedReserved_ = fields.value(reservedField()).toString();
+    const QStringList bytes = loadedReserved_.split(',');
+    for (size_t i = 0; i < reservedBytes_.size(); ++i) {
+        const QSignalBlocker blocker(reservedBytes_[i]);
+        reservedBytes_[i]->setText(bytes.size() > qsizetype(reservedBytes_.size())
+            ? (i == 0 ? loadedReserved_ : QString()) : bytes.value(i).trimmed());
+    }
     for (auto it = edits_.cbegin(); it != edits_.cend(); ++it) {
         const QSignalBlocker blocker(it.value());
         it.value()->setText(fields.value(it.key()).toString());
@@ -444,6 +507,14 @@ QMap<QString, QString> WireGuardForm::values() const {
     QMap<QString, QString> result;
     for (auto it = edits_.cbegin(); it != edits_.cend(); ++it) result.insert(it.key(), it.value()->text());
     for (auto it = choices_.cbegin(); it != choices_.cend(); ++it) result.insert(it.key(), it.value()->currentData().toString());
+    QString reserved = loadedReserved_;
+    if (changed_.contains(reservedField())) {
+        QStringList bytes;
+        for (const auto *byte : reservedBytes_)
+            if (byte->hasAcceptableInput()) bytes << QString::number(byte->text().toInt());
+        reserved = bytes.size() == qsizetype(reservedBytes_.size()) ? bytes.join(QStringLiteral(", ")) : QString();
+    }
+    result.insert(reservedField(), reserved);
     return result;
 }
 
@@ -508,6 +579,12 @@ void WireGuardForm::clearField(const QString &id) {
 }
 
 void WireGuardForm::changeVersion(int index) {
+    if (versionIndex_ == 0 && index > 0 && !reservedEditError().isEmpty()) {
+        const QSignalBlocker blocker(version_);
+        version_->setCurrentIndex(versionIndex_);
+        reservedBytes_.front()->setFocus();
+        return;
+    }
     if (index < versionIndex_) {
         QStringList filled;
         for (const QString &id : amneziaFields())
@@ -536,6 +613,7 @@ void WireGuardForm::changeVersion(int index) {
 }
 
 void WireGuardForm::refreshVersionRows() {
+    setFormRowVisible(mainForm_, rows_.value(reservedField()), reservedSupported_ && versionIndex_ == 0);
     for (auto it = rows_.cbegin(); it != rows_.cend(); ++it) {
         const QString version = fieldVersion(it.key());
         if (!version.isEmpty()) setFormRowVisible(amneziaForm_, it.value(), versions().indexOf(version) <= versionIndex_);

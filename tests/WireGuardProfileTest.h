@@ -10,6 +10,8 @@
 #include "WireGuardForm.h"
 
 #include <QToolButton>
+#include <QKeyEvent>
+#include <QElapsedTimer>
 #include <QSemaphore>
 #include <QMutex>
 #include <memory>
@@ -122,7 +124,7 @@ QString setField(const QString &text, const QString &section, const QString &key
 struct Bridge {
     QMutex mutex;
     QStringList operations;
-    QJsonObject capabilities{{"supported", true}, {"document_api", 1}};
+    QJsonObject capabilities{{"supported", true}, {"document_api", 1}, {"reserved", true}};
     QJsonObject handle(const QByteArray &input) {
         QMutexLocker lock(&mutex);
         const QJsonObject request = QJsonDocument::fromJson(input).object();
@@ -163,9 +165,11 @@ struct Bridge {
             return result;
         }
         if (op == "import_uri") {
-            if (request.value("uri").toString() != "wg://good")
+            const QString uri = request.value("uri").toString();
+            if (uri != "wg://good" && uri != "wg://reserved" && uri != "wireguard://reserved")
                 return {{"version", 1}, {"problems", QJsonArray{QJsonObject{{"code", "wireguard_reserved_unsupported"}}}}};
-            const QString converted = "[Interface]\nPrivateKey = " + privateKey + "\nAddress = 10.0.0.2/32\n\n[Peer]\nPublicKey = PUBLIC\nEndpoint = vpn.example:51820\nAllowedIPs = 0.0.0.0/0, ::/0\n";
+            QString converted = "[Interface]\nPrivateKey = " + privateKey + "\nAddress = 10.0.0.2/32\n\n[Peer]\nPublicKey = PUBLIC\nEndpoint = vpn.example:51820\nAllowedIPs = 0.0.0.0/0, ::/0\n";
+            if (uri.endsWith("reserved")) converted += "Reserved = 0, 2, 255\n";
             QJsonObject result = inspect(converted);
             result.insert("text", converted);
             result.insert("name", "Linked");
@@ -353,6 +357,114 @@ static void wireGuardEditor(const QString &directory) {
     const QString key = QString(QChar::ByteOrderMark) + "# provider comment\r\n[Interface]\r\nPrivateKey = " + privateKey
         + "\r\nAddress = 10.0.0.2/32\r\nJc = 4\r\n\r\n[Peer]\r\nPublicKey = PUBLIC\r\nPresharedKey = PSK_SENTINEL\r\nEndpoint = vpn.example:51820\r\nAllowedIPs = 0.0.0.0/0\r\n";
     const QString path = QDir(directory).filePath("tunnel.conf");
+    {
+        const QString plain = QString(key).remove("Jc = 4\r\n");
+        const QString withReserved = plain + "Reserved = 0,  2,255\r\n";
+        auto input = [](QWidget &editor, int index) {
+            return editor.findChild<QLineEdit *>(QStringLiteral("wireGuardReservedByte%1").arg(index));
+        };
+        auto save = [](QWidget &editor) { editor.findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Save)->click(); };
+        for (const QString &uri : {QStringLiteral("wg://reserved"), QStringLiteral("wireguard://reserved")}) {
+            const auto imported = WireGuardCore::importUri("fake-core", uri);
+            require(imported.answered() && !imported.text().isEmpty());
+            ProfileEditorDialog linked(profile, caps, nullptr, accepted, "fake-core", path, false, imported.text());
+            require(input(linked, 1)->text() == "0" && input(linked, 2)->text() == "2" && input(linked, 3)->text() == "255");
+        }
+        require(WireGuardCore::detect("fake-core", withReserved).format() == "wireguard");
+        ProfileEditorDialog editor(profile, caps, nullptr, accepted, "fake-core", path, false, withReserved);
+        auto *tabWidget = tabs(editor);
+        const int form = tabIndex(editor, "WireGuard"), raw = tabIndex(editor, "WG/AWG config");
+        tabWidget->setCurrentIndex(form);
+        editor.show();
+        QApplication::processEvents();
+        auto *keepalive = editor.findChild<QLineEdit *>("wireGuardPeer_PersistentKeepalive");
+        keepalive->setFocus();
+        for (int i = 1; i <= 3; ++i) {
+            QKeyEvent tab(QEvent::KeyPress, Qt::Key_Tab, Qt::NoModifier);
+            QApplication::sendEvent(editor.focusWidget(), &tab);
+            require(editor.focusWidget() == input(editor, i));
+        }
+        require(input(editor, 1)->text() == "0" && input(editor, 2)->text() == "2" && input(editor, 3)->text() == "255");
+        editor.findChild<QLineEdit *>("wireGuardPeer_Endpoint")->setText("other.example:51820");
+        require(editor.wireGuardText().contains("Reserved = 0,  2,255\r\n"));
+        auto *byte = input(editor, 2);
+        byte->selectAll();
+        byte->insert("256");
+        require(byte->text() == "2");
+        byte->clear();
+        require(editor.wireGuardText() == withReserved);
+        for (bool saving : {false, true}) {
+            bool warned = false;
+            QTimer::singleShot(0, [&warned] {
+                auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+                warned = dialog != nullptr;
+                if (dialog) dialog->reject();
+            });
+            if (saving) save(editor);
+            else tabWidget->setCurrentIndex(raw);
+            require(warned && editor.result() != QDialog::Accepted && byte->text().isEmpty());
+        }
+        for (int i = 1; i <= 3; ++i) input(editor, i)->setText("0");
+        require(editor.wireGuardText().contains("Reserved = 0, 0, 0\r\n"));
+        const int editCalls = bridge.operations.count("edit");
+        QElapsedTimer timer;
+        timer.start();
+        for (int i = 0; i < 1000; ++i) editor.wireGuardText();
+        std::fprintf(stdout, "Reserved: 1000 cached draft reads in %.2f ms\n", timer.nsecsElapsed() / 1e6);
+        require(bridge.operations.count("edit") == editCalls);
+        tabWidget->setCurrentIndex(raw);
+        auto *rawEdit = editor.findChild<QPlainTextEdit *>("wireGuardRawConfig");
+        require(rawEdit->toPlainText().contains("Reserved = 0, 0, 0\n"));
+        rawEdit->setPlainText(rawEdit->toPlainText().replace("0, 0, 0", "255, 0, 42"));
+        tabWidget->setCurrentIndex(form);
+        require(input(editor, 1)->text() == "255" && input(editor, 2)->text() == "0" && input(editor, 3)->text() == "42");
+        save(editor);
+        require(editor.result() == QDialog::Accepted);
+        ProfileStore store(QDir(directory).filePath("reserved-store"));
+        QString error;
+        const QString savedPath = store.createPair(editor.configText().toUtf8(), editor.wireGuardText().toUtf8(), &error);
+        require(!savedPath.isEmpty() && error.isEmpty());
+        QFile savedProfile(savedPath);
+        require(savedProfile.open(QIODevice::ReadOnly));
+        const QString savedText = QString::fromUtf8(savedProfile.readAll());
+        QByteArray savedConfig;
+        require(ProfileStore::readKeyFile(savedPath, ProfileStore::keyFileReference(savedText), &savedConfig));
+        ProfileEditorDialog reopened(savedText, caps, nullptr, accepted, "fake-core", savedPath, false, ProfileStore::keyFileText(savedConfig));
+        require(input(reopened, 3)->text() == "42");
+        for (int i = 1; i <= 3; ++i) input(reopened, i)->clear();
+        require(!reopened.wireGuardText().contains("Reserved"));
+        const QString awg = key + "Reserved = 0, 2, 255\r\n";
+        ProfileEditorDialog hidden(profile, caps, nullptr, accepted, "fake-core", path, false, awg);
+        auto *hiddenInput = input(hidden, 1);
+        require(hiddenInput->parentWidget()->parentWidget()->isHidden() && hidden.wireGuardText() == awg);
+        hidden.findChild<QLineEdit *>("wireGuardPeer_Endpoint")->setText("other.example:51820");
+        require(hidden.wireGuardText().contains("Reserved = 0, 2, 255\r\n"));
+        for (const auto &advertisement : {QJsonValue(QJsonValue::Undefined), QJsonValue(false)}) {
+            if (advertisement.isUndefined()) bridge.capabilities.remove("reserved");
+            else bridge.capabilities.insert("reserved", advertisement);
+            ProfileEditorDialog legacy(profile, caps, nullptr, accepted, "fake-core", path, false, withReserved);
+            require(!tabs(legacy)->isTabEnabled(tabIndex(legacy, "WireGuard")));
+            require(legacy.findChild<QPlainTextEdit *>("wireGuardRawConfig")->isReadOnly());
+            require(legacy.wireGuardText() == withReserved);
+        }
+        {
+            ProfileEditorDialog legacy(profile, caps, nullptr, accepted, "fake-core", path, false, plain);
+            auto *legacyTabs = tabs(legacy);
+            const int rawIndex = tabIndex(legacy, "WG/AWG config"), formIndex = tabIndex(legacy, "WireGuard");
+            legacyTabs->setCurrentIndex(rawIndex);
+            auto *rawConfig = legacy.findChild<QPlainTextEdit *>("wireGuardRawConfig");
+            rawConfig->setPlainText(withReserved);
+            QTimer::singleShot(0, [] {
+                if (auto *box = qobject_cast<QMessageBox *>(QApplication::activeModalWidget())) box->reject();
+            });
+            legacyTabs->setCurrentIndex(formIndex);
+            require(legacyTabs->currentIndex() == rawIndex && !rawConfig->isReadOnly());
+            rawConfig->setPlainText(plain);
+            legacyTabs->setCurrentIndex(formIndex);
+            require(legacyTabs->currentIndex() == formIndex && legacy.wireGuardText() == plain);
+        }
+        bridge.capabilities.insert("reserved", true);
+    }
     {
         ProfileEditorDialog editor(profile, caps, nullptr, accepted, "fake-core", path, false, key);
         auto *tabWidget = tabs(editor);
@@ -621,7 +733,7 @@ static void wireGuardEditor(const QString &directory) {
     }
     {
         // A WireGuard creation draft stays WireGuard after a Bimeron config edit.
-        bridge.capabilities = {{"supported", true}, {"document_api", 1}};
+        bridge.capabilities = {{"supported", true}, {"document_api", 1}, {"reserved", true}};
         ProfileEditorDialog draft({}, caps, nullptr, accepted, "fake-core", {}, true);
         auto *sources = draft.findChild<QComboBox *>("keySource");
         sources->setCurrentIndex(sources->findData("WireGuard"));
@@ -884,6 +996,36 @@ static void wireGuardEditor(const QString &directory) {
         QJsonObject{{"code", "dns_invalid"}, {"document", "other"}, {"section", "Interface"}, {"field", "DNS"}}});
     require(problems.size() == 2 && problems[0].document == "wireguard" && problems[0].fieldKey() == "WireGuard.Interface.PrivateKey");
     require(problems[1].document.isEmpty() && problems[1].fieldKey() == "Interface.DNS");
+
+    // Document-only Reserved smoke test. This also supports intermediate branch builds
+    // that can edit the document but refuse its use in a complete profile.
+    const QString reservedCore = qEnvironmentVariable("BIMERON_WIREGUARD_RESERVED_CORE");
+    if (!reservedCore.isEmpty()) {
+        const QString authority = "yAnz5TF%2BlXXJte14tji3zlMNq%2Bhd2rYUIgJBgB3fBmk%3D@203.0.113.1:51820"
+            "?publickey=xTIBA5rboUvnH4htodjb6e697QjLERt1NAB4mZqp8Dg%3D&address=10.0.0.2%2F32&allowedips=0.0.0.0%2F0";
+        for (const QString &prefix : {QStringLiteral("wg://"), QStringLiteral("wireguard://")}) {
+            const QString encoded = prefix == "wg://" ? "0%2C2%2C255" : "0-2-255";
+            const auto imported = WireGuardCore::importUri(reservedCore, prefix + authority + "&reserved=" + encoded);
+            require(imported.answered() && !imported.text().isEmpty());
+            require(WireGuardCore::detect(reservedCore, imported.text()).format() == "wireguard");
+            require(!WireGuardCore::inspect(reservedCore, imported.text()).fields().value("Peer/Reserved").toString().isEmpty());
+            ProfileEditorDialog editor(profile, caps, nullptr, accepted, reservedCore, path, false, imported.text());
+            require(editor.findChild<QLineEdit *>("wireGuardReservedByte1")->text() == "0");
+            require(editor.findChild<QLineEdit *>("wireGuardReservedByte2")->text() == "2");
+            auto *last = editor.findChild<QLineEdit *>("wireGuardReservedByte3");
+            require(last->text() == "255");
+            last->setText("42");
+            const QString edited = editor.wireGuardText();
+            require(edited != imported.text());
+            ProfileEditorDialog reopened(profile, caps, nullptr, accepted, reservedCore, path, false, edited);
+            require(reopened.findChild<QLineEdit *>("wireGuardReservedByte3")->text() == "42");
+            for (int i = 1; i <= 3; ++i)
+                reopened.findChild<QLineEdit *>(QStringLiteral("wireGuardReservedByte%1").arg(i))->clear();
+            const auto cleared = WireGuardCore::inspect(reservedCore, reopened.wireGuardText());
+            require(cleared.answered() && !cleared.fields().contains("Peer/Reserved"));
+        }
+        std::fprintf(stdout, "Reserved: real Core document smoke test passed (wg:// and wireguard://).\n");
+    }
 
     // Optional real-Core round trip.
     const QString core = qEnvironmentVariable("BIMERON_WIREGUARD_CORE");

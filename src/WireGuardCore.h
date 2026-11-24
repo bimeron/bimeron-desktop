@@ -48,9 +48,12 @@ QJsonObject setField(const QString &section, const QString &key, const QString &
 // answers are cached per executable identity (path, size, modification time),
 // so replacing the file at the same path is noticed; transient failures are not.
 // definitive is false when the probe failed transiently (start failure, timeout, crash).
-bool cliSupported(const QString &executable, bool *definitive = nullptr, QJsonArray *keyOperations = nullptr);
+bool cliSupported(const QString &executable, bool *definitive = nullptr, QJsonArray *keyOperations = nullptr,
+                  bool *reserved = nullptr);
 // True when the running service advertises WireGuard support in hello.
 bool serviceSupported(const QJsonObject &capabilities);
+bool serviceSupportsReserved(const QJsonObject &capabilities);
+bool hasReserved(const QJsonObject &inspection);
 // "WireGuard" or "AmneziaWG <version>" from an inspect response.
 QString protocolLabel(const QJsonObject &inspection);
 // Scheme check only: routes Add-profile input to Core's link conversion.

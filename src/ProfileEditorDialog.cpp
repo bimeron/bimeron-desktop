@@ -312,7 +312,7 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
     // New WireGuard drafts need both the running service and the selected CLI bridge.
     QJsonArray keyOperations;
     const bool bridge = (wireGuard_ || (create && WireGuardCore::serviceSupported(capabilities)))
-        && WireGuardCore::cliSupported(coreExecutable, nullptr, &keyOperations);
+        && WireGuardCore::cliSupported(coreExecutable, nullptr, &keyOperations, &wgReservedSupported_);
     wireGuardCreatable_ = create && bridge;
     setWindowTitle(create ? tr("Create profile") : tr("Profile settings"));
     resize(680, 520);
@@ -1027,6 +1027,7 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
     parameterLayout->addWidget(scroll);
     tabs_->insertTab(tabs_->count() - 1, parameterPage_, tr("Protocol"));
     wgForm_ = new WireGuardForm(networkForm, coreExecutable, keyOperations);
+    wgForm_->setReservedSupported(wgReservedSupported_);
     auto *wgScroll = new QScrollArea;
     wgScroll->setObjectName("wireGuardScroll");
     wgScroll->setWidgetResizable(true);
@@ -1408,7 +1409,9 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
                 tabs_->setCurrentIndex(tabs_->indexOf(wgPage_));
                 previousTab_ = tabs_->indexOf(wgPage_);
                 QMessageBox box(QMessageBox::Information, tr("WG/AWG config"),
-                    tr("Correct the WireGuard fields first: Core could not apply them, so the WG/AWG config cannot show them yet."), QMessageBox::Ok, this);
+                    wgForm_->reservedEditError().isEmpty()
+                        ? tr("Correct the WireGuard fields first: Core could not apply them, so the WG/AWG config cannot show them yet.")
+                        : wgBridgeError_, QMessageBox::Ok, this);
                 box.setObjectName("wireGuardFieldsPending");
                 box.exec();
                 return;
@@ -2760,7 +2763,9 @@ bool shownInEditor(QTabWidget *tabs, QWidget *widget) {
 QWidget *ProfileEditorDialog::problemWidget(const CoreProblem &problem) const {
     if (problem.document == "wireguard") {
         // Collapsed AmneziaWG rows still count: focusProblem expands them.
-        QWidget *widget = wgForm_ ? wgForm_->widget(problem.section + '/' + problem.field) : nullptr;
+        const QString id = problem.section + '/' + problem.field;
+        if (wgForm_ && id == WireGuardForm::reservedField() && !wgForm_->amneziaVersion().isEmpty()) return nullptr;
+        QWidget *widget = wgForm_ ? wgForm_->widget(id) : nullptr;
         const int tab = tabOf(tabs_, widget);
         return widget && tab >= 0 && tabs_->isTabVisible(tab) && tabs_->isTabEnabled(tab) && widget->isEnabled() ? widget : nullptr;
     }
@@ -3080,6 +3085,14 @@ bool ProfileEditorDialog::validateDraft(const QString &text, CoreFailure *failur
             if (wgCacheRefused_) failure->problems = wgCacheProblems_;
             return false;
         }
+        if (!wgReservedSupported_ && wireGuard != wgOriginal_) {
+            const auto inspected = WireGuardCore::inspect(coreExecutable_, wireGuard);
+            if (!inspected.answered()) { failure->text = inspected.error; return false; }
+            if (WireGuardCore::hasReserved(inspected.object)) {
+                failure->text = tr("The selected Core cannot edit WireGuard Reserved. Update Core to edit this configuration.");
+                return false;
+            }
+        }
         const auto detected = WireGuardCore::detect(coreExecutable_, wireGuard);
         if (!detected.answered()) { failure->text = detected.error; return false; }
         if (detected.format() != "wireguard") {
@@ -3108,6 +3121,8 @@ QString ProfileEditorDialog::wireGuardText() const {
         return text;
     }
     if (wgRawOnly_) return wgLoaded_;
+    wgBridgeError_ = wgForm_->reservedEditError();
+    if (!wgBridgeError_.isEmpty()) return wgLoaded_;
     QJsonArray operations;
     const QJsonObject fields = wgInspection_.value("fields").toObject();
     const auto values = wgForm_->values();
@@ -3156,6 +3171,8 @@ void ProfileEditorDialog::loadWireGuard(const QString &text, const QJsonObject &
     // Without a usable inspection, or for an ambiguous document, only the
     // WG/AWG config tab edits the text.
     wgRawOnly_ = (inspection.isEmpty() && !text.isEmpty()) || !inspection.value("fields_error").toString().isEmpty();
+    wgReservedReadOnly_ = !wgReservedSupported_ && WireGuardCore::hasReserved(inspection);
+    wgRaw_->setReadOnly(wgReservedReadOnly_);
     wgForm_->setValues(inspection.value("fields").toObject());
     wgForm_->setAmneziaVersion(inspection.value("awg_version").toString());
     {
@@ -3192,6 +3209,11 @@ bool ProfileEditorDialog::applyWireGuardRaw() {
         box.exec();
         return false;
     }
+    if (!wgReservedSupported_ && WireGuardCore::hasReserved(reply.object)) {
+        QMessageBox::warning(this, tr("WG/AWG config"),
+            tr("The selected Core cannot edit WireGuard Reserved. Update Core to edit this configuration."));
+        return false;
+    }
     if (!reply.fieldsError().isEmpty()) {
         QMessageBox box(QMessageBox::Information, tr("WG/AWG config"),
             tr("This WG/AWG configuration cannot be shown as fields. Continue editing the WG/AWG config tab."), QMessageBox::Ok, this);
@@ -3210,12 +3232,20 @@ void ProfileEditorDialog::refreshWireGuard() {
     const int formIndex = tabs_->indexOf(wgPage_), rawIndex = tabs_->indexOf(wgRawPage_);
     tabs_->setTabVisible(formIndex, wireGuard);
     tabs_->setTabVisible(rawIndex, wireGuard);
-    tabs_->setTabEnabled(formIndex, wireGuard && !wgRawOnly_);
+    tabs_->setTabEnabled(formIndex, wireGuard && !wgRawOnly_ && !wgReservedReadOnly_);
     tabs_->setTabEnabled(rawIndex, wireGuard);
     tabs_->setTabText(tabs_->count() - 1, wireGuard ? tr("Bimeron config") : tr("Raw config"));
     tabs_->setTabText(formIndex, wgForm_->amneziaVersion().isEmpty() ? QStringLiteral("WireGuard") : QStringLiteral("AmneziaWG"));
-    if (auto *general = qobject_cast<QFormLayout *>(name_->parentWidget()->layout()))
-        setFormRowVisible(general, wgServiceNotice_, wireGuard && !creating_ && !WireGuardCore::serviceSupported(capabilities_));
+    if (auto *general = qobject_cast<QFormLayout *>(name_->parentWidget()->layout())) {
+        const bool serviceUnsupported = !WireGuardCore::serviceSupported(capabilities_);
+        const bool reservedUnsupported = WireGuardCore::hasReserved(wgInspection_) && !WireGuardCore::serviceSupportsReserved(capabilities_);
+        wgServiceNotice_->setText(wgReservedReadOnly_
+            ? tr("The selected Core cannot edit WireGuard Reserved. Update Core to edit this configuration.")
+            : serviceUnsupported
+                ? tr("The running Core does not support WireGuard and AmneziaWG. The profile can be edited, but it connects only after Core is started or updated.")
+                : tr("The running Core does not support WireGuard Reserved. Update Core before connecting."));
+        setFormRowVisible(general, wgServiceNotice_, wireGuard && (wgReservedReadOnly_ || (!creating_ && (serviceUnsupported || reservedUnsupported))));
+    }
     auto *networkForm = qobject_cast<QFormLayout *>(mtu_->parentWidget()->layout());
     if (wireGuard) {
         tabs_->setTabEnabled(tabs_->indexOf(networkForm->parentWidget()), !rawOnly_ || !wgRawOnly_);
@@ -3224,7 +3254,7 @@ void ProfileEditorDialog::refreshWireGuard() {
         setFormRowVisible(networkForm, control, !wireGuard || !rawOnly_);
     setFormRowVisible(networkForm, mtu_, !wireGuard);
     setFormRowVisible(networkForm, dns_, !wireGuard);
-    wgForm_->showNetworkFields(wireGuard, !wgRawOnly_ && !wgRawDirty_);
+    wgForm_->showNetworkFields(wireGuard, !wgRawOnly_ && !wgRawDirty_ && !wgReservedReadOnly_);
     allowedIpsGroup_->setVisible(wireGuard);
     const QString mode = allowedIpsMode_->currentData().toString();
     for (QWidget *widget : std::as_const(ruleControls_)) widget->setEnabled(!wireGuard || mode != "only");
