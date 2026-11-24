@@ -253,10 +253,9 @@ with a fake API v1 bridge that returns `Peer/Reserved` in its decoded fields. Th
 covers import, keyboard traversal, partial input, form and raw synchronization, and
 the saved profile pair. It also times repeated draft reads and checks that they
 reuse the cached edit response.
-Set `BIMERON_WIREGUARD_RESERVED_CORE` to a build of Core's `feat/wireguard-reserved-208`
-branch to run the document smoke test (import, inspect, edit, reopen and remove).
-The supported test fixture for this change uses Core commit
-`8f2313d58fc5c7abe5fabb4f65eeb3e8907d0f06`.
+Set `BIMERON_WIREGUARD_RESERVED_CORE` to a build of Core merge commit
+`d258fa27f40ed6402f664047c3b94711d7073071` to reproduce the document smoke test
+(import, inspect, edit, reopen and remove).
 The desktop integration fixture `developer-mode-test --wireguard-reserved` checks
 real Desktop import, Save and reopen with that executable and synthetic service
 capabilities. Set `BIMERON_WIREGUARD_LEGACY_CORE` to a document bridge build without
