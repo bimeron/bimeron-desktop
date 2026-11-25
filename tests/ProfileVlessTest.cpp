@@ -2446,7 +2446,7 @@ int main(int argc, char **argv) {
             auto *dialog = QApplication::activeModalWidget();
             require(dialog);
             dialog->findChild<QComboBox *>("dohMode")->setCurrentIndex(1);
-            dialog->findChild<QPushButton *>("addDohResolver")->click();
+            dialog->findChild<QAction *>("addCustomDohResolver")->trigger();
             dialog->findChild<QLineEdit *>("dohUrl")->setText("https://Resolver.example/dns%2Cquery");
             dialog->findChild<QLineEdit *>("dohBootstrapIps")->setText("2001:db8::1, 192.0.2.2");
             dialog->findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Ok)->click();
@@ -2458,6 +2458,18 @@ int main(int argc, char **argv) {
         ProfileEditorDialog older(encrypted, QJsonObject{{"vpn", true}});
         require(!older.findChild<QPushButton *>("configureDoh")->isEnabled());
         require(older.configText() == encrypted);
+        ProfileEditorDialog ordinaryEditor({}, QJsonObject{{"vpn", true}}, nullptr, {}, {}, {}, true);
+        auto *ordinaryConfigure = ordinaryEditor.findChild<QPushButton *>("configureDoh");
+        require(ordinaryConfigure->isEnabled());
+        QTimer::singleShot(0, [&] {
+            auto *dialog = QApplication::activeModalWidget();
+            auto *addresses = dialog->findChild<QLineEdit *>("ordinaryDnsAddresses");
+            require(addresses->isVisible());
+            addresses->setText("192.0.2.1");
+            dialog->findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Ok)->click();
+        });
+        ordinaryConfigure->click();
+        require(ordinaryEditor.configText().contains("DNS = 192.0.2.1"));
         QTimer::singleShot(0, [&] {
             auto *dialog = QApplication::activeModalWidget();
             require(dialog);
@@ -2505,8 +2517,8 @@ int main(int argc, char **argv) {
                 require(dialog);
                 auto *resolvers = dialog->findChild<QListWidget *>("dohResolvers");
                 require(resolvers && resolvers->count() == 2);
-                require(resolvers->item(0)->text() == "https://other.example/dns-query");
-                require(resolvers->item(1)->text() == "https://Resolver.example/dns%2Cquery");
+                require(resolvers->item(0)->text() == "other.example");
+                require(resolvers->item(1)->text() == "resolver.example");
                 auto *addresses = dialog->findChild<QLineEdit *>("dohBootstrapIps");
                 require(addresses && addresses->text() == "192.0.2.3");
                 resolvers->setCurrentRow(1);

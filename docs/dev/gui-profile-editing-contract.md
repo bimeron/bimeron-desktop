@@ -105,7 +105,15 @@ Service start rejection must not rewrite the profile or expose credentials.
 
 ### Desktop DNS modes
 
-The Network tab selects ordinary DNS or DoH. Keep the existing `DNS` assignment
+The Network tab summarizes the active DNS configuration in one row. Configure
+opens a dialog with ordinary IPv4 settings and ordered DoH servers. Selecting
+a preset adds it immediately. Custom servers open the HTTPS and bootstrap
+fields. Select an entry and open Details to edit or remove it. Ordering
+controls appear with two or more servers. OK updates the draft. Save writes
+the profile. WireGuard and AmneziaWG retain their protocol-specific DNS field
+and label the separate captured-DNS control DNS over HTTPS.
+
+Keep the existing `DNS` assignment
 or omission when switching modes. Applying DoH sets `DoH` and `DoHBootstrap`
 together. Applying ordinary DNS removes both together. Captured VPN DNS uses
 only DoH while the pair exists. Ordinary DNS can still be used for physical

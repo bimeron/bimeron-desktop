@@ -56,6 +56,7 @@
 #include <QSet>
 #include <QScrollArea>
 #include <QStandardItemModel>
+#include <QMenu>
 #include <QStyledItemDelegate>
 #include <QPainter>
 #include <QSpinBox>
@@ -693,7 +694,7 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
     interfaceName_->setObjectName("interfaceName");
     mtu_ = new QSpinBox;
     mtu_->setRange(1280, 1500);
-    dns_ = new DnsAddressEdit(true);
+    dns_ = new DnsAddressEdit(true, this);
     dns_->setObjectName("dns");
     // An empty field omits DNS so Core applies its own default, shown here.
     const QString defaultDns = ProfileStore::defaultDns(capabilities);
@@ -712,8 +713,9 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
     if (!killSwitchSupported) killSwitch_->setToolTip(tr("Not supported by the current core build"));
     networkForm->addRow(tr("Interface name"), interfaceName_);
     networkForm->addRow(tr("MTU"), mtu_);
-    networkForm->addRow(tr("DNS (up to four IPv4 addresses)"), dns_);
-    networkForm->addRow(tr("Captured VPN DNS"), configureDoh_);
+    dns_->hide();
+    networkForm->addRow(tr("DNS"), configureDoh_);
+    connect(dns_, &QLineEdit::textChanged, this, &ProfileEditorDialog::refreshDohSummary);
     networkForm->addRow(tr("IPv6"), ipv6_);
     networkForm->addRow(tr("Kill switch"), killSwitch_);
     tabs_->addTab(network, tr("Network"));
@@ -2481,24 +2483,77 @@ QString ProfileEditorDialog::documentText() const {
     return cachedDocument_;
 }
 
+namespace {
+struct DnsPreset {
+    const char *name;
+    const char *url;
+    const char *addresses;
+};
+constexpr DnsPreset dnsPresets[] = {
+    {"Cloudflare", "https://cloudflare-dns.com/dns-query", "1.1.1.1, 1.0.0.1"},
+    {"Google", "https://dns.google/dns-query", "8.8.8.8, 8.8.4.4"},
+};
+
+QString dnsPresetName(const QString &url, const QString &addresses) {
+    for (const auto &preset : dnsPresets) {
+        if (url == QLatin1String(preset.url)
+            && DnsAddressEdit::addresses(addresses).join(", ") == QLatin1String(preset.addresses))
+            return QString::fromLatin1(preset.name);
+    }
+    return {};
+}
+}
+
 void ProfileEditorDialog::refreshDohSummary() {
-    configureDoh_->setText(dohEndpoints_.isEmpty()
-        ? tr("Ordinary DNS · Configure…")
-        : tr("DoH (%1 resolvers) · Configure…").arg(dohEndpoints_.count(',') + 1));
-    configureDoh_->setEnabled(capabilities_.value("doh").toBool());
-    configureDoh_->setToolTip(configureDoh_->isEnabled() ? QString()
-        : tr("The selected Core does not support DNS-over-HTTPS."));
+    QString summary = isWireGuard() ? tr("Ordinary DNS")
+                                    : dns_->text().isEmpty() ? tr("Default DNS") : dns_->text();
+    if (!dohEndpoints_.isEmpty()) {
+        const int count = dohEndpoints_.count(',') + 1;
+        const QString preset = count == 1
+            ? dnsPresetName(dohEndpoints_.trimmed(), QString(dohBootstrap_).replace('|', ',')) : QString();
+        summary = preset.isEmpty() ? tr("DNS over HTTPS (%1)").arg(count)
+                                   : tr("DNS over HTTPS · %1").arg(preset);
+    }
+    configureDoh_->setText(tr("%1 · Configure…").arg(summary));
+    configureDoh_->setEnabled(capabilities_.value("doh").toBool() || !hasDohFields(originalText_));
 }
 
 void ProfileEditorDialog::editDoh() {
     QDialog dialog(this);
-    dialog.setWindowTitle(tr("Captured VPN DNS"));
+    dialog.setWindowTitle(tr("DNS settings"));
     auto *layout = new QVBoxLayout(&dialog);
     auto *mode = new QComboBox;
     mode->addItems({tr("Ordinary DNS"), tr("DNS over HTTPS")});
     mode->setObjectName("dohMode");
     mode->setCurrentIndex(!dohEndpoints_.isEmpty() || !dohBootstrap_.isEmpty());
     layout->addWidget(mode);
+    const bool ordinaryAvailable = !isWireGuard();
+    const bool supported = capabilities_.value("doh").toBool();
+    if (!supported) {
+        qobject_cast<QStandardItemModel *>(mode->model())->item(1)->setEnabled(false);
+        auto *notice = new QLabel(tr("The running Core service does not report DNS over HTTPS support."));
+        notice->setWordWrap(true);
+        layout->addWidget(notice);
+    }
+    auto *ordinaryToggle = new QPushButton(tr("Ordinary DNS settings"));
+    ordinaryToggle->setCheckable(true);
+    if (ordinaryAvailable) layout->addWidget(ordinaryToggle);
+    else ordinaryToggle->hide();
+    auto *ordinaryPanel = new QWidget;
+    auto *ordinaryForm = new QFormLayout(ordinaryPanel);
+    auto *ordinary = new DnsAddressEdit(true);
+    ordinary->setObjectName("ordinaryDnsAddresses");
+    ordinary->setText(dns_->text());
+    ordinary->setPlaceholderText(dns_->placeholderText());
+    ordinary->setToolTip(dns_->toolTip());
+    ordinaryForm->addRow(tr("IPv4 addresses"), ordinary);
+    auto *ordinaryHint = new QLabel(tr("With DNS over HTTPS, Core can still use these addresses for the physical upstream and SSConf bootstrap."));
+    ordinaryHint->setWordWrap(true);
+    ordinaryForm->addRow(ordinaryHint);
+    layout->addWidget(ordinaryPanel);
+    connect(ordinaryToggle, &QPushButton::toggled, &dialog, [=](bool checked) {
+        ordinaryPanel->setVisible(ordinaryAvailable && (mode->currentIndex() == 0 || checked));
+    });
     auto *body = new QScrollArea;
     body->setWidgetResizable(true);
     auto *content = new QWidget;
@@ -2506,39 +2561,51 @@ void ProfileEditorDialog::editDoh() {
     body->setWidget(content);
     layout->addWidget(body);
     auto *resolvers = new QListWidget;
+    resolvers->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     resolvers->setObjectName("dohResolvers");
-    resolvers->setMaximumHeight(4 * (resolvers->fontMetrics().height() + 6) + 2 * resolvers->frameWidth());
-    fields->addWidget(resolvers);
+    resolvers->setUniformItemSizes(true);
+    auto *emptyHint = new QLabel(tr("Add a preset or enter your own DNS server."));
+    emptyHint->setWordWrap(true);
     auto *actionBar = new QWidget;
     auto *actions = new QHBoxLayout(actionBar);
     actions->setContentsMargins(0, 0, 0, 0);
-    auto *add = new QPushButton(tr("Add"));
+    auto *add = new QPushButton(tr("Add server…"));
     add->setObjectName("addDohResolver");
     auto *remove = new QPushButton(tr("Remove"));
     auto *up = new QPushButton(tr("Move up"));
     up->setObjectName("moveDohResolverUp");
     auto *down = new QPushButton(tr("Move down"));
-    for (auto *button : {add, remove, up, down}) actions->addWidget(button);
-    auto *form = new QFormLayout;
-    auto *preset = new QComboBox;
-    preset->setObjectName("dohPreset");
-    preset->addItems({tr("Custom"), QStringLiteral("Cloudflare"), QStringLiteral("Google")});
+    auto *details = new QPushButton(tr("Details"));
+    details->setCheckable(true);
+    for (auto *button : {add, details, up, down}) actions->addWidget(button);
+    fields->addWidget(actionBar);
+    fields->addWidget(emptyHint);
+    fields->addWidget(resolvers);
+    auto *detailPanel = new QWidget;
+    auto *form = new QFormLayout(detailPanel);
     auto *url = new QLineEdit;
     url->setObjectName("dohUrl");
     url->setMaxLength(64 * 1024 + 1);
     auto *ips = new DnsAddressEdit(false);
     ips->setObjectName("dohBootstrapIps");
-    form->addRow(tr("Preset"), preset);
     form->addRow(tr("HTTPS URL"), url);
     form->addRow(tr("Bootstrap IPs"), ips);
-    fields->addLayout(form);
+    form->addRow(remove);
+    fields->addWidget(detailPanel);
     auto *problem = new QLabel;
     problem->setWordWrap(true);
     layout->addWidget(problem);
-    layout->addWidget(actionBar);
     auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
+    buttons->button(QDialogButtonBox::Ok)->setText(tr("OK"));
+    buttons->button(QDialogButtonBox::Cancel)->setText(tr("Cancel"));
     layout->addWidget(buttons);
 
+    const auto updateName = [&](QListWidgetItem *item) {
+        const QString address = item->data(Qt::UserRole + 1).toString();
+        const QString name = dnsPresetName(address, item->data(Qt::UserRole).toString());
+        const QString host = QUrl(address).host();
+        item->setText(!name.isEmpty() ? name : host.isEmpty() ? tr("Custom server") : host);
+    };
     auto endpoints = dohEndpoints_.isEmpty() ? QStringList{} : dohEndpoints_.split(',');
     auto groups = dohBootstrap_.isEmpty() ? QStringList{} : dohBootstrap_.split(',');
     for (auto &endpoint : endpoints) endpoint = endpoint.trimmed();
@@ -2548,44 +2615,67 @@ void ProfileEditorDialog::editDoh() {
         group = tokens.join('|');
     }
     for (int i = 0; i < endpoints.size(); ++i) {
-        auto *item = new QListWidgetItem(endpoints.at(i).trimmed(), resolvers);
+        auto *item = new QListWidgetItem(resolvers);
+        item->setData(Qt::UserRole + 1, endpoints.at(i));
         auto addresses = groups.value(i).split('|');
         for (auto &address : addresses) address = address.trimmed();
         item->setData(Qt::UserRole, addresses.join(", "));
+        updateName(item);
     }
     const auto refresh = [&] {
         const auto *item = resolvers->currentItem();
         const int row = resolvers->currentRow();
-        const QSignalBlocker blockUrl(url), blockIps(ips), blockPreset(preset);
-        url->setText(item ? item->text() : QString());
+        const QSignalBlocker blockUrl(url), blockIps(ips);
+        url->setText(item ? item->data(Qt::UserRole + 1).toString() : QString());
         ips->setText(item ? item->data(Qt::UserRole).toString() : QString());
-        preset->setCurrentIndex(0);
-        for (QWidget *widget : QList<QWidget *>{url, ips, preset, remove}) widget->setEnabled(item != nullptr);
+        details->setVisible(item != nullptr);
+        detailPanel->setVisible(item && details->isChecked());
+        resolvers->setVisible(resolvers->count() > 0);
+        if (resolvers->count() > 0)
+            resolvers->setFixedHeight(qMin(4, resolvers->count()) * resolvers->sizeHintForRow(0) + 2 * resolvers->frameWidth());
+        emptyHint->setVisible(resolvers->count() == 0);
         add->setEnabled(resolvers->count() < 4);
+        up->setVisible(resolvers->count() > 1);
+        down->setVisible(resolvers->count() > 1);
         up->setEnabled(row > 0);
         down->setEnabled(row >= 0 && row + 1 < resolvers->count());
     };
     connect(resolvers, &QListWidget::currentRowChanged, &dialog, refresh);
-    connect(url, &QLineEdit::textChanged, &dialog, [=](const QString &text) {
-        if (auto *item = resolvers->currentItem()) item->setText(text);
-    });
-    connect(ips, &QLineEdit::textChanged, &dialog, [=](const QString &text) {
-        if (auto *item = resolvers->currentItem()) item->setData(Qt::UserRole, text);
-    });
-    connect(preset, &QComboBox::activated, &dialog, [=](int index) {
-        if (index == 1) {
-            url->setText("https://cloudflare-dns.com/dns-query");
-            ips->setText("1.1.1.1, 1.0.0.1");
-        } else if (index == 2) {
-            url->setText("https://dns.google/dns-query");
-            ips->setText("8.8.8.8, 8.8.4.4");
+    connect(details, &QPushButton::toggled, &dialog, refresh);
+    connect(url, &QLineEdit::textChanged, &dialog, [&](const QString &text) {
+        if (auto *item = resolvers->currentItem()) {
+            item->setData(Qt::UserRole + 1, text);
+            updateName(item);
         }
     });
-    connect(add, &QPushButton::clicked, &dialog, [&] {
-        resolvers->setCurrentItem(new QListWidgetItem(resolvers));
-        refresh();
-        url->setFocus();
+    connect(ips, &QLineEdit::textChanged, &dialog, [&](const QString &text) {
+        if (auto *item = resolvers->currentItem()) {
+            item->setData(Qt::UserRole, text);
+            updateName(item);
+        }
     });
+    const auto appendResolver = [&](const DnsPreset *preset) {
+        if (resolvers->count() >= 4) return;
+        auto *item = new QListWidgetItem(resolvers);
+        if (preset) {
+            item->setData(Qt::UserRole + 1, QString::fromLatin1(preset->url));
+            item->setData(Qt::UserRole, QString::fromLatin1(preset->addresses));
+        }
+        updateName(item);
+        details->setChecked(!preset);
+        resolvers->setCurrentItem(item);
+        refresh();
+        if (!preset) url->setFocus();
+    };
+    auto *menu = new QMenu(add);
+    for (const auto &preset : dnsPresets) {
+        const auto *entry = &preset;
+        menu->addAction(QString::fromLatin1(preset.name), &dialog, [&, entry] { appendResolver(entry); });
+    }
+    auto *custom = menu->addAction(tr("Custom server"), &dialog, [&] { appendResolver(nullptr); });
+    custom->setObjectName("addCustomDohResolver");
+    add->setMenu(menu);
+    connect(resolvers, &QListWidget::itemActivated, &dialog, [=] { details->setChecked(true); });
     connect(remove, &QPushButton::clicked, &dialog, [&] {
         delete resolvers->takeItem(resolvers->currentRow());
         refresh();
@@ -2600,7 +2690,9 @@ void ProfileEditorDialog::editDoh() {
     connect(down, &QPushButton::clicked, &dialog, [&] { move(1); });
     const auto showResolvers = [=](int index) {
         body->setVisible(index != 0);
-        actionBar->setVisible(index != 0);
+        ordinaryToggle->setVisible(index != 0 && ordinaryAvailable);
+        ordinaryHint->setVisible(index != 0);
+        ordinaryPanel->setVisible(ordinaryAvailable && (index == 0 || ordinaryToggle->isChecked()));
         problem->clear();
     };
     connect(mode, &QComboBox::currentIndexChanged, &dialog, showResolvers);
@@ -2609,6 +2701,15 @@ void ProfileEditorDialog::editDoh() {
     refresh();
     connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
     connect(buttons, &QDialogButtonBox::accepted, &dialog, [&] {
+        if (ordinaryAvailable && ordinary->text() != dns_->text()) {
+            const QString error = ordinary->error(ordinary->text());
+            if (!error.isEmpty()) {
+                ordinaryToggle->setChecked(true);
+                ordinary->setFocus();
+                problem->setText(error);
+                return;
+            }
+        }
         QStringList urls, bootstrap;
         if (mode->currentIndex() != 0) {
             if (resolvers->count() == 0 || resolvers->count() > 4) {
@@ -2617,7 +2718,7 @@ void ProfileEditorDialog::editDoh() {
             }
             for (int i = 0; i < resolvers->count(); ++i) {
                 const auto *item = resolvers->item(i);
-                const auto endpoint = item->text().trimmed();
+                const auto endpoint = item->data(Qt::UserRole + 1).toString().trimmed();
                 const QUrl parsed(endpoint, QUrl::StrictMode);
                 const auto input = item->data(Qt::UserRole).toString();
                 const auto addresses = DnsAddressEdit::addresses(input);
@@ -2629,6 +2730,8 @@ void ProfileEditorDialog::editDoh() {
                     error = tr("Enter an HTTPS URL with a hostname and path.");
                 if (!error.isEmpty()) {
                     resolvers->setCurrentRow(i);
+                    details->setChecked(true);
+                    (error == tr("Enter an HTTPS URL with a hostname and path.") ? url : ips)->setFocus();
                     problem->setText(error);
                     return;
                 }
@@ -2640,6 +2743,7 @@ void ProfileEditorDialog::editDoh() {
             dohEndpoints_ = urls.join(", ");
             dohBootstrap_ = bootstrap.join(", ");
         }
+        if (ordinaryAvailable) dns_->setText(ordinary->text());
         dialog.accept();
     });
     dialog.resize(520, 350);
@@ -3466,8 +3570,10 @@ void ProfileEditorDialog::refreshWireGuard() {
     for (QWidget *control : QList<QWidget *>{interfaceName_, ipv6_, killSwitch_})
         setFormRowVisible(networkForm, control, !wireGuard || !rawOnly_);
     setFormRowVisible(networkForm, mtu_, !wireGuard);
-    setFormRowVisible(networkForm, dns_, !wireGuard);
-    setFormRowVisible(networkForm, configureDoh_, !rawOnly_);
+    setFormRowVisible(networkForm, configureDoh_, !rawOnly_ && (!wireGuard || !dohEndpoints_.isEmpty() || capabilities_.value("doh").toBool()));
+    if (auto *label = qobject_cast<QLabel *>(networkForm->labelForField(configureDoh_)))
+        label->setText(wireGuard ? tr("DNS over HTTPS") : tr("DNS"));
+    refreshDohSummary();
     wgForm_->showNetworkFields(wireGuard, !wgRawOnly_ && !wgRawDirty_ && !wgReservedReadOnly_);
     allowedIpsGroup_->setVisible(wireGuard);
     const QString mode = allowedIpsMode_->currentData().toString();
