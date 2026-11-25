@@ -1274,6 +1274,7 @@
   "Core: unknown": "Core: неизвестно",
   "Core: %1 · validation CLI: %2": "Core: %1 · CLI проверки: %2",
   "DNS (up to four IPv4 addresses)": "DNS (до четырёх IPv4)",
+  "Leave empty to use the Core default: %1": "Оставьте пустым, чтобы использовать значение Core по умолчанию: %1",
   "IP or CIDR: 1.1.1.1, 10.0.0.0/8": "IP или CIDR: 1.1.1.1, 10.0.0.0/8",
   "IP/CIDR rules": "IP/CIDR-правила",
   "The kill switch is only available in system VPN mode.": "Kill switch доступен только в режиме системного VPN.",
