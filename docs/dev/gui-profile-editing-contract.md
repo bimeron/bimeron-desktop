@@ -108,7 +108,9 @@ Service start rejection must not rewrite the profile or expose credentials.
 The Network tab summarizes the active DNS configuration in one row. Configure
 opens a dialog with ordinary IPv4 settings and ordered DoH servers. Selecting
 a preset adds it immediately. Custom servers open the HTTPS and bootstrap
-fields. Select an entry and open Details to edit or remove it. Ordering
+fields. The empty dialog shows a short prompt and Add server. In a populated
+list, Add server sits directly below compact rows. The dialog grows when
+Details opens. Select an entry and open Details to edit or remove it. Ordering
 controls appear with two or more servers. OK updates the draft. Save writes
 the profile. WireGuard and AmneziaWG retain their protocol-specific DNS field
 and label the separate captured-DNS control DNS over HTTPS.

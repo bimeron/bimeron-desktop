@@ -14,6 +14,7 @@
 #include <QAccessible>
 #include <QScrollArea>
 #include <QAction>
+#include <QMenu>
 #include <QElapsedTimer>
 #include <QEventLoop>
 #include <QKeyEvent>
@@ -2446,7 +2447,25 @@ int main(int argc, char **argv) {
             auto *dialog = QApplication::activeModalWidget();
             require(dialog);
             dialog->findChild<QComboBox *>("dohMode")->setCurrentIndex(1);
+            auto *list = dialog->findChild<QListWidget *>("dohResolvers");
+            auto *add = dialog->findChild<QPushButton *>("addDohResolver");
+            auto *details = dialog->findChild<QPushButton *>("dohDetails");
+            auto *up = dialog->findChild<QPushButton *>("moveDohResolverUp");
+            require(!list->isVisible() && !details->isVisible() && !up->isVisible());
+            require(add->isVisible() && add->width() < dialog->width() / 2);
+            add->menu()->actions().first()->trigger();
+            require(list->count() == 1 && list->item(0)->text() == "Cloudflare");
+            require(list->height() < 2 * list->fontMetrics().height() + 20);
+            require(details->isVisible() && !up->isVisible());
+            require(!dialog->findChild<QLineEdit *>("dohUrl")->isVisible());
+            details->click();
+            require(dialog->findChild<QLineEdit *>("dohUrl")->isVisible());
             dialog->findChild<QAction *>("addCustomDohResolver")->trigger();
+            require(list->count() == 2 && up->isVisible() && up->isEnabled());
+            list->setCurrentRow(0);
+            dialog->findChild<QPushButton *>("removeDohResolver")->click();
+            list->setCurrentRow(0);
+            if (!details->isChecked()) details->click();
             dialog->findChild<QLineEdit *>("dohUrl")->setText("https://Resolver.example/dns%2Cquery");
             dialog->findChild<QLineEdit *>("dohBootstrapIps")->setText("2001:db8::1, 192.0.2.2");
             dialog->findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Ok)->click();

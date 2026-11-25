@@ -2522,7 +2522,9 @@ void ProfileEditorDialog::editDoh() {
     QDialog dialog(this);
     dialog.setWindowTitle(tr("DNS settings"));
     auto *layout = new QVBoxLayout(&dialog);
+    layout->setSizeConstraint(QLayout::SetFixedSize);
     auto *mode = new QComboBox;
+    mode->setMinimumWidth(450);
     mode->addItems({tr("Ordinary DNS"), tr("DNS over HTTPS")});
     mode->setObjectName("dohMode");
     mode->setCurrentIndex(!dohEndpoints_.isEmpty() || !dohBootstrap_.isEmpty());
@@ -2537,8 +2539,6 @@ void ProfileEditorDialog::editDoh() {
     }
     auto *ordinaryToggle = new QPushButton(tr("Ordinary DNS settings"));
     ordinaryToggle->setCheckable(true);
-    if (ordinaryAvailable) layout->addWidget(ordinaryToggle);
-    else ordinaryToggle->hide();
     auto *ordinaryPanel = new QWidget;
     auto *ordinaryForm = new QFormLayout(ordinaryPanel);
     auto *ordinary = new DnsAddressEdit(true);
@@ -2550,14 +2550,17 @@ void ProfileEditorDialog::editDoh() {
     auto *ordinaryHint = new QLabel(tr("With DNS over HTTPS, Core can still use these addresses for the physical upstream and SSConf bootstrap."));
     ordinaryHint->setWordWrap(true);
     ordinaryForm->addRow(ordinaryHint);
-    layout->addWidget(ordinaryPanel);
     connect(ordinaryToggle, &QPushButton::toggled, &dialog, [=](bool checked) {
         ordinaryPanel->setVisible(ordinaryAvailable && (mode->currentIndex() == 0 || checked));
     });
     auto *body = new QScrollArea;
     body->setWidgetResizable(true);
+    body->setFrameShape(QFrame::NoFrame);
+    body->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     auto *content = new QWidget;
     auto *fields = new QVBoxLayout(content);
+    fields->setContentsMargins(0, 0, 0, 0);
+    fields->setAlignment(Qt::AlignTop);
     body->setWidget(content);
     layout->addWidget(body);
     auto *resolvers = new QListWidget;
@@ -2572,17 +2575,22 @@ void ProfileEditorDialog::editDoh() {
     auto *add = new QPushButton(tr("Add server…"));
     add->setObjectName("addDohResolver");
     auto *remove = new QPushButton(tr("Remove"));
+    remove->setObjectName("removeDohResolver");
     auto *up = new QPushButton(tr("Move up"));
     up->setObjectName("moveDohResolverUp");
     auto *down = new QPushButton(tr("Move down"));
     auto *details = new QPushButton(tr("Details"));
+    details->setObjectName("dohDetails");
     details->setCheckable(true);
-    for (auto *button : {add, details, up, down}) actions->addWidget(button);
-    fields->addWidget(actionBar);
+    actions->addWidget(add);
+    actions->addStretch();
+    for (auto *button : {up, down, details}) actions->addWidget(button);
     fields->addWidget(emptyHint);
     fields->addWidget(resolvers);
+    fields->addWidget(actionBar);
     auto *detailPanel = new QWidget;
     auto *form = new QFormLayout(detailPanel);
+    form->setContentsMargins(0, 4, 0, 0);
     auto *url = new QLineEdit;
     url->setObjectName("dohUrl");
     url->setMaxLength(64 * 1024 + 1);
@@ -2590,20 +2598,32 @@ void ProfileEditorDialog::editDoh() {
     ips->setObjectName("dohBootstrapIps");
     form->addRow(tr("HTTPS URL"), url);
     form->addRow(tr("Bootstrap IPs"), ips);
-    form->addRow(remove);
+    auto *removeRow = new QHBoxLayout;
+    removeRow->addWidget(remove);
+    removeRow->addStretch();
+    form->addRow(removeRow);
     fields->addWidget(detailPanel);
+    layout->addWidget(ordinaryToggle, 0, Qt::AlignLeft);
+    layout->addWidget(ordinaryPanel);
+    ordinaryForm->setContentsMargins(0, 0, 0, 0);
     auto *problem = new QLabel;
     problem->setWordWrap(true);
+    problem->hide();
     layout->addWidget(problem);
     auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
     buttons->button(QDialogButtonBox::Ok)->setText(tr("OK"));
     buttons->button(QDialogButtonBox::Cancel)->setText(tr("Cancel"));
     layout->addWidget(buttons);
 
+    const auto fitBody = [=] {
+        fields->activate();
+        body->setFixedHeight(qMin(245, fields->sizeHint().height()));
+    };
     const auto updateName = [&](QListWidgetItem *item) {
         const QString address = item->data(Qt::UserRole + 1).toString();
         const QString name = dnsPresetName(address, item->data(Qt::UserRole).toString());
         const QString host = QUrl(address).host();
+        item->setSizeHint(QSize(1, resolvers->fontMetrics().height() + 10));
         item->setText(!name.isEmpty() ? name : host.isEmpty() ? tr("Custom server") : host);
     };
     auto endpoints = dohEndpoints_.isEmpty() ? QStringList{} : dohEndpoints_.split(',');
@@ -2639,6 +2659,7 @@ void ProfileEditorDialog::editDoh() {
         down->setVisible(resolvers->count() > 1);
         up->setEnabled(row > 0);
         down->setEnabled(row >= 0 && row + 1 < resolvers->count());
+        fitBody();
     };
     connect(resolvers, &QListWidget::currentRowChanged, &dialog, refresh);
     connect(details, &QPushButton::toggled, &dialog, refresh);
@@ -2694,6 +2715,8 @@ void ProfileEditorDialog::editDoh() {
         ordinaryHint->setVisible(index != 0);
         ordinaryPanel->setVisible(ordinaryAvailable && (index == 0 || ordinaryToggle->isChecked()));
         problem->clear();
+        problem->hide();
+        fitBody();
     };
     connect(mode, &QComboBox::currentIndexChanged, &dialog, showResolvers);
     showResolvers(mode->currentIndex());
@@ -2707,6 +2730,7 @@ void ProfileEditorDialog::editDoh() {
                 ordinaryToggle->setChecked(true);
                 ordinary->setFocus();
                 problem->setText(error);
+                problem->show();
                 return;
             }
         }
@@ -2714,6 +2738,8 @@ void ProfileEditorDialog::editDoh() {
         if (mode->currentIndex() != 0) {
             if (resolvers->count() == 0 || resolvers->count() > 4) {
                 problem->setText(tr("Enter one to four resolvers."));
+                problem->show();
+                add->setFocus();
                 return;
             }
             for (int i = 0; i < resolvers->count(); ++i) {
@@ -2733,6 +2759,7 @@ void ProfileEditorDialog::editDoh() {
                     details->setChecked(true);
                     (error == tr("Enter an HTTPS URL with a hostname and path.") ? url : ips)->setFocus();
                     problem->setText(error);
+                    problem->show();
                     return;
                 }
                 urls.append(endpoint);
@@ -2746,7 +2773,6 @@ void ProfileEditorDialog::editDoh() {
         if (ordinaryAvailable) dns_->setText(ordinary->text());
         dialog.accept();
     });
-    dialog.resize(520, 350);
     if (dialog.exec() == QDialog::Accepted) refreshDohSummary();
 }
 
