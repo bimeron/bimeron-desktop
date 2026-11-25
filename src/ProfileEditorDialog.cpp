@@ -2541,14 +2541,14 @@ void ProfileEditorDialog::editDoh() {
         "QFrame#dnsGroup { background: %1; border: 1px solid %4; border-radius: 7px; }"
         "QWidget#dnsServerHeader { background: %1; border-top: 1px solid %4; }"
         "QWidget#dnsServerHeader[firstRow=true] { border-top: 0; }"
-        "QPushButton#dohServerHeader, QPushButton#ordinaryDnsToggle { text-align: left; padding: 5px 9px; border: 1px solid transparent; border-radius: 5px; background: transparent; }"
+        "QPushButton#dohServerHeader, QPushButton#ordinaryDnsToggle { text-align: left; min-height: 27px; padding: 0 8px; border: 1px solid transparent; border-radius: 5px; background: transparent; }"
         "QPushButton#dohServerHeader { font-weight: 600; }"
         "QPushButton#dohServerHeader:hover, QPushButton#ordinaryDnsToggle:hover { background: %3; }"
         "QPushButton#dohServerHeader:focus, QPushButton#ordinaryDnsToggle:focus { border-color: #4387eb; }"
-        "QPushButton#addDohResolver { background: %3; border: 1px solid %4; border-radius: 6px; padding: 4px 9px; }"
+        "QPushButton#addDohResolver { background: %3; border: 1px solid %4; border-radius: 6px; min-height: 27px; padding: 0 10px; }"
         "QPushButton#addDohResolver:hover { border-color: #4387eb; }"
-        "QComboBox#dohMode, QDialog#dnsDialog QLineEdit, QPushButton#dnsCancel { background: %1; border: 1px solid %4; border-radius: 6px; padding: 5px 9px; }"
-        "QComboBox#dohMode { padding-right: 25px; }"
+        "QComboBox#dohMode, QDialog#dnsDialog QLineEdit, QPushButton#dnsCancel { background: %1; border: 1px solid %4; border-radius: 6px; min-height: 27px; padding: 0 8px; }"
+        "QComboBox#dohMode { padding-right: 30px; }"
         "QComboBox#dohMode[popupOpen=true] { border-bottom-left-radius: 0; border-bottom-right-radius: 0; }"
         "QComboBox#dohMode QAbstractItemView { padding: 0; background: %1; border: 1px solid %4; border-top: 0; border-bottom-left-radius: 6px; border-bottom-right-radius: 6px; outline: 0; selection-color: %5; selection-background-color: %6; }"
         "QComboBox#dohMode QAbstractItemView::item { min-height: 26px; padding: 0 6px; border: 0; }"
@@ -2556,7 +2556,7 @@ void ProfileEditorDialog::editDoh() {
         "QComboBox#dohMode QAbstractItemView::item:disabled { color: palette(mid); }"
         "QComboBox#dohMode::drop-down { border: 0; width: 24px; }"
         "QComboBox#dohMode::down-arrow { image: url(%8); width: 9px; height: 5px; }"
-        "QPushButton#moveDohResolverUp, QPushButton#moveDohResolverDown, QPushButton#removeDohResolver { background: transparent; border: 1px solid transparent; border-radius: 5px; padding: 3px 6px; }"
+        "QPushButton#moveDohResolverUp, QPushButton#moveDohResolverDown, QPushButton#removeDohResolver { background: transparent; border: 1px solid transparent; border-radius: 5px; min-height: 24px; padding: 0 3px; }"
         "QPushButton#moveDohResolverUp:hover:enabled, QPushButton#moveDohResolverDown:hover:enabled { background: %3; }"
         "QPushButton#removeDohResolver:hover { color: %7; background: %3; }"
         "QPushButton#dnsCancel:hover { background: %3; }"
@@ -2565,7 +2565,7 @@ void ProfileEditorDialog::editDoh() {
         "QPushButton#moveDohResolverUp:focus, QPushButton#moveDohResolverDown:focus, QPushButton#removeDohResolver:focus { border-color: #4387eb; }"
         "QComboBox#dohMode:focus, QDialog#dnsDialog QLineEdit:focus, QPushButton#dnsCancel:focus { border-color: #4387eb; }"
         "QDialogButtonBox#dnsButtons { button-layout: 3; }"
-        "QPushButton#dnsApply { background: #1766c8; color: white; border: 1px solid #1766c8; border-radius: 6px; padding: 5px 14px; }"
+        "QPushButton#dnsApply { background: #1766c8; color: white; border: 1px solid #1766c8; border-radius: 6px; min-height: 27px; padding: 0 14px; }"
         "QPushButton#dnsApply:disabled { background: %4; color: palette(mid); border-color: %4; }"
         "QPushButton#dnsApply:focus { border-color: #80b8ff; }"
         "QMenu#dohAddMenu { background: %1; border: 1px solid %4; padding: 4px; }"
@@ -2580,7 +2580,7 @@ void ProfileEditorDialog::editDoh() {
     main->setObjectName("dnsBody");
     auto *mainLayout = new QVBoxLayout(main);
     mainLayout->setContentsMargins(14, 14, 14, 12);
-    mainLayout->setSpacing(9);
+    mainLayout->setSpacing(8);
     layout->addWidget(main);
     layout->setSizeConstraint(QLayout::SetFixedSize);
     auto *mode = new HiDpiComboBox;
@@ -2589,10 +2589,11 @@ void ProfileEditorDialog::editDoh() {
     mode->setObjectName("dohMode");
     mode->setProperty("chevronResource", chevronResource);
     mode->setCurrentIndex(!dohEndpoints_.isEmpty() || !dohBootstrap_.isEmpty());
-    auto *modeRow = new QFormLayout;
+    auto *modeRow = new QHBoxLayout;
     auto *modeLabel = new QLabel(tr("Mode"));
     modeLabel->setBuddy(mode);
-    modeRow->addRow(modeLabel, mode);
+    modeRow->addWidget(modeLabel, 0, Qt::AlignVCenter);
+    modeRow->addWidget(mode, 1, Qt::AlignVCenter);
     mainLayout->addLayout(modeRow);
     const bool ordinaryAvailable = !isWireGuard();
     const bool supported = capabilities_.value("doh").toBool();
@@ -2686,7 +2687,7 @@ void ProfileEditorDialog::editDoh() {
     ordinaryToggle->setAutoDefault(false);
     mainLayout->addWidget(ordinaryToggle);
     auto *ordinaryPanel = new QWidget;
-    auto *ordinaryForm = new QFormLayout(ordinaryPanel);
+    auto *ordinaryForm = new QVBoxLayout(ordinaryPanel);
     ordinaryForm->setContentsMargins(0, 0, 0, 0);
     auto *ordinary = new DnsAddressEdit(true);
     ordinary->setObjectName("ordinaryDnsAddresses");
@@ -2695,8 +2696,13 @@ void ProfileEditorDialog::editDoh() {
     ordinary->setToolTip(dns_->toolTip());
     auto *ordinaryHint = new QLabel(tr("With DNS over HTTPS, Core can still use these addresses for the physical upstream and SSConf bootstrap."));
     ordinaryHint->setWordWrap(true);
-    ordinaryForm->addRow(ordinaryHint);
-    ordinaryForm->addRow(tr("IPv4 addresses"), ordinary);
+    ordinaryForm->addWidget(ordinaryHint);
+    auto *ordinaryRow = new QHBoxLayout;
+    auto *ordinaryLabel = new QLabel(tr("IPv4 addresses"));
+    ordinaryLabel->setBuddy(ordinary);
+    ordinaryRow->addWidget(ordinaryLabel, 0, Qt::AlignVCenter);
+    ordinaryRow->addWidget(ordinary, 1, Qt::AlignVCenter);
+    ordinaryForm->addLayout(ordinaryRow);
     mainLayout->addWidget(ordinaryPanel);
     const auto refreshOrdinary = [=] {
         const bool encrypted = mode->currentIndex() != 0;

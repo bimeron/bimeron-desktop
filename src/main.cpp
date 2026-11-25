@@ -117,7 +117,10 @@ int main(int argc, char *argv[]) {
     QCoreApplication::setOrganizationName(QStringLiteral("Bimeron"));
     QCoreApplication::setApplicationName(QStringLiteral("Bimeron Desktop"));
     QGuiApplication::setApplicationDisplayName(QStringLiteral("Bimeron"));
-    applyThemePalette(app);
+    const bool dnsPreviewDark = app.arguments().contains("--visual-check")
+        && (app.arguments().contains("--dns-preview") || app.arguments().contains("--dns-preview-profile"))
+        && app.arguments().contains("--dns-preview-dark");
+    applyThemePalette(app, dnsPreviewDark ? QStringLiteral("dark") : QString());
     QCoreApplication::setApplicationVersion(QStringLiteral(BIMERON_GUI_VERSION));
     const QString configuredLanguage = QSettings().value("app/language").toString();
     const QString language = configuredLanguage.isEmpty()
@@ -175,8 +178,6 @@ int main(int argc, char *argv[]) {
     if (!instanceServer.listen(instanceName))
         return 0;
     if (visualCheck && app.arguments().contains(QStringLiteral("--dns-preview"))) {
-        if (app.arguments().contains(QStringLiteral("--dns-preview-dark")))
-            applyThemePalette(app, QStringLiteral("dark"));
         ProfileEditorDialog editor({}, QJsonObject{{"vpn", true}, {"doh", true}}, nullptr, {}, {}, {}, true);
         editor.findChild<QPushButton *>("configureDoh")->click();
         return 0;

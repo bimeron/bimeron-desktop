@@ -19,6 +19,10 @@ inline bool windowsDarkMode() { return false; }
 #endif
 
 inline bool appDarkMode() {
+    const auto arguments = QCoreApplication::arguments();
+    if (arguments.contains("--visual-check") && arguments.contains("--dns-preview-dark")
+        && (arguments.contains("--dns-preview") || arguments.contains("--dns-preview-profile")))
+        return true;
     const QString choice = QSettings().value("app/theme", "system").toString();
     if (choice == "dark") return true;
     if (choice == "light") return false;

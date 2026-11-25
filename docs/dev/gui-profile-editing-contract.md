@@ -137,7 +137,11 @@ Validation failure must preserve an existing DoH document.
 For a visual check, launch Desktop with `--visual-check --dns-preview`.
 It opens a temporary DNS draft without opening a user profile or connecting
 to the service. Add `--dns-preview-dark` to preview the dark palette for
-that process.
+that process. To check the inherited main-window style through a profile,
+use `--visual-check --dns-preview-profile`. This variant opens the main
+window and requests a Core hello to load capabilities. The DNS fields
+use the Settings control height and horizontal padding, with labels
+centered vertically beside the mode and ordinary IPv4 fields.
 
 The Desktop profile regression runs the editor and clipboard checks on both
 platforms. Set `BIMERON_DOH_CORE` to a DoH-capable CLI to exercise the real
