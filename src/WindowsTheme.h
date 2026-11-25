@@ -29,12 +29,12 @@ inline bool appDarkMode() {
 #endif
 }
 
-inline void applyThemePalette(QApplication &app) {
-    const QString choice = QSettings().value("app/theme", "system").toString();
+inline void applyThemePalette(QApplication &app, const QString &overrideTheme = {}) {
+    const QString choice = overrideTheme.isEmpty() ? QSettings().value("app/theme", "system").toString() : overrideTheme;
 #ifndef Q_OS_WIN
     if (choice == "system") return;
 #endif
-    const bool dark = appDarkMode();
+    const bool dark = choice == "system" ? appDarkMode() : choice == "dark";
     QPalette palette = app.palette();
     palette.setColor(QPalette::Window, QColor(dark ? "#181e27" : "#f8fafc"));
     palette.setColor(QPalette::WindowText, QColor(dark ? "#e8edf5" : "#152238"));

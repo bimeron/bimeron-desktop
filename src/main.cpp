@@ -175,6 +175,8 @@ int main(int argc, char *argv[]) {
     if (!instanceServer.listen(instanceName))
         return 0;
     if (visualCheck && app.arguments().contains(QStringLiteral("--dns-preview"))) {
+        if (app.arguments().contains(QStringLiteral("--dns-preview-dark")))
+            applyThemePalette(app, QStringLiteral("dark"));
         ProfileEditorDialog editor({}, QJsonObject{{"vpn", true}, {"doh", true}}, nullptr, {}, {}, {}, true);
         editor.findChild<QPushButton *>("configureDoh")->click();
         return 0;

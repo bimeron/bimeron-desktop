@@ -2531,6 +2531,8 @@ void ProfileEditorDialog::editDoh() {
     const QString chrome = dark ? "#26303b" : "#f7f9fc";
     const QString detail = dark ? "#242e39" : "#f7faff";
     const QString border = dark ? "#415367" : "#dae4ef";
+    const QString chevronResource = dark ? QStringLiteral(":/icons/chevron-down-dark.xpm")
+                                         : QStringLiteral(":/icons/chevron-down.xpm");
     dialog.setObjectName("dnsDialog");
     dialog.setStyleSheet(QStringLiteral(
         "QDialog#dnsDialog, QWidget#dnsRows, QWidget#dnsBody { background: %1; }"
@@ -2547,10 +2549,18 @@ void ProfileEditorDialog::editDoh() {
         "QPushButton#addDohResolver:hover { border-color: #4387eb; }"
         "QComboBox#dohMode, QDialog#dnsDialog QLineEdit, QPushButton#dnsCancel { background: %1; border: 1px solid %4; border-radius: 6px; padding: 5px 9px; }"
         "QComboBox#dohMode { padding-right: 25px; }"
+        "QComboBox#dohMode[popupOpen=true] { border-bottom-left-radius: 0; border-bottom-right-radius: 0; }"
+        "QComboBox#dohMode QAbstractItemView { padding: 0; background: %1; border: 1px solid %4; border-top: 0; border-bottom-left-radius: 6px; border-bottom-right-radius: 6px; outline: 0; selection-color: %5; selection-background-color: %6; }"
+        "QComboBox#dohMode QAbstractItemView::item { min-height: 26px; padding: 0 6px; border: 0; }"
+        "QComboBox#dohMode QAbstractItemView::item:selected { color: %5; background: %6; border: 0; outline: 0; }"
+        "QComboBox#dohMode QAbstractItemView::item:disabled { color: palette(mid); }"
         "QComboBox#dohMode::drop-down { border: 0; width: 24px; }"
-        "QComboBox#dohMode::down-arrow { image: url(:/icons/chevron-down.xpm); width: 9px; height: 5px; }"
+        "QComboBox#dohMode::down-arrow { image: url(%8); width: 9px; height: 5px; }"
         "QPushButton#moveDohResolverUp, QPushButton#moveDohResolverDown, QPushButton#removeDohResolver { background: transparent; border: 1px solid transparent; border-radius: 5px; padding: 3px 6px; }"
-        "QPushButton#removeDohResolver { color: #9a3232; }"
+        "QPushButton#moveDohResolverUp:hover:enabled, QPushButton#moveDohResolverDown:hover:enabled { background: %3; }"
+        "QPushButton#removeDohResolver:hover { color: %7; background: %3; }"
+        "QPushButton#dnsCancel:hover { background: %3; }"
+        "QPushButton#dnsApply:hover:enabled { background: #155bae; }"
         "QPushButton#moveDohResolverUp:disabled, QPushButton#moveDohResolverDown:disabled { color: palette(mid); }"
         "QPushButton#moveDohResolverUp:focus, QPushButton#moveDohResolverDown:focus, QPushButton#removeDohResolver:focus { border-color: #4387eb; }"
         "QComboBox#dohMode:focus, QDialog#dnsDialog QLineEdit:focus, QPushButton#dnsCancel:focus { border-color: #4387eb; }"
@@ -2562,7 +2572,7 @@ void ProfileEditorDialog::editDoh() {
         "QMenu#dohAddMenu::item { padding: 5px 18px 5px 9px; }"
         "QMenu#dohAddMenu::item:selected { background: %3; }"
         "QFrame#dnsSeparator { background: %4; }"
-    ).arg(surface, chrome, detail, border));
+    ).arg(surface, chrome, detail, border, dark ? "#a9ceff" : "#1267d6", dark ? "#324964" : "#edf5ff", dark ? "#ffa2a2" : "#a83232", chevronResource));
     auto *layout = new QVBoxLayout(&dialog);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(0);
@@ -2573,10 +2583,11 @@ void ProfileEditorDialog::editDoh() {
     mainLayout->setSpacing(9);
     layout->addWidget(main);
     layout->setSizeConstraint(QLayout::SetFixedSize);
-    auto *mode = new QComboBox;
+    auto *mode = new HiDpiComboBox;
     mode->setMinimumWidth(380);
     mode->addItems({tr("Ordinary DNS"), tr("DNS over HTTPS")});
     mode->setObjectName("dohMode");
+    mode->setProperty("chevronResource", chevronResource);
     mode->setCurrentIndex(!dohEndpoints_.isEmpty() || !dohBootstrap_.isEmpty());
     auto *modeRow = new QFormLayout;
     auto *modeLabel = new QLabel(tr("Mode"));
@@ -2646,22 +2657,32 @@ void ProfileEditorDialog::editDoh() {
     urlLabel->setBuddy(url);
     auto *ipsLabel = new QLabel(tr("Bootstrap IPs"));
     ipsLabel->setBuddy(ips);
-    auto *remove = new QPushButton(tr("Remove server"));
-    remove->setObjectName("removeDohResolver");
-    remove->setAutoDefault(false);
     form->addWidget(urlLabel);
     form->addWidget(url);
     form->addWidget(ipsLabel);
     form->addWidget(ips);
-    form->addWidget(remove, 0, Qt::AlignLeft);
 
     auto *separator = new QFrame;
     separator->setObjectName("dnsSeparator");
     separator->setFixedHeight(1);
     mainLayout->addWidget(separator);
+    const QPixmap downChevron(chevronResource);
+    const auto disclosureIcon = [&downChevron](bool expanded) {
+        QPixmap icon(12, 12);
+        icon.fill(Qt::transparent);
+        QPainter painter(&icon);
+        painter.translate(6, 6);
+        if (!expanded) painter.rotate(-90);
+        painter.drawPixmap(-downChevron.width() / 2, -downChevron.height() / 2, downChevron);
+        painter.end();
+        return QIcon(icon);
+    };
+    const QIcon collapsedIcon = disclosureIcon(false);
+    const QIcon expandedIcon = disclosureIcon(true);
     auto *ordinaryToggle = new QPushButton;
     ordinaryToggle->setObjectName("ordinaryDnsToggle");
     ordinaryToggle->setCheckable(true);
+    ordinaryToggle->setIconSize(QSize(12, 12));
     ordinaryToggle->setAutoDefault(false);
     mainLayout->addWidget(ordinaryToggle);
     auto *ordinaryPanel = new QWidget;
@@ -2680,9 +2701,9 @@ void ProfileEditorDialog::editDoh() {
     const auto refreshOrdinary = [=] {
         const bool encrypted = mode->currentIndex() != 0;
         const bool expanded = ordinaryToggle->isChecked();
-        ordinaryToggle->setText(QStringLiteral("%1  %2    %3")
-            .arg(expanded ? QStringLiteral("⌄") : QStringLiteral("›"), tr("Ordinary DNS"),
-                 ordinary->text().isEmpty() ? tr("Default DNS") : ordinary->text()));
+        ordinaryToggle->setIcon(expanded ? expandedIcon : collapsedIcon);
+        ordinaryToggle->setText(QStringLiteral("%1    %2")
+            .arg(tr("Ordinary DNS"), ordinary->text().isEmpty() ? tr("Default DNS") : ordinary->text()));
         separator->setVisible(encrypted && ordinaryAvailable);
         ordinaryToggle->setVisible(encrypted && ordinaryAvailable);
         ordinaryHint->setVisible(encrypted);
@@ -2719,6 +2740,7 @@ void ProfileEditorDialog::editDoh() {
         QPushButton *title;
         QPushButton *up;
         QPushButton *down;
+        QPushButton *remove;
     };
     QList<ResolverRow> rows;
     qsizetype open = -1;
@@ -2727,8 +2749,12 @@ void ProfileEditorDialog::editDoh() {
         const QString preset = dnsPresetName(row.endpoint, row.addresses);
         const QString host = QUrl(row.endpoint).host();
         const QString name = preset.isEmpty() ? (host.isEmpty() ? tr("Custom server") : host) : preset;
-        row.title->setText(QStringLiteral("%1  %2").arg(open == index ? QStringLiteral("⌄") : QStringLiteral("›"), name));
+        row.title->setIcon(open == index ? expandedIcon : collapsedIcon);
+        row.title->setText(name);
         row.title->setAccessibleName(name);
+        const QString removeLabel = tr("Remove server: %1").arg(name);
+        row.remove->setToolTip(removeLabel);
+        row.remove->setAccessibleName(removeLabel);
         row.title->setChecked(open == index);
     };
     const auto refresh = [&] {
@@ -2755,6 +2781,23 @@ void ProfileEditorDialog::editDoh() {
                 ips->setText(row.addresses);
             }
         }
+        QWidget *previous = add;
+        const auto nextTab = [&previous](QWidget *widget) {
+            QWidget::setTabOrder(previous, widget);
+            previous = widget;
+        };
+        for (qsizetype i = 0; i < rows.size(); ++i) {
+            const auto &row = rows[i];
+            nextTab(row.title);
+            nextTab(row.up);
+            nextTab(row.down);
+            nextTab(row.remove);
+            if (open == i) {
+                nextTab(url);
+                nextTab(ips);
+            }
+        }
+        for (auto *widget : QList<QWidget *>{ordinaryToggle, ordinary, cancel, ok}) nextTab(widget);
         empty->setVisible(rows.isEmpty());
         scroll->setVisible(!rows.isEmpty());
         int rowsHeight = 0;
@@ -2780,6 +2823,20 @@ void ProfileEditorDialog::editDoh() {
         refresh();
         rows[to].title->setFocus();
     };
+    const auto removeRow = [&](QWidget *widget) {
+        const auto index = indexOf(widget);
+        if (index < 0) return;
+        rowLayout->removeWidget(widget);
+        widget->hide();
+        rows.removeAt(index);
+        widget->deleteLater();
+        if (open == index) open = -1;
+        else if (open > index) --open;
+        refresh();
+        if (rows.isEmpty()) add->setFocus();
+        else rows[qMin(index, rows.size() - 1)].remove->setFocus();
+    };
+    const QIcon removeIcon = QIcon::fromTheme(QStringLiteral("edit-delete"));
     const auto appendRow = [&](const QString &endpoint, const QString &addresses) {
         auto *widget = new QWidget(rowBox);
         widget->setObjectName("dnsServerHeader");
@@ -2790,6 +2847,7 @@ void ProfileEditorDialog::editDoh() {
         title->setObjectName("dohServerHeader");
         title->setCheckable(true);
         title->setAutoDefault(false);
+        title->setIconSize(QSize(12, 12));
         title->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
         title->setMinimumHeight(30);
         row->addWidget(title, 1);
@@ -2801,12 +2859,16 @@ void ProfileEditorDialog::editDoh() {
         down->setAccessibleName(tr("Move down"));
         up->setToolTip(tr("Move up"));
         down->setToolTip(tr("Move down"));
-        for (auto *arrow : {up, down}) {
-            arrow->setAutoDefault(false);
-            arrow->setFixedWidth(25);
-            row->addWidget(arrow);
+        auto *remove = new QPushButton;
+        remove->setObjectName("removeDohResolver");
+        if (removeIcon.isNull()) remove->setText(QStringLiteral("×"));
+        else remove->setIcon(removeIcon);
+        for (auto *button : {up, down, remove}) {
+            button->setAutoDefault(false);
+            button->setFixedWidth(25);
+            row->addWidget(button);
         }
-        rows.append(ResolverRow{endpoint, addresses, widget, title, up, down});
+        rows.append(ResolverRow{endpoint, addresses, widget, title, up, down, remove});
         connect(title, &QPushButton::clicked, &dialog, [&, widget] {
             const auto index = indexOf(widget);
             open = index == open ? -1 : index;
@@ -2814,6 +2876,7 @@ void ProfileEditorDialog::editDoh() {
         });
         connect(up, &QPushButton::clicked, &dialog, [&, widget] { move(widget, -1); });
         connect(down, &QPushButton::clicked, &dialog, [&, widget] { move(widget, 1); });
+        connect(remove, &QPushButton::clicked, &dialog, [&, widget] { removeRow(widget); });
     };
     auto endpoints = dohEndpoints_.isEmpty() ? QStringList{} : dohEndpoints_.split(',');
     auto groups = dohBootstrap_.isEmpty() ? QStringList{} : dohBootstrap_.split(',');
@@ -2861,13 +2924,6 @@ void ProfileEditorDialog::editDoh() {
     connect(add, &QPushButton::clicked, menu, [=] {
         menu->popup(add->mapToGlobal(QPoint(add->width() - menu->sizeHint().width(), add->height() + 4)));
     });
-    connect(remove, &QPushButton::clicked, &dialog, [&] {
-        if (open < 0) return;
-        delete rows.takeAt(open).widget;
-        open = -1;
-        refresh();
-        add->setFocus();
-    });
     const auto changeMode = [&] {
         doh->setVisible(mode->currentIndex() != 0);
         refreshOrdinary();
@@ -2910,7 +2966,9 @@ void ProfileEditorDialog::editDoh() {
                 if (!error.isEmpty()) {
                     open = i;
                     refresh();
-                    (error == tr("Enter an HTTPS URL with a hostname and path.") ? url : ips)->setFocus();
+                    auto *invalidField = error == tr("Enter an HTTPS URL with a hostname and path.") ? url : ips;
+                    scroll->ensureWidgetVisible(invalidField);
+                    invalidField->setFocus();
                     problem->setText(error);
                     problem->show();
                     return;
@@ -2927,14 +2985,21 @@ void ProfileEditorDialog::editDoh() {
         dialog.accept();
     });
 #ifdef Q_OS_WIN
-    if (!dark && QGuiApplication::platformName() == QStringLiteral("windows")) {
+    if (QGuiApplication::platformName() == QStringLiteral("windows")) {
         using SetWindowAttribute = HRESULT (WINAPI *)(HWND, DWORD, LPCVOID, DWORD);
         if (const auto setAttribute = reinterpret_cast<SetWindowAttribute>(
                 QLibrary::resolve(QStringLiteral("dwmapi"), "DwmSetWindowAttribute"))) {
             constexpr DWORD captionColorAttribute = 35;
             constexpr COLORREF captionColor = RGB(247, 249, 252);
-            QTimer::singleShot(0, &dialog, [&dialog, setAttribute, captionColor] {
-                setAttribute(reinterpret_cast<HWND>(dialog.winId()), captionColorAttribute, &captionColor, sizeof(captionColor));
+            QTimer::singleShot(0, &dialog, [&dialog, setAttribute, captionColor, dark] {
+                const auto window = reinterpret_cast<HWND>(dialog.winId());
+                if (dark) {
+                    constexpr DWORD immersiveDarkModeAttribute = 20;
+                    constexpr BOOL enable = TRUE;
+                    setAttribute(window, immersiveDarkModeAttribute, &enable, sizeof(enable));
+                } else {
+                    setAttribute(window, captionColorAttribute, &captionColor, sizeof(captionColor));
+                }
             });
         }
     }

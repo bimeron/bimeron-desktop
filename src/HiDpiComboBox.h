@@ -166,7 +166,8 @@ protected:
             : QColor(dark ? "#8493a7" : "#95a2b2"));
         painter.drawText(QRect(9, 0, width() - 39, height()), Qt::AlignVCenter | Qt::TextSingleLine,
                          fontMetrics().elidedText(currentText(), Qt::ElideRight, width() - 39));
-        const QPixmap arrow(QStringLiteral(":/icons/chevron-down.xpm"));
+        const QString arrowResource = property("chevronResource").toString();
+        const QPixmap arrow(arrowResource.isEmpty() ? QStringLiteral(":/icons/chevron-down.xpm") : arrowResource);
         painter.setOpacity(isEnabled() ? 1.0 : 0.5);
         painter.drawPixmap(width() - 18, (height() - arrow.height()) / 2, arrow);
     }

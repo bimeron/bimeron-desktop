@@ -3222,5 +3222,5 @@
   "+ Add": "+ Добавить",
   "No servers added yet.": "Серверы пока не добавлены.",
   "Custom server…": "Свой сервер…",
-  "Remove server": "Удалить сервер"
+  "Remove server: %1": "Удалить сервер: %1"
 }

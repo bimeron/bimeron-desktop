@@ -112,7 +112,7 @@ server menu. Selecting a preset adds it immediately. AdGuard DNS uses the
 default public filtering endpoint and its published IPv4 addresses. The
 empty list displays one status line. A server row opens its own HTTPS
 and bootstrap fields directly below the header. Custom servers open those
-fields automatically. The expanded fields include the removal action. Ordering
+fields automatically. Each server row includes a removal action. Ordering
 controls appear with two or more servers. OK updates the draft. Save writes
 the profile. WireGuard and AmneziaWG retain their protocol-specific DNS field
 and label the separate captured-DNS control DNS over HTTPS.
@@ -136,7 +136,8 @@ Validation failure must preserve an existing DoH document.
 
 For a visual check, launch Desktop with `--visual-check --dns-preview`.
 It opens a temporary DNS draft without opening a user profile or connecting
-to the service.
+to the service. Add `--dns-preview-dark` to preview the dark palette for
+that process.
 
 The Desktop profile regression runs the editor and clipboard checks on both
 platforms. Set `BIMERON_DOH_CORE` to a DoH-capable CLI to exercise the real

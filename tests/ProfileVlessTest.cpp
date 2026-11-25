@@ -15,6 +15,7 @@
 #include <QScrollArea>
 #include <QAction>
 #include <QMenu>
+#include <QStandardItemModel>
 #include <QElapsedTimer>
 #include <QEventLoop>
 #include <QKeyEvent>
@@ -2448,12 +2449,58 @@ int main(int argc, char **argv) {
             require(dialog);
             dialog->findChild<QComboBox *>("dohMode")->setCurrentIndex(1);
             auto *add = dialog->findChild<QPushButton *>("addDohResolver");
+            auto *mode = dialog->findChild<QComboBox *>("dohMode");
+            mode->setCurrentIndex(0);
+            QKeyEvent nextMode(QEvent::KeyPress, Qt::Key_Down, Qt::NoModifier);
+            QApplication::sendEvent(mode, &nextMode);
+            require(mode->currentIndex() == 1);
             auto *menu = dialog->findChild<QMenu *>("dohAddMenu");
             require(dialog->findChild<QLabel *>("dohEmpty")->isVisible() && !add->menu());
             require(menu->actions().size() == 4);
             require(menu->actions()[0]->text() == "Cloudflare");
             require(menu->actions()[1]->text() == "Google");
             require(menu->actions()[2]->text() == "AdGuard DNS");
+            const auto removeServer = [dialog](const QString &name) {
+                for (auto *button : dialog->findChildren<QPushButton *>("removeDohResolver")) {
+                    if (!button->isVisible() || !button->accessibleName().endsWith(name)) continue;
+                    require(button->toolTip() == button->accessibleName());
+                    QKeyEvent press(QEvent::KeyPress, Qt::Key_Space, Qt::NoModifier);
+                    QKeyEvent release(QEvent::KeyRelease, Qt::Key_Space, Qt::NoModifier);
+                    QApplication::sendEvent(button, &press);
+                    QApplication::sendEvent(button, &release);
+                    require(!button->isVisible());
+                    return;
+                }
+                require(false);
+            };
+            const auto visibleServers = [dialog] {
+                QStringList names;
+                for (const auto *header : dialog->findChildren<QPushButton *>("dohServerHeader"))
+                    if (header->isVisible()) names.append(header->accessibleName());
+                return names;
+            };
+            for (int i = 0; i < 3; ++i) menu->actions()[i]->trigger();
+            menu->actions()[3]->trigger();
+            QCoreApplication::processEvents();
+            auto *customUrl = dialog->findChild<QLineEdit *>("dohUrl");
+            require(visibleServers().size() == 4 && !add->isEnabled());
+            require(customUrl->isVisible() && dialog->focusWidget() == customUrl);
+            removeServer("Custom server");
+            require(!customUrl->isVisible() && add->isEnabled());
+            const auto headers = dialog->findChildren<QPushButton *>("dohServerHeader");
+            headers[2]->click();
+            require(customUrl->isVisible());
+            removeServer("Google");
+            require(visibleServers() == QStringList({"Cloudflare", "AdGuard DNS"}));
+            require(customUrl->text() == "https://dns.adguard-dns.com/dns-query");
+            removeServer("Cloudflare");
+            require(visibleServers() == QStringList({"AdGuard DNS"}) && customUrl->isVisible());
+            removeServer("AdGuard DNS");
+            require(!customUrl->isVisible());
+            require(visibleServers().isEmpty() && dialog->findChild<QLabel *>("dohEmpty")->isVisible());
+            require(!dialog->findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Ok)->isEnabled());
+            require(dialog->focusWidget() == add);
+            QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
             menu->actions()[2]->trigger();
             auto *header = dialog->findChild<QPushButton *>("dohServerHeader");
             require(header && header->accessibleName() == "AdGuard DNS");
@@ -2494,6 +2541,9 @@ int main(int argc, char **argv) {
         QTimer::singleShot(0, [&] {
             auto *dialog = QApplication::activeModalWidget();
             auto *addresses = dialog->findChild<QLineEdit *>("ordinaryDnsAddresses");
+            auto *mode = dialog->findChild<QComboBox *>("dohMode");
+            require(mode->currentIndex() == 0);
+            require(!qobject_cast<QStandardItemModel *>(mode->model())->item(1)->isEnabled());
             require(addresses->isVisible());
             addresses->setText("192.0.2.1");
             dialog->findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Ok)->click();
