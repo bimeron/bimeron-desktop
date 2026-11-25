@@ -106,11 +106,13 @@ Service start rejection must not rewrite the profile or expose credentials.
 ### Desktop DNS modes
 
 The Network tab summarizes the active DNS configuration in one row. Configure
-opens a dialog with ordinary IPv4 settings and ordered DoH servers. Selecting
-a preset adds it immediately. Custom servers open the HTTPS and bootstrap
-fields. The empty dialog shows a short prompt and Add server. In a populated
-list, Add server sits directly below compact rows. The dialog grows when
-Details opens. Select an entry and open Details to edit or remove it. Ordering
+opens a dialog with ordinary IPv4 settings and ordered DoH servers. Add in
+the section header opens the Cloudflare, Google, AdGuard DNS, and custom
+server menu. Selecting a preset adds it immediately. AdGuard DNS uses the
+default public filtering endpoint and its published IPv4 addresses. The
+empty list displays one status line. A server row opens its own HTTPS
+and bootstrap fields directly below the header. Custom servers open those
+fields automatically. The expanded fields include the removal action. Ordering
 controls appear with two or more servers. OK updates the draft. Save writes
 the profile. WireGuard and AmneziaWG retain their protocol-specific DNS field
 and label the separate captured-DNS control DNS over HTTPS.
@@ -131,6 +133,10 @@ Verify both clipboard paste paths replace selections and normalize mixed
 separators without truncation. Verify cancel, reorder and import/save/export
 round trips. When Core lacks the `doh` capability, the editor cannot enable DoH.
 Validation failure must preserve an existing DoH document.
+
+For a visual check, launch Desktop with `--visual-check --dns-preview`.
+It opens a temporary DNS draft without opening a user profile or connecting
+to the service.
 
 The Desktop profile regression runs the editor and clipboard checks on both
 platforms. Set `BIMERON_DOH_CORE` to a DoH-capable CLI to exercise the real

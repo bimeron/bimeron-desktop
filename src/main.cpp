@@ -1,3 +1,5 @@
+#include "ProfileEditorDialog.h"
+#include <QPushButton>
 #include "InstallerCore.h"
 #include "MainWindow.h"
 #include "RepairBootstrap.h"
@@ -172,6 +174,11 @@ int main(int argc, char *argv[]) {
     QLocalServer instanceServer;
     if (!instanceServer.listen(instanceName))
         return 0;
+    if (visualCheck && app.arguments().contains(QStringLiteral("--dns-preview"))) {
+        ProfileEditorDialog editor({}, QJsonObject{{"vpn", true}, {"doh", true}}, nullptr, {}, {}, {}, true);
+        editor.findChild<QPushButton *>("configureDoh")->click();
+        return 0;
+    }
     MainWindow window;
     QObject::connect(&instanceServer, &QLocalServer::newConnection, &window, [&] {
         while (auto *socket = instanceServer.nextPendingConnection()) {

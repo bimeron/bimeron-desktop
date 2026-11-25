@@ -3217,5 +3217,10 @@
   "Undo": "Отменить",
   "Redo": "Повторить",
   "Cut": "Вырезать",
-  "Select All": "Выделить всё"
+  "Select All": "Выделить всё",
+  "DoH servers": "Серверы DoH",
+  "+ Add": "+ Добавить",
+  "No servers added yet.": "Серверы пока не добавлены.",
+  "Custom server…": "Свой сервер…",
+  "Remove server": "Удалить сервер"
 }
