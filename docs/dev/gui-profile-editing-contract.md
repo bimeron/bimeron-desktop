@@ -10,6 +10,13 @@ change to Core syntax, validation, protocol support or its document API.
   or saving without changes must preserve the original bytes.
 - Apply explicit user edits to represented fields. Do not materialize omitted
   defaults merely because a control displays a default value.
+- `[Interface] DNS` follows the Core default. New profiles omit it, and an empty
+  DNS field keeps it omitted; the field's placeholder shows the default Core
+  applies. That value is the `default_dns` capability when Core reports it,
+  `1.1.1.1` when a reached Core does not (older Cores), and `1.1.1.1, 1.0.0.1`,
+  the bundled Core default, when no Core has been reached. Any typed value is
+  written as typed, even when it equals the default; clearing the field removes
+  the option. Explicit values in existing profiles are never rewritten.
 - Preserve untouched values, comments, unknown content, ordering and line endings.
   Refuse visual editing of ambiguous or unsupported content rather than dropping it.
 - Compare decoded values when determining changes, not their quote spelling.
@@ -95,6 +102,82 @@ does not establish support in the running service or prove live connectivity.
 Service start rejection must not rewrite the profile or expose credentials.
 
 ## Portable acceptance cases
+
+### Desktop DNS modes
+
+The Network tab summarizes the active DNS configuration in one row. Configure
+opens a dialog with ordinary IPv4 settings and ordered DoH servers. Add in
+the section header opens the Cloudflare, Google, AdGuard DNS, and custom
+server menu. Selecting a preset adds it immediately. AdGuard DNS uses the
+default public filtering endpoint and its published IPv4 addresses. The
+empty list displays one status line. A server row opens its own HTTPS
+and bootstrap fields directly below the header. Custom servers open those
+fields automatically. Each server row includes a removal action. Ordering
+controls appear with two or more servers. OK updates the draft. Save writes
+the profile. WireGuard and AmneziaWG retain their protocol-specific DNS field
+and label the separate captured-DNS control DNS over HTTPS.
+
+Keep the existing `DNS` assignment
+or omission when switching modes. Applying DoH sets `DoH` and `DoHBootstrap`
+together. Applying ordinary DNS removes both together. Captured VPN DNS uses
+only DoH while the pair exists. Ordinary DNS can still be used for physical
+upstream and SSConf bootstrap where applicable.
+
+Preserve the URL spelling and both levels of order. Commas separate URLs and
+positional bootstrap groups. Pipes separate the numeric IPs within each group.
+The independent limits are four DoH endpoints, four bootstrap IPs per endpoint,
+and four ordinary IPv4 DNS addresses. Preserve stored IPv6 addresses even when
+the profile disables IPv6. Core validates usable addresses and WG/AWG AllowedIPs.
+
+Verify both clipboard paste paths replace selections and normalize mixed
+separators without truncation. Verify cancel, reorder and import/save/export
+round trips. When Core lacks the `doh` capability, the editor cannot enable DoH.
+Validation failure must preserve an existing DoH document.
+
+For a visual check, launch Desktop with `--visual-check --dns-preview`.
+It opens a temporary DNS draft without opening a user profile or connecting
+to the service. Add `--dns-preview-dark` to preview the dark palette for
+that process. To check the inherited main-window style through a profile,
+use `--visual-check --dns-preview-profile`. This variant opens the main
+window and requests a Core hello to load capabilities. The DNS fields
+use the Settings control height and horizontal padding, with labels
+centered vertically beside the mode and ordinary IPv4 fields.
+
+The Desktop profile regression runs the editor and clipboard checks on both
+platforms. Set `BIMERON_DOH_CORE` to a DoH-capable CLI to exercise the real
+document patch and validation. Set `BIMERON_OLD_DOH_CORE` to a pre-DoH CLI to
+check rejection of the same encrypted profile. Use a native profile file or
+the Raw config tab when transferring the full profile with its DNS settings.
+The #246 acceptance pin is Core
+`da8e169d4c31fc30d30b629d3dddd16f4898de58`. The only change from
+`bae03176322c35b8bb6c2e690fbb2a85d2729374` is `docs/WIREGUARD.MD`.
+Use the equivalent Windows and Linux test binaries from the earlier revision
+and its
+`internal/dnsconfig/testdata/doh-v1.json` vectors. The development CLIs omit
+embedded VCS identity. Verify the binaries by SHA-256.
+
+| CLI | SHA-256 |
+| --- | --- |
+| Windows amd64 | `9562e2237e8c036a873c9850bea84a79bea5202a2b9f1a7c1f5dea0f62041d13` |
+| Linux amd64 | `d713e5a2a59c5dde44e671765c0aef1c50f57f63f709d6f08fe051d3bb5d74fb` |
+
+Core `bae03176322c35b8bb6c2e690fbb2a85d2729374` produced these packaged CLI hashes in
+[Core CI run 44844219660](https://github.com/bimeron/bimeron-core/actions/runs/44844219660).
+
+| Packaged CLI | SHA-256 |
+| --- | --- |
+| Windows amd64 | `cfeefd026f5e94688f2a3f5536b3cc33237a859d89e7c86140643f5db63e87d9` |
+| Linux amd64 | `0487fe0207ae7267d20d526c3dbea64178112e644ecfb4d40e260db07156ea37` |
+
+The shared vectors Git blob SHA-256 is
+`788b08b592c84f72421c810a15c2db884dd6b6bea33abb7da083b18f09736844`.
+Desktop CTest passed on Windows amd64 (13 tests) and Linux amd64 (12 tests)
+with those CLIs. The Windows run also checked rejection with the installed
+pre-DoH CLI. Core loopback tests on both platforms passed for terminal
+NXDOMAIN and TLS failure without plaintext fallback. Windows additionally
+passed the native trust test for an incomplete cold chain with zero AIA requests.
+
+### General profile editing
 
 Run these through the actual editor save/reopen path, with and without any document
 API path the implementation supports:

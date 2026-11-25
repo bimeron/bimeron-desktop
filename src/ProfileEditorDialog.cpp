@@ -11,6 +11,7 @@
 #include "GeoSitePicker.h"
 #include "CoreDiagnostic.h"
 #include "CoreProblems.h"
+#include "DnsAddressEdit.h"
 #include "WireGuardCore.h"
 #include "WireGuardForm.h"
 #include <QToolButton>
@@ -55,6 +56,11 @@
 #include <QSet>
 #include <QScrollArea>
 #include <QStandardItemModel>
+#include <QMenu>
+#ifdef Q_OS_WIN
+#include <QLibrary>
+#include <qt_windows.h>
+#endif
 #include <QStyledItemDelegate>
 #include <QPainter>
 #include <QSpinBox>
@@ -136,6 +142,20 @@ QMap<QString, QString> visualFields(const QString &text) {
         }
     }
     return fields;
+}
+
+bool hasDohFields(const QString &text) {
+    QString section;
+    for (const auto &line : ProfileTextEdit::lines(text)) {
+        const auto header = ProfileTextEdit::header(line);
+        if (!header.isEmpty()) section = header;
+        const auto content = ProfileTextEdit::clean(line);
+        const int equal = content.indexOf('=');
+        if (section != "Interface" || equal < 0) continue;
+        const auto key = content.left(equal).trimmed();
+        if (key == "DoH" || key == "DoHBootstrap") return true;
+    }
+    return false;
 }
 
 class ConfigHighlighter final : public QSyntaxHighlighter {
@@ -678,8 +698,16 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
     interfaceName_->setObjectName("interfaceName");
     mtu_ = new QSpinBox;
     mtu_->setRange(1280, 1500);
-    dns_ = new QLineEdit;
-    dns_->setPlaceholderText("1.1.1.1, 8.8.8.8");
+    dns_ = new DnsAddressEdit(true, this);
+    dns_->setObjectName("dns");
+    // An empty field omits DNS so Core applies its own default, shown here.
+    const QString defaultDns = ProfileStore::defaultDns(capabilities);
+    dns_->setPlaceholderText(defaultDns);
+    dns_->setToolTip(tr("Leave empty to use the Core default: %1").arg(defaultDns));
+    configureDoh_ = new QPushButton;
+    configureDoh_->setObjectName("configureDoh");
+    connect(configureDoh_, &QPushButton::clicked, this, &ProfileEditorDialog::editDoh);
+    refreshDohSummary();
     ipv6_ = new HiDpiComboBox;
     ipv6_->addItem(tr("Enabled"), "enable");
     ipv6_->addItem(tr("Disabled"), "disable");
@@ -689,7 +717,9 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
     if (!killSwitchSupported) killSwitch_->setToolTip(tr("Not supported by the current core build"));
     networkForm->addRow(tr("Interface name"), interfaceName_);
     networkForm->addRow(tr("MTU"), mtu_);
-    networkForm->addRow(tr("DNS (up to four IPv4 addresses)"), dns_);
+    dns_->hide();
+    networkForm->addRow(tr("DNS"), configureDoh_);
+    connect(dns_, &QLineEdit::textChanged, this, &ProfileEditorDialog::refreshDohSummary);
     networkForm->addRow(tr("IPv6"), ipv6_);
     networkForm->addRow(tr("Kill switch"), killSwitch_);
     tabs_->addTab(network, tr("Network"));
@@ -889,6 +919,9 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
         const bool checkParameters = !native_ && !rawOnly_ && !rawDirty_;
         CoreFailure failure;
         failure.text = (rawDirty_ || rawOnly_ || !bridgeReady_) ? QString() : bridgeError_;
+        if (failure.text.isEmpty() && checkParameters && !isWireGuard()
+            && (freshDraft_ || dns_->text() != visualFields(visualBaseline_).value("Interface/DNS")))
+            failure.text = static_cast<DnsAddressEdit *>(dns_)->error(dns_->text());
         if (failure.text.isEmpty()) failure.text = routingError();
         // Core problems name the exact field, so they take precedence over the
         // editor's own combination check, which only reports a generic message.
@@ -1103,7 +1136,6 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
         mode_->setCurrentIndex(mode_->findData("vpn"));
         interfaceName_->setText("Bimeron");
         mtu_->setValue(1420);
-        dns_->setText("1.1.1.1");
         ipv6_->setCurrentIndex(ipv6_->findData("enable"));
         listen_->setText("127.0.0.1:1080");
         defaultRoute_->setCurrentIndex(defaultRoute_->findData("proxy"));
@@ -1237,9 +1269,6 @@ ProfileEditorDialog::ProfileEditorDialog(const QString &text, const QJsonObject 
         key_->setEnabled(true);
         const bool wireGuard = source == "WireGuard";
         setFormRowVisible(generalForm, keyRow, !explicitKey && !explicitSocks5 && !explicitVless && !explicitSsh && !added && !wireGuard);
-        // WireGuard DNS applies only while the profile sets no DNS of its own.
-        if (freshDraft_ && wireGuard && dns_->text() == "1.1.1.1") dns_->clear();
-        else if (freshDraft_ && !wireGuard && dns_->text().isEmpty()) dns_->setText("1.1.1.1");
         key_->setVisible(file || keyRevealed_);
         browse->setVisible(file);
         reveal->setVisible(ss || ssconf || socks5 || source == "VLESS" || source == "Hysteria2" || source == "SSH" || source == "Key" || linkSources().contains(source));
@@ -1684,7 +1713,12 @@ void ProfileEditorDialog::loadText(const QString &text) {
     interfaceName_->setText(fieldValue("Interface", "Name").isEmpty() ? "Bimeron" : fieldValue("Interface", "Name"));
     const int mtu = fieldValue("Interface", "MTU").toInt();
     mtu_->setValue(mtu ? mtu : 1420);
-    dns_->setText(fieldValue("Interface", "DNS").isEmpty() ? (wireGuard_ ? QString() : QStringLiteral("1.1.1.1")) : fieldValue("Interface", "DNS"));
+    dns_->setText(fieldValue("Interface", "DNS"));
+    dohEndpoints_ = documentFields_.value("Interface.DoH").toString(fieldValue("Interface", "DoH"));
+    dohBootstrap_ = documentFields_.value("Interface.DoHBootstrap").toString(fieldValue("Interface", "DoHBootstrap"));
+    refreshDohSummary();
+    if (hasDohFields(text) && !capabilities_.value("doh").toBool())
+        rawOnly_ = true;
     const QString allowedMode = documentFields_.contains("Routing/AllowedIPsMode")
         ? documentFields_.value("Routing/AllowedIPsMode").toString()
         : ProfileStore::decodeOptionValue(routingSectionValue(text, "Routing", "AllowedIPsMode"));
@@ -1719,7 +1753,7 @@ void ProfileEditorDialog::loadText(const QString &text) {
         {"Profile", {"Version", "Name"}},
         {"AccessKey", {"SS", "SSConf", "SOCKS5", "VLESS", "Hysteria2", "SSH", "Key", "File", "Type", "Server", "Port", "Method", "Username", "Password", "Prefix", "Plugin", "PluginOpts", "IdentityFile", "KnownHostsFile", "CAFile", "MASQUEPath", "ID", "Encryption", "Flow", "Network", "Security", "ServerName", "PublicKey", "ShortID", "Fingerprint", "SpiderX", "ALPN", "WSPath", "WSHost", "WSEarlyData", "GRPCServiceName", "GRPCAuthority", "GRPCMultiMode", "XHTTPPath", "XHTTPHost", "XHTTPMode", "XHTTPExtra", "VMess", "Trojan", "TUIC", "AnyTLS", "HTTP", "Naive", "MASQUE"}},
         {"ShadowTLS", {"ServerName", "Password"}},
-        {"Interface", {"Mode", "Name", "MTU", "DNS", "IPv6", "KillSwitch", "Listen"}},
+        {"Interface", {"Mode", "Name", "MTU", "DNS", "DoH", "DoHBootstrap", "IPv6", "KillSwitch", "Listen"}},
         {"Routing", {"Default", "AllowedIPsMode"}}, {"Rule", {"CIDR", "Domain", "Action"}}};
     const QHash<QString, QSet<QString>> known = native_
         ? QHash<QString, QSet<QString>>{{"Profile", {"Version", "Name"}},
@@ -1983,6 +2017,8 @@ QString ProfileEditorDialog::buildText() const {
         + "\nName = " + interfaceName_->text()
         + "\nMTU = " + (isWireGuard() ? valueFor(loadedText_, "Interface", "MTU") : QString::number(mtu_->value()))
         + "\nDNS = " + (isWireGuard() ? valueFor(loadedText_, "Interface", "DNS") : dns_->text())
+        + (dohEndpoints_.isEmpty() ? QString() : "\nDoH = " + dohEndpoints_)
+        + (dohBootstrap_.isEmpty() ? QString() : "\nDoHBootstrap = " + dohBootstrap_)
         + "\nIPv6 = " + ipv6_->currentData().toString()
         + "\nKillSwitch = " + QString(killSwitch_->isChecked() ? "true" : "false")
         + "\nListen = " + listen_->text()
@@ -2148,11 +2184,12 @@ void ProfileEditorDialog::assessRepresentation() {
         if (!generated.contains(it.key()) || generated.value(it.key()) != it.value()) valid = false;
     }
     // Omitted settings may only acquire the documented Core default, never the
-    // first available GUI/capability choice. Unknown defaults require Raw.
+    // first available GUI/capability choice. Unknown defaults require Raw. An
+    // empty DNS field stays omitted, so DNS needs no entry here.
     const QMap<QString, QString> defaults{
         {"Profile/Version", "1"}, {"Profile/Name", ""}, {"AccessKey/Prefix", ""},
         {"Interface/Mode", "vpn"}, {"Interface/Name", "Bimeron"}, {"Interface/MTU", "1420"},
-        {"Interface/DNS", "1.1.1.1"}, {"Interface/IPv6", "enable"},
+        {"Interface/IPv6", "enable"},
         {"Interface/KillSwitch", "false"}, {"Interface/Listen", "127.0.0.1:1080"},
         {"Routing/Default", "proxy"}
     };
@@ -2223,7 +2260,8 @@ void ProfileEditorDialog::syncRaw() {
 
 QString ProfileEditorDialog::configText() const {
     const QString draft = draftConfigText();
-    return isWireGuard() ? ProfileTextEdit::withoutWireGuardNetworkOverrides(draft) : draft;
+    return isWireGuard() ? ProfileTextEdit::withoutWireGuardNetworkOverrides(
+        draft, hasDohFields(draft) || hasDohFields(originalText_)) : draft;
 }
 
 QString ProfileEditorDialog::draftConfigText() const {
@@ -2366,6 +2404,16 @@ QString ProfileEditorDialog::documentText() const {
         if (it.key().startsWith("ShadowTLS/")) continue;
         if (!before.contains(it.key()) || before.value(it.key()) != it.value()) changes.insert(it.key(), it.value());
     }
+    const bool endpointsChanged = changes.remove("Interface/DoH") > 0;
+    const bool bootstrapChanged = changes.remove("Interface/DoHBootstrap") > 0;
+    if (endpointsChanged || bootstrapChanged) {
+        QJsonObject operation{{"op", "set_doh"}};
+        if (!dohEndpoints_.isEmpty()) {
+            operation.insert("value", dohEndpoints_);
+            operation.insert("bootstrap", dohBootstrap_);
+        }
+        operations.append(operation);
+    }
     for (auto it = datasetPaths_.cbegin(); it != datasetPaths_.cend(); ++it) {
         bool used = false;
         for (int row = 0; row < rules_->rowCount(); ++row) {
@@ -2437,6 +2485,532 @@ QString ProfileEditorDialog::documentText() const {
     cachedVisual_ = cacheKey;
     cachedDocument_ = edited;
     return cachedDocument_;
+}
+
+namespace {
+struct DnsPreset {
+    const char *name;
+    const char *url;
+    const char *addresses;
+};
+constexpr DnsPreset dnsPresets[] = {
+    {"Cloudflare", "https://cloudflare-dns.com/dns-query", "1.1.1.1, 1.0.0.1"},
+    {"Google", "https://dns.google/dns-query", "8.8.8.8, 8.8.4.4"},
+    {"AdGuard DNS", "https://dns.adguard-dns.com/dns-query", "94.140.14.14, 94.140.15.15"},
+};
+
+QString dnsPresetName(const QString &url, const QString &addresses) {
+    for (const auto &preset : dnsPresets) {
+        if (url == QLatin1String(preset.url)
+            && DnsAddressEdit::addresses(addresses).join(", ") == QLatin1String(preset.addresses))
+            return QString::fromLatin1(preset.name);
+    }
+    return {};
+}
+}
+
+void ProfileEditorDialog::refreshDohSummary() {
+    QString summary = isWireGuard() ? tr("Ordinary DNS")
+                                    : dns_->text().isEmpty() ? tr("Default DNS") : dns_->text();
+    if (!dohEndpoints_.isEmpty()) {
+        const int count = dohEndpoints_.count(',') + 1;
+        const QString preset = count == 1
+            ? dnsPresetName(dohEndpoints_.trimmed(), QString(dohBootstrap_).replace('|', ',')) : QString();
+        summary = preset.isEmpty() ? tr("DNS over HTTPS (%1)").arg(count)
+                                   : tr("DNS over HTTPS · %1").arg(preset);
+    }
+    configureDoh_->setText(tr("%1 · Configure…").arg(summary));
+    configureDoh_->setEnabled(capabilities_.value("doh").toBool() || !hasDohFields(originalText_));
+}
+
+void ProfileEditorDialog::editDoh() {
+    QDialog dialog(this);
+    dialog.setWindowTitle(tr("DNS settings"));
+    const bool dark = dialog.palette().color(QPalette::Window).lightness() < 128;
+    const QString surface = dark ? "#20262e" : "#ffffff";
+    const QString chrome = dark ? "#26303b" : "#f7f9fc";
+    const QString detail = dark ? "#242e39" : "#f7faff";
+    const QString border = dark ? "#415367" : "#dae4ef";
+    const QString chevronResource = dark ? QStringLiteral(":/icons/chevron-down-dark.xpm")
+                                         : QStringLiteral(":/icons/chevron-down.xpm");
+    dialog.setObjectName("dnsDialog");
+    dialog.setStyleSheet(QStringLiteral(
+        "QDialog#dnsDialog, QWidget#dnsRows, QWidget#dnsBody { background: %1; }"
+        "QWidget#dnsFooter { background: %2; border-top: 1px solid %4; }"
+        "QWidget#dnsDetails { background: %3; border-top: 1px solid %4; }"
+        "QFrame#dnsGroup { background: %1; border: 1px solid %4; border-radius: 7px; }"
+        "QWidget#dnsServerHeader { background: %1; border-top: 1px solid %4; }"
+        "QWidget#dnsServerHeader[firstRow=true] { border-top: 0; }"
+        "QPushButton#dohServerHeader, QPushButton#ordinaryDnsToggle { text-align: left; min-height: 27px; padding: 0 8px; border: 1px solid transparent; border-radius: 5px; background: transparent; }"
+        "QPushButton#dohServerHeader { font-weight: 600; }"
+        "QPushButton#dohServerHeader:hover, QPushButton#ordinaryDnsToggle:hover { background: %3; }"
+        "QPushButton#dohServerHeader:focus, QPushButton#ordinaryDnsToggle:focus { border-color: #4387eb; }"
+        "QPushButton#addDohResolver { background: %3; border: 1px solid %4; border-radius: 6px; min-height: 27px; padding: 0 10px; }"
+        "QPushButton#addDohResolver:hover { border-color: #4387eb; }"
+        "QComboBox#dohMode, QDialog#dnsDialog QLineEdit, QPushButton#dnsCancel { background: %1; border: 1px solid %4; border-radius: 6px; min-height: 27px; padding: 0 8px; }"
+        "QComboBox#dohMode { padding-right: 30px; }"
+        "QComboBox#dohMode[popupOpen=true] { border-bottom-left-radius: 0; border-bottom-right-radius: 0; }"
+        "QComboBox#dohMode QAbstractItemView { padding: 0; background: %1; border: 1px solid %4; border-top: 0; border-bottom-left-radius: 6px; border-bottom-right-radius: 6px; outline: 0; selection-color: %5; selection-background-color: %6; }"
+        "QComboBox#dohMode QAbstractItemView::item { min-height: 26px; padding: 0 6px; border: 0; }"
+        "QComboBox#dohMode QAbstractItemView::item:selected { color: %5; background: %6; border: 0; outline: 0; }"
+        "QComboBox#dohMode QAbstractItemView::item:disabled { color: palette(mid); }"
+        "QComboBox#dohMode::drop-down { border: 0; width: 24px; }"
+        "QComboBox#dohMode::down-arrow { image: url(%8); width: 9px; height: 5px; }"
+        "QPushButton#moveDohResolverUp, QPushButton#moveDohResolverDown, QPushButton#removeDohResolver { background: transparent; border: 1px solid transparent; border-radius: 5px; min-height: 24px; padding: 0 3px; }"
+        "QPushButton#moveDohResolverUp:hover:enabled, QPushButton#moveDohResolverDown:hover:enabled { background: %3; }"
+        "QPushButton#removeDohResolver:hover { color: %7; background: %3; }"
+        "QPushButton#dnsCancel:hover { background: %3; }"
+        "QPushButton#dnsApply:hover:enabled { background: #155bae; }"
+        "QPushButton#moveDohResolverUp:disabled, QPushButton#moveDohResolverDown:disabled { color: palette(mid); }"
+        "QPushButton#moveDohResolverUp:focus, QPushButton#moveDohResolverDown:focus, QPushButton#removeDohResolver:focus { border-color: #4387eb; }"
+        "QComboBox#dohMode:focus, QDialog#dnsDialog QLineEdit:focus, QPushButton#dnsCancel:focus { border-color: #4387eb; }"
+        "QDialogButtonBox#dnsButtons { button-layout: 3; }"
+        "QPushButton#dnsApply { background: #1766c8; color: white; border: 1px solid #1766c8; border-radius: 6px; min-height: 27px; padding: 0 14px; }"
+        "QPushButton#dnsApply:disabled { background: %4; color: palette(mid); border-color: %4; }"
+        "QPushButton#dnsApply:focus { border-color: #80b8ff; }"
+        "QMenu#dohAddMenu { background: %1; border: 1px solid %4; padding: 4px; }"
+        "QMenu#dohAddMenu::item { padding: 5px 18px 5px 9px; }"
+        "QMenu#dohAddMenu::item:selected { background: %3; }"
+        "QFrame#dnsSeparator { background: %4; }"
+    ).arg(surface, chrome, detail, border, dark ? "#a9ceff" : "#1267d6", dark ? "#324964" : "#edf5ff", dark ? "#ffa2a2" : "#a83232", chevronResource));
+    auto *layout = new QVBoxLayout(&dialog);
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setSpacing(0);
+    auto *main = new QWidget;
+    main->setObjectName("dnsBody");
+    auto *mainLayout = new QVBoxLayout(main);
+    mainLayout->setContentsMargins(14, 14, 14, 12);
+    mainLayout->setSpacing(8);
+    layout->addWidget(main);
+    layout->setSizeConstraint(QLayout::SetFixedSize);
+    auto *mode = new HiDpiComboBox;
+    mode->setMinimumWidth(380);
+    mode->addItems({tr("Ordinary DNS"), tr("DNS over HTTPS")});
+    mode->setObjectName("dohMode");
+    mode->setProperty("chevronResource", chevronResource);
+    mode->setCurrentIndex(!dohEndpoints_.isEmpty() || !dohBootstrap_.isEmpty());
+    auto *modeRow = new QHBoxLayout;
+    auto *modeLabel = new QLabel(tr("Mode"));
+    modeLabel->setBuddy(mode);
+    modeRow->addWidget(modeLabel, 0, Qt::AlignVCenter);
+    modeRow->addWidget(mode, 1, Qt::AlignVCenter);
+    mainLayout->addLayout(modeRow);
+    const bool ordinaryAvailable = !isWireGuard();
+    const bool supported = capabilities_.value("doh").toBool();
+    if (!supported) {
+        qobject_cast<QStandardItemModel *>(mode->model())->item(1)->setEnabled(false);
+        auto *notice = new QLabel(tr("The running Core service does not report DNS over HTTPS support."));
+        notice->setWordWrap(true);
+        mainLayout->addWidget(notice);
+    }
+    auto *doh = new QWidget;
+    auto *dohLayout = new QVBoxLayout(doh);
+    dohLayout->setContentsMargins(0, 5, 0, 0);
+    dohLayout->setSpacing(6);
+    auto *heading = new QHBoxLayout;
+    auto *serversLabel = new QLabel(tr("DoH servers"));
+    QFont headingFont = serversLabel->font();
+    headingFont.setBold(true);
+    serversLabel->setFont(headingFont);
+    heading->addWidget(serversLabel);
+    heading->addStretch();
+    auto *add = new QPushButton(tr("+ Add"));
+    add->setObjectName("addDohResolver");
+    add->setAutoDefault(false);
+    heading->addWidget(add);
+    dohLayout->addLayout(heading);
+
+    auto *group = new QFrame;
+    group->setObjectName("dnsGroup");
+    auto *groupLayout = new QVBoxLayout(group);
+    groupLayout->setContentsMargins(1, 1, 1, 1);
+    groupLayout->setSpacing(0);
+    auto *empty = new QLabel(tr("No servers added yet."));
+    empty->setObjectName("dohEmpty");
+    empty->setContentsMargins(9, 8, 9, 8);
+    groupLayout->addWidget(empty);
+    auto *scroll = new QScrollArea;
+    scroll->setFrameShape(QFrame::NoFrame);
+    scroll->setWidgetResizable(true);
+    scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    auto *rowBox = new QWidget;
+    rowBox->setObjectName("dnsRows");
+    auto *rowLayout = new QVBoxLayout(rowBox);
+    rowLayout->setContentsMargins(0, 0, 0, 0);
+    rowLayout->setSpacing(0);
+    rowLayout->setAlignment(Qt::AlignTop);
+    scroll->setWidget(rowBox);
+    groupLayout->addWidget(scroll);
+    dohLayout->addWidget(group);
+    mainLayout->addWidget(doh);
+
+    auto *detailPanel = new QWidget(rowBox);
+    detailPanel->setObjectName("dnsDetails");
+    auto *form = new QVBoxLayout(detailPanel);
+    form->setContentsMargins(11, 9, 11, 9);
+    form->setSpacing(5);
+    auto *url = new QLineEdit;
+    url->setObjectName("dohUrl");
+    url->setMaxLength(64 * 1024 + 1);
+    auto *ips = new DnsAddressEdit(false);
+    ips->setObjectName("dohBootstrapIps");
+    auto *urlLabel = new QLabel(tr("HTTPS URL"));
+    urlLabel->setBuddy(url);
+    auto *ipsLabel = new QLabel(tr("Bootstrap IPs"));
+    ipsLabel->setBuddy(ips);
+    form->addWidget(urlLabel);
+    form->addWidget(url);
+    form->addWidget(ipsLabel);
+    form->addWidget(ips);
+
+    auto *separator = new QFrame;
+    separator->setObjectName("dnsSeparator");
+    separator->setFixedHeight(1);
+    mainLayout->addWidget(separator);
+    const QPixmap downChevron(chevronResource);
+    const auto disclosureIcon = [&downChevron](bool expanded) {
+        QPixmap icon(12, 12);
+        icon.fill(Qt::transparent);
+        QPainter painter(&icon);
+        painter.translate(6, 6);
+        if (!expanded) painter.rotate(-90);
+        painter.drawPixmap(-downChevron.width() / 2, -downChevron.height() / 2, downChevron);
+        painter.end();
+        return QIcon(icon);
+    };
+    const QIcon collapsedIcon = disclosureIcon(false);
+    const QIcon expandedIcon = disclosureIcon(true);
+    auto *ordinaryToggle = new QPushButton;
+    ordinaryToggle->setObjectName("ordinaryDnsToggle");
+    ordinaryToggle->setCheckable(true);
+    ordinaryToggle->setIconSize(QSize(12, 12));
+    ordinaryToggle->setAutoDefault(false);
+    mainLayout->addWidget(ordinaryToggle);
+    auto *ordinaryPanel = new QWidget;
+    auto *ordinaryForm = new QVBoxLayout(ordinaryPanel);
+    ordinaryForm->setContentsMargins(0, 0, 0, 0);
+    auto *ordinary = new DnsAddressEdit(true);
+    ordinary->setObjectName("ordinaryDnsAddresses");
+    ordinary->setText(dns_->text());
+    ordinary->setPlaceholderText(dns_->placeholderText());
+    ordinary->setToolTip(dns_->toolTip());
+    auto *ordinaryHint = new QLabel(tr("With DNS over HTTPS, Core can still use these addresses for the physical upstream and SSConf bootstrap."));
+    ordinaryHint->setWordWrap(true);
+    ordinaryForm->addWidget(ordinaryHint);
+    auto *ordinaryRow = new QHBoxLayout;
+    auto *ordinaryLabel = new QLabel(tr("IPv4 addresses"));
+    ordinaryLabel->setBuddy(ordinary);
+    ordinaryRow->addWidget(ordinaryLabel, 0, Qt::AlignVCenter);
+    ordinaryRow->addWidget(ordinary, 1, Qt::AlignVCenter);
+    ordinaryForm->addLayout(ordinaryRow);
+    mainLayout->addWidget(ordinaryPanel);
+    const auto refreshOrdinary = [=] {
+        const bool encrypted = mode->currentIndex() != 0;
+        const bool expanded = ordinaryToggle->isChecked();
+        ordinaryToggle->setIcon(expanded ? expandedIcon : collapsedIcon);
+        ordinaryToggle->setText(QStringLiteral("%1    %2")
+            .arg(tr("Ordinary DNS"), ordinary->text().isEmpty() ? tr("Default DNS") : ordinary->text()));
+        separator->setVisible(encrypted && ordinaryAvailable);
+        ordinaryToggle->setVisible(encrypted && ordinaryAvailable);
+        ordinaryHint->setVisible(encrypted);
+        ordinaryPanel->setVisible(ordinaryAvailable && (!encrypted || expanded));
+    };
+    connect(ordinaryToggle, &QPushButton::toggled, &dialog, refreshOrdinary);
+    connect(ordinary, &QLineEdit::textChanged, &dialog, refreshOrdinary);
+
+    auto *problem = new QLabel;
+    problem->setWordWrap(true);
+    problem->hide();
+    mainLayout->addWidget(problem);
+    auto *footer = new QWidget;
+    footer->setObjectName("dnsFooter");
+    auto *footerLayout = new QHBoxLayout(footer);
+    footerLayout->setContentsMargins(14, 8, 14, 8);
+    footerLayout->addStretch();
+    auto *buttons = new QDialogButtonBox;
+    buttons->setObjectName("dnsButtons");
+    auto *cancel = buttons->addButton(QDialogButtonBox::Cancel);
+    auto *ok = buttons->addButton(QDialogButtonBox::Ok);
+    cancel->setText(tr("Cancel"));
+    cancel->setObjectName("dnsCancel");
+    ok->setText(tr("OK"));
+    ok->setObjectName("dnsApply");
+    ok->setDefault(true);
+    footerLayout->addWidget(buttons);
+    layout->addWidget(footer);
+
+    struct ResolverRow {
+        QString endpoint;
+        QString addresses;
+        QWidget *widget;
+        QPushButton *title;
+        QPushButton *up;
+        QPushButton *down;
+        QPushButton *remove;
+    };
+    QList<ResolverRow> rows;
+    qsizetype open = -1;
+    const auto updateTitle = [&](qsizetype index) {
+        const auto &row = rows[index];
+        const QString preset = dnsPresetName(row.endpoint, row.addresses);
+        const QString host = QUrl(row.endpoint).host();
+        const QString name = preset.isEmpty() ? (host.isEmpty() ? tr("Custom server") : host) : preset;
+        row.title->setIcon(open == index ? expandedIcon : collapsedIcon);
+        row.title->setText(name);
+        row.title->setAccessibleName(name);
+        const QString removeLabel = tr("Remove server: %1").arg(name);
+        row.remove->setToolTip(removeLabel);
+        row.remove->setAccessibleName(removeLabel);
+        row.title->setChecked(open == index);
+    };
+    const auto refresh = [&] {
+        rowLayout->removeWidget(detailPanel);
+        detailPanel->setVisible(open >= 0);
+        for (qsizetype i = 0; i < rows.size(); ++i) {
+            auto &row = rows[i];
+            rowLayout->addWidget(row.widget);
+            row.widget->show();
+            if (row.widget->property("firstRow").toBool() != (i == 0)) {
+                row.widget->setProperty("firstRow", i == 0);
+                row.widget->style()->unpolish(row.widget);
+                row.widget->style()->polish(row.widget);
+            }
+            updateTitle(i);
+            row.up->setVisible(rows.size() > 1);
+            row.down->setVisible(rows.size() > 1);
+            row.up->setEnabled(i > 0);
+            row.down->setEnabled(i + 1 < rows.size());
+            if (open == i) {
+                rowLayout->addWidget(detailPanel);
+                const QSignalBlocker blockUrl(url), blockIps(ips);
+                url->setText(row.endpoint);
+                ips->setText(row.addresses);
+            }
+        }
+        QWidget *previous = add;
+        const auto nextTab = [&previous](QWidget *widget) {
+            QWidget::setTabOrder(previous, widget);
+            previous = widget;
+        };
+        for (qsizetype i = 0; i < rows.size(); ++i) {
+            const auto &row = rows[i];
+            nextTab(row.title);
+            nextTab(row.up);
+            nextTab(row.down);
+            nextTab(row.remove);
+            if (open == i) {
+                nextTab(url);
+                nextTab(ips);
+            }
+        }
+        for (auto *widget : QList<QWidget *>{ordinaryToggle, ordinary, cancel, ok}) nextTab(widget);
+        empty->setVisible(rows.isEmpty());
+        scroll->setVisible(!rows.isEmpty());
+        int rowsHeight = 0;
+        for (const auto &row : std::as_const(rows))
+            rowsHeight += row.widget->sizeHint().height();
+        if (open >= 0) rowsHeight += detailPanel->sizeHint().height();
+        scroll->setFixedHeight(qMin(300, rowsHeight));
+        add->setEnabled(rows.size() < 4);
+        ok->setEnabled(mode->currentIndex() == 0 || !rows.isEmpty());
+    };
+    const auto indexOf = [&](const QWidget *widget) {
+        for (qsizetype i = 0; i < rows.size(); ++i)
+            if (rows[i].widget == widget) return i;
+        return qsizetype(-1);
+    };
+    const auto move = [&](QWidget *widget, int delta) {
+        const auto from = indexOf(widget);
+        const auto to = from + delta;
+        if (from < 0 || to < 0 || to >= rows.size()) return;
+        rows.swapItemsAt(from, to);
+        if (open == from) open = to;
+        else if (open == to) open = from;
+        refresh();
+        rows[to].title->setFocus();
+    };
+    const auto removeRow = [&](QWidget *widget) {
+        const auto index = indexOf(widget);
+        if (index < 0) return;
+        rowLayout->removeWidget(widget);
+        widget->hide();
+        rows.removeAt(index);
+        widget->deleteLater();
+        if (open == index) open = -1;
+        else if (open > index) --open;
+        refresh();
+        if (rows.isEmpty()) add->setFocus();
+        else rows[qMin(index, rows.size() - 1)].remove->setFocus();
+    };
+    const QIcon removeIcon = QIcon::fromTheme(QStringLiteral("edit-delete"));
+    const auto appendRow = [&](const QString &endpoint, const QString &addresses) {
+        auto *widget = new QWidget(rowBox);
+        widget->setObjectName("dnsServerHeader");
+        auto *row = new QHBoxLayout(widget);
+        row->setContentsMargins(2, 1, 5, 1);
+        row->setSpacing(3);
+        auto *title = new QPushButton;
+        title->setObjectName("dohServerHeader");
+        title->setCheckable(true);
+        title->setAutoDefault(false);
+        title->setIconSize(QSize(12, 12));
+        title->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
+        title->setMinimumHeight(30);
+        row->addWidget(title, 1);
+        auto *up = new QPushButton(QStringLiteral("↑"));
+        auto *down = new QPushButton(QStringLiteral("↓"));
+        up->setObjectName("moveDohResolverUp");
+        down->setObjectName("moveDohResolverDown");
+        up->setAccessibleName(tr("Move up"));
+        down->setAccessibleName(tr("Move down"));
+        up->setToolTip(tr("Move up"));
+        down->setToolTip(tr("Move down"));
+        auto *remove = new QPushButton;
+        remove->setObjectName("removeDohResolver");
+        if (removeIcon.isNull()) remove->setText(QStringLiteral("×"));
+        else remove->setIcon(removeIcon);
+        for (auto *button : {up, down, remove}) {
+            button->setAutoDefault(false);
+            button->setFixedWidth(25);
+            row->addWidget(button);
+        }
+        rows.append(ResolverRow{endpoint, addresses, widget, title, up, down, remove});
+        connect(title, &QPushButton::clicked, &dialog, [&, widget] {
+            const auto index = indexOf(widget);
+            open = index == open ? -1 : index;
+            refresh();
+        });
+        connect(up, &QPushButton::clicked, &dialog, [&, widget] { move(widget, -1); });
+        connect(down, &QPushButton::clicked, &dialog, [&, widget] { move(widget, 1); });
+        connect(remove, &QPushButton::clicked, &dialog, [&, widget] { removeRow(widget); });
+    };
+    auto endpoints = dohEndpoints_.isEmpty() ? QStringList{} : dohEndpoints_.split(',');
+    auto groups = dohBootstrap_.isEmpty() ? QStringList{} : dohBootstrap_.split(',');
+    for (auto &endpoint : endpoints) endpoint = endpoint.trimmed();
+    for (auto &group : groups) {
+        auto tokens = group.split('|');
+        for (auto &token : tokens) token = token.trimmed();
+        group = tokens.join('|');
+    }
+    for (qsizetype i = 0; i < endpoints.size(); ++i) {
+        auto addresses = groups.value(i).split('|');
+        appendRow(endpoints[i], addresses.join(", "));
+    }
+    connect(url, &QLineEdit::textChanged, &dialog, [&](const QString &text) {
+        if (open < 0) return;
+        rows[open].endpoint = text;
+        updateTitle(open);
+    });
+    connect(ips, &QLineEdit::textChanged, &dialog, [&](const QString &text) {
+        if (open < 0) return;
+        rows[open].addresses = text;
+        updateTitle(open);
+    });
+    const auto addResolver = [&](const DnsPreset *preset) {
+        if (rows.size() >= 4) return;
+        appendRow(preset ? QString::fromLatin1(preset->url) : QString(),
+                  preset ? QString::fromLatin1(preset->addresses) : QString());
+        open = preset ? -1 : rows.size() - 1;
+        refresh();
+        if (!preset) {
+            QTimer::singleShot(0, url, [scroll, url] {
+                scroll->ensureWidgetVisible(url);
+                url->setFocus(Qt::OtherFocusReason);
+            });
+        }
+    };
+    auto *menu = new QMenu(add);
+    menu->setObjectName("dohAddMenu");
+    for (const auto &preset : dnsPresets) {
+        const auto *entry = &preset;
+        menu->addAction(QString::fromLatin1(preset.name), &dialog, [&, entry] { addResolver(entry); });
+    }
+    auto *custom = menu->addAction(tr("Custom server…"), &dialog, [&] { addResolver(nullptr); });
+    custom->setObjectName("addCustomDohResolver");
+    connect(add, &QPushButton::clicked, menu, [=] {
+        menu->popup(add->mapToGlobal(QPoint(add->width() - menu->sizeHint().width(), add->height() + 4)));
+    });
+    const auto changeMode = [&] {
+        doh->setVisible(mode->currentIndex() != 0);
+        refreshOrdinary();
+        problem->hide();
+        refresh();
+    };
+    connect(mode, &QComboBox::currentIndexChanged, &dialog, changeMode);
+    changeMode();
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    connect(buttons, &QDialogButtonBox::accepted, &dialog, [&] {
+        if (ordinaryAvailable && ordinary->text() != dns_->text()) {
+            const QString error = ordinary->error(ordinary->text());
+            if (!error.isEmpty()) {
+                ordinaryToggle->setChecked(true);
+                ordinary->setFocus();
+                problem->setText(error);
+                problem->show();
+                return;
+            }
+        }
+        QStringList urls, bootstrap;
+        if (mode->currentIndex() != 0) {
+            if (rows.size() == 0 || rows.size() > 4) {
+                problem->setText(tr("Enter one to four resolvers."));
+                problem->show();
+                add->setFocus();
+                return;
+            }
+            for (int i = 0; i < rows.size(); ++i) {
+                const auto endpoint = rows[i].endpoint.trimmed();
+                const QUrl parsed(endpoint, QUrl::StrictMode);
+                const auto input = rows[i].addresses;
+                const auto addresses = DnsAddressEdit::addresses(input);
+                QString error = ips->error(input);
+                if (addresses.isEmpty()) error = tr("Enter at least one bootstrap IP address.");
+                if (!parsed.isValid() || parsed.scheme() != "https" || parsed.host().isEmpty() || parsed.path().isEmpty()
+                    || parsed.authority().contains('@') || parsed.hasQuery() || parsed.hasFragment()
+                    || endpoint.contains(',') || endpoint.contains('|'))
+                    error = tr("Enter an HTTPS URL with a hostname and path.");
+                if (!error.isEmpty()) {
+                    open = i;
+                    refresh();
+                    auto *invalidField = error == tr("Enter an HTTPS URL with a hostname and path.") ? url : ips;
+                    scroll->ensureWidgetVisible(invalidField);
+                    invalidField->setFocus();
+                    problem->setText(error);
+                    problem->show();
+                    return;
+                }
+                urls.append(endpoint);
+                bootstrap.append(addresses.join('|'));
+            }
+        }
+        if (urls != endpoints || bootstrap != groups) {
+            dohEndpoints_ = urls.join(", ");
+            dohBootstrap_ = bootstrap.join(", ");
+        }
+        if (ordinaryAvailable) dns_->setText(ordinary->text());
+        dialog.accept();
+    });
+#ifdef Q_OS_WIN
+    if (QGuiApplication::platformName() == QStringLiteral("windows")) {
+        using SetWindowAttribute = HRESULT (WINAPI *)(HWND, DWORD, LPCVOID, DWORD);
+        if (const auto setAttribute = reinterpret_cast<SetWindowAttribute>(
+                QLibrary::resolve(QStringLiteral("dwmapi"), "DwmSetWindowAttribute"))) {
+            constexpr DWORD captionColorAttribute = 35;
+            constexpr COLORREF captionColor = RGB(247, 249, 252);
+            QTimer::singleShot(0, &dialog, [&dialog, setAttribute, captionColor, dark] {
+                const auto window = reinterpret_cast<HWND>(dialog.winId());
+                if (dark) {
+                    constexpr DWORD immersiveDarkModeAttribute = 20;
+                    constexpr BOOL enable = TRUE;
+                    setAttribute(window, immersiveDarkModeAttribute, &enable, sizeof(enable));
+                } else {
+                    setAttribute(window, captionColorAttribute, &captionColor, sizeof(captionColor));
+                }
+            });
+        }
+    }
+#endif
+    if (dialog.exec() == QDialog::Accepted) refreshDohSummary();
 }
 
 QString ProfileEditorDialog::routingError() const {
@@ -2780,6 +3354,8 @@ QWidget *ProfileEditorDialog::problemWidget(const CoreProblem &problem) const {
     add("Interface.Name", interfaceName_);
     add("Interface.MTU", mtu_);
     add("Interface.DNS", dns_);
+    add("Interface.DoH", configureDoh_);
+    add("Interface.DoHBootstrap", configureDoh_);
     add("Interface.IPv6", ipv6_);
     add("Interface.KillSwitch", killSwitch_);
     add("Routing.Default", defaultRoute_);
@@ -3065,6 +3641,10 @@ bool ProfileEditorDialog::isWireGuard() const {
 }
 
 bool ProfileEditorDialog::validateDraft(const QString &text, CoreFailure *failure, const QString *wireGuardOverride) {
+    if (!capabilities_.value("doh").toBool() && (hasDohFields(text) || hasDohFields(originalText_))) {
+        failure->text = tr("Select a Core with DNS-over-HTTPS support to save this profile.");
+        return false;
+    }
     if (wireGuard_ && ProfileStore::keyFileReference(text) != ProfileStore::keyFileReference(originalText_)) {
         failure->text = tr("The WireGuard configuration file of this profile is managed by Bimeron. Keep File = %1 and edit the WG/AWG config tab instead.")
             .arg(ProfileStore::keyFileReference(originalText_));
@@ -3253,7 +3833,10 @@ void ProfileEditorDialog::refreshWireGuard() {
     for (QWidget *control : QList<QWidget *>{interfaceName_, ipv6_, killSwitch_})
         setFormRowVisible(networkForm, control, !wireGuard || !rawOnly_);
     setFormRowVisible(networkForm, mtu_, !wireGuard);
-    setFormRowVisible(networkForm, dns_, !wireGuard);
+    setFormRowVisible(networkForm, configureDoh_, !rawOnly_ && (!wireGuard || !dohEndpoints_.isEmpty() || capabilities_.value("doh").toBool()));
+    if (auto *label = qobject_cast<QLabel *>(networkForm->labelForField(configureDoh_)))
+        label->setText(wireGuard ? tr("DNS over HTTPS") : tr("DNS"));
+    refreshDohSummary();
     wgForm_->showNetworkFields(wireGuard, !wgRawOnly_ && !wgRawDirty_ && !wgReservedReadOnly_);
     allowedIpsGroup_->setVisible(wireGuard);
     const QString mode = allowedIpsMode_->currentData().toString();

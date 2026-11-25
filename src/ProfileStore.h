@@ -21,6 +21,11 @@ struct ProfileConnectionInfo {
 
 class ProfileStore {
 public:
+    // DNS servers Core uses when a profile omits [Interface] DNS, for display
+    // only: Desktop never writes it. Uses the advertised default_dns; a reached
+    // Core without it predates the capability and defaults to 1.1.1.1; with no
+    // Core reached, the bundled Core default 1.1.1.1, 1.0.0.1 applies.
+    static QString defaultDns(const QJsonObject &capabilities);
     explicit ProfileStore(const QString &root = {});
     QList<Profile> load(QString *error = nullptr) const;
     bool save(const QList<Profile> &profiles, QString *error = nullptr) const;

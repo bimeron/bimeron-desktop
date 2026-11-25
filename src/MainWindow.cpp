@@ -558,6 +558,8 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), core_(this) {
     if (!QCoreApplication::arguments().contains("--visual-check")) {
         pollTimer->start();
         QTimer::singleShot(0, this, &MainWindow::poll);
+    } else if (QCoreApplication::arguments().contains("--dns-preview-profile")) {
+        QTimer::singleShot(0, this, [this] { core_.request("hello"); });
     }
     connect(development_, &DevelopmentCore::changed, this, &MainWindow::updateDevelopment);
     connect(development_, &DevelopmentCore::forcedExitReady, this, [] { QApplication::quit(); });
